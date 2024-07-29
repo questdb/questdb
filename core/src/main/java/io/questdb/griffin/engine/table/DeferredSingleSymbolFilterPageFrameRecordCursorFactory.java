@@ -42,7 +42,7 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
 
     public DeferredSingleSymbolFilterPageFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
-            int tableSymColIndex,
+            int symbolColumnIndex,
             Function symbolFunc,
             RowCursorFactory rowCursorFactory,
             RecordMetadata metadata,
@@ -66,12 +66,12 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
         );
         this.symbolFunc = symbolFunc;
         symbolKey = SymbolTable.VALUE_NOT_FOUND;
-        symbolColumnIndex = columnIndexes.indexOf(tableSymColIndex, 0, columnIndexes.size());
+        this.symbolColumnIndex = symbolColumnIndex;
 
         symbolFilter = new SingleSymbolFilter() {
             @Override
             public int getColumnIndex() {
-                return symbolColumnIndex;
+                return DeferredSingleSymbolFilterPageFrameRecordCursorFactory.this.symbolColumnIndex;
             }
 
             @Override
@@ -88,7 +88,7 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
 
     @Override
     public String getBaseColumnName(int idx) {
-        return dataFrameCursorFactory.getMetadata().getColumnName(idx);
+        return getMetadata().getColumnName(idx);
     }
 
     @Override

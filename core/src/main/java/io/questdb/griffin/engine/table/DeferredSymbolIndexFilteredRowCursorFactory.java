@@ -26,15 +26,10 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.EmptyRowCursor;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PageFrame;
-import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
 
 public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBasedRowCursorFactory {
     private final int columnIndex;
@@ -47,20 +42,19 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
             Function symbolFunction,
             Function filter,
             boolean cachedIndexReaderCursor,
-            int indexDirection,
-            IntList columnIndexes
+            int indexDirection
     ) {
         this.columnIndex = columnIndex;
         this.symbolFunction = symbolFunction;
-        cursor = new SymbolIndexFilteredRowCursor(columnIndex, filter, cachedIndexReaderCursor, indexDirection, columnIndexes);
+        cursor = new SymbolIndexFilteredRowCursor(columnIndex, filter, cachedIndexReaderCursor, indexDirection);
     }
 
     @Override
-    public RowCursor getCursor(PageFrame pageFrame) {
+    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
             return EmptyRowCursor.INSTANCE;
         }
-        return cursor.of(pageFrame);
+        return cursor.of(pageFrame, pageFrameMemory);
     }
 
     @Override
@@ -69,8 +63,8 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
     }
 
     @Override
-    public void init(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        symbolFunction.init(tableReader, sqlExecutionContext);
+    public void init(PageFrameCursor pageFrameCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        symbolFunction.init(pageFrameCursor, sqlExecutionContext);
     }
 
     @Override
@@ -84,11 +78,11 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader) {
-        symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbolFunction.getStrA(null));
+    public void prepareCursor(PageFrameCursor pageFrameCursor) {
+        symbolKey = pageFrameCursor.getSymbolTable(columnIndex).keyOf(symbolFunction.getStrA(null));
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
             cursor.of(symbolKey);
-            cursor.prepare(tableReader);
+            cursor.prepare(pageFrameCursor);
         }
     }
 

@@ -43,7 +43,6 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     private static final Comparator<FunctionBasedRowCursorFactory> COMPARATOR = FilterOnValuesRecordCursorFactory::compareStrFunctions;
     private static final Comparator<FunctionBasedRowCursorFactory> COMPARATOR_DESC = FilterOnValuesRecordCursorFactory::compareStrFunctionsDesc;
     private final int columnIndex;
-    private final IntList columnIndexes;
     private final PageFrameRecordCursorImpl cursor;
     private final ObjList<FunctionBasedRowCursorFactory> cursorFactories;
     private final int[] cursorFactoriesIdx;
@@ -74,11 +73,10 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         final int nKeyValues = keyValues.size();
         this.columnIndex = columnIndex;
         this.filter = filter;
-        this.columnIndexes = columnIndexes;
         this.orderDirection = orderDirection;
         cursorFactories = new ObjList<>(nKeyValues);
         cursorFactoriesIdx = new int[]{0};
-        final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndex);
+        final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(columnIndex));
         for (int i = 0; i < nKeyValues; i++) {
             final Function symbol = keyValues.get(i);
             if (symbol.isConstant()) {
@@ -151,9 +149,20 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         final FunctionBasedRowCursorFactory rowCursorFactory;
         if (filter == null) {
             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                rowCursorFactory = new DeferredSymbolIndexRowCursorFactory(columnIndex, symbolFunction, cursorFactories.size() == 0, indexDirection);
+                rowCursorFactory = new DeferredSymbolIndexRowCursorFactory(
+                        columnIndex,
+                        symbolFunction,
+                        cursorFactories.size() == 0,
+                        indexDirection
+                );
             } else {
-                rowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, cursorFactories.size() == 0, indexDirection, symbolFunction);
+                rowCursorFactory = new SymbolIndexRowCursorFactory(
+                        columnIndex,
+                        symbolKey,
+                        cursorFactories.size() == 0,
+                        indexDirection,
+                        symbolFunction
+                );
             }
         } else {
             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
@@ -162,8 +171,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
                         symbolFunction,
                         filter,
                         cursorFactories.size() == 0,
-                        indexDirection,
-                        columnIndexes
+                        indexDirection
                 );
             } else {
                 rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(
@@ -172,7 +180,6 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
                         filter,
                         cursorFactories.size() == 0,
                         indexDirection,
-                        columnIndexes,
                         symbolFunction
                 );
             }

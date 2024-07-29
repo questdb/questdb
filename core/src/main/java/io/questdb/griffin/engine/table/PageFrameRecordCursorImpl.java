@@ -58,7 +58,7 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
         if (!areCursorsPrepared) {
-            rowCursorFactory.prepareCursor(frameCursor.getTableReader());
+            rowCursorFactory.prepareCursor(frameCursor);
             areCursorsPrepared = true;
         }
 
@@ -87,7 +87,7 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     @Override
     public boolean hasNext() {
         if (!areCursorsPrepared) {
-            rowCursorFactory.prepareCursor(frameCursor.getTableReader());
+            rowCursorFactory.prepareCursor(frameCursor);
             areCursorsPrepared = true;
         }
 
@@ -102,10 +102,11 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
             PageFrame frame;
             while ((frame = frameCursor.next()) != null) {
-                rowCursor = rowCursorFactory.getCursor(frame);
+                frameAddressCache.add(frameCount, frame);
+                final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameCount++);
+                rowCursor = rowCursorFactory.getCursor(frame, frameMemory);
                 if (rowCursor.hasNext()) {
-                    frameAddressCache.add(frameCount, frame);
-                    frameMemoryPool.navigateTo(frameCount++, recordA);
+                    recordA.init(frameMemory);
                     recordA.setRowIndex(rowCursor.next());
                     return true;
                 }
@@ -128,9 +129,9 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             close();
             this.frameCursor = frameCursor;
         }
-        recordA.of(frameCursor.getTableReader());
-        recordB.of(frameCursor.getTableReader());
-        rowCursorFactory.init(frameCursor.getTableReader(), sqlExecutionContext);
+        recordA.of(frameCursor);
+        recordB.of(frameCursor);
+        rowCursorFactory.init(frameCursor, sqlExecutionContext);
         rowCursor = null;
         areCursorsPrepared = false;
         frameCount = 0;
@@ -161,7 +162,7 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         }
 
         if (!areCursorsPrepared) {
-            rowCursorFactory.prepareCursor(frameCursor.getTableReader());
+            rowCursorFactory.prepareCursor(frameCursor);
             areCursorsPrepared = true;
         }
 
@@ -191,10 +192,10 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         isSkipped = true;
         // page frame is null when table has no partitions so there's nothing to skip
         if (pageFrame != null) {
-            rowCursor = rowCursorFactory.getCursor(pageFrame);
-
-            frameMemoryPool.navigateTo(frameIndex, recordA);
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            rowCursor = rowCursorFactory.getCursor(pageFrame, frameMemory);
             // move to frame, rowlo doesn't matter
+            recordA.init(frameMemory);
             recordA.setRowIndex(0);
         }
     }

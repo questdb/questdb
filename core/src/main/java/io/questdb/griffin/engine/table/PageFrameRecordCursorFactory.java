@@ -84,16 +84,6 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     }
 
     @Override
-    public String getBaseColumnName(int idx) {
-        return dataFrameCursorFactory.getMetadata().getColumnName(columnIndexes.getQuick(idx));
-    }
-
-    @Override
-    public String getBaseColumnNameNoRemap(int idx) {
-        return dataFrameCursorFactory.getMetadata().getColumnName(idx);
-    }
-
-    @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         if (framingSupported) {
             DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, order);

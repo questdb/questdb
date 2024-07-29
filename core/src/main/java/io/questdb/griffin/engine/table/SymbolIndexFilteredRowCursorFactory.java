@@ -25,13 +25,8 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PageFrame;
-import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
-import io.questdb.std.IntList;
 
 public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCursorFactory {
     private final SymbolIndexFilteredRowCursor cursor;
@@ -43,7 +38,6 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
             Function filter,
             boolean cachedIndexReaderCursor,
             int indexDirection,
-            IntList columnIndexes,
             Function symbolFunction
     ) {
         this.cursor = new SymbolIndexFilteredRowCursor(
@@ -51,15 +45,14 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
                 symbolKey,
                 filter,
                 cachedIndexReaderCursor,
-                indexDirection,
-                columnIndexes
+                indexDirection
         );
         this.symbolFunction = symbolFunction;
     }
 
     @Override
-    public RowCursor getCursor(PageFrame pageFrame) {
-        return cursor.of(pageFrame);
+    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
+        return cursor.of(pageFrame, pageFrameMemory);
     }
 
     @Override
@@ -87,8 +80,8 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader) {
-        this.cursor.prepare(tableReader);
+    public void prepareCursor(PageFrameCursor pageFrameCursor) {
+        cursor.prepare(pageFrameCursor);
     }
 
     @Override

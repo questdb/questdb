@@ -28,6 +28,7 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.griffin.PlanSink;
@@ -45,7 +46,7 @@ public class LatestByValueIndexedRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
-    public RowCursor getCursor(PageFrame pageFrame) {
+    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         RowCursor cursor = pageFrame
                 .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD)
                 .getCursor(cachedIndexReaderCursor, symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1, true);

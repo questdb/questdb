@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.sql.PageFrame;
-import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -53,17 +50,17 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
-    public RowCursor getCursor(PageFrame pageFrame) {
+    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         for (int i = 0, n = cursorFactoriesIdx[0]; i < n; i++) {
-            cursors.extendAndSet(i, cursorFactories.getQuick(i).getCursor(pageFrame));
+            cursors.extendAndSet(i, cursorFactories.getQuick(i).getCursor(pageFrame, pageFrameMemory));
         }
         cursor.init();
         return cursor;
     }
 
     @Override
-    public void init(TableReader tableReader, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        RowCursorFactory.init(cursorFactories, tableReader, sqlExecutionContext);
+    public void init(PageFrameCursor pageFrameCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        RowCursorFactory.init(cursorFactories, pageFrameCursor, sqlExecutionContext);
     }
 
     @Override
@@ -76,8 +73,8 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader) {
-        RowCursorFactory.prepareCursor(cursorFactories, tableReader);
+    public void prepareCursor(PageFrameCursor pageFrameCursor) {
+        RowCursorFactory.prepareCursor(cursorFactories, pageFrameCursor);
     }
 
     @Override

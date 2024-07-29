@@ -24,17 +24,14 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.DataFrameCursorFactory;
-import io.questdb.cairo.sql.PageFrame;
-import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.sql.RowCursorFactory;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 
 public class BwdPageFrameRowCursorFactory implements RowCursorFactory {
     private final PageFrameBwdRowCursor cursor = new PageFrameBwdRowCursor();
 
     @Override
-    public RowCursor getCursor(PageFrame pageFrame) {
+    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         cursor.of(pageFrame);
         return cursor;
     }

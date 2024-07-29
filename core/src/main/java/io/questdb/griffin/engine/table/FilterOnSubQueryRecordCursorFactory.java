@@ -41,7 +41,6 @@ import org.jetbrains.annotations.Nullable;
 
 public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     private final int columnIndex;
-    private final IntList columnIndexes;
     private final DataFrameRecordCursorWrapper cursor;
     private final ObjList<RowCursorFactory> cursorFactories;
     private final int[] cursorFactoriesIdx;
@@ -78,7 +77,6 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
         );
         cursor = new DataFrameRecordCursorWrapper(dataFrameRecordCursor);
         this.columnIndex = columnIndex;
-        this.columnIndexes = columnIndexes;
     }
 
     @Override
@@ -254,7 +252,6 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
                                         filter,
                                         false,
                                         BitmapIndexReader.DIR_FORWARD,
-                                        columnIndexes,
                                         null
                                 );
                             }

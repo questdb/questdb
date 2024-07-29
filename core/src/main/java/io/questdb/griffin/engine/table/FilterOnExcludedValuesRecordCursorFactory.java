@@ -25,8 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.SymbolMapReaderImpl;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.PlanSink;
@@ -41,7 +39,6 @@ import java.util.Comparator;
 
 public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     private final int columnIndex;
-    private final IntList columnIndexes;
     private final Comparator<SymbolFunctionRowCursorFactory> comparator;
     private final Comparator<SymbolFunctionRowCursorFactory> comparatorDesc;
     private final PageFrameRecordCursorImpl cursor;
@@ -58,7 +55,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     private final ObjList<Function> keyExcludedValueFunctions = new ObjList<>();
     private final int maxSymbolNotEqualsCount;
     private final int orderDirection;
-    private SymbolMapReaderImpl symbolMapReader;
+    private StaticSymbolTable symbolMapReader;
 
     public FilterOnExcludedValuesRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -114,7 +111,6 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             );
         }
         this.followedOrderByAdvice = orderByKeyColumn || orderByTimestamp;
-        this.columnIndexes = columnIndexes;
 
         comparator = this::compareStrFunctions;
         comparatorDesc = this::compareStrFunctionsDesc;
@@ -133,7 +129,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
         return SCAN_DIRECTION_OTHER;
     }
 
-    public void recalculateIncludedValues(TableReader tableReader) {
+    public void recalculateIncludedValues(PageFrameCursor pageFrameCursor) {
         cursorFactoriesIdx[0] = cursorFactories.size();
         excludedKeys.clear();
         if (dynamicExcludedKeys) {
@@ -143,7 +139,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             cursorFactoriesIdx[0] = 0;
         }
         try {
-            symbolMapReader = (SymbolMapReaderImpl) tableReader.getSymbolMapReader(columnIndex);
+            symbolMapReader = pageFrameCursor.getSymbolTable(columnIndex);
 
             // Generate excluded key set.
             for (int i = 0, n = keyExcludedValueFunctions.size(); i < n; i++) {
@@ -236,7 +232,6 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
                     filter,
                     false,
                     indexDirection,
-                    columnIndexes,
                     null
             );
         }
@@ -256,13 +251,12 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             PageFrameCursor pageFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        TableReader reader = pageFrameCursor.getTableReader();
-        if (reader.getSymbolMapReader(columnIndex).getSymbolCount() > maxSymbolNotEqualsCount) {
-            throw TableReferenceOutOfDateException.of(reader.getTableToken().getTableName());
+        if (pageFrameCursor.getSymbolTable(columnIndex).getSymbolCount() > maxSymbolNotEqualsCount) {
+            throw TableReferenceOutOfDateException.of(pageFrameCursor.getTableReader().getTableToken().getTableName());
         }
 
-        Function.init(keyExcludedValueFunctions, reader, executionContext);
-        recalculateIncludedValues(reader);
+        Function.init(keyExcludedValueFunctions, pageFrameCursor, executionContext);
+        recalculateIncludedValues(pageFrameCursor);
         cursor.of(pageFrameCursor, executionContext);
         if (filter != null) {
             filter.init(cursor, executionContext);

@@ -5055,7 +5055,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (intrinsicModel.keyColumn != null) {
                 // existence of column would have been already validated
-                final int keyColumnIndex = metadata.getColumnIndexQuiet(intrinsicModel.keyColumn);
+                final int keyColumnIndex = myMeta.getColumnIndexQuiet(intrinsicModel.keyColumn);
                 final int nKeyValues = intrinsicModel.keyValueFuncs.size();
                 final int nKeyExcludedValues = intrinsicModel.keyExcludedValueFuncs.size();
 
@@ -5138,7 +5138,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (nKeyValues == 1) {
                         final RowCursorFactory rcf;
                         final Function symbolFunc = intrinsicModel.keyValueFuncs.get(0);
-                        final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(keyColumnIndex);
+                        final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(keyColumnIndex));
                         final int symbolKey = symbolFunc.isRuntimeConstant()
                                 ? SymbolTable.VALUE_NOT_FOUND
                                 : symbolMapReader.keyOf(symbolFunc.getStrA(null));
@@ -5157,15 +5157,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         symbolFunc,
                                         filter,
                                         true,
-                                        indexDirection,
-                                        columnIndexes
+                                        indexDirection
                                 );
                             }
                         } else {
                             if (filter == null) {
-                                rcf = new SymbolIndexRowCursorFactory(keyColumnIndex, symbolKey, true, indexDirection, null);
+                                rcf = new SymbolIndexRowCursorFactory(
+                                        keyColumnIndex,
+                                        symbolKey,
+                                        true,
+                                        indexDirection,
+                                        null
+                                );
                             } else {
-                                rcf = new SymbolIndexFilteredRowCursorFactory(keyColumnIndex, symbolKey, filter, true, indexDirection, columnIndexes, null);
+                                rcf = new SymbolIndexFilteredRowCursorFactory(
+                                        keyColumnIndex,
+                                        symbolKey,
+                                        filter,
+                                        true,
+                                        indexDirection,
+                                        null
+                                );
                             }
                         }
 
@@ -5220,7 +5232,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             columnSizeShifts
                     );
                 } else if (nKeyExcludedValues > 0) {
-                    if (reader.getSymbolMapReader(keyColumnIndex).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount()) {
+                    if (reader.getSymbolMapReader(columnIndexes.getQuick(keyColumnIndex)).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount()) {
                         Function filter = compileFilter(intrinsicModel, myMeta, executionContext);
                         if (filter != null && filter.isConstant()) {
                             try {
