@@ -39,6 +39,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
     private boolean endFill = false;
     private boolean firstRun = true;
     private boolean gapFill = false;
+    private long upperBound = Long.MAX_VALUE;
 
     public SampleByFillValueNotKeyedRecordCursor(
             CairoConfiguration configuration,
@@ -112,7 +113,8 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
             nextSampleLocalEpoch = expectedLocalEpoch;
             endFill = false;
             gapFill = false;
-            return true;
+
+            return localEpoch < upperBound;
         }
         if (setActiveA(expectedLocalEpoch)) {
             return peeker.reset();
@@ -122,7 +124,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
 
         if (baseRecord == null && sampleToFunc != TimestampConstant.NULL && !endFill) {
             endFill = true;
-            final long upperBound = sampleToFunc.getTimestamp(null);
+            upperBound = sampleToFunc.getTimestamp(null);
             baseRecord = baseCursor.getRecord();
             nextSamplePeriod(upperBound);
         }
@@ -140,6 +142,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSplitVirtualR
     public void toTop() {
         super.toTop();
         endFill = false;
+        upperBound = Long.MAX_VALUE;
     }
 
     private boolean setActiveA(long expectedLocalEpoch) {
