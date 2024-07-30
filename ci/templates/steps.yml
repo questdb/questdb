@@ -156,8 +156,35 @@ steps:
         eq(variables['testset'], 'coverage'),
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
       )
+
   - bash: |
-      ## Produce the Rust coverage report
+      find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x" "$(ARCHIVED_CRASH_LOG)"' \;
+    displayName: "Tests failed -- rename crash dump"
+    workingDirectory: $(Build.SourcesDirectory)/core/
+    condition: failed()
+  - task: PublishBuildArtifacts@1
+    displayName: "Tests failed -- Upload crash logs"
+    condition: failed()
+    inputs:
+      pathToPublish: $(ARCHIVED_CRASH_LOG)
+      artifactName: CrashDump
+  - task: ArchiveFiles@2
+    displayName: "Tests failed -- Compress logs"
+    condition: failed()
+    inputs:
+      rootFolderOrFile: $(QDB_LOG_W_FILE_LOCATION)
+      includeRootFolder: false
+      archiveFile: $(ARCHIVED_LOGS)
+      quiet: true
+  - task: PublishBuildArtifacts@1
+    displayName: "Tests failed -- Upload logs"
+    condition: failed()
+    inputs:
+      pathToPublish: $(ARCHIVED_LOGS)
+      artifactName: MavenFailedTestsLogs
+
+  - bash: |
+      ## Generate Rust coverage report
       set -eux
       export PATH=/usr/lib/llvm-$LLVM_VERSION/bin:$PATH
 
@@ -208,46 +235,73 @@ steps:
       )
 
   - bash: |
-      find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x" "$(ARCHIVED_CRASH_LOG)"' \;
-    displayName: "Tests failed -- rename crash dump"
-    workingDirectory: $(Build.SourcesDirectory)/core/
-    condition: failed()
-  - task: PublishBuildArtifacts@1
-    displayName: "Tests failed -- Upload crash logs"
-    condition: failed()
-    inputs:
-      pathToPublish: $(ARCHIVED_CRASH_LOG)
-      artifactName: CrashDump
-  - task: ArchiveFiles@2
-    displayName: "Tests failed -- Compress logs"
-    condition: not(succeeded())
-    inputs:
-      rootFolderOrFile: $(QDB_LOG_W_FILE_LOCATION)
-      includeRootFolder: false
-      archiveFile: $(ARCHIVED_LOGS)
-      quiet: true
-  - task: PublishBuildArtifacts@1
-    displayName: "Tests failed -- Upload logs"
-    condition: not(succeeded())
-    inputs:
-      pathToPublish: $(ARCHIVED_LOGS)
-      artifactName: MavenFailedTestsLogs
-  - bash: |
-      mv $(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco.exec $(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco-$(System.JobId).exec
-    displayName: "Rename jacoco cover report"
-    workingDirectory: $(Build.SourcesDirectory)/core/
+      set -eux
+      JACOCO_FILE="$(Build.SourcesDirectory)/CCReport43F6D5EF/jacoco.xml"
+      RUST_FILE="$(Build.SourcesDirectory)/questdbr-coverage-report/cobertura.xml"
+      if [ -f $JACOCO_FILE ]; then
+        JACOCO_ARGS="-type jacoco --cover $JACOCO_FILE"
+      else
+        JACOCO_ARGS=""
+      fi
+      if [ -f $RUST_FILE ]; then
+        RUST_ARGS="-type cobertura --cover $RUST_FILE"
+      else
+        RUST_ARGS=""
+      fi
+      $JAVA_HOME_11_X64/bin/java -jar \
+        $(Build.SourcesDirectory)/ci/cover-checker-1.5.0-all.jar \
+        $JACOCO_ARGS $RUST_ARGS --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) \ 
+        -t $(DIFF_COVER_THRESHOLD_PCT)
+    displayName: "Diff coverage PR report"
     condition: |
-      and(and(
-        eq(variables['testset'], 'coverage'),
-        eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
-      ), succeeded())
+      and( 
+          or( 
+              eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'), 
+              eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
+          ), 
+          eq(variables['testset'], 'coverage'),
+          eq(variables['System.PullRequest.IsFork'], 'false')
+      )
+
   - task: PublishBuildArtifacts@1
-    displayName: "Publish jacoco report"
+    displayName: "Upload Java coverage report"
     condition: |
-      and(and(
+      and(
         eq(variables['testset'], 'coverage'),
-        eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
-      ), succeeded())
+        eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
     inputs:
-      pathToPublish: "$(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco-$(system.JobId).exec"
-      artifactName: jacoco-coverage
+      pathToPublish: $(Build.SourcesDirectory)/CCReport43F6D5EF
+      artifactName: "Java JaCoCo coverage report"
+  - task: PublishBuildArtifacts@1
+    displayName: "Upload Rust coverage report"
+    condition: |
+      and(
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+        eq(variables['System.PullRequest.IsFork'], 'false'),
+        eq(variables['testset'], 'coverage')
+      )
+    inputs:
+      pathToPublish: $(Build.SourcesDirectory)/questdbr-coverage-report
+      artifactName: "Rust LLVM coverage report"
+
+#  - bash: |
+#      mv $(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco.exec $(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco-$(System.JobId).exec
+#    displayName: "Rename jacoco cover report"
+#    workingDirectory: $(Build.SourcesDirectory)/core/
+#    condition: |
+#      and(and(
+#        eq(variables['testset'], 'coverage'),
+#        eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
+#      ), succeeded())
+#  - task: PublishBuildArtifacts@1
+#    displayName: "Publish jacoco report"
+#    condition: |
+#      and(and(
+#        eq(variables['testset'], 'coverage'),
+#        eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
+#      ), succeeded())
+#    inputs:
+#      pathToPublish: "$(Build.SourcesDirectory)/core/CCReport43F6D5EF/jacoco-$(system.JobId).exec"
+#      artifactName: "Java JaCoCo coverage report"
