@@ -56,7 +56,7 @@ public class PgProcFunctionFactory implements FunctionFactory {
         return new CursorFunction(
                 new GenericRecordCursorFactory(
                         METADATA,
-                        new ProcCatalogueCursor(),
+                        new PgProcCatalogueCursor(),
                         false
                 )
         );
@@ -77,7 +77,6 @@ public class PgProcFunctionFactory implements FunctionFactory {
         metadata.add(new TableColumnMetadata("prosecdef", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("proleakproof", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("proisstrict", ColumnType.BOOLEAN));
-
         metadata.add(new TableColumnMetadata("proretset", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("provolatile", ColumnType.CHAR));
         metadata.add(new TableColumnMetadata("proparallel", ColumnType.CHAR));

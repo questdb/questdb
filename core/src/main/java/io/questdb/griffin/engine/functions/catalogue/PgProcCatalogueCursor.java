@@ -32,20 +32,14 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.pgwire.PGOids;
-import io.questdb.std.Numbers;
 
 import static io.questdb.cutlass.pgwire.PGOids.*;
 
-class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
+class PgProcCatalogueCursor implements NoRandomAccessRecordCursor {
     static final RecordMetadata METADATA;
     private static final int rowCount = PG_TYPE_OIDS.size();
-    public final int[] intValues = new int[METADATA.getColumnCount()];
-    private final TypeCatalogueRecord record = new TypeCatalogueRecord();
+    private final PgProdCatalogueRecord record = new PgProdCatalogueRecord();
     private int row = -1;
-
-    public TypeCatalogueCursor() {
-        this.intValues[4] = PGOids.PG_PUBLIC_OID;
-    }
 
     @Override
     public void close() {
@@ -59,18 +53,7 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public boolean hasNext() {
-        if (++row < rowCount) {
-            intValues[0] = PG_TYPE_OIDS.get(row);
-            intValues[9] = Numbers.INT_NULL;
-            intValues[10] = 0;
-            intValues[11] = 0;
-            intValues[12] = 0;
-            intValues[13] = 0;
-            intValues[21] = 0;//typndims
-            intValues[22] = 0;//typcollation
-            return true;
-        }
-        return false;
+        return ++row < rowCount;
     }
 
     @Override
@@ -83,51 +66,85 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
         row = -1;
     }
 
-    class TypeCatalogueRecord implements Record {
+    class PgProdCatalogueRecord implements Record {
 
         @Override
         public boolean getBool(int col) {
-            //typisdefined
-            return col == 18;
+            switch (col) {
+                case 10: // prosecdef
+                    return false;
+                case 11: // proleakproof
+                    return false;
+                case 12: // proisstrict
+                    return true;
+                case 13: // proretset
+                    return false;
+            }
+            throw new UnsupportedOperationException("not a bool col: " + col);
         }
 
         @Override
         public char getChar(int col) {
-            if (col == 8) {
-                return PG_TYPE_TO_CATEGORY[row];
+            switch (col) {
+                case 9: // prokind
+                    return 'f';
+                case 14: // provolatile
+                    return 'i';
+                case 15: //proparallel
+                    return 's';
             }
-            if (col == 19) {//typalign
-                return 'c';//char alignment
-            }
-            if (col == 20) {//typstorage
-                return 'p';//plain
-            }
-            return 'b';
+            throw new UnsupportedOperationException("not a char col: " + col);
         }
 
         @Override
         public int getInt(int col) {
-            return intValues[col];
+            switch (col) {
+                case 0: // oid (of type proc)
+                    return PG_TYPE_PROC_OIDS.get(row);
+                case 2: // pronamespace
+                    return PGOids.PG_PUBLIC_OID;
+                case 3: // proowner
+                    return 0;
+                case 4: // prolang
+                    return 0;
+                case 7: // provariadic
+                    return 0;
+                case 8: // prosupport
+                    return 0;
+                case 18: // prorettype
+                    return PG_TYPE_OIDS.get(row);
+            }
+            throw new UnsupportedOperationException("not a int col: " + col);
         }
 
         @Override
         public short getShort(int col) {
-            if (col == 15) {
-                return PG_TYPE_TO_LENGTH[row];
+            switch (col) {
+                case 16: // pronargs
+                    return 1;
+                case 17: // pronargdefaults
+                    return 0;
             }
+            throw new UnsupportedOperationException("not a short col: " + col);
+        }
 
-            return -1;
+        @Override
+        public float getFloat(int col) {
+            return 0;
         }
 
         @Override
         public CharSequence getStrA(int col) {
-            if (col == 1) {
-                return PG_TYPE_TO_NAME[row];
+            switch (col) {
+                case 1: // proname
+                    return PG_TYPE_TO_PROC_NAME[row];
+                case 19:
+                    return PG_TYPE_TO_PROC_SRC[row];
+                case 20:
+                    return null;
+
             }
-            if (col == 23) {
-                return PG_TYPE_TO_DEFAULT[row];
-            }
-            return null;
+            throw new UnsupportedOperationException("not a string col: " + col);
         }
 
         @Override
@@ -157,7 +174,6 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
         metadata.add(new TableColumnMetadata("typreceive", ColumnType.INT));
         metadata.add(new TableColumnMetadata("typdelim", ColumnType.INT));
         metadata.add(new TableColumnMetadata("typinput", ColumnType.INT));
-
         metadata.add(new TableColumnMetadata("typowner", ColumnType.INT));
         metadata.add(new TableColumnMetadata("typlen", ColumnType.SHORT));
         metadata.add(new TableColumnMetadata("typbyval", ColumnType.BOOLEAN));
@@ -168,7 +184,6 @@ class TypeCatalogueCursor implements NoRandomAccessRecordCursor {
         metadata.add(new TableColumnMetadata("typndims", ColumnType.INT));
         metadata.add(new TableColumnMetadata("typcollation", ColumnType.INT));
         metadata.add(new TableColumnMetadata("typdefault", ColumnType.STRING));
-
         METADATA = metadata;
     }
 }
