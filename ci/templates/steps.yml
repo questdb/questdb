@@ -68,9 +68,8 @@ steps:
       mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
-      goals: "compile"
       options:
-        "$(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) -P qdbr-release $(MAVEN_RUN_OPTS)"
+        "compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) -P qdbr-release $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     condition:
       or(
