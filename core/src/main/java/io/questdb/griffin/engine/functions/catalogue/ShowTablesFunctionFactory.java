@@ -176,6 +176,7 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
             }
 
             private class TableListRecord implements Record {
+                private final CairoTable localTableCopy = new CairoTable();
                 private boolean isDedup;
                 private boolean isSoftLink;
                 private int maxUncommittedRows;
@@ -186,10 +187,10 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                 @Override
                 public boolean getBool(int col) {
                     if (col == WAL_ENABLED_COLUMN) {
-                        return tableToken.isWal();
+                        return localTableCopy.getWalEnabledUnsafe();
                     }
                     if (col == DEDUP_NAME_COLUMN) {
-                        return isDedup;
+                        return localTableCopy.getIsDedupUnsafe();
                     }
                     return false;
                 }
@@ -197,34 +198,34 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                 @Override
                 public int getInt(int col) {
                     if (col == ID_COLUMN) {
-                        return tableToken.getTableId();
+                        return localTableCopy.getIdUnsafe();
                     }
                     assert col == MAX_UNCOMMITTED_ROWS_COLUMN;
-                    return maxUncommittedRows;
+                    return localTableCopy.getMaxUncommittedRowsUnsafe();
                 }
 
                 @Override
                 public long getLong(int col) {
                     assert col == O3_MAX_LAG_COLUMN;
-                    return o3MaxLag;
+                    return localTableCopy.getO3MaxLagUnsafe();
                 }
 
                 @Override
                 public CharSequence getStrA(int col) {
                     if (Chars.equals(ShowTablesCursorFactory.TABLE_NAME_COLUMN_NAME, getMetadata().getColumnName(col))) {
-                        return tableToken.getTableName();
+                        return localTableCopy.getNameUnsafe();
                     }
                     if (col == PARTITION_BY_COLUMN) {
-                        return PartitionBy.toString(partitionBy);
+                        return localTableCopy.getPartitionByUnsafe();
                     }
                     if (col == DESIGNATED_TIMESTAMP_COLUMN) {
-                        return timestampColumnName;
+                        return localTableCopy.getDesignatedTimestampNameUnsafe();
                     }
                     if (col == DIRECTORY_NAME_COLUMN) {
-                        if (isSoftLink) {
-                            return tableToken.getDirName() + " (->)";
+                        if (localTableCopy.getIsDedupUnsafe()) {
+                            return localTableCopy.getDirectoryNameUnsafe() + " (->)";
                         }
-                        return tableToken.getDirName();
+                        return localTableCopy.getDirectoryNameUnsafe();
                     }
                     return null;
                 }
@@ -253,38 +254,42 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                         }
                     }
 
-                    if (getMetadata() == METADATA) {
-                        TableToken lastTableTokenVersion = executionContext.getCairoEngine().getTableTokenIfExists(tableToken.getTableName());
-                        if (lastTableTokenVersion != null) {
-                            tableToken = lastTableTokenVersion;
-                            try (TableMetadata tableMetadata = executionContext.getMetadataForRead(tableToken)) {
-                                isSoftLink = tableMetadata.isSoftLink();
-                                maxUncommittedRows = tableMetadata.getMaxUncommittedRows();
-                                o3MaxLag = tableMetadata.getO3MaxLag();
-                                partitionBy = tableMetadata.getPartitionBy();
-                                int timestampIndex = tableMetadata.getTimestampIndex();
-                                timestampColumnName = timestampIndex > -1 ? tableMetadata.getColumnName(timestampIndex) : null;
-                                isDedup = timestampIndex >= 0 && tableToken.isWal() && tableMetadata.isDedupKey(timestampIndex);
-                            } catch (CairoException e) {
-                                // perhaps this folder is not a table remove it from the result set
-                                LOG.info()
-                                        .$("cannot query table metadata [table=").$(tableToken)
-                                        .$(", error=").$(e.getFlyweightMessage())
-                                        .$(", errno=").$(e.getErrno())
-                                        .I$();
-                                return false;
-                            } catch (TableReferenceOutOfDateException e) {
-                                LOG.info()
-                                        .$("cannot query table metadata, can be concurrent table drop [table=").$(tableToken)
-                                        .$(", error=").$(e.getFlyweightMessage())
-                                        .I$();
-                                return false;
-                            }
-                        } else {
-                            // Table is dropped.
+                    final CairoEngine engine = executionContext.getCairoEngine();
+                    final CairoMetadata metadata = engine.getCairoMetadata();
+                    final TableToken lastTableToken = engine.getTableTokenIfExists(tableToken.getTableName());
+
+                    if (lastTableToken == null) {
+                        // table is dropped
+                        return false;
+                    }
+
+                    CairoTable table = metadata.getTableQuiet(lastTableToken.getTableName());
+
+                    if (table == null) {
+                        try (TableMetadata tableMetadata = executionContext.getMetadataForRead(lastTableToken)) {
+                            metadata.upsertTable(tableMetadata);
+                            table = metadata.getTableQuiet(lastTableToken.getTableName());
+                        } catch (CairoException e) {
+                            // perhaps this folder is not a table remove it from the result set
+                            LOG.info()
+                                    .$("cannot query table metadata [table=").$(tableToken)
+                                    .$(", error=").$(e.getFlyweightMessage())
+                                    .$(", errno=").$(e.getErrno())
+                                    .I$();
+                            return false;
+                        } catch (TableReferenceOutOfDateException e) {
+                            LOG.info()
+                                    .$("cannot query table metadata, can be concurrent table drop [table=").$(tableToken)
+                                    .$(", error=").$(e.getFlyweightMessage())
+                                    .I$();
                             return false;
                         }
                     }
+
+                    assert table != null;
+
+                    table.copyTo(localTableCopy);
+
                     return true;
                 }
             }

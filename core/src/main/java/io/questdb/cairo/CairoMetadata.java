@@ -24,18 +24,34 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.SimpleReadWriteLock;
 import org.jetbrains.annotations.NotNull;
 
 public class CairoMetadata {
-    private CharSequenceObjHashMap<CairoTable> tables;
+    public static final CairoMetadata INSTANCE = new CairoMetadata();
+
+    private final CharSequenceObjHashMap<CairoTable> tables;
+
     // used to protect the tables hashmap
-    private SimpleReadWriteLock tablesLock; // consider StampedLock
+    private final SimpleReadWriteLock tablesLock; // consider StampedLock
 
     public CairoMetadata() {
         this.tables = new CharSequenceObjHashMap<>();
         this.tablesLock = new SimpleReadWriteLock();
+    }
+
+    // fails if table already exists
+    public void addTable(@NotNull CairoTable newTable) {
+        tablesLock.writeLock().lock();
+        final String tableName = newTable.getName();
+        final CairoTable existingTable = tables.get(tableName);
+        if (existingTable != null) {
+            throw CairoException.nonCritical().put("table [name=").put(tableName).put("] already exists in CairoMetadata");
+        }
+        tables.put(tableName, newTable);
+        tablesLock.writeLock().unlock();
     }
 
     public CairoTable getTableQuick(@NotNull CharSequence tableName) {
@@ -51,6 +67,26 @@ public class CairoMetadata {
         final CairoTable tbl = tables.get(tableName);
         tablesLock.readLock().unlock();
         return tbl;
+    }
+
+    public void upsertTable(@NotNull TableReader tableReader) {
+        CairoTable tbl = getTableQuiet(tableReader.getTableToken().getTableName());
+        if (tbl == null) {
+            tbl = new CairoTable(tableReader);
+            addTable(tbl);
+        } else {
+            tbl.updateMetadataIfRequired(tableReader);
+        }
+    }
+    
+    public void upsertTable(@NotNull TableMetadata tableMetadata) {
+        CairoTable tbl = getTableQuiet(tableMetadata.getTableToken().getTableName());
+        if (tbl == null) {
+            tbl = new CairoTable(tableMetadata);
+            addTable(tbl);
+        } else {
+            tbl.updateMetadataIfRequired(tableMetadata);
+        }
     }
 
 }

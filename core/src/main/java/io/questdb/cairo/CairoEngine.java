@@ -95,6 +95,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
+    private @NotNull CairoMetadata cairoMetadata = CairoMetadata.INSTANCE;
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
@@ -440,6 +441,10 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public int getBusyWriterCount() {
         return writerPool.getBusyCount();
+    }
+
+    public @NotNull CairoMetadata getCairoMetadata() {
+        return cairoMetadata;
     }
 
     public long getCommandCorrelationId() {
@@ -1117,6 +1122,10 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public void setCairoMetadata(@NotNull CairoMetadata cairoMetadata) {
+        this.cairoMetadata = cairoMetadata;
+    }
+
     @SuppressWarnings("unused")
     public void setDdlListener(@NotNull DdlListener ddlListener) {
         this.ddlListener = ddlListener;
@@ -1365,6 +1374,10 @@ public class CairoEngine implements Closeable, WriterSource {
             }
 
             getDdlListener(tableToken).onTableCreated(securityContext, tableToken);
+
+            // add to cairoMetadata
+            final CairoTable newCairoTable = CairoTable.newInstanceFromToken(tableToken);
+            cairoMetadata.addTable(newCairoTable);
 
             return tableToken;
         }

@@ -154,6 +154,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             close();
             throw e;
         }
+        CairoMetadata.INSTANCE.upsertTable(this);
     }
 
     public static int getPrimaryColumnIndex(int base, int index) {
@@ -1142,51 +1143,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return columnVersionReader.getVersion() == columnVersion;
     }
 
-    private boolean reloadMetadata(int txnMetadataVersion, long deadline, boolean reshuffleColumns) {
-        // create transition index, which will help us reuse already open resources
-        if (txnMetadataVersion == metadata.getMetadataVersion()) {
-            return true;
-        }
-
-        while (true) {
-            try {
-                if (!metadata.prepareTransition(txnMetadataVersion)) {
-                    if (clock.getTicks() < deadline) {
-                        return false;
-                    }
-                    LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms, table=").$(tableToken.getTableName()).I$();
-                    throw CairoException.critical(0).put("Metadata read timeout [table=").put(tableToken.getTableName()).put(']');
-                }
-            } catch (CairoException ex) {
-                // This is temporary solution until we can get multiple version of metadata not overwriting each other
-                TableUtils.handleMetadataLoadException(tableToken.getTableName(), deadline, ex, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
-                continue;
-            }
-
-            assert !reshuffleColumns || metadata.getColumnCount() == this.columnCount;
-            TableReaderMetadataTransitionIndex transitionIndex = metadata.applyTransition();
-            if (reshuffleColumns) {
-                final int columnCount = metadata.getColumnCount();
-
-                int columnCountShl = getColumnBits(columnCount);
-                // when a column is added we cannot easily reshuffle columns in-place
-                // the reason is that we'd have to create gaps in columns list between
-                // partitions. It is possible in theory, but this could be an algo for
-                // another day.
-                if (columnCountShl > this.columnCountShl) {
-                    createNewColumnList(columnCount, transitionIndex, columnCountShl);
-                } else {
-                    reshuffleColumns(columnCount, transitionIndex);
-                }
-                // rearrange symbol map reader list
-                reshuffleSymbolMapReaders(transitionIndex, columnCount);
-                this.columnCount = columnCount;
-                reloadSymbolMapCounts();
-            }
-            return true;
-        }
-    }
-
     /**
      * Updates boundaries of all columns in partition.
      *
@@ -1229,6 +1185,51 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
         } finally {
             path.trimTo(rootLen);
+        }
+    }
+
+    private boolean reloadMetadata(int txnMetadataVersion, long deadline, boolean reshuffleColumns) {
+        // create transition index, which will help us reuse already open resources
+        if (txnMetadataVersion == metadata.getMetadataVersion()) {
+            return true;
+        }
+
+        while (true) {
+            try {
+                if (!metadata.prepareTransition(txnMetadataVersion)) {
+                    if (clock.getTicks() < deadline) {
+                        return false;
+                    }
+                    LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms, table=").$(tableToken.getTableName()).I$();
+                    throw CairoException.critical(0).put("Metadata read timeout [table=").put(tableToken.getTableName()).put(']');
+                }
+            } catch (CairoException ex) {
+                // This is temporary solution until we can get multiple version of metadata not overwriting each other
+                TableUtils.handleMetadataLoadException(tableToken.getTableName(), deadline, ex, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+                continue;
+            }
+
+            assert !reshuffleColumns || metadata.getColumnCount() == this.columnCount;
+            TableReaderMetadataTransitionIndex transitionIndex = metadata.applyTransition();
+            if (reshuffleColumns) {
+                final int columnCount = metadata.getColumnCount();
+
+                int columnCountShl = getColumnBits(columnCount);
+                // when a column is added we cannot easily reshuffle columns in-place
+                // the reason is that we'd have to create gaps in columns list between
+                // partitions. It is possible in theory, but this could be an algo for
+                // another day.
+                if (columnCountShl > this.columnCountShl) {
+                    createNewColumnList(columnCount, transitionIndex, columnCountShl);
+                } else {
+                    reshuffleColumns(columnCount, transitionIndex);
+                }
+                // rearrange symbol map reader list
+                reshuffleSymbolMapReaders(transitionIndex, columnCount);
+                this.columnCount = columnCount;
+                reloadSymbolMapCounts();
+            }
+            return true;
         }
     }
 

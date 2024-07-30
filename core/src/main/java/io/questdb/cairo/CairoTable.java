@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.std.SimpleReadWriteLock;
 import org.jetbrains.annotations.NotNull;
 
@@ -33,81 +34,270 @@ import org.jetbrains.annotations.NotNull;
 
 
 // designated timestamp and partition by are final
+// todo: intern column names
 public class CairoTable {
+    // consider a versioned lock. consider more granular locking
+    private final SimpleReadWriteLock tableWideLock;
+    private int columnCount;
+    private int designatedTimestampIndex;
+    // todo: intern, its a column name
+    private String designatedTimestampName;
+    private String directoryName;
+    private boolean isDedup;
+    private boolean isSoftLink;
+    private long lastMetadataVersion = -1;
+    private long maxTimestamp;
+    private int maxUncommittedRows;
+    private long minTimestamp;
+    private long o3MaxLag;
+    private String partitionBy;
     private TableToken token;
-    private SimpleReadWriteLock tokenLock;
+
+
+    public CairoTable() {
+        this.tableWideLock = new SimpleReadWriteLock();
+    }
 
     public CairoTable(@NotNull TableToken token) {
-        this.tokenLock = new SimpleReadWriteLock();
         this.token = token;
+        this.tableWideLock = new SimpleReadWriteLock();
     }
 
-    
+    public CairoTable(@NotNull TableReader tableReader) {
+        this.token = tableReader.getTableToken();
+        this.tableWideLock = new SimpleReadWriteLock();
+        updateMetadataIfRequired(tableReader);
+    }
+
+    public CairoTable(@NotNull TableMetadata tableMetadata) {
+        this.token = tableMetadata.getTableToken();
+        this.tableWideLock = new SimpleReadWriteLock();
+        updateMetadataIfRequired(tableMetadata);
+    }
+
+    public static CairoTable newInstanceFromToken(@NotNull TableToken token) {
+        return new CairoTable(token);
+    }
+
+    public void copyTo(@NotNull CairoTable target) {
+        target.tableWideLock.writeLock();
+        target.token = token;
+        target.columnCount = columnCount;
+        target.designatedTimestampIndex = designatedTimestampIndex;
+        target.designatedTimestampName = designatedTimestampName;
+        target.directoryName = directoryName;
+        target.isDedup = isDedup;
+        target.isSoftLink = isSoftLink;
+        target.lastMetadataVersion = lastMetadataVersion;
+        target.maxTimestamp = maxTimestamp;
+        target.maxUncommittedRows = maxUncommittedRows;
+        target.minTimestamp = minTimestamp;
+        target.o3MaxLag = o3MaxLag;
+        target.partitionBy = partitionBy;
+        target.tableWideLock.writeLock().unlock();
+    }
+
+    public long getColumnCount() {
+        tableWideLock.readLock().lock();
+        final long columnCount = this.columnCount;
+        tableWideLock.readLock().unlock();
+        return columnCount;
+    }
+
+    public int getDesignatedTimestampIndex() {
+        tableWideLock.readLock().lock();
+        final int designatedTimestampIndex = this.designatedTimestampIndex;
+        tableWideLock.readLock().unlock();
+        return designatedTimestampIndex;
+    }
+
+    public String getDesignatedTimestampName() {
+        tableWideLock.readLock().lock();
+        final String designatedTimestampName = this.designatedTimestampName;
+        tableWideLock.readLock().unlock();
+        return designatedTimestampName;
+    }
+
+    public String getDesignatedTimestampNameUnsafe() {
+        return designatedTimestampName;
+    }
+
+    public int getDesignatedTimestampUnsafe() {
+        return designatedTimestampIndex;
+    }
+
+    public String getDirectoryName() {
+        tableWideLock.readLock().lock();
+        final String directoryName = this.directoryName;
+        tableWideLock.readLock().unlock();
+        return directoryName;
+    }
+
+    public String getDirectoryNameUnsafe() {
+        return token.getDirName();
+    }
+
+    public int getId() {
+        tableWideLock.readLock().lock();
+        final int id = this.token.getTableId();
+        tableWideLock.readLock().unlock();
+        return id;
+    }
+
+    public int getIdUnsafe() {
+        return this.token.getTableId();
+    }
+
+    public boolean getIsDedup() {
+        tableWideLock.readLock().lock();
+        final boolean isDedup = this.isDedup;
+        tableWideLock.readLock().unlock();
+        return isDedup;
+    }
+
+    public boolean getIsDedupUnsafe() {
+        return isDedup;
+    }
+
+    public boolean getIsSoftLink() {
+        tableWideLock.readLock().lock();
+        final boolean isSoftLink = this.isSoftLink;
+        tableWideLock.readLock().unlock();
+        return isSoftLink;
+    }
+
+    public boolean getIsSoftLinkUnsafe() {
+        return isSoftLink;
+    }
+
+    public long getMaxTimestamp() {
+        tableWideLock.readLock().lock();
+        final long maxTimestamp = this.maxTimestamp;
+        tableWideLock.readLock().unlock();
+        return maxTimestamp;
+    }
+
+    public long getMaxTimestampUnsafe() {
+        return maxTimestamp;
+    }
+
+    public int getMaxUncommittedRows() {
+        tableWideLock.readLock().lock();
+        final int maxUncommittedRows = this.maxUncommittedRows;
+        tableWideLock.readLock().unlock();
+        return maxUncommittedRows;
+    }
+
+    public int getMaxUncommittedRowsUnsafe() {
+        return maxUncommittedRows;
+    }
+
+    public long getMinTimestamp() {
+        tableWideLock.readLock().lock();
+        final long minTimestamp = this.minTimestamp;
+        tableWideLock.readLock().unlock();
+        return minTimestamp;
+    }
+
+    public long getMinTimestampUnsafe() {
+        return minTimestamp;
+    }
+
     public @NotNull String getName() {
-        tokenLock.readLock().lock();
-        final String tbl = token.getTableName();
-        tokenLock.readLock().unlock();
-        return tbl;
+        tableWideLock.readLock().lock();
+        final String name = this.token.getTableName();
+        tableWideLock.readLock().unlock();
+        return name;
     }
 
-    /**
-     * Get table token, not thread safe.
-     *
-     * @return
-     */
-    private TableToken getTokenUnsafe() {
-        return token;
+    public @NotNull String getNameUnsafe() {
+        return this.token.getTableName();
     }
 
-//
-//    @NotNull
-//    private final GcUtf8String dirName;
-//    private final boolean isProtected;
-//    private final boolean isPublic;
-//    private final boolean isSystem;
-//    private final boolean isWal;
-//    private final int tableId;
-//    @NotNull
-//    private final String tableName;
+    public long getO3MaxLag() {
+        tableWideLock.readLock().lock();
+        final long o3MaxLag = this.o3MaxLag;
+        tableWideLock.readLock().unlock();
+        return o3MaxLag;
+    }
 
+    public long getO3MaxLagUnsafe() {
+        return o3MaxLag;
+    }
+
+    public String getPartitionBy() {
+        tableWideLock.readLock().lock();
+        final String partitionBy = this.partitionBy;
+        tableWideLock.readLock().unlock();
+        return partitionBy;
+    }
+
+    public String getPartitionByUnsafe() {
+        return partitionBy;
+    }
+
+    public boolean getWalEnabled() {
+        tableWideLock.readLock().lock();
+        final boolean walEnabled = this.token.isWal();
+        tableWideLock.readLock().unlock();
+        return walEnabled;
+    }
+
+    public boolean getWalEnabledUnsafe() {
+        return token.isWal();
+    }
+
+    public boolean isInitialised() {
+        return getLastMetadataVersion() != -1;
+    }
+
+    public void updateMetadataIfRequired(@NotNull TableReader tableReader) {
+        final long lastMetadataVersion = getLastMetadataVersion();
+        if (lastMetadataVersion < tableReader.getMetadataVersion()) {
+            tableWideLock.writeLock().lock();
+            token = tableReader.getTableToken();
+            minTimestamp = tableReader.getMinTimestamp();
+            maxTimestamp = tableReader.getMaxTimestamp();
+            maxUncommittedRows = tableReader.getMaxUncommittedRows();
+            o3MaxLag = tableReader.getO3MaxLag();
+            partitionBy = PartitionBy.toString(tableReader.getPartitionedBy()); // intern this
+            isSoftLink = tableReader.getMetadata().isSoftLink();
+            this.lastMetadataVersion = tableReader.getMetadataVersion();
+            designatedTimestampIndex = tableReader.getMetadata().timestampIndex;
+            designatedTimestampName = designatedTimestampIndex > -1 ? tableReader.getMetadata().getColumnName(designatedTimestampIndex) : null;
+            isDedup = designatedTimestampIndex >= 0 && token.isWal() && tableReader.getMetadata().isDedupKey(designatedTimestampIndex);
+            columnCount = tableReader.getColumnCount();
+            tableWideLock.writeLock().unlock();
+        }
+    }
+
+    public void updateMetadataIfRequired(@NotNull TableMetadata tableMetadata) {
+        final long lastMetadataVersion = getLastMetadataVersion();
+        if (lastMetadataVersion < tableMetadata.getMetadataVersion()) {
+            tableWideLock.writeLock().lock();
+            token = tableMetadata.getTableToken();
+            maxUncommittedRows = tableMetadata.getMaxUncommittedRows();
+            o3MaxLag = tableMetadata.getO3MaxLag();
+            partitionBy = PartitionBy.toString(tableMetadata.getPartitionBy()); // intern this
+            isSoftLink = tableMetadata.isSoftLink();
+            this.lastMetadataVersion = tableMetadata.getMetadataVersion();
+            designatedTimestampIndex = tableMetadata.getTimestampIndex();
+            designatedTimestampName = designatedTimestampIndex > -1 ? tableMetadata.getColumnName(designatedTimestampIndex) : null;
+            isDedup = designatedTimestampIndex >= 0 && token.isWal() && tableMetadata.isDedupKey(designatedTimestampIndex);
+            columnCount = tableMetadata.getColumnCount();
+            tableWideLock.writeLock().unlock();
+        }
+    }
+
+    private long getLastMetadataVersion() {
+        tableWideLock.readLock().lock();
+        final long lastMetadataVersion = this.lastMetadataVersion;
+        tableWideLock.readLock().unlock();
+        return lastMetadataVersion;
+    }
+
+    private long getLastMetadataVersionUnsafe() {
+        return lastMetadataVersion;
+    }
+    
 }
-
-
-//private static final Log LOG = LogFactory.getLog(TableReader.class);
-//private static final int PARTITIONS_SLOT_OFFSET_COLUMN_VERSION = 3;
-//private static final int PARTITIONS_SLOT_OFFSET_NAME_TXN = 2;
-//private static final int PARTITIONS_SLOT_OFFSET_SIZE = 1;
-//private static final int PARTITIONS_SLOT_SIZE = 4;
-//private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
-//private final MillisecondClock clock;
-//private final ColumnVersionReader columnVersionReader;
-//private final CairoConfiguration configuration;
-//private final int dbRootSize;
-//private final FilesFacade ff;
-//private final int maxOpenPartitions;
-//private final MessageBus messageBus;
-//private final TableReaderMetadata metadata;
-//private final LongList openPartitionInfo;
-//private final int partitionBy;
-//private final Path path;
-//private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor();
-//private final int rootLen;
-//private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
-//private final MemoryMR todoMem = Vm.getCMRInstance();
-//private final TxReader txFile;
-//private final TxnScoreboard txnScoreboard;
-//private ObjList<BitmapIndexReader> bitmapIndexes;
-//private int columnCount;
-//private int columnCountShl;
-//private LongList columnTops;
-//private ObjList<MemoryCMR> columns;
-//private int openPartitionCount;
-//private int partitionCount;
-//private long rowCount;
-//private TableToken tableToken;
-//private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
-//private long txColumnVersion = -1;
-//private long txPartitionVersion = -1;
-//private long txTruncateVersion = -1;
-//private long txn = TableUtils.INITIAL_TXN;
-//private boolean txnAcquired = false;
