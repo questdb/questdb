@@ -24,9 +24,10 @@ jobs:
             ANY=$(echo "$FILES" | grep '"filename":')
             if [ -z "$ANY" ]; then
               if [ -n "$COV_CLASSES" ]; then
+                COV_CLASSES=$(echo "$COV_CLASSES" | sed -e 's/,$//g')
                 echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]$COV_CLASSES"
                 echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]JaCoCo"
-              else 
+              else
                 echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]-:*"
                 echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]None"
               fi
@@ -55,7 +56,6 @@ jobs:
             CHANGED_CORE_FILES="${CHANGED_CORE_FILES}$(echo "$ANY" | grep -oP 'filename": "\K(core|benchmarks|compat|utils)')"
             CHANGED_RUST_FILES="${CHANGED_RUST_FILES}$(echo "$ANY" | grep -oP 'filename": "\K(core/rust)')"
           done
-          COV_CLASSES=$(echo "$COV_CLASSES" | sed -e 's/,$//g')
         name: check_coverage
         env:
           PRID: $(System.PullRequest.PullRequestNumber)
