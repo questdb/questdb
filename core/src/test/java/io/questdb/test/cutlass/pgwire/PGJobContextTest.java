@@ -5081,53 +5081,6 @@ nodejs code:
     }
 
     @Test
-    public void testMatchSymbolBindVariable() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            connection.setAutoCommit(false);
-            connection.prepareStatement("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(50))").execute();
-            mayDrainWalQueue();
-
-            sink.clear();
-            try (PreparedStatement ps = connection.prepareStatement("select * from x where name ~ ?")) {
-                ps.setString(1, "^jjk.*");
-                try (ResultSet rs = ps.executeQuery()) {
-                    assertResultSet(
-                            "name[VARCHAR]\n" +
-                                    "jjke\n" +
-                                    "jjke\n" +
-                                    "jjke\n" +
-                                    "jjke\n" +
-                                    "jjke\n" +
-                                    "jjke\n" +
-                                    "jjke\n" +
-                                    "jjke\n" +
-                                    "jjke\n",
-                            sink,
-                            rs
-                    );
-                }
-                ps.setString(1, "^op.*");
-                try (ResultSet rs = ps.executeQuery()) {
-                    assertResultSet(
-                            "name[VARCHAR]\n" +
-                                    "ope\n" +
-                                    "ope\n" +
-                                    "ope\n" +
-                                    "ope\n" +
-                                    "ope\n" +
-                                    "ope\n" +
-                                    "ope\n" +
-                                    "ope\n" +
-                                    "ope\n",
-                            sink,
-                            rs
-                    );
-                }
-            }
-        });
-    }
-
-    @Test
     public void testLargeBatchCairoExceptionResume() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
@@ -5749,6 +5702,53 @@ nodejs code:
     }
 
     @Test
+    public void testMatchSymbolBindVariable() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("create table x as (select rnd_symbol('jjke', 'jio2', 'ope', 'nbbe', null) name from long_sequence(50))").execute();
+            mayDrainWalQueue();
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("select * from x where name ~ ?")) {
+                ps.setString(1, "^jjk.*");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "name[VARCHAR]\n" +
+                                    "jjke\n" +
+                                    "jjke\n" +
+                                    "jjke\n" +
+                                    "jjke\n" +
+                                    "jjke\n" +
+                                    "jjke\n" +
+                                    "jjke\n" +
+                                    "jjke\n" +
+                                    "jjke\n",
+                            sink,
+                            rs
+                    );
+                }
+                ps.setString(1, "^op.*");
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "name[VARCHAR]\n" +
+                                    "ope\n" +
+                                    "ope\n" +
+                                    "ope\n" +
+                                    "ope\n" +
+                                    "ope\n" +
+                                    "ope\n" +
+                                    "ope\n" +
+                                    "ope\n" +
+                                    "ope\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMetadata() throws Exception {
         recvBufferSize = 2048;
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> connection.getMetaData().getColumns("dontcare", "whatever", "x", null).close());
@@ -6313,6 +6313,68 @@ nodejs code:
                 script,
                 getHexPgWireConfig()
         );
+    }
+
+    @Test
+    public void testPrepareInsertAsSelect() throws Exception {
+        // This test doesn't use partitioned tables.
+        Assume.assumeFalse(walEnabled);
+
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            CallableStatement stmt = connection.prepareCall("drop table if exists mining_event;");
+            stmt.execute();
+
+            stmt = connection.prepareCall("drop table if exists mining_event_5m;");
+            stmt.execute();
+
+            stmt = connection.prepareCall(
+                    "create table mining_event (\n" +
+                            "            ts timestamp,\n" +
+                            "            user symbol capacity 12800 CACHE INDEX,\n" +
+                            "            worker symbol capacity 1280000 NOCACHE,\n" +
+                            "            shares long\n" +
+                            "        ) timestamp(ts) partition by day bypass wal"
+            );
+            stmt.execute();
+            stmt = connection.prepareCall(
+                    "create table mining_event_5m (\n" +
+                            "            ts timestamp,\n" +
+                            "            user symbol capacity 12800 CACHE INDEX,\n" +
+                            "            worker symbol capacity 1280000 NOCACHE,\n" +
+                            "            shares long\n" +
+                            "        )\n" +
+                            "        timestamp(ts)\n" +
+                            "        partition by day bypass wal"
+            );
+            stmt.execute();
+            try (PreparedStatement insert = connection.prepareStatement(
+                    "insert into mining_event (ts, user, worker, shares) values ('2024-01-12 00:00:03', 'user_1', 'user_1.w1', 10);")) {
+                insert.executeUpdate();
+            }
+
+            String insertAsSelect = "insert into mining_event_5m\n" +
+                    "        select ts, user, worker, sum(shares) as shares\n" +
+                    "        from mining_event\n" +
+                    "        where ts >= '2024-01-12 00:00:00' sample by 5m fill (none) align to calendar;";
+            try (PreparedStatement statement = connection.prepareStatement(insertAsSelect)) {
+                long micros = TimestampFormatUtils.parseTimestamp("2025-04-19T18:50:00.998666Z");
+                statement.execute();
+            }
+
+            try (PreparedStatement statement = connection.prepareStatement("select count() from mining_event")) {
+                try (ResultSet rs = statement.executeQuery()) {
+                    assertTrue(rs.next());
+                    assertEquals(1, rs.getLong(1));
+                }
+            }
+
+            try (PreparedStatement statement = connection.prepareStatement("select count() from mining_event_5m")) {
+                try (ResultSet rs = statement.executeQuery()) {
+                    assertTrue(rs.next());
+                    assertEquals(1, rs.getLong(1));
+                }
+            }
+        });
     }
 
     @Test

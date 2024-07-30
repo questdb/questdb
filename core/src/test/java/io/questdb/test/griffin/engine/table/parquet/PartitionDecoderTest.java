@@ -24,13 +24,11 @@
 
 package io.questdb.test.griffin.engine.table.parquet;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
-import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -86,51 +84,16 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 Assert.assertEquals(rows, partitionDecoder.getMetadata().rowCount());
                 Assert.assertEquals(1, partitionDecoder.getMetadata().rowGroupCount());
 
-                final long[] expectedPhysicalTypes = new long[]{
-                        PartitionDecoder.INT64_PHYSICAL_TYPE, PartitionDecoder.BOOLEAN_PHYSICAL_TYPE,
-                        PartitionDecoder.INT32_PHYSICAL_TYPE, PartitionDecoder.INT32_PHYSICAL_TYPE,
-                        PartitionDecoder.INT32_PHYSICAL_TYPE, PartitionDecoder.INT32_PHYSICAL_TYPE,
-                        PartitionDecoder.INT64_PHYSICAL_TYPE, PartitionDecoder.FLOAT_PHYSICAL_TYPE,
-                        PartitionDecoder.DOUBLE_PHYSICAL_TYPE, PartitionDecoder.BYTE_ARRAY_PHYSICAL_TYPE,
-                        PartitionDecoder.INT32_PHYSICAL_TYPE, PartitionDecoder.INT32_PHYSICAL_TYPE,
-                        PartitionDecoder.INT32_PHYSICAL_TYPE, PartitionDecoder.INT64_PHYSICAL_TYPE,
-                        PartitionDecoder.BYTE_ARRAY_PHYSICAL_TYPE, PartitionDecoder.BYTE_ARRAY_PHYSICAL_TYPE,
-                        PartitionDecoder.BYTE_ARRAY_PHYSICAL_TYPE, PartitionDecoder.INT32_PHYSICAL_TYPE,
-                        Numbers.encodeLowHighInts(PartitionDecoder.FIXED_LEN_BYTE_ARRAY_PHYSICAL_TYPE, 16), // uuid
-                        Numbers.encodeLowHighInts(PartitionDecoder.FIXED_LEN_BYTE_ARRAY_PHYSICAL_TYPE, 32), // long256
-                        Numbers.encodeLowHighInts(PartitionDecoder.FIXED_LEN_BYTE_ARRAY_PHYSICAL_TYPE, 16), // long128
-                        PartitionDecoder.INT64_PHYSICAL_TYPE, PartitionDecoder.INT64_PHYSICAL_TYPE,
-                        PartitionDecoder.INT64_PHYSICAL_TYPE,
-                };
-
                 TableReaderMetadata readerMeta = reader.getMetadata();
                 Assert.assertEquals(readerMeta.getColumnCount(), partitionDecoder.getMetadata().columnCount());
 
                 for (int i = 0; i < columns; i++) {
                     TestUtils.assertEquals("column: " + i, readerMeta.getColumnName(i), partitionDecoder.getMetadata().columnName(i));
                     Assert.assertEquals("column: " + i, i, partitionDecoder.getMetadata().columnId(i));
-                    Assert.assertEquals("column: " + i, toParquetStorageType(readerMeta.getColumnType(i)), partitionDecoder.getMetadata().getColumnType(i));
+                    Assert.assertEquals("column: " + i, readerMeta.getColumnType(i), partitionDecoder.getMetadata().getColumnType(i));
                 }
             }
         });
     }
 
-    private int toParquetStorageType(int columnType) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.IPv4:
-            case ColumnType.GEOINT:
-                return ColumnType.INT;
-            case ColumnType.GEOLONG:
-                return ColumnType.LONG;
-            case ColumnType.GEOSHORT:
-                return ColumnType.SHORT;
-            case ColumnType.GEOBYTE:
-                return ColumnType.BYTE;
-            case ColumnType.STRING:
-            case ColumnType.SYMBOL:
-                return ColumnType.VARCHAR;
-            default:
-                return columnType;
-        }
-    }
 }
