@@ -126,7 +126,7 @@ steps:
         or( 
             eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
             eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
-        ), 
+        )
       )
 
   - bash: |
