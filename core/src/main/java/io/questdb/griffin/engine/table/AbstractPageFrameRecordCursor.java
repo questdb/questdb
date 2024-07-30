@@ -49,7 +49,6 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
         frameAddressCache = new PageFrameAddressCache(configuration);
         frameAddressCache.of(metadata);
         frameMemoryPool = new PageFrameMemoryPool();
-        frameMemoryPool.of(frameAddressCache);
     }
 
     @Override
@@ -95,5 +94,6 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
         frameCount = 0;
         frameCursor.toTop();
         frameAddressCache.clear();
+        frameMemoryPool.of(frameAddressCache);
     }
 }

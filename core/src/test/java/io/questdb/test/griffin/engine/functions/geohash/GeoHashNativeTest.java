@@ -24,16 +24,17 @@
 
 package io.questdb.test.griffin.engine.functions.geohash;
 
-import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
-import io.questdb.test.AbstractCairoTest;
 import io.questdb.cairo.BitmapIndexFwdReader;
-import io.questdb.test.cairo.BitmapIndexTest;
 import io.questdb.cairo.BitmapIndexWriter;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.griffin.engine.table.LatestByArguments;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.Path;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.BitmapIndexTest;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -67,6 +68,8 @@ public class GeoHashNativeTest extends AbstractCairoTest {
         final DirectLongList rows = new DirectLongList(keyCount, MemoryTag.NATIVE_LONG_LIST);
         long argsAddress = LatestByArguments.allocateMemoryArray(1);
 
+        PageFrameMemoryPool frameMemoryPool = new PageFrameMemoryPool();
+
         try {
             BitmapIndexTest.create(configuration, path, "x", 64);
 
@@ -87,6 +90,7 @@ public class GeoHashNativeTest extends AbstractCairoTest {
 
             try (BitmapIndexFwdReader indexReader = new BitmapIndexFwdReader(configuration, path, "x", COLUMN_NAME_TXN_NONE, 0)) {
                 GeoHashNative.latestByAndFilterPrefix(
+                        frameMemoryPool, // won't be used
                         indexReader.getKeyBaseAddress(),
                         indexReader.getKeyMemorySize(),
                         indexReader.getValueBaseAddress(),
@@ -97,7 +101,7 @@ public class GeoHashNativeTest extends AbstractCairoTest {
                         0,
                         0,
                         indexReader.getValueBlockCapacity(),
-                        0,
+                        -1,
                         0,
                         0,
                         0

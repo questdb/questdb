@@ -307,7 +307,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             super(timestampSampler, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleFromFuncPos, sampleToFunc, sampleToFuncPos);
             frameAddressCache = new PageFrameAddressCache(configuration);
             frameMemoryPool = new PageFrameMemoryPool();
-            frameMemoryPool.of(frameAddressCache);
         }
 
         @Override
@@ -397,6 +396,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             crossRowState = NONE;
             frameCursor.toTop();
             frameAddressCache.clear();
+            frameMemoryPool.of(frameAddressCache);
             frameMemory = null;
         }
 

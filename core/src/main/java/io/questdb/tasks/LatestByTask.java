@@ -25,16 +25,19 @@
 package io.questdb.tasks;
 
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.CountDownLatchSPI;
 
 public class LatestByTask {
+    private final PageFrameMemoryPool frameMemoryPool = new PageFrameMemoryPool();
     private long argsAddress;
     private ExecutionCircuitBreaker circuitBreaker;
     private CountDownLatchSPI doneLatch;
     private int frameIndex;
-    private int hashLength;
-    private long hashesAddress;
+    private int hashColumnIndex;
+    private int hashColumnType;
     private long keyBaseAddress;
     private long keysMemorySize;
     private long prefixesAddress;
@@ -47,6 +50,7 @@ public class LatestByTask {
     private long valuesMemorySize;
 
     public void of(
+            PageFrameAddressCache addressCache,
             long keyBaseAddress,
             long keysMemorySize,
             long valueBaseAddress,
@@ -57,13 +61,14 @@ public class LatestByTask {
             long rowLo,
             int frameIndex,
             int valueBlockCapacity,
-            long hashesAddress,
-            int hashLength,
+            int hashColumnIndex,
+            int hashColumnType,
             long prefixesAddress,
             long prefixesCount,
             CountDownLatchSPI doneLatch,
             ExecutionCircuitBreaker circuitBreaker
     ) {
+        this.frameMemoryPool.of(addressCache);
         this.keyBaseAddress = keyBaseAddress;
         this.keysMemorySize = keysMemorySize;
         this.valueBaseAddress = valueBaseAddress;
@@ -74,8 +79,8 @@ public class LatestByTask {
         this.rowLo = rowLo;
         this.frameIndex = frameIndex;
         this.valueBlockCapacity = valueBlockCapacity;
-        this.hashesAddress = hashesAddress;
-        this.hashLength = hashLength;
+        this.hashColumnIndex = hashColumnIndex;
+        this.hashColumnType = hashColumnType;
         this.prefixesAddress = prefixesAddress;
         this.prefixesCount = prefixesCount;
         this.doneLatch = doneLatch;
@@ -83,26 +88,30 @@ public class LatestByTask {
     }
 
     public boolean run() {
-        if (!circuitBreaker.checkIfTripped()) {
-            GeoHashNative.latestByAndFilterPrefix(
-                    keyBaseAddress,
-                    keysMemorySize,
-                    valueBaseAddress,
-                    valuesMemorySize,
-                    argsAddress,
-                    unIndexedNullCount,
-                    rowHi,
-                    rowLo,
-                    frameIndex,
-                    valueBlockCapacity,
-                    hashesAddress,
-                    hashLength,
-                    prefixesAddress,
-                    prefixesCount
-            );
+        try {
+            if (!circuitBreaker.checkIfTripped()) {
+                GeoHashNative.latestByAndFilterPrefix(
+                        frameMemoryPool,
+                        keyBaseAddress,
+                        keysMemorySize,
+                        valueBaseAddress,
+                        valuesMemorySize,
+                        argsAddress,
+                        unIndexedNullCount,
+                        rowHi,
+                        rowLo,
+                        frameIndex,
+                        valueBlockCapacity,
+                        hashColumnIndex,
+                        hashColumnType,
+                        prefixesAddress,
+                        prefixesCount
+                );
+            }
+            doneLatch.countDown();
+            return true;
+        } finally {
+            frameMemoryPool.close();
         }
-
-        doneLatch.countDown();
-        return true;
     }
 }

@@ -116,9 +116,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             int geoHashBits = ColumnType.getGeoHashBits(hashColumnType);
 
             if (hashColumnIndex > -1 && ColumnType.isGeoHash(hashColumnType)) {
-                sink.attr("filter")
-                        .putColumnName(hashColumnIndex).val(" within(");
-
+                sink.attr("filter").putColumnName(hashColumnIndex).val(" within(");
                 for (long i = 2, n = prefixes.size(); i < n; i += 2) {
                     if (i > 2) {
                         sink.val(',');
@@ -137,10 +135,6 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
     private static long getChunkSize(int keyCount, int workerCount) {
         return (keyCount + workerCount - 1) / workerCount;
-    }
-
-    private static int getPow2SizeOfGeoHashType(int type) {
-        return 1 << ColumnType.pow2SizeOfBits(ColumnType.getGeoHashBits(type));
     }
 
     private static int getTaskCount(int keyCount, long chunkSize) {
@@ -194,12 +188,18 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         long foundRowCount = 0;
         int queuedCount = 0;
         try {
+            // First, build address cache as we'll be publishing it to other threads.
+            while ((frame = frameCursor.next()) != null) {
+                frameAddressCache.add(frameCount++, frame);
+            }
+
+            frameCount = 0;
+            frameCursor.toTop();
             while ((frame = frameCursor.next()) != null && foundRowCount < keyCount) {
                 doneLatch.reset();
-                final int frameIndex = frameCount;
-                frameAddressCache.add(frameCount++, frame);
 
                 final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
+                final int frameIndex = frameCount;
                 final long rowLo = 0;
                 final long rowHi = frame.getPartitionHi() - frame.getPartitionLo() - 1;
 
@@ -209,18 +209,6 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 final long valuesMemorySize = indexReader.getValueMemorySize();
                 final int valueBlockCapacity = indexReader.getValueBlockCapacity();
                 final long unIndexedNullCount = indexReader.getUnIndexedNullCount();
-
-                long hashColumnAddress = 0;
-
-                // hashColumnIndex can be -1 for latest by part only (no prefixes to match)
-                if (hashColumnIndex > -1) {
-                    // TODO(puzpuzpuz): this has to be per-task
-                    final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-                    hashColumnAddress = frameMemory.getPageAddress(hashColumnIndex);
-                }
-
-                // -1 must be dead case here
-                final int hashColumnSize = ColumnType.isGeoHash(hashColumnType) ? getPow2SizeOfGeoHashType(hashColumnType) : -1;
 
                 queuedCount = 0;
                 for (long i = 0; i < taskCount; ++i) {
@@ -238,6 +226,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                     if (seq < 0) {
                         circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                         GeoHashNative.latestByAndFilterPrefix(
+                                frameMemoryPool,
                                 keyBaseAddress,
                                 keysMemorySize,
                                 valueBaseAddress,
@@ -248,13 +237,14 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                                 rowLo,
                                 frameIndex,
                                 valueBlockCapacity,
-                                hashColumnAddress,
-                                hashColumnSize,
+                                hashColumnIndex,
+                                hashColumnType,
                                 prefixesAddress,
                                 prefixesCount
                         );
                     } else {
                         queue.get(seq).of(
+                                frameAddressCache,
                                 keyBaseAddress,
                                 keysMemorySize,
                                 valueBaseAddress,
@@ -265,8 +255,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                                 rowLo,
                                 frameIndex,
                                 valueBlockCapacity,
-                                hashColumnAddress,
-                                hashColumnSize,
+                                hashColumnIndex,
+                                hashColumnType,
                                 prefixesAddress,
                                 prefixesCount,
                                 doneLatch,

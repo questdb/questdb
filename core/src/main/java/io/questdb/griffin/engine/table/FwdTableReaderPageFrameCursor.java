@@ -132,8 +132,8 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
         topsRemaining.setAll(columnCount, 0);
         columnPageAddress.setAll(2 * columnCount, 0);
         columnPageNextAddress.setAll(2 * columnCount, 0);
-        pageRowsRemaining.setAll(columnCount, -1L);
-        pageSizes.setAll(2 * columnCount, -1L);
+        pageRowsRemaining.setAll(columnCount, -1);
+        pageSizes.setAll(2 * columnCount, -1);
         formats.setAll(formats.size(), (byte) -1);
         formats.clear();
         reenterDataFrame = false;

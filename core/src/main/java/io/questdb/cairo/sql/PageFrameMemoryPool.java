@@ -47,6 +47,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
     @Override
     public void close() {
         frameMemory.clear();
+        addressCache = null;
     }
 
     /**

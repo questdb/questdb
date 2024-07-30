@@ -163,9 +163,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             this.frameMemoryPools = new ObjList<>(workerCount);
             for (int i = 0; i < workerCount; i++) {
-                final PageFrameMemoryPool frameMemoryPool = new PageFrameMemoryPool();
-                frameMemoryPool.of(frameAddressCache);
-                frameMemoryPools.add(frameMemoryPool);
+                frameMemoryPools.add(new PageFrameMemoryPool());
             }
         } catch (Throwable th) {
             close();
@@ -354,6 +352,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.bus = bus;
             this.circuitBreaker = circuitBreaker;
             frameAddressCache.of(metadata);
+            for (int i = 0; i < workerCount; i++) {
+                frameMemoryPools.getQuick(i).of(frameAddressCache);
+            }
             frameCount = 0;
             isRostiBuilt = false;
             return this;

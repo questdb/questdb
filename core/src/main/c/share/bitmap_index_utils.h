@@ -51,7 +51,7 @@ struct out_arguments {
     int64_t rows_capacity;
     int64_t rows_size;
     int64_t filtered_size;
-};
+} __attribute__((packed));
 
 struct key_header {
     int8_t signature;
