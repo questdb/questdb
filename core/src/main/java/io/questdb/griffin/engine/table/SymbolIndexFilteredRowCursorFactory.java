@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 
 public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCursorFactory {
+    private final int columnIndex;
     private final SymbolIndexFilteredRowCursor cursor;
     private final Function symbolFunction;
 
@@ -40,6 +41,7 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
             int indexDirection,
             Function symbolFunction
     ) {
+        this.columnIndex = columnIndex;
         this.cursor = new SymbolIndexFilteredRowCursor(
                 columnIndex,
                 symbolKey,
@@ -86,8 +88,8 @@ public class SymbolIndexFilteredRowCursorFactory implements SymbolFunctionRowCur
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Index ").type(BitmapIndexReader.nameOf(cursor.getIndexDirection())).type(" scan").meta("on").putColumnName(cursor.getColumnIndex());
-        sink.attr("filter").putColumnName(cursor.getColumnIndex()).val('=').val(cursor.getSymbolKey()).val(" and ").val(cursor.getFilter());
+        sink.type("Index ").type(BitmapIndexReader.nameOf(cursor.getIndexDirection())).type(" scan").meta("on").putBaseColumnName(columnIndex);
+        sink.attr("filter").putBaseColumnName(columnIndex).val('=').val(cursor.getSymbolKey()).val(" and ").val(cursor.getFilter());
     }
 }
 

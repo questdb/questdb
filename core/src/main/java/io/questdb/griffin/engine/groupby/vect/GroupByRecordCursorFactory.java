@@ -206,7 +206,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.type("GroupBy");
         sink.meta("vectorized").val(true);
         sink.meta("workers").val(workerCount);
-        sink.attr("keys").val("[").putBaseColumnNameNoRemap(keyColumnIndex).val("]");
+        sink.attr("keys").val("[").putBaseColumnName(keyColumnIndex).val("]");
         sink.optAttr("values", vafList, true);
         sink.child(base);
     }

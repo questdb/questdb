@@ -88,9 +88,9 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Index ").type(BitmapIndexReader.nameOf(cursor.getIndexDirection())).type(" scan").meta("on").putBaseColumnName(cursor.getColumnIndex());
+        sink.type("Index ").type(BitmapIndexReader.nameOf(cursor.getIndexDirection())).type(" scan").meta("on").putBaseColumnName(columnIndex);
         sink.meta("deferred").val(true);
-        sink.attr("symbolFilter").putBaseColumnName(cursor.getColumnIndex()).val('=').val(symbolFunction);
+        sink.attr("symbolFilter").putBaseColumnName(columnIndex).val('=').val(symbolFunction);
         sink.optAttr("filter", cursor.getFilter());
     }
 }

@@ -55,6 +55,7 @@ public abstract class BasePlanSink implements PlanSink {
         this.order = -1;
     }
 
+    @Override
     public PlanSink child(Plannable p, int order) {
         this.order = order;
         child(p);
@@ -63,6 +64,7 @@ public abstract class BasePlanSink implements PlanSink {
         return this;
     }
 
+    @Override
     public void clear() {
         this.sink.clear();
         this.depth = 0;
@@ -86,10 +88,12 @@ public abstract class BasePlanSink implements PlanSink {
         return sink;
     }
 
+    @Override
     public boolean getUseBaseMetadata() {
         return useBaseMetadata;
     }
 
+    @Override
     public PlanSink optAttr(CharSequence name, CharSequence value) {
         if (value != null) {
             attr(name).val(value);
@@ -97,6 +101,7 @@ public abstract class BasePlanSink implements PlanSink {
         return this;
     }
 
+    @Override
     public PlanSink optAttr(CharSequence name, Sinkable value) {
         if (value != null) {
             attr(name).val(value);
@@ -104,6 +109,7 @@ public abstract class BasePlanSink implements PlanSink {
         return this;
     }
 
+    @Override
     public PlanSink optAttr(CharSequence name, Plannable value) {
         if (value != null) {
             if (value instanceof ConstantFunction && ((ConstantFunction) value).isNullConstant()) {
@@ -114,6 +120,7 @@ public abstract class BasePlanSink implements PlanSink {
         return this;
     }
 
+    @Override
     public PlanSink optAttr(CharSequence name, Plannable value, boolean useBaseMetadata) {
         this.useBaseMetadata = useBaseMetadata;
         optAttr(name, value);
@@ -121,6 +128,7 @@ public abstract class BasePlanSink implements PlanSink {
         return this;
     }
 
+    @Override
     public PlanSink optAttr(CharSequence name, ObjList<? extends Plannable> value) {
         if (value != null && value.size() > 0) {
             attr(name).val(value);
@@ -128,6 +136,7 @@ public abstract class BasePlanSink implements PlanSink {
         return this;
     }
 
+    @Override
     public PlanSink optAttr(CharSequence name, ObjList<? extends Plannable> value, boolean useBaseMetadata) {
         this.useBaseMetadata = useBaseMetadata;
         optAttr(name, value);
@@ -135,14 +144,12 @@ public abstract class BasePlanSink implements PlanSink {
         return this;
     }
 
+    @Override
     public PlanSink putBaseColumnName(int columnIdx) {
         return val(factoryStack.peek().getBaseColumnName(columnIdx));
     }
 
-    public PlanSink putBaseColumnNameNoRemap(int columnIdx) {
-        return val(factoryStack.peek().getBaseColumnNameNoRemap(columnIdx));
-    }
-
+    @Override
     public PlanSink putColumnName(int columnIdx) {
         if (useBaseMetadata) {
             putBaseColumnName(columnIdx);
@@ -153,18 +160,21 @@ public abstract class BasePlanSink implements PlanSink {
     }
 
     @Override
-    public void useBaseMetadata(boolean useBaseMetdata) {
-        this.useBaseMetadata = useBaseMetdata;
+    public void useBaseMetadata(boolean useBaseMetadata) {
+        this.useBaseMetadata = useBaseMetadata;
     }
 
+    @Override
     public PlanSink val(ObjList<?> list) {
         return val(list, 0, list.size());
     }
 
+    @Override
     public PlanSink val(ObjList<?> list, int from) {
         return val(list, from, list.size());
     }
 
+    @Override
     public PlanSink val(ObjList<?> list, int from, int to) {
         sink.put('[');
         for (int i = from; i < to; i++) {

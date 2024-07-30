@@ -79,7 +79,7 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Index ").type(BitmapIndexReader.NAME_BACKWARD).type(" scan").meta("on").putBaseColumnNameNoRemap(columnIndex).meta("deferred").val(true);
-        sink.attr("filter").putBaseColumnNameNoRemap(columnIndex).val('=').val(symbolFunc);
+        sink.type("Index ").type(BitmapIndexReader.NAME_BACKWARD).type(" scan").meta("on").putBaseColumnName(columnIndex).meta("deferred").val(true);
+        sink.attr("filter").putBaseColumnName(columnIndex).val('=').val(symbolFunc);
     }
 }

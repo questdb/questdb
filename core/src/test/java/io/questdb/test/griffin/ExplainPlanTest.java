@@ -1275,7 +1275,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExplainDeferredSingleSymbolFilterDataFrame() throws Exception {
+    public void testExplainDeferredSingleSymbolFilterPageFrame() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab \n" +
                     "(\n" +
@@ -1561,7 +1561,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                \"condition\": \"b.l=a.l\",\n" +
                         "                \"Plans\": [\n" +
                         "                {\n" +
-                        "                    \"Node Type\": \"DataFrame\",\n" +
+                        "                    \"Node Type\": \"PageFrame\",\n" +
                         "                    \"Plans\": [\n" +
                         "                    {\n" +
                         "                        \"Node Type\": \"Row forward scan\"\n" +
@@ -1581,7 +1581,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                        \"filter\": \"10<l\",\n" +
                         "                        \"Plans\": [\n" +
                         "                        {\n" +
-                        "                            \"Node Type\": \"DataFrame\",\n" +
+                        "                            \"Node Type\": \"PageFrame\",\n" +
                         "                            \"Plans\": [\n" +
                         "                            {\n" +
                         "                                \"Node Type\": \"Row forward scan\"\n" +
@@ -1632,7 +1632,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "            \"Node Type\": \"Union\",\n" +
                         "            \"Plans\": [\n" +
                         "            {\n" +
-                        "                \"Node Type\": \"DataFrame\",\n" +
+                        "                \"Node Type\": \"PageFrame\",\n" +
                         "                \"Plans\": [\n" +
                         "                {\n" +
                         "                    \"Node Type\": \"Row forward scan\"\n" +
@@ -1643,7 +1643,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                } ]\n" +
                         "            },\n" +
                         "            {\n" +
-                        "                \"Node Type\": \"DataFrame\",\n" +
+                        "                \"Node Type\": \"PageFrame\",\n" +
                         "                \"Plans\": [\n" +
                         "                {\n" +
                         "                    \"Node Type\": \"Row forward scan\"\n" +
@@ -1682,7 +1682,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            \"filter\": \"(taba.a1=tabb.b1 or taba.a2=tabb.b2)\",\n" +
                             "            \"Plans\": [\n" +
                             "            {\n" +
-                            "                \"Node Type\": \"DataFrame\",\n" +
+                            "                \"Node Type\": \"PageFrame\",\n" +
                             "                \"Plans\": [\n" +
                             "                {\n" +
                             "                    \"Node Type\": \"Row forward scan\"\n" +
@@ -1693,7 +1693,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                } ]\n" +
                             "            },\n" +
                             "            {\n" +
-                            "                \"Node Type\": \"DataFrame\",\n" +
+                            "                \"Node Type\": \"PageFrame\",\n" +
                             "                \"Plans\": [\n" +
                             "                {\n" +
                             "                    \"Node Type\": \"Row forward scan\"\n" +

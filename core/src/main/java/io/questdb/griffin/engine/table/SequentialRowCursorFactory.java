@@ -79,7 +79,7 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Cursor-order scan");//postgres uses 'Append' node
+        sink.type("Cursor-order scan"); // postgres uses 'Append' node
         for (int i = 0, n = cursorFactories.size(); i < n; i++) {
             sink.child(cursorFactories.getQuick(i));
         }

@@ -92,10 +92,6 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
         return this;
     }
 
-    int getColumnIndex() {
-        return columnIndex;
-    }
-
     Function getFilter() {
         return filter;
     }
