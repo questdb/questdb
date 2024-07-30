@@ -74,7 +74,7 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
     public void prepareCursor(PageFrameCursor pageFrameCursor) {
         symbolKeys.clear();
 
-        final StaticSymbolTable staticSymbolTable = pageFrameCursor.getSymbolTable(columnIndexes.get(columnIndex));
+        final StaticSymbolTable staticSymbolTable = pageFrameCursor.getSymbolTable(columnIndex);
         int count = staticSymbolTable.getSymbolCount();
 
         final SortHelper sortHelper = TL_SORT_HELPER.get();
@@ -172,7 +172,7 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
         private boolean fetchNext() {
             while (index < symbolKeyLimit) {
                 current = pageFrame
-                        .getBitmapIndexReader(columnIndexes.get(columnIndex), indexDirection)
+                        .getBitmapIndexReader(columnIndex, indexDirection)
                         .getCursor(
                                 true,
                                 symbolKeys.getQuick(index++),
