@@ -5,10 +5,6 @@ jobs:
       vmImage: "ubuntu-latest"
     steps:
       - checkout: none
-        name: check_changes
-        env:
-          PRID: $(System.PullRequest.PullRequestNumber)
-        displayName: "Check changed files"
       - bash: |
           set -ux
           echo "PR ID: $PRID"
@@ -63,4 +59,4 @@ jobs:
         name: check_coverage
         env:
           PRID: $(System.PullRequest.PullRequestNumber)
-        displayName: "List of coverage classes PR build"
+        displayName: "Check which files changed, list classes for coverage"
