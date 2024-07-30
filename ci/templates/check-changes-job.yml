@@ -10,8 +10,8 @@ jobs:
           PRID: $(System.PullRequest.PullRequestNumber)
         displayName: "Check changed files"
       - bash: |
-          set -eux
           echo $PRID
+          set -ux
           ALL_CHANGES=""
           CHANGED_CORE_FILES=""
           if [[ $PRID =~ ^[0-9]+$ ]]; then
