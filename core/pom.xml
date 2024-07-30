@@ -116,13 +116,13 @@
                         </configuration>
                     </execution>
                     <execution>
-                        <id>qdb-ent-test</id>
+                        <id>qdbr-test</id>
                         <goals>
                             <goal>test</goal>
                         </goals>
                         <phase>${qdbr-test.phase}</phase>
                         <configuration>
-                            <path>rust/qdb-ent</path>
+                            <path>rust/qdbr</path>
                             <release>${qdbr.release}</release>
                         </configuration>
                     </execution>
