@@ -45,7 +45,10 @@ steps:
       chmod +x lcov_cobertura.py
     displayName: "Install Rust coverage dependencies"
     condition: |
-      eq(variables['testset'], 'coverage')
+      and(
+        eq(variables['testset'], 'coverage'),
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+      )
 
   - script: |
       set -eux
@@ -60,6 +63,11 @@ steps:
         "cargo-registry" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)" | "$(LINUX_GLIBC_VERSION)"
       path: $(CARGO_HOME)/registry
     displayName: "Cache ~/.cargo/registry"
+    condition: |
+      and(
+        eq(variables['testset'], 'coverage'),
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+      )
 
   - task: Maven@3
     displayName: "Compile with Maven"
@@ -71,10 +79,10 @@ steps:
       options:
         "compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) -P qdbr-release $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
-    condition:
+    condition: |
       or(
-      eq(variables['testset'], 'none'),
-      eq(variables['SOURCE_CODE_CHANGED'], 'false')
+        eq(variables['testset'], 'none'),
+        eq(variables['SOURCE_CODE_CHANGED'], 'false')
       )
   - task: Maven@3
     displayName: "Run tests"
@@ -139,8 +147,8 @@ steps:
     displayName: "Run Rust tests for code coverage"
     condition: |
       and(
-        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-        eq(variables['testset'], 'coverage')
+        eq(variables['testset'], 'coverage'),
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
       )
   - bash: |
       ## Produce the Rust coverage report
@@ -189,8 +197,8 @@ steps:
     displayName: "Generate Rust coverage report"
     condition: |
       and(
-        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-        eq(variables['testset'], 'coverage')
+        eq(variables['testset'], 'coverage'),
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
       )
 
   - bash: |
