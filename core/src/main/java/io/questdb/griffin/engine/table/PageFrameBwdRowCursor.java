@@ -32,16 +32,16 @@ import io.questdb.cairo.sql.RowCursor;
  */
 public class PageFrameBwdRowCursor implements RowCursor {
     private long current;
-    private long lo;
+    private long hi;
 
     @Override
     public boolean hasNext() {
-        return current >= lo;
+        return current >= 0;
     }
 
     @Override
     public void jumpTo(long position) {
-        this.current = position;
+        this.current = hi - position;
     }
 
     @Override
@@ -50,7 +50,7 @@ public class PageFrameBwdRowCursor implements RowCursor {
     }
 
     void of(PageFrame frame) {
-        this.current = frame.getPartitionHi() - frame.getPartitionLo() - 1;
-        this.lo = 0;
+        this.hi = frame.getPartitionHi() - frame.getPartitionLo() - 1;
+        this.current = hi;
     }
 }
