@@ -140,11 +140,6 @@ public class QueryProgress extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public String getBaseColumnNameNoRemap(int idx) {
-        return base.getBaseColumnNameNoRemap(idx);
-    }
-
-    @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
     }

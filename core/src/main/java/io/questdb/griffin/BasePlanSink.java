@@ -145,16 +145,16 @@ public abstract class BasePlanSink implements PlanSink {
     }
 
     @Override
-    public PlanSink putBaseColumnName(int columnIdx) {
-        return val(factoryStack.peek().getBaseColumnName(columnIdx));
+    public PlanSink putBaseColumnName(int columnIndex) {
+        return val(factoryStack.peek().getBaseColumnName(columnIndex));
     }
 
     @Override
-    public PlanSink putColumnName(int columnIdx) {
+    public PlanSink putColumnName(int columnIndex) {
         if (useBaseMetadata) {
-            putBaseColumnName(columnIdx);
+            putBaseColumnName(columnIndex);
         } else {
-            val(factoryStack.peek().getMetadata().getColumnName(columnIdx));
+            val(factoryStack.peek().getMetadata().getColumnName(columnIndex));
         }
         return this;
     }
@@ -204,6 +204,7 @@ public abstract class BasePlanSink implements PlanSink {
     }
 
     static class EscapingStringSink extends StringSink {
+
         @Override
         public StringSink put(@Nullable CharSequence cs) {
             if (cs != null) {

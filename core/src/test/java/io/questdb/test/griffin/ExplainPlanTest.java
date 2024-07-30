@@ -2100,10 +2100,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "  values: [count(*)]\n" +
                     "    FilterOnValues symbolOrder: desc\n" +
                     "        Cursor-order scan\n" +
-                    "            Index forward scan on: referencePriceType\n" +
-                    "              filter: referencePriceType=3 and not (referencePriceType in [TYPE1])\n" +
-                    "            Index forward scan on: referencePriceType\n" +
-                    "              filter: referencePriceType=1 and not (referencePriceType in [TYPE1])\n" +
+                    "            Index forward scan on: venue\n" +
+                    "              filter: venue=3 and not (referencePriceType in [TYPE1])\n" +
+                    "            Index forward scan on: venue\n" +
+                    "              filter: venue=1 and not (referencePriceType in [TYPE1])\n" +
                     "        Frame forward scan on: reference_prices\n";
 
             assertPlanNoLeakCheck(query1, expectedPlan);
@@ -2272,16 +2272,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             PlanSink planSink = new TextPlanSink() {
                 @Override
-                public PlanSink putColumnName(int columnIdx) {
-                    val("column(").val(columnIdx).val(")");
+                public PlanSink putColumnName(int columnIndex) {
+                    val("column(").val(columnIndex).val(")");
                     return this;
                 }
             };
 
             PlanSink tmpPlanSink = new TextPlanSink() {
                 @Override
-                public PlanSink putColumnName(int columnIdx) {
-                    val("column(").val(columnIdx).val(")");
+                public PlanSink putColumnName(int columnIndex) {
+                    val("column(").val(columnIndex).val(")");
                     return this;
                 }
             };
@@ -4166,7 +4166,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             compile("insert into a select x::int, 's' ||(x%10), x::timestamp from long_sequence(1000)");
 
             assertPlanNoLeakCheck(
-                    "select s, i, ts from a where s  in ('bogus_key') latest on ts partition by s",
+                    "select s, i, ts from a where s in ('bogus_key') latest on ts partition by s",
                     "PageFrame\n" +
                             "    Index backward scan on: s deferred: true\n" +
                             "      filter: s='bogus_key'\n" +
