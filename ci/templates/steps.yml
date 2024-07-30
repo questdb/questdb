@@ -12,6 +12,12 @@ steps:
       restoreKeys: |
         "questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"
       path: $(MAVEN_CACHE_FOLDER)
+  - bash: |
+      echo "SOURCE_CODE_CHANGED: $(SOURCE_CODE_CHANGED)"
+      echo "RUST_SOURCE_CODE_CHANGED: $(RUST_SOURCE_CODE_CHANGED)"
+      echo "COVERAGE_DIFF: $(COVERAGE_DIFF)"
+      echo "CODE_COVERAGE_TOOL_OPTION: $(CODE_COVERAGE_TOOL_OPTION)"
+    displayName: "Print out task variables"
 
   - task: Cache@2
     inputs:
