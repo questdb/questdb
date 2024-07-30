@@ -45,8 +45,7 @@ jobs:
               if [ ! -z "$COV_CLASSES" ]; then
                 ALL_CHANGES="${ALL_CHANGES}${COV_CLASSES}"
               fi
-              CHANGED_CORE_FILES="${CHANGED_CORE_FILES}$(echo "$ANY" \
-                  | grep -oP 'filename": "(core|benchmarks|compat|utils)/(.+/)?\K[^.]+')"
+              CHANGED_CORE_FILES="${CHANGED_CORE_FILES}$(echo "$ANY" | grep -oP 'filename": "\K(core|benchmarks|compat|utils)"
             done
           ALL_CHANGES=$(echo "$ALL_CHANGES" | sed -e 's/,$//g')
           echo $ALL_CHANGES
