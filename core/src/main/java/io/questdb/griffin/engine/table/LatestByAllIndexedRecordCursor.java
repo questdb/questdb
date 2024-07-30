@@ -200,8 +200,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 frameAddressCache.add(frameCount++, frame);
 
                 final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
-                final long partitionLo = frame.getPartitionLo();
-                final long partitionHi = frame.getPartitionHi() - 1;
+                final long rowLo = 0;
+                final long rowHi = frame.getPartitionHi() - frame.getPartitionLo() - 1;
 
                 final long keyBaseAddress = indexReader.getKeyBaseAddress();
                 final long keysMemorySize = indexReader.getKeyMemorySize();
@@ -220,7 +220,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 }
 
                 // -1 must be dead case here
-                final int hashesColumnSize = ColumnType.isGeoHash(hashColumnType) ? getPow2SizeOfGeoHashType(hashColumnType) : -1;
+                final int hashColumnSize = ColumnType.isGeoHash(hashColumnType) ? getPow2SizeOfGeoHashType(hashColumnType) : -1;
 
                 queuedCount = 0;
                 for (long i = 0; i < taskCount; ++i) {
@@ -233,8 +233,6 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                     if (found >= keyHi - keyLo) {
                         continue;
                     }
-                    // Update hash column address with current frame value
-                    LatestByArguments.setHashesAddress(argsAddress, hashColumnAddress);
 
                     final long seq = pubSeq.next();
                     if (seq < 0) {
@@ -246,12 +244,12 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                                 valuesMemorySize,
                                 argsAddress,
                                 unIndexedNullCount,
-                                partitionHi,
-                                partitionLo,
+                                rowHi,
+                                rowLo,
                                 frameIndex,
                                 valueBlockCapacity,
                                 hashColumnAddress,
-                                hashesColumnSize,
+                                hashColumnSize,
                                 prefixesAddress,
                                 prefixesCount
                         );
@@ -263,12 +261,12 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                                 valuesMemorySize,
                                 argsAddress,
                                 unIndexedNullCount,
-                                partitionHi,
-                                partitionLo,
+                                rowHi,
+                                rowLo,
                                 frameIndex,
                                 valueBlockCapacity,
                                 hashColumnAddress,
-                                hashesColumnSize,
+                                hashColumnSize,
                                 prefixesAddress,
                                 prefixesCount,
                                 doneLatch,

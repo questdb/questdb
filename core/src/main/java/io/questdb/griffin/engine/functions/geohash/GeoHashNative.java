@@ -39,8 +39,8 @@ public class GeoHashNative {
             long minValue,
             int frameIndex,
             int blockValueCountMod,
-            long hashesAddress,
-            int hashLength,
+            long hashColumnAddress,
+            int hashColumnSize,
             long prefixesAddress,
             long prefixesCount
     );

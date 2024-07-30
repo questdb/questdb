@@ -50,7 +50,6 @@ struct out_arguments {
     int64_t* rows_address;
     int64_t rows_capacity;
     int64_t rows_size;
-    int64_t hashes_address;
     int64_t filtered_size;
 };
 

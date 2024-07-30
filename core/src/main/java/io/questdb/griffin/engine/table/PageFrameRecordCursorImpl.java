@@ -142,15 +142,18 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     @Override
     public long size() {
         if (entityCursor) {
-            // TODO(puzpuzpuz): this may mmap column files; consider keeping data frame-based size calculation here
-            frameCursor.toTop();
-            long size = 0;
-            PageFrame pageFrame;
-            while ((pageFrame = frameCursor.next()) != null) {
-                size += pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
+            try {
+                // TODO(puzpuzpuz): this may mmap column files; consider keeping data frame-based size calculation here
+                frameCursor.toTop();
+                long size = 0;
+                PageFrame pageFrame;
+                while ((pageFrame = frameCursor.next()) != null) {
+                    size += pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
+                }
+                return size;
+            } finally {
+                frameCursor.toTop();
             }
-            frameCursor.toTop();
-            return size;
         }
         return -1;
     }
