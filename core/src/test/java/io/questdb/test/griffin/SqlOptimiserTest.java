@@ -2334,10 +2334,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
-    /*TODO: Line 722 and 723 are doing a forward scan on selected model y2 whereas it should be a backward scan
-        Suspected issue is with SqlOptimiser.optimiseOrderBy() , raise a github issue for the same
-     */
-
     @Test
     public void testQueryPlanForWhereClauseOnNestedModelWithMaxAggregateFunctionOnParentModel() throws Exception {
         assertMemoryLeak(() -> {
