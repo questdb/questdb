@@ -24,37 +24,45 @@ jobs:
             ANY=$(echo "$FILES" | grep '"filename":')
             if [ -z "$ANY" ]; then
               if [ -n "$COV_CLASSES" ]; then
+                echo "Some classes need coverage testing"
                 COV_CLASSES=$(echo "$COV_CLASSES" | sed -e 's/,$//g')
-                echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]$COV_CLASSES"
-                echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]JaCoCo"
+                COVERAGE_TOOL=JaCoCo
               else
-                echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]-:*"
-                echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]None"
+                echo "No classes need coverage testing"
+                COV_CLASSES='-:*'
+                COVERAGE_TOOL=None
               fi
-          
               if [ -n "$CHANGED_CORE_FILES" ]; then
-                echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]false"
+                echo "Main source code changed"
+                SOURCE_CODE_CHANGED=true
               else
-                echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
+                echo "Main source code did not change"
+                SOURCE_CODE_CHANGED=false
+              fi
+              if [ -n "$CHANGED_RUST_FILES" ]; then
+                echo "Rust source code changed"
+                RUST_SOURCE_CODE_CHANGED=true
+              else
+                echo "Rust source code did not change"
+                RUST_SOURCE_CODE_CHANGED=false
               fi
 
-              if [ -n "$CHANGED_RUST_FILES" ]; then
-                echo "##vso[task.setvariable variable=RUST_SOURCE_CODE_CHANGED;isOutput=true]false"
-              else
-                echo "##vso[task.setvariable variable=RUST_SOURCE_CODE_CHANGED;isOutput=true]true"
-              fi
+              echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]$COV_CLASSES"
+              echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]$COVERAGE_TOOL"
+              echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]$SOURCE_CODE_CHANGED"
+              echo "##vso[task.setvariable variable=RUST_SOURCE_CODE_CHANGED;isOutput=true]$RUST_SOURCE_CODE_CHANGED"
 
               break
             fi
           
-            COV_CLASSES_IN_PAGE=$(echo "$ANY" | grep -oP 'core/src/main/java/(.+/)?\K.+(?=\.java)' \
+            COV_CLASSES_IN_PAGE=$(echo "$ANY" | grep -oP '"core/src/main/java/(.+/)?\K.+(?=\.java)' \
               | sed -e 's/^/+:*./g' | tr '\n' ',' )
           
             if [ ! -z "$COV_CLASSES_IN_PAGE" ]; then
               COV_CLASSES="${COV_CLASSES}${COV_CLASSES_IN_PAGE}"
             fi
-            CHANGED_CORE_FILES="${CHANGED_CORE_FILES}$(echo "$ANY" | grep -oP 'filename": "\K(core|benchmarks|compat|utils)')"
-            CHANGED_RUST_FILES="${CHANGED_RUST_FILES}$(echo "$ANY" | grep -oP 'filename": "\K(core/rust)')"
+            CHANGED_CORE_FILES="${CHANGED_CORE_FILES}$(echo "$ANY" | grep -oP '"(core|benchmarks|compat|utils)')"
+            CHANGED_RUST_FILES="${CHANGED_RUST_FILES}$(echo "$ANY" | grep -oP '"core/rust')"
           done
         name: check_coverage
         env:
