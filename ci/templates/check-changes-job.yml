@@ -13,7 +13,7 @@ jobs:
           set -ux
           echo "PR ID: $PRID"
           if ! [[ $PRID =~ ^[0-9]+$ ]]; then
-            exit(0)
+            exit
           fi
           
           ALL_CHANGES=""
