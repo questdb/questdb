@@ -10,8 +10,8 @@ jobs:
           PRID: $(System.PullRequest.PullRequestNumber)
         displayName: "Check changed files"
       - bash: |
-          echo $PRID
           set -ux
+          echo "PR ID: $PRID"
           ALL_CHANGES=""
           CHANGED_CORE_FILES=""
           if [[ $PRID =~ ^[0-9]+$ ]]; then
@@ -19,8 +19,8 @@ jobs:
             while true; do
               PAGE=$((PAGE+1))
               echo PAGE $PAGE
-              FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PRID/files\?per_page\=100\&page=$PAGE -s)
-              ANY=$(echo $FILES | grep '"filename":')
+              FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PRID/files?per_page=100&page=$PAGE -s)
+              ANY=$(echo "$FILES" | grep '"filename":')
               if [ -z "$ANY" ]; then
                 if [ -n "$ALL_CHANGES" ]; then
                   echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]$ALL_CHANGES"
@@ -39,22 +39,17 @@ jobs:
                 break
               fi
           
-              COV_CLASSES=$(echo $FILES | jq -r '.[].filename' | grep '.java' | grep 'core/src/main/java' \
-                  | sed 's#.*/##; s/\.java$//' \
-                  | tr '\n' ',' | sed -e 's/,/,+:*./g' | sed 's/,+:\*\.$//')
+              COV_CLASSES=$(echo "$ANY" \
+                  | grep -oP 'core/src/main/java/(.+/)?\K.+(?=\.java)' \
+                  | tr '\n' ',' | sed -e 's/,/,+:*./g')
           
-              if [ -z "$COV_CLASSES" ]; then
-                echo no match found
-              else
-                echo match found
-                if [ -n "$ALL_CHANGES" ]; then
-                  ALL_CHANGES="${ALL_CHANGES},+:*.${COV_CLASSES}"
-                else
-                  ALL_CHANGES="+:*.${COV_CLASSES}"
-                fi
+              if [ ! -z "$COV_CLASSES" ]; then
+                ALL_CHANGES="${ALL_CHANGES}${COV_CLASSES}"
               fi
-              CHANGED_CORE_FILES="${CHANGED_CORE_FILES}$(echo $FILES | jq -r '.[].filename' | grep -oP 'filename": "(core|benchmarks|compat|utils)/*\/\K[^.]+')"
+              CHANGED_CORE_FILES="${CHANGED_CORE_FILES}$(echo "$ANY" \
+                  | grep -oP 'filename": "(core|benchmarks|compat|utils)/(.+/)?\K[^.]+')"
             done
+          ALL_CHANGES=$(echo "$ALL_CHANGES" | sed -e 's/,\+:\*\.$//g')
           echo $ALL_CHANGES
           fi
         name: check_coverage
