@@ -39,9 +39,8 @@ jobs:
                 break
               fi
           
-              COV_CLASSES=$(echo "$ANY" \
-                  | grep -oP 'core/src/main/java/(.+/)?\K.+(?=\.java)' \
-                  | tr '\n' ',' | sed -e 's/,/,+:*./g')
+              COV_CLASSES=$(echo "$ANY" | grep -oP 'core/src/main/java/(.+/)?\K.+(?=\.java)' \
+                | sed -e 's/^/+:*./g' | tr '\n' ',' )
           
               if [ ! -z "$COV_CLASSES" ]; then
                 ALL_CHANGES="${ALL_CHANGES}${COV_CLASSES}"
@@ -49,7 +48,7 @@ jobs:
               CHANGED_CORE_FILES="${CHANGED_CORE_FILES}$(echo "$ANY" \
                   | grep -oP 'filename": "(core|benchmarks|compat|utils)/(.+/)?\K[^.]+')"
             done
-          ALL_CHANGES=$(echo "$ALL_CHANGES" | sed -e 's/,\+:\*\.$//g')
+          ALL_CHANGES=$(echo "$ALL_CHANGES" | sed -e 's/,$//g')
           echo $ALL_CHANGES
           fi
         name: check_coverage
