@@ -25,18 +25,17 @@
 package io.questdb.cairo;
 
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.SimpleReadWriteLock;
 import org.jetbrains.annotations.NotNull;
-
-import java.util.concurrent.locks.StampedLock;
 
 public class CairoMetadata {
     private CharSequenceObjHashMap<CairoTable> tables;
     // used to protect the tables hashmap
-    private StampedLock tablesLock;
+    private SimpleReadWriteLock tablesLock; // consider StampedLock
 
     public CairoMetadata() {
         this.tables = new CharSequenceObjHashMap<>();
-        this.tablesLock = new StampedLock();
+        this.tablesLock = new SimpleReadWriteLock();
     }
 
     public CairoTable getTableQuick(@NotNull CharSequence tableName) {
@@ -48,16 +47,9 @@ public class CairoMetadata {
     }
 
     public CairoTable getTableQuiet(@NotNull CharSequence tableName) {
-        // try an optimistic read
-        long optimisticStamp = tablesLock.tryOptimisticRead();
-        CairoTable tbl = tables.get(tableName);
-        // check the read
-        if (!tablesLock.validate(optimisticStamp)) {
-            // upgrade the lock
-            final long upgradedStamp = tablesLock.readLock();
-            tbl = tables.get(tableName);
-            tablesLock.unlockRead(upgradedStamp);
-        }
+        tablesLock.readLock().lock();
+        final CairoTable tbl = tables.get(tableName);
+        tablesLock.readLock().unlock();
         return tbl;
     }
 
