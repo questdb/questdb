@@ -97,7 +97,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         argumentsAddress = 0;
         isTreeMapBuilt = false;
         // prepare for page frame iteration
-        super.toTop();
+        super.init();
     }
 
     @Override

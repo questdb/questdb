@@ -37,7 +37,6 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     private final Function filter;
     private final RowCursorFactory rowCursorFactory;
     private boolean areCursorsPrepared;
-    private int frameCount = 0;
     private boolean isSkipped;
     private RowCursor rowCursor;
 
@@ -132,11 +131,9 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         recordA.of(frameCursor);
         recordB.of(frameCursor);
         rowCursorFactory.init(frameCursor, sqlExecutionContext);
-        rowCursor = null;
-        areCursorsPrepared = false;
-        frameCount = 0;
+        toTop();
         // prepare for page frame iteration
-        super.toTop();
+        super.init();
     }
 
     @Override
@@ -196,10 +193,11 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         // page frame is null when table has no partitions so there's nothing to skip
         if (pageFrame != null) {
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-            rowCursor = rowCursorFactory.getCursor(pageFrame, frameMemory);
             // move to frame, rowlo doesn't matter
             recordA.init(frameMemory);
             recordA.setRowIndex(0);
+            rowCursor = rowCursorFactory.getCursor(pageFrame, frameMemory);
+            rowCursor.jumpTo(skipToPosition);
         }
     }
 
@@ -213,9 +211,9 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         if (filter != null) {
             filter.toTop();
         }
-        frameCursor.toTop();
-        frameCount = 0;
+        areCursorsPrepared = false;
         rowCursor = null;
         isSkipped = false;
+        super.toTop();
     }
 }

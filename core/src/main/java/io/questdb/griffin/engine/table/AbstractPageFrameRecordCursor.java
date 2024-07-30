@@ -93,7 +93,12 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
     public void toTop() {
         frameCount = 0;
         frameCursor.toTop();
+    }
+
+    protected void init() {
         frameAddressCache.clear();
         frameMemoryPool.of(frameAddressCache);
+        frameCount = 0;
+        frameCursor.toTop();
     }
 }

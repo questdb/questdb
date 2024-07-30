@@ -40,8 +40,8 @@ abstract class AbstractDescendingRecordListCursor extends AbstractPageFrameRecor
     protected final DirectLongList rows;
     protected SqlExecutionCircuitBreaker circuitBreaker;
     protected boolean isOpen;
-    private long index;
     private boolean isTreeMapBuilt;
+    private long rowIndex;
 
     public AbstractDescendingRecordListCursor(
             @NotNull CairoConfiguration configuration,
@@ -57,13 +57,13 @@ abstract class AbstractDescendingRecordListCursor extends AbstractPageFrameRecor
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
         if (!isTreeMapBuilt) {
             buildTreeMap();
-            index = rows.size() - 1;
+            rowIndex = rows.size() - 1;
             isTreeMapBuilt = true;
         }
 
-        if (index > -1) {
-            counter.add(index + 1);
-            index = -1;
+        if (rowIndex > -1) {
+            counter.add(rowIndex + 1);
+            rowIndex = -1;
         }
     }
 
@@ -77,11 +77,11 @@ abstract class AbstractDescendingRecordListCursor extends AbstractPageFrameRecor
     public boolean hasNext() {
         if (!isTreeMapBuilt) {
             buildTreeMap();
-            index = rows.size() - 1;
+            rowIndex = rows.size() - 1;
             isTreeMapBuilt = true;
         }
-        if (index > -1) {
-            long rowId = rows.get(index--);
+        if (rowIndex > -1) {
+            long rowId = rows.get(rowIndex--);
             frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), recordA);
             recordA.setRowIndex(Rows.toLocalRowID(rowId));
             return true;
@@ -103,7 +103,7 @@ abstract class AbstractDescendingRecordListCursor extends AbstractPageFrameRecor
         isTreeMapBuilt = false;
         isOpen = true;
         // prepare for page frame iteration
-        super.toTop();
+        super.init();
     }
 
     @Override
@@ -115,22 +115,22 @@ abstract class AbstractDescendingRecordListCursor extends AbstractPageFrameRecor
     public void skipRows(Counter rowCount) throws DataUnavailableException {
         if (!isTreeMapBuilt) {
             buildTreeMap();
-            index = rows.size() - 1;
+            rowIndex = rows.size() - 1;
             isTreeMapBuilt = true;
         }
 
-        if (index > -1) {
-            long rowsLeft = index + 1;
+        if (rowIndex > -1) {
+            long rowsLeft = rowIndex + 1;
             long rowsToSkip = Math.min(rowsLeft, rowCount.get());
 
             rowCount.dec(rowsToSkip);
-            index -= rowsToSkip;
+            rowIndex -= rowsToSkip;
         }
     }
 
     @Override
     public void toTop() {
-        index = rows.size() - 1;
+        rowIndex = rows.size() - 1;
     }
 
     abstract protected void buildTreeMap();

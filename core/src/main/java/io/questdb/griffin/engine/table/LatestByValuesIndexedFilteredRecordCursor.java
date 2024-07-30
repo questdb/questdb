@@ -93,7 +93,7 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
         keyCount = -1;
         isTreeMapBuilt = false;
         // prepare for page frame iteration
-        super.toTop();
+        super.init();
     }
 
     @Override

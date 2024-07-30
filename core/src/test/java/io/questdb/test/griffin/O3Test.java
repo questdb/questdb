@@ -1108,13 +1108,13 @@ public class O3Test extends AbstractO3Test {
                     TestUtils.assertSql(
                             compiler,
                             sqlExecutionContext,
-                            "select * from " + tableName + " limit -5",
+                            "select * from " + tableName + " limit -5,5",
                             sink,
                             "str\tts\n" +
                                     strColVal + "\t2022-02-24T00:51:43.301000Z\n" +
                                     strColVal + "\t2022-02-24T00:51:43.302000Z\n" +
-                                    "abcd\t2022-02-24T00:51:43.303000Z\n" +
                                     strColVal + "\t2022-02-24T00:51:43.303000Z\n" +
+                                    "abcd\t2022-02-24T00:51:43.303000Z\n" +
                                     strColVal + "\t2022-02-24T00:51:43.304000Z\n"
                     );
                 }, new TestFilesFacadeImpl() {
