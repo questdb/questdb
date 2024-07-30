@@ -10,6 +10,7 @@ jobs:
           PRID: $(System.PullRequest.PullRequestNumber)
         displayName: "Check changed files"
       - bash: |
+          set -eux
           echo $PRID
           if [[ $PRID =~ ^[0-9]+$ ]]; then
             PAGE=0
@@ -52,6 +53,7 @@ jobs:
               fi
               CHANGED_CORE_FILES="${CHANGED_CORE_FILES}$(echo $FILES | jq -r '.[].filename' | grep -oP 'filename": "(core|benchmarks|compat|utils)/*\/\K[^.]+')"
             done
+          echo $ALL_CHANGES
           fi
         name: check_coverage
         env:
