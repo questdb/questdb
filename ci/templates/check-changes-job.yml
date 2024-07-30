@@ -12,6 +12,7 @@ jobs:
       - bash: |
           set -eux
           echo $PRID
+          ALL_CHANGES=""
           if [[ $PRID =~ ^[0-9]+$ ]]; then
             PAGE=0
             while true; do
