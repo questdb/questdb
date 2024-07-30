@@ -25,18 +25,21 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 
-import static io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory.ShowColumnsCursor;
 import static io.questdb.griffin.engine.functions.catalogue.ShowTablesFunctionFactory.ShowTablesCursorFactory;
+import static io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory.ShowColumnsCursor;
+
 
 public class InformationSchemaColumnsFunctionFactory implements FunctionFactory {
     public static final RecordMetadata METADATA;
