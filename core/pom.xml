@@ -22,7 +22,8 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://maven.apache.org/POM/4.0.0"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <name>QuestDB</name>
     <description>QuestDB is high performance SQL time series database</description>
@@ -39,6 +40,16 @@
         <web.console.version>0.5.1</web.console.version>
         <qdbr.path>rust/qdbr</qdbr.path>
         <qdbr.release>false</qdbr.release>
+
+        <!--
+        For production builds, use -P qdbr-release
+        -->
+        <qdbr.failpoints>fail/failpoints</qdbr.failpoints>
+        <qdbr.rustflags>-D warnings</qdbr.rustflags>
+        <!--
+        Set -Dqdbr-test.phase=disabled to skip running Rust tests.
+        -->
+        <qdbr-test.phase>test</qdbr-test.phase>
     </properties>
 
     <version>8.1.1-SNAPSHOT</version>
@@ -81,6 +92,42 @@
 
     <build>
         <plugins>
+            <plugin>
+                <groupId>org.questdb</groupId>
+                <artifactId>rust-maven-plugin</artifactId>
+                <version>1.1.1</version>
+                <executions>
+                    <execution>
+                        <id>qdbr-build</id>
+                        <goals>
+                            <goal>build</goal>
+                        </goals>
+                        <configuration>
+                            <path>rust/qdbr</path>
+                            <release>${qdbr.release}</release>
+                            <copyTo>${project.build.directory}/classes/io/questdb/bin</copyTo>
+                            <copyWithPlatformDir>true</copyWithPlatformDir>
+                            <environmentVariables>
+                                <RUSTFLAGS>${qdbr.rustflags}</RUSTFLAGS>
+                            </environmentVariables>
+                            <features>
+                                <feature>${qdbr.failpoints}</feature>
+                            </features>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>qdb-ent-test</id>
+                        <goals>
+                            <goal>test</goal>
+                        </goals>
+                        <phase>${qdbr-test.phase}</phase>
+                        <configuration>
+                            <path>rust/qdb-ent</path>
+                            <release>${qdbr.release}</release>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
@@ -690,6 +737,20 @@
                     <scope>provided</scope>
                 </dependency>
             </dependencies>
+        </profile>
+        <profile>
+            <id>qdbr-release</id>
+            <properties>
+                <qdbr.release>true</qdbr.release>
+                <qdbr.failpoints/>
+            </properties>
+        </profile>
+        <profile>
+            <id>qdbr-coverage</id>
+            <properties>
+                <qdr.release>false</qdr.release>
+                <qdbr.rustflags>-D warnings -C instrument-coverage</qdbr.rustflags>
+            </properties>
         </profile>
     </profiles>
 

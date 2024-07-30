@@ -31,6 +31,36 @@ steps:
       destinationFolder: '$(build.sourcesdirectory)/maven'
     condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'))
 
+  - bash: |
+      set -eux
+      # Fetch and execute LLVM installation script
+      wget https://apt.llvm.org/llvm.sh
+      sudo bash llvm.sh
+      # CURRENT_LLVM_STABLE in the script tells which version it installed. Extract it from the script: 
+      export $(grep CURRENT_LLVM_STABLE= llvm.sh)
+      # ... and set a task variable to its value
+      echo "##vso[task.setvariable variable=LLVM_VERSION]$CURRENT_LLVM_STABLE"
+      # Install Cobertura
+      wget https://raw.githubusercontent.com/eriwen/lcov-to-cobertura-xml/master/lcov_cobertura/lcov_cobertura.py
+      chmod +x lcov_cobertura.py
+    displayName: "Install Rust coverage dependencies"
+    condition: |
+      eq(variables['testset'], 'coverage')
+
+  - script: |
+      set -eux
+      python3 ci/prepare_rust_env.py --export-cargo-install-env
+    displayName: "Ensure Rust is installed"
+    # Note, the `prepare_rust_env.py` script exports a number of variables.
+  - task: Cache@2
+    inputs:
+      key: '"cargo-registry" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)" | "$(LINUX_GLIBC_VERSION)" | **/Cargo.lock'
+      restoreKeys: |
+        "cargo-registry" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)" | "$(LINUX_GLIBC_VERSION)" | **/Cargo.lock
+        "cargo-registry" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)" | "$(LINUX_GLIBC_VERSION)"
+      path: $(CARGO_HOME)/registry
+    displayName: "Cache ~/.cargo/registry"
+
   - task: Maven@3
     displayName: "Compile with Maven"
     inputs:
@@ -38,12 +68,15 @@ steps:
       mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
+      goals: "compile"
       options:
-        "compile $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) $(MAVEN_RUN_OPTS)"
+        "$(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) -P qdbr-release $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     condition:
-      or(eq(variables['SOURCE_CODE_CHANGED'], 'false'), eq(variables['testset'],
-      'none'))
+      or(
+      eq(variables['testset'], 'none'),
+      eq(variables['SOURCE_CODE_CHANGED'], 'false')
+      )
   - task: Maven@3
     displayName: "Run tests"
     inputs:
@@ -66,6 +99,9 @@ steps:
         eq(variables['testset'], 'all'),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
+  - bash: echo "##vso[task.setvariable variable=LLVM_PROFILE_FILE]qdb-ent-junit.profraw"
+    displayName: "LLVM_PROFILE_FILE=qdb-ent-junit.profraw"
+    condition: eq(variables['testset'], 'coverage')
   - task: Maven@3
     displayName: "Run tests with Coverage"
     inputs:
@@ -75,9 +111,10 @@ steps:
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "test"
       options:
-        "--batch-mode --quiet -Dtest.include=$(includeTests)
+        "--batch-mode --quiet -Dtest.include=**/griffin/engine/table/parquet/**
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf 
+        -P qdbr-coverage
         $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
       codeCoverageToolOption: "$(CODE_COVERAGE_TOOL_OPTION)"
@@ -86,8 +123,77 @@ steps:
     condition: |
       and(
         eq(variables['testset'], 'coverage'),
-        eq(variables['SOURCE_CODE_CHANGED'], 'true')
+        or( 
+            eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
+            eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+        ), 
       )
+
+  - bash: |
+      set -eux
+      pushd core/rust/qdbr
+      RUSTFLAGS="-C instrument-coverage -D warnings" cargo build --tests
+      popd
+      QDBR_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdbr/debug/deps/qdbr-* -type f -executable)
+      export LLVM_PROFILE_FILE="qdbr-cargo-test.profraw"
+      $QDBR_TEST_BIN
+    displayName: "Run Rust tests for code coverage"
+    condition: |
+      and(
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+        eq(variables['testset'], 'coverage')
+      )
+  - bash: |
+      ## Produce the Rust coverage report
+      set -eux
+      export PATH=/usr/lib/llvm-$LLVM_VERSION/bin:$PATH
+
+      # Merge the raw Rust coverage reports
+      FROM_RUST_TEST=qdbr-cargo-test.profraw
+      FROM_JAVA_TEST=core/qdbr-junit.profraw
+      if [ ! -f $FROM_RUST_TEST ]; then
+        FROM_RUST_TEST=""
+      fi
+      if [ ! -f $FROM_JAVA_TEST ]; then
+        FROM_JAVA_TEST=""
+      fi
+      if [ -n "$FROM_RUST_TEST" -o -n "$FROM_JAVA_TEST" ]; then
+        llvm-profdata merge -sparse -o qdbr.profdata $FROM_RUST_TEST $FROM_JAVA_TEST
+      else
+        echo "LLVM profiling files not found"
+        ls -al
+        ls -al core
+        exit -1
+      fi
+
+      # Compile the merged coverage report into an HTML report
+      QDB_ENT_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdbr/debug/deps/qdbr-* -type f -executable)
+      llvm-cov show \
+        --format=html \
+        --output-dir=qdbr-coverage-report \
+        --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
+        --instr-profile=qdbr.profdata \
+        --object core/target/rust-maven-plugin/qdbr/debug/libqdbr.so \
+        --object $QDBR_TEST_BIN
+
+      # Export the merged coverage report to LCOV format
+      llvm-cov export \
+        --format=lcov \
+        --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
+        --instr-profile=qdbr.profdata \
+        --object core/target/rust-maven-plugin/qdbr/debug/libqdbr.so \
+        --object $QDBR_TEST_BIN > qdbr.lcov.dat
+
+      # Convert LCOV coverage results to Cobertura XML format
+      # https://www.collabora.com/news-and-blog/blog/2021/03/24/rust-integrating-llvm-source-base-code-coverage-with-gitlab/
+      python3 ./ci/lcov_cobertura.py qdbr.lcov.dat --output qdbr-coverage-report/cobertura.xml --base-dir core/rust/qdbr/src
+    displayName: "Generate Rust coverage report"
+    condition: |
+      and(
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+        eq(variables['testset'], 'coverage')
+      )
+
   - bash: |
       find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x" "$(ARCHIVED_CRASH_LOG)"' \;
     displayName: "Tests failed -- rename crash dump"
