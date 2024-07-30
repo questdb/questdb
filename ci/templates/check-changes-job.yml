@@ -13,6 +13,7 @@ jobs:
           set -eux
           echo $PRID
           ALL_CHANGES=""
+          CHANGED_CORE_FILES=""
           if [[ $PRID =~ ^[0-9]+$ ]]; then
             PAGE=0
             while true; do
