@@ -147,9 +147,9 @@ steps:
       pushd core/rust/qdbr
       RUSTFLAGS="-C instrument-coverage -D warnings" cargo build --tests
       popd
-      QDBR_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdbr/debug/deps/qdbr-* -type f -executable)
-      export LLVM_PROFILE_FILE="qdbr-cargo-test.profraw"
-      $QDBR_TEST_BIN
+      QUESTDBR_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdbr/debug/deps/questdbr-* -type f -executable)
+      export LLVM_PROFILE_FILE="questdbr-cargo-test.profraw"
+      $QUESTDBR_TEST_BIN
     displayName: "Run Rust tests for code coverage"
     condition: |
       and(
@@ -162,8 +162,8 @@ steps:
       export PATH=/usr/lib/llvm-$LLVM_VERSION/bin:$PATH
 
       # Merge the raw Rust coverage reports
-      FROM_RUST_TEST=qdbr-cargo-test.profraw
-      FROM_JAVA_TEST=core/qdbr-junit.profraw
+      FROM_RUST_TEST=questdbr-cargo-test.profraw
+      FROM_JAVA_TEST=core/questdbr-junit.profraw
       if [ ! -f $FROM_RUST_TEST ]; then
         FROM_RUST_TEST=""
       fi
@@ -171,7 +171,7 @@ steps:
         FROM_JAVA_TEST=""
       fi
       if [ -n "$FROM_RUST_TEST" -o -n "$FROM_JAVA_TEST" ]; then
-        llvm-profdata merge -sparse -o qdbr.profdata $FROM_RUST_TEST $FROM_JAVA_TEST
+        llvm-profdata merge -sparse -o questdbr.profdata $FROM_RUST_TEST $FROM_JAVA_TEST
       else
         echo "LLVM profiling files not found"
         ls -al
@@ -180,26 +180,26 @@ steps:
       fi
 
       # Compile the merged coverage report into an HTML report
-      QDB_ENT_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdbr/debug/deps/qdbr-* -type f -executable)
+      QDB_ENT_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdbr/debug/deps/questdbr-* -type f -executable)
       llvm-cov show \
         --format=html \
-        --output-dir=qdbr-coverage-report \
+        --output-dir=questdbr-coverage-report \
         --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
-        --instr-profile=qdbr.profdata \
-        --object core/target/rust-maven-plugin/qdbr/debug/libqdbr.so \
-        --object $QDBR_TEST_BIN
+        --instr-profile=questdbr.profdata \
+        --object core/target/rust-maven-plugin/qdbr/debug/libquestdbr.so \
+        --object $QUESTDBR_TEST_BIN
 
       # Export the merged coverage report to LCOV format
       llvm-cov export \
         --format=lcov \
         --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
-        --instr-profile=qdbr.profdata \
-        --object core/target/rust-maven-plugin/qdbr/debug/libqdbr.so \
-        --object $QDBR_TEST_BIN > qdbr.lcov.dat
+        --instr-profile=questdbr.profdata \
+        --object core/target/rust-maven-plugin/qdbr/debug/libquestdbr.so \
+        --object $QUESTDBR_TEST_BIN > questdbr.lcov.dat
 
       # Convert LCOV coverage results to Cobertura XML format
       # https://www.collabora.com/news-and-blog/blog/2021/03/24/rust-integrating-llvm-source-base-code-coverage-with-gitlab/
-      python3 ./ci/lcov_cobertura.py qdbr.lcov.dat --output qdbr-coverage-report/cobertura.xml --base-dir core/rust/qdbr/src
+      python3 ./ci/lcov_cobertura.py questdbr.lcov.dat --output questdbr-coverage-report/cobertura.xml --base-dir core/rust/qdbr/src
     displayName: "Generate Rust coverage report"
     condition: |
       and(
