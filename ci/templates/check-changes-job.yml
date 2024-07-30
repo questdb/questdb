@@ -25,7 +25,9 @@ jobs:
           while true; do
             PAGE=$((PAGE+1))
             echo PAGE $PAGE
+            set -e
             FILES=$(curl "https://api.github.com/repos/questdb/questdb/pulls/$PRID/files?per_page=100&page=$PAGE" -s)
+            set +e
             ANY=$(echo "$FILES" | grep '"filename":')
             if [ -z "$ANY" ]; then
               if [ -n "$COV_CLASSES" ]; then
