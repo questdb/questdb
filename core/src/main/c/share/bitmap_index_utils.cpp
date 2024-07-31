@@ -272,7 +272,7 @@ extern "C" {
 
 JNIEXPORT void JNICALL
 Java_io_questdb_std_BitmapIndexUtilsNative_latestScanBackward0(
-        JNIEnv * /*env*/,
+        JNIEnv */*env*/,
         jclass /*cl*/,
         jlong keysMemory,
         jlong keysMemorySize,

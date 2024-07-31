@@ -41,6 +41,7 @@ import org.junit.Test;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 
 public class GeoHashNativeTest extends AbstractCairoTest {
+
     @Test
     public void testIota() {
         final long N = 511;
@@ -100,6 +101,7 @@ public class GeoHashNativeTest extends AbstractCairoTest {
                         255,
                         0,
                         0,
+                        1,
                         indexReader.getValueBlockCapacity(),
                         -1,
                         0,

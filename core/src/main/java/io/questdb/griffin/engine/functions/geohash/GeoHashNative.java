@@ -42,22 +42,23 @@ public class GeoHashNative {
             long unIndexedNullCount,
             long maxValue,
             long minValue,
-            int frameIndex,
+            int invertedFrameIndex,
+            int frameCount,
             int blockValueCountMod,
             int geoHashColumnIndex,
             int geoHashColumnType,
             long prefixesAddress,
             long prefixesCount
     ) {
-        long hashColumnAddress = 0;
+        long geoHashColumnAddress = 0;
         // hashColumnIndex can be -1 for latest by part only (no prefixes to match)
         if (geoHashColumnIndex > -1) {
-            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-            hashColumnAddress = frameMemory.getPageAddress(geoHashColumnIndex);
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameCount - invertedFrameIndex - 1);
+            geoHashColumnAddress = frameMemory.getPageAddress(geoHashColumnIndex);
         }
 
         // -1 must be dead case here
-        final int hashColumnSize = ColumnType.isGeoHash(geoHashColumnType) ? getPow2SizeOfGeoHashType(geoHashColumnType) : -1;
+        final int geoHashColumnSize = ColumnType.isGeoHash(geoHashColumnType) ? getPow2SizeOfGeoHashType(geoHashColumnType) : -1;
 
         latestByAndFilterPrefix(
                 keysMemory,
@@ -68,10 +69,10 @@ public class GeoHashNative {
                 unIndexedNullCount,
                 maxValue,
                 minValue,
-                frameIndex,
+                invertedFrameIndex,
                 blockValueCountMod,
-                hashColumnAddress,
-                hashColumnSize,
+                geoHashColumnAddress,
+                geoHashColumnSize,
                 prefixesAddress,
                 prefixesCount
         );
@@ -92,7 +93,7 @@ public class GeoHashNative {
             long unIndexedNullCount,
             long maxValue,
             long minValue,
-            int frameIndex,
+            int invertedFrameIndex,
             int blockValueCountMod,
             long geoHashColumnAddress,
             int geoHashColumnSize,

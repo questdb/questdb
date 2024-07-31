@@ -242,11 +242,9 @@ public class ParallelLatestByTest extends AbstractTest {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final String expected = "a\tk\tb\n" +
-                "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
-                "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
-                "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
-                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
+        final String expected = "ts\tsym\tlon\tlat\tgeo\n" +
+                "1970-01-12T13:41:40.000000Z\tb\t74.35404787498278\t87.57691791453159\tgk1gj8\n" +
+                "1970-01-12T13:45:00.000000Z\tc\t96.30622421207782\t30.899377111184336\tmbx5c0\n";
 
         final String ddl = "create table x as " +
                 "(" +
@@ -259,8 +257,7 @@ public class ParallelLatestByTest extends AbstractTest {
                 " from long_sequence(10000)" +
                 "), index(sym) timestamp(ts) partition by DAY";
 
-        final String query = "select * from x where geo within(#gk1gj8) latest on ts partition by sym";
-        // "select * from x latest on ts partition by sym";
+        final String query = "select * from x where geo within(#gk1gj8, #mbx5c0) latest on ts partition by sym";
 
         assertQuery(compiler, sqlExecutionContext, expected, ddl, query);
     }
