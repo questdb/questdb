@@ -39,6 +39,7 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     private boolean areCursorsPrepared;
     private boolean isSkipped;
     private RowCursor rowCursor;
+    private long size;
 
     public PageFrameRecordCursorImpl(
             CairoConfiguration configuration,
@@ -134,6 +135,7 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         areCursorsPrepared = false;
         rowCursor = null;
         isSkipped = false;
+        size = -1;
         // prepare for page frame iteration
         super.init();
     }
@@ -141,6 +143,10 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     @Override
     public long size() {
         if (entityCursor) {
+            if (size != -1) {
+                return size;
+            }
+
             try {
                 // TODO(puzpuzpuz): this may mmap column files; consider keeping data frame-based size calculation here
                 frameCursor.toTop();
@@ -149,6 +155,7 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
                 while ((pageFrame = frameCursor.next()) != null) {
                     size += pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
                 }
+                this.size = size;
                 return size;
             } finally {
                 frameCursor.toTop();
