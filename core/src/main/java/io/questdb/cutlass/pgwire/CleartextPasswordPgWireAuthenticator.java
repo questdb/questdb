@@ -408,7 +408,7 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
         // at this point we have a full message available ready to be processed
         recvBufReadPos += 1 + Integer.BYTES; // first move beyond the msgType and msgLen
 
-        long hi = PGConnectionContext.getStringLength(recvBufReadPos, msgLimit, "bad password length");
+        long hi = PGConnectionContext.getUtf8StrSize(recvBufReadPos, msgLimit, "bad password length");
         if (matcher.verifyPassword(username, recvBufReadPos, (int) (hi - recvBufReadPos))) {
             recvBufReadPos = msgLimit;
             state = State.AUTH_SUCCESS;
@@ -427,9 +427,9 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
         // there is an extra byte at the end, and it has to be 0
         while (lo < msgLimit - 1) {
             final long nameLo = lo;
-            final long nameHi = PGConnectionContext.getStringLength(lo, msgLimit, "malformed property name");
+            final long nameHi = PGConnectionContext.getUtf8StrSize(lo, msgLimit, "malformed property name");
             final long valueLo = nameHi + 1;
-            final long valueHi = PGConnectionContext.getStringLength(valueLo, msgLimit, "malformed property value");
+            final long valueHi = PGConnectionContext.getUtf8StrSize(valueLo, msgLimit, "malformed property value");
             lo = valueHi + 1;
 
             // store user
