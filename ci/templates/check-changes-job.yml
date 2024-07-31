@@ -30,7 +30,7 @@ jobs:
             set +e
             ANY=$(echo "$FILES" | grep '"filename":')
             if [ -z "$ANY" ]; then
-              set -x
+              set +x
               if [ -n "$COV_CLASSES" ]; then
                 COV_CLASSES=$(echo "$COV_CLASSES" | sed -e 's/,$//g')
                 COVERAGE_TOOL='JaCoCo'
