@@ -98,7 +98,7 @@ stages:
           and(
             eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
             eq(variables['System.PullRequest.IsFork'], 'false')
-          ),
+          )
         steps:
           - checkout: self
             fetchDepth: 1
