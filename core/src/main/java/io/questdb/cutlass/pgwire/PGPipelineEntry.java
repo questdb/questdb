@@ -49,7 +49,6 @@ public class PGPipelineEntry implements QuietCloseable {
     private final IntList msgBindSelectFormatCodes = new IntList();
     private AlterOperation alterOp = null;
     private boolean empty;
-    private boolean executedFromNew = false;
     // this is a "union", so should only be one, depending on SQL type
     // SELECT or EXPLAIN
     private RecordCursorFactory factory = null;
@@ -58,11 +57,12 @@ public class PGPipelineEntry implements QuietCloseable {
     private int msgBindParameterValueCount;
     // types are sent to us via "parse" message
     private IntList msgParseParameterTypes = new IntList();
-    private boolean named = false;
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private IntList pgResultSetColumnTypes;
-    private boolean shouldCache = false;
-    private long sqlRowCount = 0;
+    private boolean portal = false;
+    private boolean preparedStatement = false;
+    private long sqlAffectedRowCount = 0;
+    private long sqlReturnRowCountLimit = 0;
     private CharSequence sqlTag = null;
     private CharSequence sqlText = null;
     private boolean sqlTextHasSecret = false;
@@ -72,10 +72,104 @@ public class PGPipelineEntry implements QuietCloseable {
     private TypesAndUpdate tau = null;
     private UpdateOperation updateOp = null;
     private String updateOpSql = null;
+    private boolean cacheHit = false;
+    private RecordCursor cursor;
 
     @Override
     public void close() {
+    }
 
+    public void execute(SqlExecutionContext executionContext) throws SqlException {
+        // todo: we must not throw exception as this step, instead we must cache the outcome and
+        //     send it when the client is ready to receive
+        switch (this.sqlType) {
+            case CompiledQuery.CREATE_TABLE_AS_SELECT:
+                //  nothing to do, this SQL executes at compilation
+                break;
+            case CompiledQuery.EXPLAIN:
+            case CompiledQuery.SELECT:
+            case CompiledQuery.PSEUDO_SELECT:
+                if (cursor == null) {
+                    executionContext.getCircuitBreaker().resetTimer();
+                    executionContext.setCacheHit(cacheHit);
+                    try {
+                        cursor = factory.getCursor(executionContext);
+                        // cache random if it was replaced
+                        rnd = executionContext.getRandom();
+                    } catch (TableReferenceOutOfDateException e) {
+                        // We cannot simply recompile SQL at this stage because
+                        // we have a bunch of other things, like bind variables,
+                        // client supplied types, flags etc. All of this might just
+                        // go out of sync leading to non-deterministic outcome.
+                        //
+                        // Instead of recompiling however, we can just "un-cache" the SQL
+                        tas = Misc.free(tas);
+                        factory = null;
+                        throw e;
+                    }
+                }
+                break;
+            case CompiledQuery.INSERT:
+                this.insertOp = cq.getInsertOperation();
+                tai = taiPool.pop();
+                // todo: check why TypeAndSelect has separate method for copying types from BindVariableService
+                tai.of(insertOp, executionContext.getBindVariableService());
+                if (executionContext.getBindVariableService().getIndexedVariableCount() > 0) {
+                    // TypeAndInsert cache is connection local, we decide to cache insert if it has
+                    // bind variables.
+                    taiCache.put(sqlText, tai);
+                }
+                sqlTag = TAG_INSERT;
+                break;
+            case CompiledQuery.UPDATE:
+                this.updateOp = cq.getUpdateOperation();
+                this.updateOpSql = cq.getSqlStatement();
+
+                tau = tauPool.pop();
+                tau.of(cq, executionContext.getBindVariableService());
+                if (executionContext.getBindVariableService().getIndexedVariableCount() > 0) {
+                    // TypeAndUpdate cache is connection local, we decide to cache insert if it has
+                    // bind variables.
+                    tauCache.put(sqlText, tau);
+                }
+                sqlTag = TAG_UPDATE;
+                break;
+            case CompiledQuery.INSERT_AS_SELECT:
+                this.insertOp = cq.getInsertOperation();
+                sqlTag = TAG_INSERT_AS_SELECT;
+                break;
+            case CompiledQuery.SET:
+                sqlTag = TAG_SET;
+                break;
+            case CompiledQuery.DEALLOCATE:
+                sqlTag = TAG_DEALLOCATE;
+                break;
+            case CompiledQuery.BEGIN:
+                sqlTag = TAG_BEGIN;
+                break;
+            case CompiledQuery.COMMIT:
+                sqlTag = TAG_COMMIT;
+                break;
+            case CompiledQuery.ROLLBACK:
+                sqlTag = TAG_ROLLBACK;
+                break;
+            case CompiledQuery.ALTER_USER:
+                sqlTextHasSecret = executionContext.containsSecret();
+                sqlTag = TAG_ALTER_ROLE;
+                break;
+            case CompiledQuery.CREATE_USER:
+                sqlTextHasSecret = executionContext.containsSecret();
+                sqlTag = TAG_CREATE_ROLE;
+                break;
+            case CompiledQuery.ALTER:
+                // future-proofing ALTER execution
+                this.alterOp = cq.getAlterOperation();
+                // fall through
+            default:
+                // DDL
+                sqlTag = TAG_OK;
+                break;
+        }
     }
 
     public int getMsgParseParameterTypeCount() {
@@ -90,8 +184,12 @@ public class PGPipelineEntry implements QuietCloseable {
         return empty;
     }
 
-    public boolean isNamed() {
-        return named;
+    public boolean isPortal() {
+        return portal;
+    }
+
+    public boolean isPreparedStatement() {
+        return preparedStatement;
     }
 
     public boolean lookup(
@@ -109,14 +207,17 @@ public class PGPipelineEntry implements QuietCloseable {
         // select factory to be used by another thread concurrently
         if (tai != null) {
             tai.defineBindVariables(bindVariableService);
+            insertOp = tai.getInsert();
             sqlTag = TAG_INSERT;
             return true;
         }
 
-        tau = tauCache.poll(sqlText);
+        tau = tauCache.peek(sqlText);
 
         if (tau != null) {
             tau.defineBindVariables(bindVariableService);
+            updateOp = tau.getCompiledQuery().getUpdateOperation();
+            updateOpSql = tau.getCompiledQuery().getSqlStatement();
             sqlTag = TAG_UPDATE;
             return true;
         }
@@ -126,6 +227,7 @@ public class PGPipelineEntry implements QuietCloseable {
         if (tas != null) {
             // cache hit, define bind variables
             tas.defineBindVariables(bindVariableService);
+            factory = tas.getFactory();
             sqlTag = TAG_SELECT;
             return true;
         }
@@ -138,10 +240,10 @@ public class PGPipelineEntry implements QuietCloseable {
         if (formatCodeCount > 0) {
             if (formatCodeCount == 1) {
                 // same format applies to all parameters
-                mergeParameterTypesAndFormatCodesOneForAll(lo, msgLimit);
+                msgBindMergeParameterTypesAndFormatCodesOneForAll(lo, msgLimit);
             } else if (msgParseParameterTypes.size() > 0) {
                 //client doesn't need to specify types in Parse message and can use those returned in ParameterDescription
-                mergeParameterTypesAndFormatCodes(lo, msgLimit, formatCodeCount);
+                msgBindMergeParameterTypesAndFormatCodes(lo, msgLimit, formatCodeCount);
             }
         }
     }
@@ -250,12 +352,52 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
-    public void of(CharSequence sqlText) {
+    public void of(
+            CharSequence sqlText,
+            CairoEngine engine,
+            SqlExecutionContext executionContext,
+            SimpleAssociativeCache<TypesAndInsert> taiCache,
+            SimpleAssociativeCache<TypesAndUpdate> tauCache,
+            AssociativeCache<TypesAndSelect> tasCache,
+            WeakSelfReturningObjectPool<TypesAndInsert> taiPool,
+            WeakSelfReturningObjectPool<TypesAndUpdate> tauPool
+    ) throws SqlException {
         this.sqlText = sqlText;
         this.empty = sqlText == null || sqlText.length() == 0;
+        cacheHit = true;
+        if (!empty) {
+            // try insert, peek because this is our private cache,
+            // and we do not want to remove statement from it
+            if (
+                    !lookup(
+                            taiCache,
+                            tauCache,
+                            tasCache,
+                            executionContext.getBindVariableService()
+                    )
+            ) {
+                cacheHit = false;
+                parseNew(
+                        engine,
+                        executionContext,
+                        taiPool,
+                        tauPool,
+                        taiCache,
+                        tauCache
+                );
+            }
+            buildResultSetColumnTypes();
+        }
     }
 
-    public void parseNew(CairoEngine engine, SqlExecutionContext executionContext) throws SqlException {
+    private void parseNew(
+            CairoEngine engine,
+            SqlExecutionContext executionContext,
+            WeakSelfReturningObjectPool<TypesAndInsert> taiPool,
+            WeakSelfReturningObjectPool<TypesAndUpdate> tauPool,
+            SimpleAssociativeCache<TypesAndInsert> taiCache,
+            SimpleAssociativeCache<TypesAndUpdate> tauCache
+    ) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             CompiledQuery cq = compiler.compile(sqlText, executionContext);
 
@@ -266,29 +408,59 @@ public class PGPipelineEntry implements QuietCloseable {
             switch (cq.getType()) {
                 case CompiledQuery.CREATE_TABLE_AS_SELECT:
                     sqlTag = TAG_CTAS;
-                    sqlRowCount = cq.getAffectedRowsCount();
+                    sqlAffectedRowCount = cq.getAffectedRowsCount();
                     break;
                 case CompiledQuery.EXPLAIN:
                     this.factory = cq.getRecordCursorFactory();
-                    msgParseBuildResultSetColumnTypes();
+                    // After parsing SQL text the bind variable service contains types of the variables
+                    // the compiler could work out. Caching SQL plan involved not recompiling SQL text over
+                    // and over. For that reason the types of the bind variables will have to be
+                    // preserved when SQL factory is taken from cache and reused. This is what
+                    // TypesAndSelect is for.
+
+                    // SQL cache is global and multithreaded. For that reason we must
+                    // move "tas" into the cache only when the current context is guaranteed not
+                    // to use it.
+                    tas = new TypesAndSelect(this.factory);
+                    tas.copyTypesFrom(executionContext.getBindVariableService());
                     sqlTag = TAG_EXPLAIN;
                 case CompiledQuery.SELECT:
                     this.factory = cq.getRecordCursorFactory();
-                    msgParseBuildResultSetColumnTypes();
+                    tas = new TypesAndSelect(this.factory);
+                    tas.copyTypesFrom(executionContext.getBindVariableService());
                     sqlTag = TAG_SELECT;
                     break;
                 case CompiledQuery.PSEUDO_SELECT:
+                    // the PSEUDO_SELECT comes from a "copy" SQL, which is why
+                    // we do not intend to cache it. The fact we don't have
+                    // TypesAndSelect instance here should be enough to tell the
+                    // system not to cache.
                     this.factory = cq.getRecordCursorFactory();
-                    msgParseBuildResultSetColumnTypes();
                     sqlTag = TAG_PSEUDO_SELECT;
                     break;
                 case CompiledQuery.INSERT:
                     this.insertOp = cq.getInsertOperation();
+                    tai = taiPool.pop();
+                    // todo: check why TypeAndSelect has separate method for copying types from BindVariableService
+                    tai.of(insertOp, executionContext.getBindVariableService());
+                    if (executionContext.getBindVariableService().getIndexedVariableCount() > 0) {
+                        // TypeAndInsert cache is connection local, we decide to cache insert if it has
+                        // bind variables.
+                        taiCache.put(sqlText, tai);
+                    }
                     sqlTag = TAG_INSERT;
                     break;
                 case CompiledQuery.UPDATE:
                     this.updateOp = cq.getUpdateOperation();
                     this.updateOpSql = cq.getSqlStatement();
+
+                    tau = tauPool.pop();
+                    tau.of(cq, executionContext.getBindVariableService());
+                    if (executionContext.getBindVariableService().getIndexedVariableCount() > 0) {
+                        // TypeAndUpdate cache is connection local, we decide to cache insert if it has
+                        // bind variables.
+                        tauCache.put(sqlText, tau);
+                    }
                     sqlTag = TAG_UPDATE;
                     break;
                 case CompiledQuery.INSERT_AS_SELECT:
@@ -369,8 +541,16 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
-    public void setNamed(boolean named) {
-        this.named = named;
+    public void setPortal(boolean portal) {
+        this.portal = portal;
+    }
+
+    public void setPreparedStatement(boolean preparedStatement) {
+        this.preparedStatement = preparedStatement;
+    }
+
+    public void setReturnRowCountLimit(int rowCountLimit) {
+        this.sqlReturnRowCountLimit = rowCountLimit;
     }
 
     private static void ensureValueLength(int variableIndex, int sizeRequired, int sizeActual) throws BadProtocolException {
@@ -512,26 +692,6 @@ public class PGPipelineEntry implements QuietCloseable {
         bindVariableService.setUuid(variableIndex, lo, hi);
     }
 
-    private void mergeParameterTypesAndFormatCodes(long lo, long msgLimit, short parameterFormatCount) throws BadProtocolException {
-        if (lo + Short.BYTES * parameterFormatCount <= msgLimit) {
-            LOG.debug().$("processing bind formats [count=").$(parameterFormatCount).I$();
-            for (int i = 0; i < parameterFormatCount; i++) {
-                final short code = getShortUnsafe(lo + i * Short.BYTES);
-                msgParseParameterTypes.setQuick(i, toParamBinaryType(code, msgParseParameterTypes.getQuick(i)));
-            }
-        } else {
-            LOG.error().$("invalid format code count [value=").$(parameterFormatCount).I$();
-            throw BadProtocolException.INSTANCE;
-        }
-    }
-
-    private void mergeParameterTypesAndFormatCodesOneForAll(long lo, long msgLimit) throws BadProtocolException {
-        short code = getShort(lo, msgLimit, "could not read parameter formats");
-        for (int i = 0, n = msgParseParameterTypes.size(); i < n; i++) {
-            msgParseParameterTypes.setQuick(i, toParamBinaryType(code, msgParseParameterTypes.getQuick(i)));
-        }
-    }
-
     private long msgBindDefineBindVariablesAsStrings(
             long lo,
             long msgLimit,
@@ -657,16 +817,37 @@ public class PGPipelineEntry implements QuietCloseable {
         return lo;
     }
 
-    // todo: this is required for "describe" and "sync" - may be we're building this too soon?
-    private void msgParseBuildResultSetColumnTypes() {
-        final RecordMetadata m = factory.getMetadata();
-        final int columnCount = m.getColumnCount();
-        pgResultSetColumnTypes.setPos(2 * columnCount);
-        for (int i = 0; i < columnCount; i++) {
-            final int columnType = m.getColumnType(i);
-            pgResultSetColumnTypes.setQuick(2 * i, columnType);
-            // the extra values stored here are used to render geo-hashes as strings
-            pgResultSetColumnTypes.setQuick(2 * i + 1, GeoHashes.getBitFlags(columnType));
+    private void msgBindMergeParameterTypesAndFormatCodes(long lo, long msgLimit, short parameterFormatCount) throws BadProtocolException {
+        if (lo + Short.BYTES * parameterFormatCount <= msgLimit) {
+            LOG.debug().$("processing bind formats [count=").$(parameterFormatCount).I$();
+            for (int i = 0; i < parameterFormatCount; i++) {
+                final short code = getShortUnsafe(lo + i * Short.BYTES);
+                msgParseParameterTypes.setQuick(i, toParamBinaryType(code, msgParseParameterTypes.getQuick(i)));
+            }
+        } else {
+            LOG.error().$("invalid format code count [value=").$(parameterFormatCount).I$();
+            throw BadProtocolException.INSTANCE;
+        }
+    }
+
+    private void msgBindMergeParameterTypesAndFormatCodesOneForAll(long lo, long msgLimit) throws BadProtocolException {
+        short code = getShort(lo, msgLimit, "could not read parameter formats");
+        for (int i = 0, n = msgParseParameterTypes.size(); i < n; i++) {
+            msgParseParameterTypes.setQuick(i, toParamBinaryType(code, msgParseParameterTypes.getQuick(i)));
+        }
+    }
+
+    private void buildResultSetColumnTypes() {
+        if (factory != null) {
+            final RecordMetadata m = factory.getMetadata();
+            final int columnCount = m.getColumnCount();
+            pgResultSetColumnTypes.setPos(2 * columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                final int columnType = m.getColumnType(i);
+                pgResultSetColumnTypes.setQuick(2 * i, columnType);
+                // the extra values stored here are used to render geo-hashes as strings
+                pgResultSetColumnTypes.setQuick(2 * i + 1, GeoHashes.getBitFlags(columnType));
+            }
         }
     }
 }
