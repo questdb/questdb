@@ -188,6 +188,9 @@ steps:
       set -eux
       export PATH=/usr/lib/llvm-$LLVM_VERSION/bin:$PATH
       
+      ls -al /usr/lib
+      ls -al /usr/lib/llvm-$LLVM_VERSION
+      ls -al /usr/lib/llvm-$LLVM_VERSION/bin
       find . -name \*.profraw
 
       # Merge the raw Rust coverage reports
