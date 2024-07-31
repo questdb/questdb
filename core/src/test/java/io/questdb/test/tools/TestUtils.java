@@ -371,7 +371,7 @@ public final class TestUtils {
         }
 
         if (expected != null && actual == null) {
-            Assert.fail("Expected: \n`" + expected + "`\nbut have NULL");
+            Assert.fail("Expected: \n`" + expected + "`\nbut have NULL. ");
         }
 
         if (expected == null) {
@@ -387,7 +387,7 @@ public final class TestUtils {
         String expectedStr = sink.toString();
         sink.clear();
         Utf8s.utf8ToUtf16(actual, sink);
-        assertEquals(null, expectedStr, sink);
+        assertEquals(expectedStr, sink);
     }
 
     public static void assertEquals(CharSequence expected, CharSequence actual) {
