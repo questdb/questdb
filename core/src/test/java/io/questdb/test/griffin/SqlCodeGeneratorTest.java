@@ -1271,33 +1271,31 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select * from x where b in (select list('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and test_match()",
-                    "create table x as " +
-                            "(" +
-                            "select" +
-                            " rnd_double(0)*100 a," +
-                            " rnd_symbol(5,4,4,1) b," +
-                            " timestamp_sequence(0, 100000000000) k" +
-                            " from" +
-                            " long_sequence(20)" +
-                            "),index(b) timestamp(k) partition by DAY",
-                    "k",
-                    "insert into x select * from (" +
-                            "select" +
-                            " rnd_double(0)*100," +
-                            " 'ABC'," +
-                            " to_timestamp('1971', 'yyyy') t" +
-                            " from long_sequence(1)" +
-                            ") timestamp(t)",
-                    expected +
-                            "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n",
-                    true
-            );
-            Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
-        });
+        assertQuery(
+                expected,
+                "select * from x where b in (select list('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and test_match()",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "),index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'ABC'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                expected +
+                        "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n",
+                true
+        );
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -1578,45 +1576,43 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testFilterOnValuesAndFilter() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    "a\tb\tk\n" +
-                            "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
-                            "32.881769076795045\t\t1970-01-01T01:23:20.000000Z\n" +
-                            "12.026122412833129\tHYRX\t1970-01-01T02:30:00.000000Z\n" +
-                            "26.922103479744898\t\t1970-01-01T03:03:20.000000Z\n" +
-                            "49.00510449885239\tPEHN\t1970-01-01T04:10:00.000000Z\n" +
-                            "45.6344569609078\t\t1970-01-01T05:00:00.000000Z\n" +
-                            "40.455469747939254\t\t1970-01-01T05:16:40.000000Z\n",
-                    "select * from x o where o.b in ('HYRX','PEHN', null) and a < 50 and test_match()",
-                    "create table x as (" +
-                            "select" +
-                            " rnd_double(0)*100 a," +
-                            " rnd_symbol(5,4,4,1) b," +
-                            " timestamp_sequence(0, 1000000000) k" +
-                            " from long_sequence(20)" +
-                            ")," +
-                            " index(b)",
-                    null,
-                    "insert into x (a,b)" +
-                            " select" +
-                            " rnd_double(0)*100," +
-                            " rnd_symbol(5,4,4,1)" +
-                            " from" +
-                            " long_sequence(10)",
-                    "a\tb\tk\n" +
-                            "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
-                            "32.881769076795045\t\t1970-01-01T01:23:20.000000Z\n" +
-                            "12.026122412833129\tHYRX\t1970-01-01T02:30:00.000000Z\n" +
-                            "26.922103479744898\t\t1970-01-01T03:03:20.000000Z\n" +
-                            "49.00510449885239\tPEHN\t1970-01-01T04:10:00.000000Z\n" +
-                            "45.6344569609078\t\t1970-01-01T05:00:00.000000Z\n" +
-                            "40.455469747939254\t\t1970-01-01T05:16:40.000000Z\n" +
-                            "44.80468966861358\t\t\n",
-                    true
-            );
-            Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
-        });
+        assertQuery(
+                "a\tb\tk\n" +
+                        "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                        "32.881769076795045\t\t1970-01-01T01:23:20.000000Z\n" +
+                        "12.026122412833129\tHYRX\t1970-01-01T02:30:00.000000Z\n" +
+                        "26.922103479744898\t\t1970-01-01T03:03:20.000000Z\n" +
+                        "49.00510449885239\tPEHN\t1970-01-01T04:10:00.000000Z\n" +
+                        "45.6344569609078\t\t1970-01-01T05:00:00.000000Z\n" +
+                        "40.455469747939254\t\t1970-01-01T05:16:40.000000Z\n",
+                "select * from x o where o.b in ('HYRX','PEHN', null) and a < 50 and test_match()",
+                "create table x as (" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 1000000000) k" +
+                        " from long_sequence(20)" +
+                        ")," +
+                        " index(b)",
+                null,
+                "insert into x (a,b)" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " rnd_symbol(5,4,4,1)" +
+                        " from" +
+                        " long_sequence(10)",
+                "a\tb\tk\n" +
+                        "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                        "32.881769076795045\t\t1970-01-01T01:23:20.000000Z\n" +
+                        "12.026122412833129\tHYRX\t1970-01-01T02:30:00.000000Z\n" +
+                        "26.922103479744898\t\t1970-01-01T03:03:20.000000Z\n" +
+                        "49.00510449885239\tPEHN\t1970-01-01T04:10:00.000000Z\n" +
+                        "45.6344569609078\t\t1970-01-01T05:00:00.000000Z\n" +
+                        "40.455469747939254\t\t1970-01-01T05:16:40.000000Z\n" +
+                        "44.80468966861358\t\t\n",
+                true
+        );
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -1692,23 +1688,21 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         final String expected = "a\tb\n" +
                 "52.98405941762054\tHYRX\n" +
                 "72.30015763133606\tHYRX\n";
-        assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select * from x where b = 'HYRX' and a > 41 and test_match()",
-                    "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,0) b from long_sequence(20)), index(b)",
-                    null,
-                    "insert into x select" +
-                            " rnd_double(0)*100," +
-                            " 'HYRX'" +
-                            " from long_sequence(2)",
-                    expected +
-                            "75.88175403454873\tHYRX\n" +
-                            "57.78947915182423\tHYRX\n",
-                    true
-            );
-            Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
-        });
+        assertQuery(
+                expected,
+                "select * from x where b = 'HYRX' and a > 41 and test_match()",
+                "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,0) b from long_sequence(20)), index(b)",
+                null,
+                "insert into x select" +
+                        " rnd_double(0)*100," +
+                        " 'HYRX'" +
+                        " from long_sequence(2)",
+                expected +
+                        "75.88175403454873\tHYRX\n" +
+                        "57.78947915182423\tHYRX\n",
+                true
+        );
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test

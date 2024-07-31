@@ -131,7 +131,9 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         recordA.of(frameCursor);
         recordB.of(frameCursor);
         rowCursorFactory.init(frameCursor, sqlExecutionContext);
-        toTop();
+        areCursorsPrepared = false;
+        rowCursor = null;
+        isSkipped = false;
         // prepare for page frame iteration
         super.init();
     }
