@@ -4274,38 +4274,36 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByMissingKeyValuesIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertMemoryLeak(() -> {
-            assertQuery(
-                    "a\tb\tk\n" +
-                            "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n",
-                    "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b",
-                    "create table x as " +
-                            "(" +
-                            "select" +
-                            " rnd_double(0)*100 a," +
-                            " rnd_symbol(5,4,4,1) b," +
-                            " timestamp_sequence(0, 10000000000) k" +
-                            " from" +
-                            " long_sequence(300)" +
-                            "), index(b) timestamp(k) partition by DAY",
-                    "k",
-                    "insert into x select * from (" +
-                            "select" +
-                            " 88.1," +
-                            " 'XYZ'," +
-                            " to_timestamp('1971', 'yyyy') t" +
-                            " from long_sequence(1)" +
-                            ") timestamp(t)",
-                    "a\tb\tk\n" +
-                            "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n" +
-                            "88.1\tXYZ\t1971-01-01T00:00:00.000000Z\n",
-                    true,
-                    true,
-                    false
-            );
-            // good
-            Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
-        });
+        assertQuery(
+                "a\tb\tk\n" +
+                        "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n",
+                "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 10000000000) k" +
+                        " from" +
+                        " long_sequence(300)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " 88.1," +
+                        " 'XYZ'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tk\n" +
+                        "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n" +
+                        "88.1\tXYZ\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                false
+        );
+        // good
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test

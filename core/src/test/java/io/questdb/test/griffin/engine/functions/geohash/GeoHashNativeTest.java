@@ -101,7 +101,6 @@ public class GeoHashNativeTest extends AbstractCairoTest {
                         255,
                         0,
                         0,
-                        1,
                         indexReader.getValueBlockCapacity(),
                         -1,
                         0,

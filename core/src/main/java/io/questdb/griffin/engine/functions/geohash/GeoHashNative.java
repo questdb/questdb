@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.geohash;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.std.Rows;
 
 public class GeoHashNative {
 
@@ -42,8 +43,7 @@ public class GeoHashNative {
             long unIndexedNullCount,
             long maxValue,
             long minValue,
-            int invertedFrameIndex,
-            int frameCount,
+            int frameIndex,
             int blockValueCountMod,
             int geoHashColumnIndex,
             int geoHashColumnType,
@@ -53,7 +53,7 @@ public class GeoHashNative {
         long geoHashColumnAddress = 0;
         // hashColumnIndex can be -1 for latest by part only (no prefixes to match)
         if (geoHashColumnIndex > -1) {
-            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameCount - invertedFrameIndex - 1);
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
             geoHashColumnAddress = frameMemory.getPageAddress(geoHashColumnIndex);
         }
 
@@ -69,7 +69,9 @@ public class GeoHashNative {
                 unIndexedNullCount,
                 maxValue,
                 minValue,
-                invertedFrameIndex,
+                // Invert page frame indexes, so that they grow asc in time order.
+                // That's to be able to do post-processing (sorting) of the result set.
+                Rows.MAX_SAFE_PARTITION_INDEX - frameIndex,
                 blockValueCountMod,
                 geoHashColumnAddress,
                 geoHashColumnSize,

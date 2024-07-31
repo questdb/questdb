@@ -79,7 +79,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             // We added 1 on cpp side.
             final long rowId = rows.get(aIndex++) - 1;
             // We inverted frame indexes when posting tasks.
-            final int frameIndex = frameCount - Rows.toPartitionIndex(rowId) - 1;
+            final int frameIndex = Rows.MAX_SAFE_PARTITION_INDEX - Rows.toPartitionIndex(rowId);
             frameMemoryPool.navigateTo(frameIndex, recordA);
             recordA.setRowIndex(Rows.toLocalRowID(rowId));
             return true;
@@ -197,9 +197,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 frameAddressCache.add(frameCount++, frame);
             }
 
-            // Invert page frame indexes, so that they grow asc in time order.
-            // That's to be able to do later post-processing (sorting) of the result set.
-            int invertedFrameIndex = frameCount - 1;
+            int frameIndex = 0;
             frameCursor.toTop();
             while ((frame = frameCursor.next()) != null && foundRowCount < keyCount) {
                 doneLatch.reset();
@@ -240,8 +238,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                                 unIndexedNullCount,
                                 partitionHi,
                                 partitionLo,
-                                invertedFrameIndex,
-                                frameCount,
+                                frameIndex,
                                 valueBlockCapacity,
                                 geoHashColumnIndex,
                                 geoHashColumnType,
@@ -259,8 +256,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                                 unIndexedNullCount,
                                 partitionHi,
                                 partitionLo,
-                                invertedFrameIndex,
-                                frameCount,
+                                frameIndex,
                                 valueBlockCapacity,
                                 geoHashColumnIndex,
                                 geoHashColumnType,
@@ -293,7 +289,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                     foundRowCount += LatestByArguments.getRowsSize(address);
                 }
 
-                invertedFrameIndex--;
+                frameIndex++;
             }
         } catch (DataUnavailableException e) {
             // We're not yet done, so no need to cancel the circuit breaker. 

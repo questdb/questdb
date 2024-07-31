@@ -74,7 +74,9 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
         }
         if (index < lim) {
             long rowId = rows.get(index++);
-            frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), recordA);
+            // We inverted frame indexes when posting tasks.
+            final int frameIndex = Rows.MAX_SAFE_PARTITION_INDEX - Rows.toPartitionIndex(rowId);
+            frameMemoryPool.navigateTo(frameIndex, recordA);
             recordA.setRowIndex(Rows.toLocalRowID(rowId));
             return true;
         }
@@ -147,15 +149,18 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
             frameAddressCache.add(frameCount, frame);
             frameMemoryPool.navigateTo(frameCount++, recordA);
 
+            // Invert page frame indexes, so that they grow asc in time order.
+            // That's to be able to do post-processing (sorting) of the result set.
+            final int invertedFrameIndex = Rows.MAX_SAFE_PARTITION_INDEX - frameIndex;
             for (int i = 0, n = symbolKeys.size(); i < n; i++) {
                 int symbolKey = symbolKeys.get(i);
-                addFoundKey(symbolKey, indexReader, frameIndex, partitionLo, partitionHi);
+                addFoundKey(symbolKey, indexReader, invertedFrameIndex, partitionLo, partitionHi);
             }
             if (deferredSymbolKeys != null) {
                 for (int i = 0, n = deferredSymbolKeys.size(); i < n; i++) {
                     int symbolKey = deferredSymbolKeys.get(i);
                     if (!symbolKeys.contains(symbolKey)) {
-                        addFoundKey(symbolKey, indexReader, frameIndex, partitionLo, partitionHi);
+                        addFoundKey(symbolKey, indexReader, invertedFrameIndex, partitionLo, partitionHi);
                     }
                 }
             }

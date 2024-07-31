@@ -60,7 +60,7 @@ Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latestByAndFilter
         jlong unIndexedNullCount,
         jlong maxValue,
         jlong minValue,
-        jint frameIndex,
+        jint frameIndex, // inverted frame index
         jint blockValueCountMod,
         jlong geoHashColumnAddress,
         jint geoHashColumnSize,
