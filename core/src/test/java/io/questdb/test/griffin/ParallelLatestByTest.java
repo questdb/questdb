@@ -47,14 +47,13 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class ParallelLatestByTest extends AbstractTest {
-    protected static final StringSink sink = new StringSink();
+    private static final StringSink sink = new StringSink();
 
     @Before
     public void setUp() {
         SharedRandom.RANDOM.set(new Rnd());
         super.setUp();
     }
-
 
     @Test
     public void testLatestByAllParallel1() throws Exception {
@@ -155,6 +154,68 @@ public class ParallelLatestByTest extends AbstractTest {
         } finally {
             Misc.free(factory);
         }
+    }
+
+    private static void execute(
+            @Nullable WorkerPool pool,
+            LatestByRunnable runnable,
+            CairoConfiguration configuration
+    ) throws Exception {
+        final int workerCount = pool == null ? 1 : pool.getWorkerCount();
+        try (
+                final CairoEngine engine = new CairoEngine(configuration);
+                final SqlCompiler compiler = engine.getSqlCompiler()
+        ) {
+            try (final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount)
+            ) {
+                try {
+                    if (pool != null) {
+                        pool.assign(new LatestByAllIndexedJob(engine.getMessageBus()));
+                        pool.start(LOG);
+                    }
+
+                    runnable.run(engine, compiler, sqlExecutionContext);
+                    Assert.assertEquals(0, engine.getBusyWriterCount());
+                    Assert.assertEquals(0, engine.getBusyReaderCount());
+                } finally {
+                    if (pool != null) {
+                        pool.halt();
+                    }
+                }
+            }
+        }
+    }
+
+    private static void executeVanilla(LatestByRunnable code) throws Exception {
+        executeVanilla(() -> execute(null, code, new DefaultTestCairoConfiguration(root)));
+    }
+
+    private static void executeWithPool(
+            int workerCount,
+            int queueCapacity,
+            LatestByRunnable runnable
+    ) throws Exception {
+        executeVanilla(() -> {
+            if (workerCount > 0) {
+
+                WorkerPool pool = new WorkerPool(() -> workerCount);
+
+                final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                };
+
+                execute(pool, runnable, configuration);
+            } else {
+                // we need to create entire engine
+                final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+
+                    @Override
+                    public int getLatestByQueueCapacity() {
+                        return queueCapacity;
+                    }
+                };
+                execute(null, runnable, configuration);
+            }
+        });
     }
 
     private static void testLatestByAll(
@@ -262,70 +323,8 @@ public class ParallelLatestByTest extends AbstractTest {
         assertQuery(compiler, sqlExecutionContext, expected, ddl, query);
     }
 
-    protected static void execute(
-            @Nullable WorkerPool pool,
-            LatestByRunnable runnable,
-            CairoConfiguration configuration
-    ) throws Exception {
-        final int workerCount = pool == null ? 1 : pool.getWorkerCount();
-        try (
-                final CairoEngine engine = new CairoEngine(configuration);
-                final SqlCompiler compiler = engine.getSqlCompiler()
-        ) {
-            try (final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine, workerCount)
-            ) {
-                try {
-                    if (pool != null) {
-                        pool.assign(new LatestByAllIndexedJob(engine.getMessageBus()));
-                        pool.start(LOG);
-                    }
-
-                    runnable.run(engine, compiler, sqlExecutionContext);
-                    Assert.assertEquals(0, engine.getBusyWriterCount());
-                    Assert.assertEquals(0, engine.getBusyReaderCount());
-                } finally {
-                    if (pool != null) {
-                        pool.halt();
-                    }
-                }
-            }
-        }
-    }
-
-    protected static void executeVanilla(LatestByRunnable code) throws Exception {
-        executeVanilla(() -> execute(null, code, new DefaultTestCairoConfiguration(root)));
-    }
-
     static void executeVanilla(TestUtils.LeakProneCode code) throws Exception {
         TestUtils.assertMemoryLeak(code);
-    }
-
-    protected static void executeWithPool(
-            int workerCount,
-            int queueCapacity,
-            LatestByRunnable runnable
-    ) throws Exception {
-        executeVanilla(() -> {
-            if (workerCount > 0) {
-
-                WorkerPool pool = new WorkerPool(() -> workerCount);
-
-                final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-                };
-
-                execute(pool, runnable, configuration);
-            } else {
-                // we need to create entire engine
-                final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
-
-                    @Override
-                    public int getLatestByQueueCapacity() {
-                        return queueCapacity;
-                    }
-                };
-                execute(null, runnable, configuration);
-            }
-        });
     }
 
     @FunctionalInterface

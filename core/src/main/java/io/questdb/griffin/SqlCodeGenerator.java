@@ -4930,7 +4930,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ExpressionNode withinExtracted = whereClauseParser.extractWithin(
                 model,
                 model.getWhereClause(),
-                metadata,
+                myMeta,
                 functionParser,
                 executionContext,
                 prefixes
