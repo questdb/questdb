@@ -42,15 +42,13 @@ steps:
       # Fetch and execute LLVM installation script
       wget https://apt.llvm.org/llvm.sh
       sudo bash llvm.sh
-      
-      ls -al /usr/lib
-      ls -al /usr/lib/llvm-$LLVM_VERSION
-      ls -al /usr/lib/llvm-$LLVM_VERSION/bin
-
       # CURRENT_LLVM_STABLE in the script tells which version it installed. Extract it from the script: 
       export $(grep CURRENT_LLVM_STABLE= llvm.sh)
       # ... and set a task variable to its value
       echo "##vso[task.setvariable variable=LLVM_VERSION]$CURRENT_LLVM_STABLE"
+      
+      sudo apt-get install llvm-$CURRENT_LLVM_STABLE
+      
       # Install Cobertura
       wget https://raw.githubusercontent.com/eriwen/lcov-to-cobertura-xml/master/lcov_cobertura/lcov_cobertura.py
       chmod +x lcov_cobertura.py
