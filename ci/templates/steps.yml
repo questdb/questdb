@@ -211,7 +211,7 @@ steps:
       fi
 
       # Compile the merged coverage report into an HTML report
-      QDB_ENT_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdbr/debug/deps/questdbr-* -type f -executable)
+      QUESTDBR_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdbr/debug/deps/questdbr-* -type f -executable)
       llvm-cov show \
         --format=html \
         --output-dir=questdbr-coverage-report \
