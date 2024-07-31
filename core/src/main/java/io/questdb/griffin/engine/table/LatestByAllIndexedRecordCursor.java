@@ -152,13 +152,13 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
             argumentsAddress = LatestByArguments.allocateMemoryArray(taskCount);
             for (long i = 0; i < taskCount; ++i) {
-                final long klo = i * chunkSize;
-                final long khi = Long.min(klo + chunkSize, keyCount);
+                final long keyLo = i * chunkSize;
+                final long keyHi = Long.min(keyLo + chunkSize, keyCount);
                 final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
                 LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
                 LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
-                LatestByArguments.setKeyLo(argsAddress, klo);
-                LatestByArguments.setKeyHi(argsAddress, khi);
+                LatestByArguments.setKeyLo(argsAddress, keyLo);
+                LatestByArguments.setKeyHi(argsAddress, keyHi);
                 LatestByArguments.setRowsSize(argsAddress, 0);
             }
 

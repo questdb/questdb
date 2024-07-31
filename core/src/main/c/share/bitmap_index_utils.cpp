@@ -97,7 +97,6 @@ void latest_scan_backward(uint64_t keys_memory_addr,
                           int32_t frame_index,
                           uint32_t vblock_capacity_mask
 ) {
-
     auto keys_memory = reinterpret_cast<const uint8_t *>(keys_memory_addr);
     auto out_args = reinterpret_cast<out_arguments *>(args_memory_addr);
 
@@ -113,15 +112,16 @@ void latest_scan_backward(uint64_t keys_memory_addr,
 
     // we are mutating k here
     auto first_not_found = std::partition(first, last, [&](auto &k) {
-        int64_t row_id = find_latest_for_key(k,
-                                             keys,
-                                             values_memory_addr,
-                                             value_memory_size,
-                                             unindexed_null_count,
-                                             max_value,
-                                             min_value,
-                                             frame_index,
-                                             vblock_capacity_mask
+        int64_t row_id = find_latest_for_key(
+                k,
+                keys,
+                values_memory_addr,
+                value_memory_size,
+                unindexed_null_count,
+                max_value,
+                min_value,
+                frame_index,
+                vblock_capacity_mask
         );
         const bool r = row_id > -1;
         if (r) {
