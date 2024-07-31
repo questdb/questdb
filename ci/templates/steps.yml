@@ -187,10 +187,12 @@ steps:
       ## Generate Rust coverage report
       set -eux
       export PATH=/usr/lib/llvm-$LLVM_VERSION/bin:$PATH
+      
+      find . -name \*.profraw
 
       # Merge the raw Rust coverage reports
       FROM_RUST_TEST=questdbr-cargo-test.profraw
-      FROM_JAVA_TEST=core/questdbr-junit.profraw
+      FROM_JAVA_TEST=core/rust/qdbr/questdbr-junit.profraw
       if [ ! -f $FROM_RUST_TEST ]; then
         FROM_RUST_TEST=""
       fi
