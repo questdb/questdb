@@ -42,6 +42,11 @@ steps:
       # Fetch and execute LLVM installation script
       wget https://apt.llvm.org/llvm.sh
       sudo bash llvm.sh
+      
+      ls -al /usr/lib
+      ls -al /usr/lib/llvm-$LLVM_VERSION
+      ls -al /usr/lib/llvm-$LLVM_VERSION/bin
+
       # CURRENT_LLVM_STABLE in the script tells which version it installed. Extract it from the script: 
       export $(grep CURRENT_LLVM_STABLE= llvm.sh)
       # ... and set a task variable to its value
@@ -187,10 +192,6 @@ steps:
       ## Generate Rust coverage report
       set -eux
       export PATH=/usr/lib/llvm-$LLVM_VERSION/bin:$PATH
-      
-      ls -al /usr/lib
-      ls -al /usr/lib/llvm-$LLVM_VERSION
-      ls -al /usr/lib/llvm-$LLVM_VERSION/bin
       find . -name \*.profraw
 
       # Merge the raw Rust coverage reports
