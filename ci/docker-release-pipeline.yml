@@ -35,7 +35,7 @@ jobs:
         inputs:
           script: |
             docker buildx build --platform linux/amd64,linux/arm64 --push -t questdb/questdb:nightly .
-            docker buildx build --build-arg base_image=registry.access.redhat.com/ubi9/ubi --platform linux/amd64,linux/arm64 --push -t questdb/questdb:nightly-rhel .
+            docker buildx build --target rhel --platform linux/amd64,linux/arm64 --push -t questdb/questdb:nightly-rhel .
           workingDirectory: core
         condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/master'))
 
@@ -48,7 +48,7 @@ jobs:
             tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
             echo $tag_name
             docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$tag_name .
-            docker buildx build --build-arg tag_name=$tag_name --build-arg base_image=registry.access.redhat.com/ubi9/ubi --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$tag_name-rhel .
+            docker buildx build --build-arg tag_name=$tag_name --target rhel --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$tag_name-rhel .
           workingDirectory: core
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
 
@@ -64,6 +64,6 @@ jobs:
             docker_tag_name=patch-$(echo $(Build.SourceVersion) | cut -c 1-7) 
             echo $docker_tag_name
             docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:${docker_tag_name} .
-            docker buildx build --build-arg tag_name=$tag_name --build-arg base_image=registry.access.redhat.com/ubi9/ubi --platform linux/amd64,linux/arm64 --push -t questdb/questdb:${docker_tag_name}-rhel .
+            docker buildx build --build-arg tag_name=$tag_name --target rhel --platform linux/amd64,linux/arm64 --push -t questdb/questdb:${docker_tag_name}-rhel .
           workingDirectory: core
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/'), ne(variables['Build.SourceBranch'], 'refs/heads/master'))
