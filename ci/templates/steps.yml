@@ -112,8 +112,8 @@ steps:
         eq(variables['testset'], 'all'),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
-  - bash: echo "##vso[task.setvariable variable=LLVM_PROFILE_FILE]qdbr-junit.profraw"
-    displayName: "LLVM_PROFILE_FILE=qdbr-junit.profraw"
+  - bash: echo "##vso[task.setvariable variable=LLVM_PROFILE_FILE]questdbr-junit.profraw"
+    displayName: "LLVM_PROFILE_FILE=questdbr-junit.profraw"
     condition: eq(variables['testset'], 'coverage')
   - task: Maven@3
     displayName: "Run tests with Coverage"
