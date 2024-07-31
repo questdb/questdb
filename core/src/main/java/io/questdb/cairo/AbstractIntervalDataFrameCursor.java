@@ -95,7 +95,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     }
 
     public AbstractIntervalDataFrameCursor of(TableReader reader, SqlExecutionContext sqlContext) throws SqlException {
-        this.intervals = this.intervalsModel.calculateIntervals(sqlContext);
+        this.intervals = intervalsModel.calculateIntervals(sqlContext);
         calculateRanges(reader, intervals);
         this.reader = reader;
         return this;
@@ -134,8 +134,13 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
                 initialPartitionLo = 0;
                 initialPartitionHi = reader.getPartitionCount();
             }
-            toTop();
+        } else {
+            initialIntervalsLo = 0;
+            initialIntervalsHi = 0;
+            initialPartitionLo = 0;
+            initialPartitionHi = 0;
         }
+        toTop();
     }
 
     private void cullIntervals(TableReader reader, LongList intervals) {
