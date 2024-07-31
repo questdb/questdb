@@ -52,7 +52,6 @@ public class GeoHashNative {
         long hashColumnAddress = 0;
         // hashColumnIndex can be -1 for latest by part only (no prefixes to match)
         if (hashColumnIndex > -1) {
-            // TODO(puzpuzpuz): this has to be per-task
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
             hashColumnAddress = frameMemory.getPageAddress(hashColumnIndex);
         }

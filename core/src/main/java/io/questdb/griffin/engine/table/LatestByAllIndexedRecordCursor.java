@@ -110,8 +110,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Index backward scan").meta("on").putColumnName(columnIndex);
-        sink.meta("parallel").val(true);
+        sink.type("Async index backward scan").meta("on").putColumnName(columnIndex);
+        sink.meta("workers").val(workerCount);
 
         if (prefixes.size() > 2) {
             int hashColumnIndex = (int) prefixes.get(0);
@@ -198,7 +198,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
             // Invert page frame indexes, so that they grow asc in time order.
             // That's to be able to do later post-processing (sorting) of the result set.
-            int frameIndex = frameCount - 1;
+            int invertedFrameIndex = frameCount - 1;
             frameCursor.toTop();
             while ((frame = frameCursor.next()) != null && foundRowCount < keyCount) {
                 doneLatch.reset();
@@ -239,7 +239,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                                 unIndexedNullCount,
                                 partitionHi,
                                 partitionLo,
-                                frameIndex,
+                                invertedFrameIndex,
                                 valueBlockCapacity,
                                 hashColumnIndex,
                                 hashColumnType,
@@ -257,7 +257,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                                 unIndexedNullCount,
                                 partitionHi,
                                 partitionLo,
-                                frameIndex,
+                                invertedFrameIndex,
                                 valueBlockCapacity,
                                 hashColumnIndex,
                                 hashColumnType,
@@ -290,7 +290,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                     foundRowCount += LatestByArguments.getRowsSize(address);
                 }
 
-                frameIndex--;
+                invertedFrameIndex--;
             }
         } catch (DataUnavailableException e) {
             // We're not yet done, so no need to cancel the circuit breaker. 
