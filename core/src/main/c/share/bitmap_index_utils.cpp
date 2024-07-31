@@ -35,7 +35,6 @@ int64_t find_latest_for_key(int64_t k,
                             int32_t frame_index,
                             uint32_t vblock_capacity_mask
 ) {
-
     const auto values_memory = reinterpret_cast<const uint8_t *>(values_memory_addr);
     const auto vblock_capacity = vblock_capacity_mask + 1;
     const auto key_count = static_cast<int64_t>(keys.key_count()); // assert(key_count <= Long.MAX_VALUE)
@@ -65,7 +64,7 @@ int64_t find_latest_for_key(int64_t k,
                 inconsistent_tail.move_next();
                 block_traversed += 1;
             }
-            //assuming blocks are full
+            // assuming blocks are full
             value_count = vblock_capacity * block_traversed;
         }
 
@@ -74,14 +73,14 @@ int64_t find_latest_for_key(int64_t k,
         if (value_count > 0) {
             int64_t local_row_id = current_block[value_count - 1];
             if (local_row_id >= min_value) {
-                return to_row_id(frame_index, local_row_id) + 1;
+                return to_row_id(frame_index, local_row_id - min_value) + 1;
             }
         }
     }
 
     if (k == 0 && unindexed_null_count > 0) {
         if (unindexed_null_count - 1 >= min_value) {
-            return to_row_id(frame_index, unindexed_null_count);
+            return to_row_id(frame_index, unindexed_null_count - min_value);
         }
     }
     return -1;

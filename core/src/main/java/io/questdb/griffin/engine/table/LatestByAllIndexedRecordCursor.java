@@ -199,9 +199,9 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 doneLatch.reset();
 
                 final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
-                final int frameIndex = frameCount;
-                final long rowLo = 0;
-                final long rowHi = frame.getPartitionHi() - frame.getPartitionLo() - 1;
+                final int frameIndex = frameCount++;
+                final long partitionLo = frame.getPartitionLo();
+                final long partitionHi = frame.getPartitionHi() - 1;
 
                 final long keyBaseAddress = indexReader.getKeyBaseAddress();
                 final long keysMemorySize = indexReader.getKeyMemorySize();
@@ -233,8 +233,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                                 valuesMemorySize,
                                 argsAddress,
                                 unIndexedNullCount,
-                                rowHi,
-                                rowLo,
+                                partitionHi,
+                                partitionLo,
                                 frameIndex,
                                 valueBlockCapacity,
                                 hashColumnIndex,
@@ -251,8 +251,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                                 valuesMemorySize,
                                 argsAddress,
                                 unIndexedNullCount,
-                                rowHi,
-                                rowLo,
+                                partitionHi,
+                                partitionLo,
                                 frameIndex,
                                 valueBlockCapacity,
                                 hashColumnIndex,

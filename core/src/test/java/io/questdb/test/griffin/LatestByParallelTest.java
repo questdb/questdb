@@ -142,7 +142,6 @@ public class LatestByParallelTest extends AbstractTest {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-
         final String expected = "a\tb\tk\n" +
                 "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
                 "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
