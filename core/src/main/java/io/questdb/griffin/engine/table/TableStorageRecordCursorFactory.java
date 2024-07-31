@@ -40,21 +40,21 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
-public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFactory {
-    private static final int TABLE_NAME;
-    private static final int WAL_ENABLED;
-    private static final int PARTITION_BY;
-    private static final int PARTITION_COUNT;
-    private static final int ROW_COUNT;
-    private static final int DISK_SIZE;
+public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory {
+    private static final int TABLE_NAME = 0;
+    private static final int WAL_ENABLED = 1;
+    private static final int PARTITION_BY = 2;
+    private static final int PARTITION_COUNT = 3;
+    private static final int ROW_COUNT = 4;
+    private static final int DISK_SIZE = 5;
     private static final RecordMetadata METADATA;
     private SqlExecutionContext executionContext;
-    private final AllTablePartitionListRecordCursor cursor = new AllTablePartitionListRecordCursor();
+    private final TableStorageRecordCursor cursor = new TableStorageRecordCursor();
     private CairoConfiguration cairoConfig;
     private FilesFacade ff;
 
 
-    public ShowAllTablePartitionsCursoryFactory() {
+    public TableStorageRecordCursorFactory() {
         super(METADATA);
     }
 
@@ -76,7 +76,7 @@ public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFa
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("all_table_partition_storage");
+        sink.type("table_storage()");
     }
 
     @Override
@@ -84,13 +84,13 @@ public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFa
         return false;
     }
 
-    private class AllTablePartitionListRecordCursor implements NoRandomAccessRecordCursor {
+    private class TableStorageRecordCursor implements NoRandomAccessRecordCursor {
         private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
         private Path path = new Path();
         private int tableIndex = -1;
-        private final AllPartitionsRecord record = new AllPartitionsRecord();
+        private final TableStorageRecord record = new TableStorageRecord();
 
-        private AllTablePartitionListRecordCursor initialize() {
+        private TableStorageRecordCursor initialize() {
             executionContext.getCairoEngine().getTableTokens(tableBucket, false);
             toTop();
             return this;
@@ -132,7 +132,7 @@ public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFa
             tableIndex = -1;
         }
 
-        private class AllPartitionsRecord implements Record, Closeable {
+        private class TableStorageRecord implements Record, Closeable {
             private CharSequence tableName;
             private int partitionBy;
             private long partitionCount;
@@ -148,11 +148,11 @@ public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFa
             @Override
             public long getLong(int col) {
                 switch (col) {
-                    case 3:
+                    case PARTITION_COUNT:
                         return partitionCount;
-                    case 4:
+                    case ROW_COUNT:
                         return rowCount;
-                    case 5:
+                    case DISK_SIZE:
                         return sizeB;
                     default:
                         throw new UnsupportedOperationException();
@@ -162,7 +162,7 @@ public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFa
             @Override
             public boolean getBool(int col) {
                 switch (col) {
-                    case 1:
+                    case WAL_ENABLED:
                         return walEnabled;
                     default:
                         throw new UnsupportedOperationException();
@@ -172,9 +172,9 @@ public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFa
             @Override
             public @Nullable CharSequence getStrA(int col) {
                 switch (col) {
-                    case 0:
+                    case TABLE_NAME:
                         return tableName;
-                    case 2:
+                    case PARTITION_BY:
                         return PartitionBy.toString(partitionBy);
                     default:
                         throw new UnsupportedOperationException();
@@ -184,9 +184,9 @@ public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFa
             @Override
             public @Nullable CharSequence getStrB(int col) {
                 switch (col) {
-                    case 0:
+                    case TABLE_NAME:
                         return tableName;
-                    case 2:
+                    case PARTITION_BY:
                         return PartitionBy.toString(partitionBy);
                     default:
                         throw new UnsupportedOperationException();
@@ -225,13 +225,6 @@ public class ShowAllTablePartitionsCursoryFactory extends AbstractRecordCursorFa
     }
 
     static {
-        TABLE_NAME = 0;
-        WAL_ENABLED = 1;
-        PARTITION_BY = 2;
-        PARTITION_COUNT = 3;
-        ROW_COUNT = 4;
-        DISK_SIZE = 5;
-
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("tableName", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("walEnabled", ColumnType.BOOLEAN));

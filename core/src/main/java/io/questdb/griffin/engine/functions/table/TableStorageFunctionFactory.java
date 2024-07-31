@@ -30,11 +30,11 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.table.ShowAllTablePartitionsCursoryFactory;
+import io.questdb.griffin.engine.table.TableStorageRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class AllTablePartitionsFunctionFactory implements FunctionFactory {
+public class TableStorageFunctionFactory implements FunctionFactory {
 
     public static final String SIGNATURE = "table_storage()";
 
@@ -50,7 +50,7 @@ public class AllTablePartitionsFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new CursorFunction(new ShowAllTablePartitionsCursoryFactory());
+        return new CursorFunction(new TableStorageRecordCursorFactory());
     }
 
 }
