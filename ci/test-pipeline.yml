@@ -96,12 +96,9 @@ stages:
           COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
         condition: |
           and(
-            and(
-              eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
-              eq(variables['SOURCE_CODE_CHANGED'], 'true')
-            ),
+            eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
             eq(variables['System.PullRequest.IsFork'], 'false')
-          )
+          ),
         steps:
           - checkout: self
             fetchDepth: 1
@@ -121,6 +118,8 @@ stages:
               jdkVersionOption: "1.11"
           - download: current
             artifact: jacoco-coverage
+          - download: current
+            artifact: rust-llvm-coverage
           - task: Maven@3
             displayName: "Merge coverage reports"
             inputs:
@@ -139,3 +138,32 @@ stages:
               $(System.PullRequest.PullRequestNumber)
               -t  $(DIFF_COVER_THRESHOLD_PCT) -type jacoco;
             displayName: "Diff coverage PR report"
+
+#  - bash: |
+#      set -eux
+#      JACOCO_FILE="$(Build.SourcesDirectory)/CCReport43F6D5EF/jacoco.xml"
+#      RUST_FILE="$(Build.SourcesDirectory)/questdbr-coverage-report/cobertura.xml"
+#      if [ -f $JACOCO_FILE ]; then
+#        JACOCO_ARGS="-type jacoco --cover $JACOCO_FILE"
+#      else
+#        JACOCO_ARGS=""
+#      fi
+#      if [ -f $RUST_FILE ]; then
+#        RUST_ARGS="-type cobertura --cover $RUST_FILE"
+#      else
+#        RUST_ARGS=""
+#      fi
+#      $JAVA_HOME_11_X64/bin/java -jar \
+#        $(Build.SourcesDirectory)/ci/cover-checker-1.5.0-all.jar \
+#        $JACOCO_ARGS $RUST_ARGS --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) \
+#        -t $(DIFF_COVER_THRESHOLD_PCT)
+#    displayName: "Diff coverage PR report"
+#    condition: |
+#      and(
+#          or(
+#              eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+#              eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
+#          ),
+#          eq(variables['testset'], 'coverage'),
+#          eq(variables['System.PullRequest.IsFork'], 'false')
+#      )
