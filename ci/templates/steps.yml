@@ -147,7 +147,7 @@ steps:
       pushd core/rust/qdbr
       RUSTFLAGS="-C instrument-coverage -D warnings" cargo build --tests
       popd
-      QUESTDBR_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdbr/debug/deps/questdbr-\* -type f -executable)
+      QUESTDBR_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdbr/debug/deps/questdbr-* -type f -executable)
       export LLVM_PROFILE_FILE="questdbr-cargo-test.profraw"
       $QUESTDBR_TEST_BIN
     displayName: "Run Rust tests for code coverage"
