@@ -527,8 +527,10 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         reader.getValueMemorySize(),
                         argsAddress,
                         reader.getUnIndexedNullCount(),
-                        Long.MAX_VALUE, 0,
-                        0, valueBlockCapacity - 1
+                        Long.MAX_VALUE,
+                        0,
+                        0,
+                        valueBlockCapacity - 1
                 );
             }
 
@@ -597,8 +599,10 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         reader.getValueMemorySize(),
                         argsAddress,
                         reader.getUnIndexedNullCount(),
-                        Long.MAX_VALUE, 0,
-                        0, valueBlockCapacity - 1
+                        Long.MAX_VALUE,
+                        0,
+                        0,
+                        valueBlockCapacity - 1
                 );
             }
 
@@ -675,8 +679,10 @@ public class BitmapIndexTest extends AbstractCairoTest {
                         reader.getValueMemorySize(),
                         argsAddress,
                         reader.getUnIndexedNullCount(),
-                        Long.MAX_VALUE, 0,
-                        0, valueBlockCapacity - 1
+                        Long.MAX_VALUE,
+                        0,
+                        0,
+                        valueBlockCapacity - 1
                 );
             }
 
@@ -776,8 +782,10 @@ public class BitmapIndexTest extends AbstractCairoTest {
                                 reader.getValueMemorySize(),
                                 argsAddress,
                                 columnTop,
-                                Long.MAX_VALUE, 0,
-                                0, indexBlockCapacity - 1
+                                Long.MAX_VALUE,
+                                0,
+                                0,
+                                indexBlockCapacity - 1
                         );
 
                         long rowCount = LatestByArguments.getRowsSize(argsAddress);

@@ -49,26 +49,24 @@ Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_iota(
 DECLARE_DISPATCHER(filter_with_prefix);
 
 JNIEXPORT void JNICALL
-Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latestByAndFilterPrefix
-        (
-                JNIEnv */*env*/,
-                jclass /*cl*/,
-                jlong keysMemory,
-                jlong keysMemorySize,
-                jlong valuesMemory,
-                jlong valuesMemorySize,
-                jlong argsMemory,
-                jlong unIndexedNullCount,
-                jlong maxValue,
-                jlong minValue,
-                jint frameIndex,
-                jint blockValueCountMod,
-                jlong hashColumnAddress,
-                jint hashColumnSize,
-                jlong prefixesAddress,
-                jlong prefixesCount
-        ) {
-
+Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latestByAndFilterPrefix(
+        JNIEnv */*env*/,
+        jclass /*cl*/,
+        jlong keysMemory,
+        jlong keysMemorySize,
+        jlong valuesMemory,
+        jlong valuesMemorySize,
+        jlong argsMemory,
+        jlong unIndexedNullCount,
+        jlong maxValue,
+        jlong minValue,
+        jint frameIndex,
+        jint blockValueCountMod,
+        jlong hashColumnAddress,
+        jint hashColumnSize,
+        jlong prefixesAddress,
+        jlong prefixesCount
+) {
     auto out_args = reinterpret_cast<out_arguments *>(argsMemory);
     auto rows = reinterpret_cast<int64_t *>(out_args->rows_address);
     auto rows_count_prev = out_args->rows_size;
@@ -83,7 +81,8 @@ Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latestByAndFilter
             maxValue,
             minValue,
             frameIndex,
-            blockValueCountMod);
+            blockValueCountMod
+    );
 
     auto rows_count_after = out_args->rows_size;
     const auto hash_column_addr = reinterpret_cast<void *>(hashColumnAddress);

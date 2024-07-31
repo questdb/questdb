@@ -272,7 +272,7 @@ extern "C" {
 
 JNIEXPORT void JNICALL
 Java_io_questdb_std_BitmapIndexUtilsNative_latestScanBackward0(
-        JNIEnv */*env*/,
+        JNIEnv * /*env*/,
         jclass /*cl*/,
         jlong keysMemory,
         jlong keysMemorySize,
@@ -282,7 +282,7 @@ Java_io_questdb_std_BitmapIndexUtilsNative_latestScanBackward0(
         jlong unIndexedNullCount,
         jlong maxValue,
         jlong minValue,
-        jint partitionIndex,
+        jint frameIndex,
         jint blockValueCountMod
 ) {
     latest_scan_backward(
@@ -294,7 +294,7 @@ Java_io_questdb_std_BitmapIndexUtilsNative_latestScanBackward0(
             unIndexedNullCount,
             maxValue,
             minValue,
-            partitionIndex,
+            frameIndex,
             blockValueCountMod
     );
 }

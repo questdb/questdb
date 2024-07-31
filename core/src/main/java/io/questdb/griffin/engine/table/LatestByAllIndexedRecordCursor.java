@@ -76,8 +76,11 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             isTreeMapBuilt = true;
         }
         if (aIndex < aLimit) {
-            long rowId = rows.get(aIndex++) - 1; // we added 1 on cpp side
-            frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), recordA);
+            // We added 1 on cpp side.
+            final long rowId = rows.get(aIndex++) - 1;
+            // We inverted frame indexes when posting tasks.
+            final int frameIndex = frameCount - Rows.toPartitionIndex(rowId) - 1;
+            frameMemoryPool.navigateTo(frameIndex, recordA);
             recordA.setRowIndex(Rows.toLocalRowID(rowId));
             return true;
         }
@@ -193,13 +196,14 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 frameAddressCache.add(frameCount++, frame);
             }
 
-            frameCount = 0;
+            // Invert page frame indexes, so that they grow asc in time order.
+            // That's to be able to do later post-processing (sorting) of the result set.
+            int frameIndex = frameCount - 1;
             frameCursor.toTop();
             while ((frame = frameCursor.next()) != null && foundRowCount < keyCount) {
                 doneLatch.reset();
 
                 final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
-                final int frameIndex = frameCount++;
                 final long partitionLo = frame.getPartitionLo();
                 final long partitionHi = frame.getPartitionHi() - 1;
 
@@ -211,7 +215,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 final long unIndexedNullCount = indexReader.getUnIndexedNullCount();
 
                 queuedCount = 0;
-                for (long i = 0; i < taskCount; ++i) {
+                for (long i = 0; i < taskCount; i++) {
                     final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
                     final long found = LatestByArguments.getRowsSize(argsAddress);
                     final long keyHi = LatestByArguments.getKeyHi(argsAddress);
@@ -285,6 +289,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                     final long address = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
                     foundRowCount += LatestByArguments.getRowsSize(address);
                 }
+
+                frameIndex--;
             }
         } catch (DataUnavailableException e) {
             // We're not yet done, so no need to cancel the circuit breaker. 
