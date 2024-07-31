@@ -112,6 +112,7 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
     @Override
     public void toTop() {
         index = 0;
+        filter.toTop();
     }
 
     private void addFoundKey(int symbolKey, BitmapIndexReader indexReader, int frameIndex, long partitionLo, long partitionHi) {
