@@ -32,7 +32,7 @@ jobs:
             if [ -z "$ANY" ]; then
               if [ -n "$COV_CLASSES" ]; then
                 echo "Some classes need coverage testing"
-                COV_CLASSES="$(echo "$COV_CLASSES" | sed -e 's/,$//g')"
+                COV_CLASSES=$(echo "$COV_CLASSES" | sed -e 's/,$//g')
                 COVERAGE_TOOL='JaCoCo'
               else
                 echo "No classes need coverage testing"
