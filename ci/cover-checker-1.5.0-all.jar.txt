@@ -1,2 +1,0 @@
-This is a manual build of https://github.com/naver/cover-checker/
-It contains fixes that have not been released yet as of 2023-06-30.
