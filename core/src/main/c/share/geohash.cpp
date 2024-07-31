@@ -62,8 +62,8 @@ Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latestByAndFilter
         jlong minValue,
         jint frameIndex,
         jint blockValueCountMod,
-        jlong hashColumnAddress,
-        jint hashColumnSize,
+        jlong geoHashColumnAddress,
+        jint geoHashColumnSize,
         jlong prefixesAddress,
         jlong prefixesCount
 ) {
@@ -85,20 +85,20 @@ Java_io_questdb_griffin_engine_functions_geohash_GeoHashNative_latestByAndFilter
     );
 
     auto rows_count_after = out_args->rows_size;
-    const auto hash_column_addr = reinterpret_cast<void *>(hashColumnAddress);
-    const auto hash_column_size = static_cast<int32_t>(hashColumnSize);
+    const auto geohash_column_addr = reinterpret_cast<void *>(geoHashColumnAddress);
+    const auto geohash_column_size = static_cast<int32_t>(geoHashColumnSize);
     const auto *prefixes = reinterpret_cast<const int64_t *>(prefixesAddress);
     const auto prefixes_count = static_cast<int64_t>(prefixesCount);
 
     auto found_start = rows + out_args->key_lo;
     auto found_stop = rows + out_args->key_lo + rows_count_after;
 
-    if (hash_column_addr && prefixes && prefixes_count) {
+    if (geohash_column_addr && prefixes && prefixes_count) {
         int64_t filtered_count = 0;
         filter_with_prefix(
-                hash_column_addr,
+                geohash_column_addr,
                 rows + out_args->key_lo + rows_count_prev,
-                hash_column_size,
+                geohash_column_size,
                 rows_count_after - rows_count_prev,
                 prefixes,
                 prefixes_count,

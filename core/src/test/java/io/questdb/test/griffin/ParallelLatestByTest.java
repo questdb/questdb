@@ -46,7 +46,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-public class LatestByParallelTest extends AbstractTest {
+public class ParallelLatestByTest extends AbstractTest {
     protected static final StringSink sink = new StringSink();
 
     @Before
@@ -58,62 +58,82 @@ public class LatestByParallelTest extends AbstractTest {
 
     @Test
     public void testLatestByAllParallel1() throws Exception {
-        executeWithPool(4, 8, LatestByParallelTest::testLatestByAll);
+        executeWithPool(4, 8, ParallelLatestByTest::testLatestByAll);
     }
 
     @Test
     public void testLatestByAllParallel2() throws Exception {
-        executeWithPool(8, 4, LatestByParallelTest::testLatestByAll);
+        executeWithPool(8, 4, ParallelLatestByTest::testLatestByAll);
     }
 
     @Test
     public void testLatestByAllParallel3() throws Exception {
-        executeWithPool(4, 0, LatestByParallelTest::testLatestByAll);
+        executeWithPool(4, 0, ParallelLatestByTest::testLatestByAll);
     }
 
     @Test
     public void testLatestByAllVanilla() throws Exception {
-        executeVanilla(LatestByParallelTest::testLatestByAll);
+        executeVanilla(ParallelLatestByTest::testLatestByAll);
     }
 
     @Test
     public void testLatestByFilteredParallel1() throws Exception {
-        executeWithPool(4, 8, LatestByParallelTest::testLatestByFiltered);
+        executeWithPool(4, 8, ParallelLatestByTest::testLatestByFiltered);
     }
 
     @Test
     public void testLatestByFilteredParallel2() throws Exception {
-        executeWithPool(8, 4, LatestByParallelTest::testLatestByFiltered);
+        executeWithPool(8, 4, ParallelLatestByTest::testLatestByFiltered);
     }
 
     @Test
     public void testLatestByFilteredParallel3() throws Exception {
-        executeWithPool(4, 0, LatestByParallelTest::testLatestByFiltered);
+        executeWithPool(4, 0, ParallelLatestByTest::testLatestByFiltered);
     }
 
     @Test
     public void testLatestByFilteredVanilla() throws Exception {
-        executeVanilla(LatestByParallelTest::testLatestByFiltered);
+        executeVanilla(ParallelLatestByTest::testLatestByFiltered);
     }
 
     @Test
     public void testLatestByTimestampParallel1() throws Exception {
-        executeWithPool(4, 8, LatestByParallelTest::testLatestByTimestamp);
+        executeWithPool(4, 8, ParallelLatestByTest::testLatestByTimestamp);
     }
 
     @Test
     public void testLatestByTimestampParallel2() throws Exception {
-        executeWithPool(8, 4, LatestByParallelTest::testLatestByTimestamp);
+        executeWithPool(8, 4, ParallelLatestByTest::testLatestByTimestamp);
     }
 
     @Test
     public void testLatestByTimestampParallel3() throws Exception {
-        executeWithPool(4, 0, LatestByParallelTest::testLatestByTimestamp);
+        executeWithPool(4, 0, ParallelLatestByTest::testLatestByTimestamp);
     }
 
     @Test
     public void testLatestByTimestampVanilla() throws Exception {
-        executeVanilla(LatestByParallelTest::testLatestByTimestamp);
+        executeVanilla(ParallelLatestByTest::testLatestByTimestamp);
+    }
+
+    @Test
+    public void testLatestByWithinParallel1() throws Exception {
+        executeWithPool(4, 8, ParallelLatestByTest::testLatestByWithin);
+    }
+
+    @Test
+    public void testLatestByWithinParallel2() throws Exception {
+        executeWithPool(8, 8, ParallelLatestByTest::testLatestByWithin);
+    }
+
+    @Test
+    public void testLatestByWithinParallel3() throws Exception {
+        executeWithPool(8, 0, ParallelLatestByTest::testLatestByWithin);
+    }
+
+    @Test
+    public void testLatestByWithinVanilla() throws Exception {
+        executeVanilla(ParallelLatestByTest::testLatestByWithin);
     }
 
     private static void assertQuery(
@@ -169,7 +189,6 @@ public class LatestByParallelTest extends AbstractTest {
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-
         final String expected = "a\tk\tb\n" +
                 "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
                 "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
@@ -214,6 +233,34 @@ public class LatestByParallelTest extends AbstractTest {
                 "), index(b) timestamp(k) partition by DAY";
 
         final String query = "select * from x where k < '1970-01-03' latest on k partition by b";
+
+        assertQuery(compiler, sqlExecutionContext, expected, ddl, query);
+    }
+
+    private static void testLatestByWithin(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        final String expected = "a\tk\tb\n" +
+                "78.83065830055033\t1970-01-04T11:20:00.000000Z\tVTJW\n" +
+                "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
+
+        final String ddl = "create table x as " +
+                "(" +
+                "select" +
+                " timestamp_sequence(0, 100000000) ts," +
+                " rnd_symbol('a','b','c') sym," +
+                " rnd_double(0)*100 lon," +
+                " rnd_double(0)*100 lat," +
+                " rnd_geohash(30) geo" +
+                " from long_sequence(10000)" +
+                "), index(sym) timestamp(ts) partition by DAY";
+
+        final String query = "select * from x where geo within(#gk1gj8) latest on ts partition by sym";
+        // "select * from x latest on ts partition by sym";
 
         assertQuery(compiler, sqlExecutionContext, expected, ddl, query);
     }

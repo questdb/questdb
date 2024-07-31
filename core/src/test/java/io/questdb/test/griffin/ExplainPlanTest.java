@@ -4057,7 +4057,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
                 "select * from a latest on ts partition by s",
                 "LatestByAllIndexed\n" +
-                        "    Index backward scan on: s parallel: true\n" +
+                        "    Async index backward scan on: s workers: 1\n" +
                         "    Frame backward scan on: a\n"
         );
     }

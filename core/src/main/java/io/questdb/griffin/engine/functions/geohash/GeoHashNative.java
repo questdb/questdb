@@ -44,20 +44,20 @@ public class GeoHashNative {
             long minValue,
             int frameIndex,
             int blockValueCountMod,
-            int hashColumnIndex,
-            int hashColumnType,
+            int geoHashColumnIndex,
+            int geoHashColumnType,
             long prefixesAddress,
             long prefixesCount
     ) {
         long hashColumnAddress = 0;
         // hashColumnIndex can be -1 for latest by part only (no prefixes to match)
-        if (hashColumnIndex > -1) {
+        if (geoHashColumnIndex > -1) {
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-            hashColumnAddress = frameMemory.getPageAddress(hashColumnIndex);
+            hashColumnAddress = frameMemory.getPageAddress(geoHashColumnIndex);
         }
 
         // -1 must be dead case here
-        final int hashColumnSize = ColumnType.isGeoHash(hashColumnType) ? getPow2SizeOfGeoHashType(hashColumnType) : -1;
+        final int hashColumnSize = ColumnType.isGeoHash(geoHashColumnType) ? getPow2SizeOfGeoHashType(geoHashColumnType) : -1;
 
         latestByAndFilterPrefix(
                 keysMemory,
@@ -94,8 +94,8 @@ public class GeoHashNative {
             long minValue,
             int frameIndex,
             int blockValueCountMod,
-            long hashColumnAddress,
-            int hashColumnSize,
+            long geoHashColumnAddress,
+            int geoHashColumnSize,
             long prefixesAddress,
             long prefixesCount
     );

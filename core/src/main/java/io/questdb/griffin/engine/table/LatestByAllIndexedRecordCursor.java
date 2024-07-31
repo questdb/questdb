@@ -114,12 +114,12 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         sink.meta("workers").val(workerCount);
 
         if (prefixes.size() > 2) {
-            int hashColumnIndex = (int) prefixes.get(0);
-            int hashColumnType = (int) prefixes.get(1);
-            int geoHashBits = ColumnType.getGeoHashBits(hashColumnType);
+            int geoHashColumnIndex = (int) prefixes.get(0);
+            int geoHashColumnType = (int) prefixes.get(1);
+            int geoHashBits = ColumnType.getGeoHashBits(geoHashColumnType);
 
-            if (hashColumnIndex > -1 && ColumnType.isGeoHash(hashColumnType)) {
-                sink.attr("filter").putColumnName(hashColumnIndex).val(" within(");
+            if (geoHashColumnIndex > -1 && ColumnType.isGeoHash(geoHashColumnType)) {
+                sink.attr("filter").putColumnName(geoHashColumnIndex).val(" within(");
                 for (long i = 2, n = prefixes.size(); i < n; i += 2) {
                     if (i > 2) {
                         sink.val(',');
@@ -171,14 +171,15 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             taskCount = getTaskCount(keyCount, chunkSize);
         }
 
-        int hashColumnIndex = -1;
-        int hashColumnType = ColumnType.UNDEFINED;
+        int geoHashColumnIndex = -1;
+        int geoHashColumnType = ColumnType.UNDEFINED;
         long prefixesAddress = 0;
         long prefixesCount = 0;
 
         if (prefixes.size() > 2) {
-            hashColumnIndex = (int) prefixes.get(0);
-            hashColumnType = (int) prefixes.get(1);
+            // Looks like we have WITHIN clause in the filter.
+            geoHashColumnIndex = (int) prefixes.get(0);
+            geoHashColumnType = (int) prefixes.get(1);
             prefixesAddress = prefixes.getAddress() + 2 * Long.BYTES;
             prefixesCount = prefixes.size() - 2;
         }
@@ -241,8 +242,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                                 partitionLo,
                                 invertedFrameIndex,
                                 valueBlockCapacity,
-                                hashColumnIndex,
-                                hashColumnType,
+                                geoHashColumnIndex,
+                                geoHashColumnType,
                                 prefixesAddress,
                                 prefixesCount
                         );
@@ -259,8 +260,8 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                                 partitionLo,
                                 invertedFrameIndex,
                                 valueBlockCapacity,
-                                hashColumnIndex,
-                                hashColumnType,
+                                geoHashColumnIndex,
+                                geoHashColumnType,
                                 prefixesAddress,
                                 prefixesCount,
                                 doneLatch,
