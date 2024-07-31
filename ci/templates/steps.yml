@@ -254,7 +254,7 @@ steps:
       fi
       $JAVA_HOME_11_X64/bin/java -jar \
         $(Build.SourcesDirectory)/ci/cover-checker-1.5.0-all.jar \
-        $JACOCO_ARGS $RUST_ARGS --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) \ 
+        $JACOCO_ARGS $RUST_ARGS --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) \
         -t $(DIFF_COVER_THRESHOLD_PCT)
     displayName: "Diff coverage PR report"
     condition: |
