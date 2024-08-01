@@ -97,8 +97,11 @@ stages:
           COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
         condition: |
           and(
-            eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
-            eq(variables['System.PullRequest.IsFork'], 'false')
+              or(
+                  eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+                  eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
+              ),
+              eq(variables['System.PullRequest.IsFork'], 'false')
           )
         steps:
           - checkout: self
@@ -143,15 +146,6 @@ stages:
                 $JACOCO_ARGS $RUST_ARGS --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) \
                 -t $(DIFF_COVER_THRESHOLD_PCT)
             displayName: "Diff coverage PR report"
-            condition: |
-              and(
-                  or(
-                      eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-                      eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
-                  ),
-                  eq(variables['testset'], 'coverage'),
-                  eq(variables['System.PullRequest.IsFork'], 'false')
-              )
 
 
 
