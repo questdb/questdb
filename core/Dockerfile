@@ -47,6 +47,7 @@ RUN dpkgArch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
 ##############################################################################
 
 FROM registry.access.redhat.com/ubi9/ubi AS rhel
+ARG tag_name
 
 WORKDIR /app
 
