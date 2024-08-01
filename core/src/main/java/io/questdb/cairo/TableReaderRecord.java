@@ -38,7 +38,6 @@ import org.jetbrains.annotations.Nullable;
 // TODO(puzpuzpuz): delete me
 @Deprecated
 public class TableReaderRecord implements Record, Sinkable {
-
     private int columnBase;
     private TableReader reader;
     private long recordIndex = 0;

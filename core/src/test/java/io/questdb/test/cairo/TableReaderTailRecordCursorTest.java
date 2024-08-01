@@ -191,11 +191,12 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
             }).start();
 
             new Thread(() -> {
-                try (TableReader reader = engine.getReader(tableToken)) {
+                try (
+                        TableReader reader = engine.getReader(tableToken);
+                        TestTableReaderTailRecordCursor cursor = new TestTableReaderTailRecordCursor().of(reader)
+                ) {
                     Rnd rnd = new Rnd();
                     int count = 0;
-                    final TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor();
-                    cursor.of(reader);
                     final Record record = cursor.getRecord();
                     barrier.await();
                     while (count < n) {
@@ -250,7 +251,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
                     Rnd rnd = new Rnd();
                     appendRecords(0, n, timestampIncrement, writer, ts, addr, rnd);
                     ts = n * timestampIncrement;
-                    try (TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor()) {
+                    try (TestTableReaderTailRecordCursor cursor = new TestTableReaderTailRecordCursor()) {
                         cursor.of(engine.getReader(tableToken, TableUtils.ANY_TABLE_VERSION));
                         cursor.toBottom();
 
@@ -307,7 +308,7 @@ public class TableReaderTailRecordCursorTest extends AbstractCairoTest {
                     Rnd rnd = new Rnd();
                     appendRecords(0, n, timestampIncrement, writer, ts, addr, rnd);
                     ts = n * timestampIncrement;
-                    try (TableReaderTailRecordCursor cursor = new TableReaderTailRecordCursor()) {
+                    try (TestTableReaderTailRecordCursor cursor = new TestTableReaderTailRecordCursor()) {
                         cursor.of(engine.getReader(tableToken, TableUtils.ANY_TABLE_VERSION));
                         Assert.assertTrue(cursor.reload());
                         int count = 0;

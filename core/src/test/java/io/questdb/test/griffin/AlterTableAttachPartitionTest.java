@@ -34,6 +34,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -1090,7 +1091,10 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     2
             );
 
-            try (TableReader dstReader = newOffPoolReader(configuration, dst.getTableName())) {
+            try (
+                    TableReader dstReader = newOffPoolReader(configuration, dst.getTableName());
+                    TestTableReaderRecordCursor dstCursor = new TestTableReaderRecordCursor().of(dstReader)
+            ) {
                 dstReader.openPartition(0);
                 dstReader.openPartition(1);
                 dstReader.goPassive();
@@ -1108,7 +1112,10 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
                 // Go active
                 Assert.assertTrue(dstReader.reload());
-                try (TableReader srcReader = getReader(src.getTableName())) {
+                try (
+                        TableReader srcReader = getReader(src.getTableName());
+                        TestTableReaderRecordCursor srcCursor = new TestTableReaderRecordCursor().of(srcReader)
+                ) {
                     String tableHeader = "l\ti\tstr\tvch\tts\n";
                     // check the original src table is not affected
                     String srcPartition2020_01_09 = "1\t1\t1\t&\uDA1F\uDE98|\uD924\uDE04\t2020-01-09T09:35:59.800000Z\n" +
@@ -1117,7 +1124,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                             "4\t4\t4\t\t2020-01-10T14:23:59.200000Z\n" +
                             "5\t5\t5\t͛Ԉ龘и\uDA89\uDFA4~\t2020-01-10T23:59:59.000000Z\n";
                     String expected = tableHeader + srcPartition2020_01_09 + srcPartition2020_01_10;
-                    assertCursor(expected, srcReader.getCursor(), srcReader.getMetadata(), true);
+                    assertCursor(expected, srcCursor, srcReader.getMetadata(), true);
 
                     // now check the dst table
                     // the first 2 rows must be the same as the src table - because we attached the 2020-01-09 partition from src table
@@ -1126,7 +1133,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     expected = tableHeader + srcPartition2020_01_09 + dstPartition2020_01_10;
                     assertCursor(
                             expected,
-                            dstReader.getCursor(),
+                            dstCursor,
                             dstReader.getMetadata(),
                             true
                     );

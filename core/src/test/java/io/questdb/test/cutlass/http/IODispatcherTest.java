@@ -58,6 +58,7 @@ import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.cutlass.suspend.TestCase;
 import io.questdb.test.cutlass.suspend.TestCases;
@@ -8445,13 +8446,17 @@ public class IODispatcherTest extends AbstractTest {
 
         String dirName = TableUtils.getTableDir(mangleTableDirNames, tableName, 1, false);
         TableToken tableToken = new TableToken(tableName, dirName, 1, false, false, false);
-        try (TableReader reader = new TableReader(configuration, tableToken)) {
+        try (
+                TableReader reader = new TableReader(configuration, tableToken);
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
+        ) {
+            cursor.of(reader);
             Assert.assertEquals(expectedO3MaxLag, reader.getO3MaxLag());
             Assert.assertEquals(expectedMaxUncommittedRows, reader.getMaxUncommittedRows());
             Assert.assertEquals(expectedImportedRows, reader.size());
             Assert.assertEquals(0, expectedImportedRows - reader.size());
             StringSink sink = new StringSink();
-            TestUtils.assertCursor(expectedData, reader.getCursor(), reader.getMetadata(), false, sink);
+            TestUtils.assertCursor(expectedData, cursor, reader.getMetadata(), false, sink);
         }
     }
 
@@ -8461,14 +8466,18 @@ public class IODispatcherTest extends AbstractTest {
 
         String telemetry = TelemetryTask.TABLE_NAME;
         TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false, false, false, true);
-        try (TableReader reader = new TableReader(configuration, telemetryTableName)) {
+        try (
+                TableReader reader = new TableReader(configuration, telemetryTableName);
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
+        ) {
+            cursor.of(reader);
             final StringSink sink = new StringSink();
             sink.clear();
-            printTelemetryEventAndOrigin(reader.getCursor(), reader.getMetadata(), sink);
+            printTelemetryEventAndOrigin(cursor, reader.getMetadata(), sink);
             TestUtils.assertEquals(expected, sink);
-            reader.getCursor().toTop();
+            cursor.toTop();
             sink.clear();
-            printTelemetryEventAndOrigin(reader.getCursor(), reader.getMetadata(), sink);
+            printTelemetryEventAndOrigin(cursor, reader.getMetadata(), sink);
             TestUtils.assertEquals(expected, sink);
         }
     }

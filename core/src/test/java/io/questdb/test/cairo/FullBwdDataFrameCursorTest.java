@@ -75,18 +75,18 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
             long increment = 3600000000L * 8;
             int N = 10;
 
-            try (TableWriter w = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
                 for (int i = 0; i < N; i++) {
-                    TableWriter.Row row = w.newRow(timestamp);
+                    TableWriter.Row row = writer.newRow(timestamp);
                     row.putInt(0, rnd.nextInt());
                     row.putInt(1, rnd.nextInt());
                     row.append();
                     timestamp += increment;
                 }
-                w.commit();
-                Assert.assertEquals(N, w.size());
+                writer.commit();
+                Assert.assertEquals(N, writer.size());
 
-                try (FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory(w.getTableToken(), 0, GenericRecordMetadata.deepCopyOf(w.getMetadata()))) {
+                try (FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory(writer.getTableToken(), 0, GenericRecordMetadata.deepCopyOf(writer.getMetadata()))) {
                     final TestTableReaderRecord record = new TestTableReaderRecord();
 
                     try (final DataFrameCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine), ORDER_DESC)) {
@@ -98,20 +98,20 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
 
                         timestamp = TimestampFormatUtils.parseTimestamp("1975-01-01T00:00:00.000Z");
                         for (int i = 0; i < N; i++) {
-                            TableWriter.Row row = w.newRow(timestamp);
+                            TableWriter.Row row = writer.newRow(timestamp);
                             row.putInt(0, rnd.nextInt());
                             row.putInt(1, rnd.nextInt());
                             row.append();
                             timestamp += increment;
                         }
-                        w.commit();
+                        writer.commit();
 
                         Assert.assertTrue(cursor.reload());
                         printCursor(record, cursor);
                         TestUtils.assertEquals(expectedNext + expected, sink);
                     }
 
-                    w.removeColumn("a");
+                    writer.removeColumn("a");
 
                     try {
                         factory.getCursor(new SqlExecutionContextStub(engine), ORDER_DESC);

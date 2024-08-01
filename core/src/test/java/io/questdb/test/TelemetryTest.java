@@ -36,6 +36,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -142,8 +143,10 @@ public class TelemetryTest extends AbstractCairoTest {
                 expectedClasses.add(TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE);
 
                 HashSet<Short> actualClasses = new HashSet<>();
-                try (TableReader reader = newOffPoolReader(configuration, TELEMETRY)) {
-                    final RecordCursor cursor = reader.getCursor();
+                try (
+                        TableReader reader = newOffPoolReader(configuration, TELEMETRY);
+                        TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+                ) {
                     final Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
                         final short event = record.getShort(1);
@@ -241,13 +244,16 @@ public class TelemetryTest extends AbstractCairoTest {
 
     @SuppressWarnings("SameParameterValue")
     private void assertEventAndOrigin(CharSequence expected) {
-        try (TableReader reader = newOffPoolReader(configuration, TELEMETRY)) {
+        try (
+                TableReader reader = newOffPoolReader(configuration, TELEMETRY);
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
             sink.clear();
-            printEventAndOrigin(reader.getCursor(), reader.getMetadata());
+            printEventAndOrigin(cursor, reader.getMetadata());
             TestUtils.assertEquals(expected, sink);
-            reader.getCursor().toTop();
+            cursor.toTop();
             sink.clear();
-            printEventAndOrigin(reader.getCursor(), reader.getMetadata());
+            printEventAndOrigin(cursor, reader.getMetadata());
             TestUtils.assertEquals(expected, sink);
         }
     }

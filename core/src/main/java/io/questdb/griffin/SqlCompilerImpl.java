@@ -3388,7 +3388,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             Misc.free(dstPath);
         }
 
-        private void backupTable(@NotNull TableToken tableToken) {
+        private void backupTable(@NotNull TableToken tableToken, SqlExecutionContext executionContext) throws SqlException {
             LOG.info().$("starting backup of ").$(tableToken).$();
 
             // the table is copied to a TMP folder and then this folder is moved to the final destination (dstPath)
@@ -3518,9 +3518,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             );
                             tableBackupRowCopiedCache.put(srcPath, recordToRowCopier);
                         }
-                        RecordCursor cursor = reader.getCursor();
-                        //statement/query timeout value  is most likely too small for backup operation
-                        copyTableData(cursor, reader.getMetadata(), backupWriter, writerMetadata, recordToRowCopier, configuration.getCreateTableModelBatchSize(), configuration.getO3MaxLag(), SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+                        try (
+                                RecordCursorFactory factory = engine.select(tableToken.getTableName(), executionContext);
+                                RecordCursor cursor = factory.getCursor(executionContext)
+                        ) {
+                            // statement/query timeout value is most likely too small for backup operation
+                            copyTableData(
+                                    cursor,
+                                    reader.getMetadata(),
+                                    backupWriter,
+                                    writerMetadata,
+                                    recordToRowCopier,
+                                    configuration.getCreateTableModelBatchSize(),
+                                    configuration.getO3MaxLag(),
+                                    SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER
+                            );
+                        }
                         backupWriter.commit();
                     }
                 } // release reader lock
@@ -3596,7 +3609,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.position(lexer.lastTokenPosition()).put("expected 'table' or 'database'");
         }
 
-        private void sqlDatabaseBackup(SqlExecutionContext executionContext) {
+        private void sqlDatabaseBackup(SqlExecutionContext executionContext) throws SqlException {
             mkBackupDstRoot();
             mkBackupDstDir(configuration.getDbDirectory(), "could not create backup [db dir=");
 
@@ -3604,7 +3617,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             engine.getTableTokens(tableTokenBucket, false);
             executionContext.getSecurityContext().authorizeTableBackup(tableTokens);
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
-                backupTable(tableTokenBucket.get(i));
+                backupTable(tableTokenBucket.get(i), executionContext);
             }
 
             srcPath.of(configuration.getRoot()).$();
@@ -3666,7 +3679,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executionContext.getSecurityContext().authorizeTableBackup(tableTokens);
 
                 for (int i = 0, n = tableTokens.size(); i < n; i++) {
-                    backupTable(tableTokens.get(i));
+                    backupTable(tableTokens.get(i), executionContext);
                 }
                 compiledQuery.ofBackupTable();
             } finally {

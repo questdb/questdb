@@ -22,17 +22,16 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.test.cairo;
 
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Rows;
 
-// TODO(puzpuzpuz): delete me
-@Deprecated
-public class TableReaderRecordCursor implements RecordCursor {
-
+public class TestTableReaderRecordCursor implements RecordCursor {
     protected final TableReaderRecord recordA = new TableReaderRecord();
     private final TableReaderRecord recordB = new TableReaderRecord();
     protected TableReader reader;
@@ -46,10 +45,7 @@ public class TableReaderRecordCursor implements RecordCursor {
 
     @Override
     public void close() {
-        if (reader != null) {
-            reader.close();
-            reader = null;
-        }
+        // no-op
     }
 
     @Override
@@ -81,7 +77,7 @@ public class TableReaderRecordCursor implements RecordCursor {
         return reader.newSymbolTable(columnIndex);
     }
 
-    public void of(TableReader reader) {
+    public TestTableReaderRecordCursor of(TableReader reader) {
         this.partitionLo = 0;
         this.recordLo = 0;
         this.partitionHi = reader.getPartitionCount();
@@ -89,6 +85,7 @@ public class TableReaderRecordCursor implements RecordCursor {
         // the recordHi value becomes irrelevant - partition index never gets to partitionCount.
         this.recordHi = -1;
         of0(reader);
+        return this;
     }
 
     public void of(TableReader reader, int partitionLo, long recordLo, int partitionHi, long recordHi) {

@@ -35,6 +35,7 @@ import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.fuzz.FuzzInsertOperation;
 import io.questdb.test.fuzz.FuzzStableInsertOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
@@ -851,8 +852,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             foundSymbols = new boolean[symbols.length];
         }
 
-        try (TableReader rdr = getReader(tableName)) {
-            TableReaderRecordCursor cursor = rdr.getCursor();
+        try (
+                TableReader reader = getReader(tableName);
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
             Record rec = cursor.getRecord();
             AssertionError fail = null;
             int dups = existingDups;

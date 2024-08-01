@@ -22,13 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo;
+package io.questdb.test.cairo;
 
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.TestOnly;
 
-public class TableReaderTailRecordCursor extends TableReaderRecordCursor {
-
+public class TestTableReaderTailRecordCursor extends TestTableReaderRecordCursor {
     private long dataVersion = -1;
     private long lastRowId = -1;
     private long txn = TableUtils.INITIAL_TXN;
@@ -45,6 +46,12 @@ public class TableReaderTailRecordCursor extends TableReaderRecordCursor {
         }
         bookmark();
         return false;
+    }
+
+    @Override
+    public TestTableReaderTailRecordCursor of(TableReader reader) {
+        super.of(reader);
+        return this;
     }
 
     public boolean reload() {

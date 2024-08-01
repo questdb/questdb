@@ -65,8 +65,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final LongList openPartitionInfo;
     private final int partitionBy;
     private final Path path;
-    // TODO(puzpuzpuz): get rid of this cursor
-    private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor();
     private final int rootLen;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final MemoryMR todoMem = Vm.getCMRInstance();
@@ -150,7 +148,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
             columnTops = new LongList(capacity / 2);
             columnTops.setPos(capacity / 2);
-            recordCursor.of(this);
         } catch (Throwable e) {
             close();
             throw e;
@@ -241,11 +238,6 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public ColumnVersionReader getColumnVersionReader() {
         return columnVersionReader;
-    }
-
-    public TableReaderRecordCursor getCursor() {
-        recordCursor.toTop();
-        return recordCursor;
     }
 
     public long getDataVersion() {

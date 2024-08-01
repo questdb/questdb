@@ -55,6 +55,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.*;
 import io.questdb.test.QuestDBTestNode;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.griffin.CustomisableRunnable;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.jetbrains.annotations.NotNull;
@@ -78,8 +79,7 @@ import static io.questdb.cairo.TableUtils.*;
 import static org.junit.Assert.assertNotNull;
 
 public final class TestUtils {
-
-    private final static ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
+    private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
 
     private TestUtils() {
     }
@@ -578,13 +578,15 @@ public final class TestUtils {
     }
 
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
-        try (LeakCheck _check = new LeakCheck()) {
+        try (LeakCheck ignore = new LeakCheck()) {
             runnable.run();
         }
     }
 
     public static void assertReader(CharSequence expected, TableReader reader, MutableUtf16Sink sink) {
-        assertCursor(expected, reader.getCursor(), reader.getMetadata(), true, sink);
+        try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
+            assertCursor(expected, cursor, reader.getMetadata(), true, sink);
+        }
     }
 
     public static void assertSql(

@@ -36,7 +36,6 @@ import static io.questdb.cairo.TableReaderRecord.ifOffsetNegThen0ElseValue;
 // TODO(puzpuzpuz): delete me
 @Deprecated
 public class TableReaderSelectedColumnRecord implements Record {
-
     private final IntList columnIndexes;
     private int columnBase;
     private TableReader reader;
@@ -44,10 +43,6 @@ public class TableReaderSelectedColumnRecord implements Record {
 
     public TableReaderSelectedColumnRecord(@NotNull IntList columnIndexes) {
         this.columnIndexes = columnIndexes;
-    }
-
-    public long getAdjustedRecordIndex() {
-        return recordIndex;
     }
 
     @Override
