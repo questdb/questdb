@@ -92,6 +92,7 @@ stages:
           vmImage: "ubuntu-latest"
         variables:
           SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
+          RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
           CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
           COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
         condition: |
