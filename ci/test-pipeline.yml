@@ -109,13 +109,13 @@ stages:
               key: '"questdb_main" | "maven"'
               restoreKeys: |
               path: $(MAVEN_CACHE_FOLDER)
-          - task: Maven@3
-            displayName: "Compile with Maven"
-            inputs:
-              mavenPomFile: "core/pom.xml"
-              mavenOptions: "$(MAVEN_OPTS)"
-              options: "compile -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
-              jdkVersionOption: "1.11"
+          #          - task: Maven@3
+          #            displayName: "Compile with Maven"
+          #            inputs:
+          #              mavenPomFile: "core/pom.xml"
+          #              mavenOptions: "$(MAVEN_OPTS)"
+          #              options: "compile -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+          #              jdkVersionOption: "1.11"
           - download: current
             artifact: jacoco-coverage
           - download: current
