@@ -177,7 +177,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private long recvBufferWriteOffset = 0;
     private boolean replyAndContinue;
     private PGResumeCallback resumeCallback;
-    private Rnd rnd;
+    private final Rnd rnd;
     private long sendBuffer;
     private long sendBufferLimit;
     private long sendBufferPtr;
@@ -1362,7 +1362,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         try {
             if (parameterValueCount > 0) {
                 //client doesn't need to specify any type in Parse message and can just use types returned in ParameterDescription message
-                if (this.activeParsePhaseBindVariableCount == parameterValueCount || activeBindVariableTypes.size() > 0) {
+                if (activeBindVariableTypes.size() > 0) {
                     lo = bindValuesUsingSetters(lo, msgLimit, parameterValueCount);
                 } else {
                     lo = bindValuesAsStrings(lo, msgLimit, parameterValueCount);
@@ -1374,10 +1374,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             throw e;
         }
 
+        short columnFormatCodeCount = getShort(lo, msgLimit, "could not read result set column format codes");
         if (activeTypesAndSelect != null) {
             bindSelectColumnFormats.clear();
 
-            short columnFormatCodeCount = getShort(lo, msgLimit, "could not read result set column format codes");
             if (columnFormatCodeCount > 0) {
 
                 final RecordMetadata m = activeTypesAndSelect.getFactory().getMetadata();
@@ -1491,7 +1491,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         // initialize activeBindVariableTypes from bind variable service
         final int n = bindVariableService.getIndexedVariableCount();
-        if (sendParameterDescription && n > 0 && activeBindVariableTypes.size() == 0) {
+        if (n > 0 && activeBindVariableTypes.size() == 0) {
             activeBindVariableTypes.setPos(n);
             for (int i = 0; i < n; i++) {
                 final Function f = bindVariableService.getFunction(i);
@@ -2710,7 +2710,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     currentCursor = currentFactory.getCursor(sqlExecutionContext);
                     recompileStale = false;
                     // cache random if it was replaced
-                    rnd = sqlExecutionContext.getRandom();
+//                    rnd = sqlExecutionContext.getRandom();
                 } catch (TableReferenceOutOfDateException e) {
                     if (retries == maxRecompileAttempts) {
                         throw SqlException.$(0, e.getFlyweightMessage());
