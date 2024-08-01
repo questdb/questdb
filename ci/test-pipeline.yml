@@ -146,7 +146,7 @@ stages:
               $JAVA_HOME_11_X64/bin/java -jar \
                 $(Build.SourcesDirectory)/ci/cover-checker-1.5.0-all.jar \
                 $JACOCO_ARGS $RUST_ARGS --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) \
-                -t $(DIFF_COVER_THRESHOLD_PCT)
+                -t $(DIFF_COVER_THRESHOLD_PCT) --github-token $(GH_TOKEN)
             displayName: "Diff coverage PR report"
 
 
