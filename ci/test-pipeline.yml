@@ -128,9 +128,11 @@ stages:
               set -eux
               
               ls -al $(Pipeline.Workspace)
+              ls -al $(Pipeline.Workspace)/jacoco-coverage
+              ls -al $(Pipeline.Workspace)/rust-llvm-coverage
               
-              JACOCO_FILE="$(Pipeline.Workspace)/jacoco-coverage/CCReport43F6D5EF/jacoco.xml"
-              RUST_FILE="$(Pipeline.Workspace)/rust-llvm-coverage/questdbr-coverage-report/cobertura.xml"
+              JACOCO_FILE="$(Pipeline.Workspace)/jacoco-coverage/jacoco.xml"
+              RUST_FILE="$(Pipeline.Workspace)/rust-llvm-coverage/cobertura.xml"
               if [ -f $JACOCO_FILE ]; then
                 JACOCO_ARGS="-type jacoco --cover $JACOCO_FILE"
               else
