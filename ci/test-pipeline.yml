@@ -120,49 +120,54 @@ stages:
             artifact: jacoco-coverage
           - download: current
             artifact: rust-llvm-coverage
-          - task: Maven@3
-            displayName: "Merge coverage reports"
-            inputs:
-              mavenPomFile: "ci/jacoco-merge.xml"
-              goals: "verify"
-              options:
-                "-Dhttp.keepAlive=false -DincludeRoot=$(Pipeline.Workspace)
-                -DoutputDirectory=$(Pipeline.Workspace)/jacoco-aggregate
-                -DcoverDiff=$(COVERAGE_DIFF)
-                -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
-          - bash:
-              $JAVA_HOME_11_X64/bin/java -jar
-              $(Build.SourcesDirectory)/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar
-              -c $(Pipeline.Workspace)/jacoco-aggregate/jacoco.xml
-              --github-token $(GH_TOKEN) --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber)
-              -t $(DIFF_COVER_THRESHOLD_PCT) -type jacoco;
+          - bash: |
+              set -eux
+              
+              ls -al $(Pipeline.Workspace)
+              
+              JACOCO_FILE="$(Pipeline.Workspace)/CCReport43F6D5EF/jacoco.xml"
+              RUST_FILE="$(Pipeline.Workspace)/questdbr-coverage-report/cobertura.xml"
+              if [ -f $JACOCO_FILE ]; then
+                JACOCO_ARGS="-type jacoco --cover $JACOCO_FILE"
+              else
+                JACOCO_ARGS=""
+              fi
+              if [ -f $RUST_FILE ]; then
+                RUST_ARGS="-type cobertura --cover $RUST_FILE"
+              else
+                RUST_ARGS=""
+              fi
+              $JAVA_HOME_11_X64/bin/java -jar \
+                $(Build.SourcesDirectory)/ci/cover-checker-1.5.0-all.jar \
+                $JACOCO_ARGS $RUST_ARGS --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) \
+                -t $(DIFF_COVER_THRESHOLD_PCT)
             displayName: "Diff coverage PR report"
+            condition: |
+              and(
+                  or(
+                      eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+                      eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
+                  ),
+                  eq(variables['testset'], 'coverage'),
+                  eq(variables['System.PullRequest.IsFork'], 'false')
+              )
 
-#  - bash: |
-#      set -eux
-#      JACOCO_FILE="$(Build.SourcesDirectory)/CCReport43F6D5EF/jacoco.xml"
-#      RUST_FILE="$(Build.SourcesDirectory)/questdbr-coverage-report/cobertura.xml"
-#      if [ -f $JACOCO_FILE ]; then
-#        JACOCO_ARGS="-type jacoco --cover $JACOCO_FILE"
-#      else
-#        JACOCO_ARGS=""
-#      fi
-#      if [ -f $RUST_FILE ]; then
-#        RUST_ARGS="-type cobertura --cover $RUST_FILE"
-#      else
-#        RUST_ARGS=""
-#      fi
-#      $JAVA_HOME_11_X64/bin/java -jar \
-#        $(Build.SourcesDirectory)/ci/cover-checker-1.5.0-all.jar \
-#        $JACOCO_ARGS $RUST_ARGS --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) \
-#        -t $(DIFF_COVER_THRESHOLD_PCT)
-#    displayName: "Diff coverage PR report"
-#    condition: |
-#      and(
-#          or(
-#              eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-#              eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
-#          ),
-#          eq(variables['testset'], 'coverage'),
-#          eq(variables['System.PullRequest.IsFork'], 'false')
-#      )
+
+
+#          - task: Maven@3
+#            displayName: "Merge coverage reports"
+#            inputs:
+#              mavenPomFile: "ci/jacoco-merge.xml"
+#              goals: "verify"
+#              options:
+#                "-Dhttp.keepAlive=false -DincludeRoot=$(Pipeline.Workspace)
+#                -DoutputDirectory=$(Pipeline.Workspace)/jacoco-aggregate
+#                -DcoverDiff=$(COVERAGE_DIFF)
+#                -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+#          - bash:
+#              $JAVA_HOME_11_X64/bin/java -jar
+#              $(Build.SourcesDirectory)/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar
+#              -c $(Pipeline.Workspace)/jacoco-aggregate/jacoco.xml
+#              --github-token $(GH_TOKEN) --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber)
+#              -t $(DIFF_COVER_THRESHOLD_PCT) -type jacoco;
+#            displayName: "Diff coverage PR report"
