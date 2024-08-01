@@ -247,7 +247,7 @@ steps:
         eq(variables['System.PullRequest.IsFork'], 'false')
       )
     inputs:
-      pathToPublish: $(Build.SourcesDirectory)/CCReport43F6D5EF
+      pathToPublish: $(Build.SourcesDirectory)/core/CCReport43F6D5EF
       artifactName: jacoco-coverage
   - task: PublishBuildArtifacts@1
     displayName: "Upload Rust coverage report"
