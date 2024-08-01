@@ -52,6 +52,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private long argumentsAddress;
     private MessageBus bus;
     private SqlExecutionCircuitBreaker circuitBreaker;
+    private boolean isFrameCacheBuilt;
     private boolean isTreeMapBuilt;
     private int keyCount;
     private int workerCount;
@@ -98,6 +99,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         rows.clear();
         keyCount = -1;
         argumentsAddress = 0;
+        isFrameCacheBuilt = false;
         isTreeMapBuilt = false;
         // prepare for page frame iteration
         super.init();
@@ -193,8 +195,11 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         int queuedCount = 0;
         try {
             // First, build address cache as we'll be publishing it to other threads.
-            while ((frame = frameCursor.next()) != null) {
-                frameAddressCache.add(frameCount++, frame);
+            if (!isFrameCacheBuilt) {
+                while ((frame = frameCursor.next()) != null) {
+                    frameAddressCache.add(frameCount++, frame);
+                }
+                isFrameCacheBuilt = true;
             }
 
             int frameIndex = 0;

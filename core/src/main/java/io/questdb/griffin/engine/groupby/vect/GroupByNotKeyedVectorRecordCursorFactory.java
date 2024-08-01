@@ -342,6 +342,8 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                 throw e;
             } catch (Throwable e) {
                 sharedCircuitBreaker.cancel();
+                // Release page frame memory.
+                Misc.freeObjListAndKeepObjects(frameMemoryPools);
                 throw e;
             } finally {
                 // all done? great start consuming the queue we just published
@@ -360,9 +362,10 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                         sharedCircuitBreaker,
                         workStealingStrategy
                 );
-                // Release page frame memory.
-                Misc.freeObjListAndKeepObjects(frameMemoryPools);
             }
+
+            // Release page frame memory.
+            Misc.freeObjListAndKeepObjects(frameMemoryPools);
 
             toTop();
 
