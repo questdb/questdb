@@ -39,7 +39,6 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     private boolean areCursorsPrepared;
     private boolean isSkipped;
     private RowCursor rowCursor;
-    private long size;
 
     public PageFrameRecordCursorImpl(
             CairoConfiguration configuration,
@@ -135,7 +134,6 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         areCursorsPrepared = false;
         rowCursor = null;
         isSkipped = false;
-        size = -1;
         // prepare for page frame iteration
         super.init();
     }
