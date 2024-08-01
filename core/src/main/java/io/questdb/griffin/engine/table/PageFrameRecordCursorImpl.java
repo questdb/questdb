@@ -62,7 +62,7 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             areCursorsPrepared = true;
         }
 
-        if (filter != null || rowCursorFactory.isUsingIndex()) {
+        if (!frameCursor.supportsSizeCalculation() || filter != null || rowCursorFactory.isUsingIndex()) {
             while (hasNext()) {
                 counter.inc();
             }
@@ -142,26 +142,7 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     @Override
     public long size() {
-        if (entityCursor) {
-            if (size != -1) {
-                return size;
-            }
-
-            try {
-                // TODO(puzpuzpuz): this may mmap column files; consider keeping data frame-based size calculation here
-                frameCursor.toTop();
-                long size = 0;
-                PageFrame pageFrame;
-                while ((pageFrame = frameCursor.next()) != null) {
-                    size += pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
-                }
-                this.size = size;
-                return size;
-            } finally {
-                frameCursor.toTop();
-            }
-        }
-        return -1;
+        return entityCursor ? frameCursor.size() : -1;
     }
 
     @Override

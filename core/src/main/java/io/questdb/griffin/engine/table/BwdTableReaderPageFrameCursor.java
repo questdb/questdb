@@ -74,6 +74,11 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
+    public void calculateSize(RecordCursor.Counter counter) {
+        dataFrameCursor.calculateSize(counter);
+    }
+
+    @Override
     public void close() {
         dataFrameCursor = Misc.free(dataFrameCursor);
     }
@@ -123,6 +128,16 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
         reader = dataFrameCursor.getTableReader();
         toTop();
         return this;
+    }
+
+    @Override
+    public long size() {
+        return dataFrameCursor.size();
+    }
+
+    @Override
+    public boolean supportsSizeCalculation() {
+        return dataFrameCursor.supportsSizeCalculation();
     }
 
     @Override

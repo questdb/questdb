@@ -72,6 +72,11 @@ public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
         return moreData;
     }
 
+    @Override
+    public long size() {
+        return reader.size();
+    }
+
     protected static class FullTableDataFrame implements DataFrame {
         protected int partitionIndex;
         protected long rowHi;

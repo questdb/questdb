@@ -34,6 +34,9 @@ import org.jetbrains.annotations.TestOnly;
  */
 public interface DataFrameCursor extends QuietCloseable, SymbolTableSource {
 
+    default void calculateSize(RecordCursor.Counter counter) {
+    }
+
     // same TableReader is available on each data frame
     TableReader getTableReader();
 
@@ -52,6 +55,19 @@ public interface DataFrameCursor extends QuietCloseable, SymbolTableSource {
      */
     @TestOnly
     boolean reload();
+
+    /**
+     * @return number of items in all data frames.
+     */
+    long size();
+
+    /**
+     * @return true if cursor supports fast size calculation,
+     * i.e. {@link #calculateSize(RecordCursor.Counter)} is properly implemented.
+     */
+    default boolean supportsSizeCalculation() {
+        return false;
+    }
 
     /**
      * Return the cursor to the first data frame.

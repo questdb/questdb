@@ -30,13 +30,7 @@ import org.jetbrains.annotations.Nullable;
 
 public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
 
-    default void calculateSize(RecordCursor.Counter counter) {
-        PageFrame frame;
-        while ((frame = next()) != null) {
-            counter.add(frame.getPartitionHi() - frame.getPartitionLo());
-        }
-        toTop();
-    }
+    void calculateSize(RecordCursor.Counter counter);
 
     @Override
     StaticSymbolTable getSymbolTable(int columnIndex);
@@ -57,6 +51,17 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     PageFrame next();
 
     PageFrameCursor of(DataFrameCursor dataFrameCursor);
+
+    /**
+     * @return number of items in all page frames
+     */
+    long size();
+
+    /**
+     * @return true if cursor supports fast size calculation,
+     * i.e. {@link #calculateSize(RecordCursor.Counter)} is properly implemented.
+     */
+    boolean supportsSizeCalculation();
 
     /**
      * Return the cursor to the beginning of the page frame.

@@ -25,9 +25,21 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.RecordCursor;
 import org.jetbrains.annotations.Nullable;
 
 public class FullFwdDataFrameCursor extends AbstractFullDataFrameCursor {
+
+    @Override
+    public void calculateSize(RecordCursor.Counter counter) {
+        while (partitionIndex < partitionHi) {
+            final long hi = getTableReader().openPartition(partitionIndex);
+            if (hi > 0) {
+                counter.add(hi);
+            }
+            partitionIndex++;
+        }
+    }
 
     @Override
     public @Nullable DataFrame next() {
@@ -45,6 +57,11 @@ public class FullFwdDataFrameCursor extends AbstractFullDataFrameCursor {
             }
         }
         return null;
+    }
+
+    @Override
+    public boolean supportsSizeCalculation() {
+        return true;
     }
 
     @Override

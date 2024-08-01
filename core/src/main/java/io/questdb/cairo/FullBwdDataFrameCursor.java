@@ -25,8 +25,20 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.RecordCursor;
 
 public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
+
+    @Override
+    public void calculateSize(RecordCursor.Counter counter) {
+        while (partitionIndex > -1) {
+            final long hi = reader.openPartition(partitionIndex);
+            if (hi > 0) {
+                counter.add(hi);
+            }
+            partitionIndex--;
+        }
+    }
 
     @Override
     public DataFrame next() {
@@ -43,6 +55,11 @@ public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
             }
         }
         return null;
+    }
+
+    @Override
+    public boolean supportsSizeCalculation() {
+        return true;
     }
 
     @Override

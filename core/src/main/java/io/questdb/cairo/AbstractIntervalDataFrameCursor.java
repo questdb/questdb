@@ -112,6 +112,11 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     }
 
     @Override
+    public long size() {
+        return size > -1 ? size : computeSize();
+    }
+
+    @Override
     public void toTop() {
         intervalsLo = initialIntervalsLo;
         intervalsHi = initialIntervalsHi;
@@ -141,6 +146,96 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
             initialPartitionHi = 0;
         }
         toTop();
+    }
+
+    /**
+     * Best effort size calculation.
+     */
+    private long computeSize() {
+        int intervalsLo = this.intervalsLo;
+        int intervalsHi = this.intervalsHi;
+        int partitionLo = this.partitionLo;
+        int partitionHi = this.partitionHi;
+        long partitionLimit = this.partitionLimit;
+        long size = this.sizeSoFar;
+
+        while (intervalsLo < intervalsHi && partitionLo < partitionHi) {
+            // We don't need to worry about column tops and null column because we
+            // are working with timestamp. Timestamp column cannot be added to existing table.
+            long rowCount;
+            try {
+                rowCount = reader.openPartition(partitionLo);
+            } catch (DataUnavailableException e) {
+                // The data is in cold storage, close the event and give up on size calculation.
+                Misc.free(e.getEvent());
+                return -1;
+            }
+            if (rowCount > 0) {
+                final MemoryR column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionLo), timestampIndex));
+                final long intervalLo = intervals.getQuick(intervalsLo * 2);
+                final long intervalHi = intervals.getQuick(intervalsLo * 2 + 1);
+
+                final long partitionTimestampLo = column.getLong(0);
+                // interval is wholly above partition, skip interval
+                if (partitionTimestampLo > intervalHi) {
+                    intervalsLo++;
+                    continue;
+                }
+
+                final long partitionTimestampHi = column.getLong((rowCount - 1) * 8);
+                // interval is wholly below partition, skip partition
+                if (partitionTimestampHi < intervalLo) {
+                    partitionLimit = 0;
+                    partitionLo++;
+                    continue;
+                }
+
+                // calculate intersection
+                long lo;
+                if (partitionTimestampLo >= intervalLo) {
+                    lo = 0;
+                } else {
+                    lo = binarySearch(column, intervalLo, partitionLimit == -1 ? 0 : partitionLimit, rowCount, SCAN_UP);
+                    if (lo < 0) {
+                        lo = -lo - 1;
+                    }
+                }
+
+                long hi = binarySearch(column, intervalHi, lo, rowCount - 1, SCAN_DOWN);
+
+                if (hi < 0) {
+                    hi = -hi - 1;
+                } else {
+                    // We have direct hit. Interval is inclusive of edges and we have to
+                    // bump to high bound because it is non-inclusive
+                    hi++;
+                }
+
+                if (lo < hi) {
+                    size += (hi - lo);
+
+                    // we do have whole partition of fragment?
+                    if (hi == rowCount) {
+                        // whole partition, will need to skip to next one
+                        partitionLimit = 0;
+                        partitionLo++;
+                    } else {
+                        // only fragment, need to skip to next interval
+                        partitionLimit = hi;
+                        intervalsLo++;
+                    }
+                    continue;
+                }
+                // interval yielded empty data frame
+                partitionLimit = hi;
+                intervalsLo++;
+            } else {
+                // partition was empty, just skip to next
+                partitionLo++;
+            }
+        }
+
+        return this.size = size;
     }
 
     private void cullIntervals(TableReader reader, LongList intervals) {

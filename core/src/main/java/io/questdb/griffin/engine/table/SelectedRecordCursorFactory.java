@@ -209,6 +209,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public void calculateSize(RecordCursor.Counter counter) {
+            baseCursor.calculateSize(counter);
+        }
+
+        @Override
         public void close() {
             baseCursor.close();
         }
@@ -242,6 +247,16 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public PageFrameCursor of(DataFrameCursor dataFrameCursor) {
             return baseCursor.of(dataFrameCursor);
+        }
+
+        @Override
+        public long size() {
+            return baseCursor.size();
+        }
+
+        @Override
+        public boolean supportsSizeCalculation() {
+            return baseCursor.supportsSizeCalculation();
         }
 
         @Override
