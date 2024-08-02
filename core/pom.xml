@@ -124,6 +124,12 @@
                         <configuration>
                             <path>rust/qdbr</path>
                             <release>${qdbr.release}</release>
+                            <environmentVariables>
+                                <RUSTFLAGS>${qdbr.rustflags}</RUSTFLAGS>
+                            </environmentVariables>
+                            <features>
+                                <feature>${qdbr.failpoints}</feature>
+                            </features>
                         </configuration>
                     </execution>
                 </executions>
