@@ -40,16 +40,19 @@ import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
  */
 public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
-    // TODO(puzpuzpuz): we can't use this class anymore as there may be Parquet partitions
-    private final boolean stable;
+    private final StableStringSource stableSource;
     private boolean ascii;
     private long dataLim;
     private long dataLo;
     private long prefixLo;
     private int size;
 
-    public Utf8SplitString(boolean stable) {
-        this.stable = stable;
+    public Utf8SplitString() {
+        this.stableSource = StableStringSource.UNSTABLE_SOURCE;
+    }
+
+    public Utf8SplitString(StableStringSource stableSource) {
+        this.stableSource = stableSource;
     }
 
     @Override
@@ -75,7 +78,7 @@ public class Utf8SplitString implements DirectUtf8Sequence, Mutable {
 
     @Override
     public boolean isStable() {
-        return stable;
+        return stableSource.isStable();
     }
 
     @Override

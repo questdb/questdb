@@ -22,42 +22,20 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.vm;
+package io.questdb.test.cairo;
 
-import io.questdb.cairo.vm.api.MemoryCR;
-import io.questdb.cairo.vm.api.MemoryFR;
+import io.questdb.std.str.DirectUtf8String;
 
-/**
- * Fixed page memory implementation. It augments a pointer of fixed size with accessor methods without
- * owning the pointer. Therefore, memory cannot be extended.
- */
-public class MemoryFCRImpl extends AbstractMemoryCR implements MemoryFR, MemoryCR {
+// We only need stable-aware DirectUtf8String in tests.
+public class TestDirectUtf8String extends DirectUtf8String {
+    private final boolean stable;
 
-    @Override
-    public long addressHi() {
-        return lim;
+    public TestDirectUtf8String(boolean stable) {
+        this.stable = stable;
     }
 
     @Override
-    public void close() {
-        // nothing to do, we do not own the memory
-        this.pageAddress = 0;
-    }
-
-    @Override
-    public void extend(long size) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getFd() {
-        return -1;
-    }
-
-    @Override
-    public void of(long pageAddress, long size) {
-        this.pageAddress = pageAddress;
-        this.size = size;
-        this.lim = pageAddress + size;
+    public boolean isStable() {
+        return stable;
     }
 }

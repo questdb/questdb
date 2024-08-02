@@ -151,15 +151,13 @@ public class PageFrameAddressCache implements Mutable {
 
     public boolean hasColumnTops(int frameIndex) {
         final byte frameFormat = frameFormats.getQuick(frameIndex);
-        // TODO(puzpuzpuz): make sure to test non-native frames
-        if (frameFormat == PageFrame.NATIVE_FORMAT) {
-            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                if (pageAddresses.getQuick(frameIndex).getQuick(columnIndex) == 0
-                        // VARCHAR column that contains short strings will have zero data vector,
-                        // so for such columns we also need to check that the aux (index) vector is zero.
-                        && auxPageAddresses.getQuick(frameIndex).getQuick(columnIndex) == 0) {
-                    return true;
-                }
+        assert frameFormat == PageFrame.NATIVE_FORMAT;
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            if (pageAddresses.getQuick(frameIndex).getQuick(columnIndex) == 0
+                    // VARCHAR column that contains short strings will have zero data vector,
+                    // so for such columns we also need to check that the aux (index) vector is zero.
+                    && auxPageAddresses.getQuick(frameIndex).getQuick(columnIndex) == 0) {
+                return true;
             }
         }
         return false;

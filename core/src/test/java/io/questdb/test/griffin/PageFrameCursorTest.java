@@ -195,7 +195,7 @@ public class PageFrameCursorTest extends AbstractCairoTest {
                 sink
         );
 
-        final Utf8SplitString utf8SplitView = new Utf8SplitString(false);
+        final Utf8SplitString utf8SplitView = new Utf8SplitString();
         final StringSink actualSink = new StringSink();
         // header
         actualSink.put("b\n");

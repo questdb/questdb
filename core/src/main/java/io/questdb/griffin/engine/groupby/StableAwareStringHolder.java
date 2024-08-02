@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSequence;
-import io.questdb.std.str.StableDirectString;
+import io.questdb.std.str.DirectString;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -79,21 +79,24 @@ public class StableAwareStringHolder implements CharSequence {
         if (cs == null) {
             return;
         }
-        if (cs instanceof StableDirectString) {
-            direct = true;
-            StableDirectString sds = (StableDirectString) cs;
-            checkCapacity(4); // pointer is 8 bytes = 4 chars
-            Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE, sds.ptr());
-            Unsafe.getUnsafe().putInt(ptr + LEN_OFFSET, cs.length());
-        } else {
-            int thatLen = cs.length();
-            checkCapacity(thatLen);
-            long lo = ptr + HEADER_SIZE;
-            for (int i = 0; i < thatLen; i++) {
-                Unsafe.getUnsafe().putChar(lo + 2L * i, cs.charAt(i));
+        if (cs instanceof DirectString) {
+            DirectString ds = (DirectString) cs;
+            if (ds.isStable()) {
+                direct = true;
+                checkCapacity(4); // pointer is 8 bytes = 4 chars
+                Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE, ds.ptr());
+                Unsafe.getUnsafe().putInt(ptr + LEN_OFFSET, cs.length());
+                return;
             }
-            Unsafe.getUnsafe().putInt(ptr + LEN_OFFSET, thatLen);
         }
+
+        int thatLen = cs.length();
+        checkCapacity(thatLen);
+        long lo = ptr + HEADER_SIZE;
+        for (int i = 0; i < thatLen; i++) {
+            Unsafe.getUnsafe().putChar(lo + 2L * i, cs.charAt(i));
+        }
+        Unsafe.getUnsafe().putInt(ptr + LEN_OFFSET, thatLen);
     }
 
     @Override

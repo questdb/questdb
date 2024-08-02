@@ -32,10 +32,7 @@ import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.*;
-import io.questdb.std.str.CharSink;
-import io.questdb.std.str.DirectString;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8SplitString;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -44,10 +41,10 @@ import java.io.Closeable;
  * Must be initialized with a {@link #init(PageFrameMemory)} call
  * for a given page frame before any use.
  */
-public class PageFrameMemoryRecord implements Record, Closeable {
-    private final ObjList<MemoryCR.ByteSequenceView> bsviews = new ObjList<>();
-    private final ObjList<DirectString> csviewsA = new ObjList<>();
-    private final ObjList<DirectString> csviewsB = new ObjList<>();
+public class PageFrameMemoryRecord implements Record, StableStringSource, Closeable {
+    private final ObjList<MemoryCR.ByteSequenceView> bsViews = new ObjList<>();
+    private final ObjList<DirectString> csViewsA = new ObjList<>();
+    private final ObjList<DirectString> csViewsB = new ObjList<>();
     private final ObjList<Long256Impl> longs256A = new ObjList<>();
     private final ObjList<Long256Impl> longs256B = new ObjList<>();
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
@@ -61,6 +58,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
     private LongList pageSizes;
     private long rowIdOffset;
     private long rowIndex;
+    private boolean stableStrings;
     private SymbolTableSource symbolTableSource;
 
     public PageFrameMemoryRecord() {
@@ -76,6 +74,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         this.auxPageAddresses = other.auxPageAddresses;
         this.pageSizes = other.pageSizes;
         this.auxPageSizes = other.auxPageSizes;
+        this.stableStrings = other.stableStrings;
     }
 
     @Override
@@ -98,7 +97,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
             final long indexPageAddress = auxPageAddresses.getQuick(columnIndex);
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
             final long pageLimit = pageSizes.getQuick(columnIndex);
-            return getBin(dataPageAddress, offset, pageLimit, bsview(columnIndex));
+            return getBin(dataPageAddress, offset, pageLimit, bsView(columnIndex));
         }
         return NullMemoryCMR.INSTANCE.getBin(0);
     }
@@ -290,7 +289,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
             final long indexPageAddress = auxPageAddresses.getQuick(columnIndex);
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
             final long pageLimit = pageSizes.getQuick(columnIndex);
-            return getStrA(dataPageAddress, offset, pageLimit, csviewA(columnIndex));
+            return getStrA(dataPageAddress, offset, pageLimit, csViewA(columnIndex));
         }
         return NullMemoryCMR.INSTANCE.getStrA(0);
     }
@@ -302,7 +301,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
             final long indexPageAddress = auxPageAddresses.getQuick(columnIndex);
             final long offset = Unsafe.getUnsafe().getLong(indexPageAddress + (rowIndex << 3));
             final long pageLimit = pageSizes.getQuick(columnIndex);
-            return getStrA(dataPageAddress, offset, pageLimit, csviewB(columnIndex));
+            return getStrA(dataPageAddress, offset, pageLimit, csViewB(columnIndex));
         }
         return NullMemoryCMR.INSTANCE.getStrB(0);
     }
@@ -362,11 +361,17 @@ public class PageFrameMemoryRecord implements Record, Closeable {
     public void init(PageFrameMemory frameMemory) {
         this.frameIndex = frameMemory.getFrameIndex();
         this.frameFormat = frameMemory.getFrameFormat();
+        this.stableStrings = (frameFormat == PageFrame.NATIVE_FORMAT);
         this.rowIdOffset = frameMemory.getRowIdOffset();
         this.pageAddresses = frameMemory.getPageAddresses();
         this.auxPageAddresses = frameMemory.getAuxPageAddresses();
         this.pageSizes = frameMemory.getPageSizes();
         this.auxPageSizes = frameMemory.getAuxPageSizes();
+    }
+
+    @Override
+    public boolean isStable() {
+        return stableStrings;
     }
 
     public void of(SymbolTableSource symbolTableSource) {
@@ -378,25 +383,25 @@ public class PageFrameMemoryRecord implements Record, Closeable {
         this.rowIndex = rowIndex;
     }
 
-    private MemoryCR.ByteSequenceView bsview(int columnIndex) {
-        if (bsviews.getQuiet(columnIndex) == null) {
-            bsviews.extendAndSet(columnIndex, new MemoryCR.ByteSequenceView());
+    private MemoryCR.ByteSequenceView bsView(int columnIndex) {
+        if (bsViews.getQuiet(columnIndex) == null) {
+            bsViews.extendAndSet(columnIndex, new MemoryCR.ByteSequenceView());
         }
-        return bsviews.getQuick(columnIndex);
+        return bsViews.getQuick(columnIndex);
     }
 
-    private DirectString csviewA(int columnIndex) {
-        if (csviewsA.getQuiet(columnIndex) == null) {
-            csviewsA.extendAndSet(columnIndex, new DirectString());
+    private DirectString csViewA(int columnIndex) {
+        if (csViewsA.getQuiet(columnIndex) == null) {
+            csViewsA.extendAndSet(columnIndex, new DirectString(this));
         }
-        return csviewsA.getQuick(columnIndex);
+        return csViewsA.getQuick(columnIndex);
     }
 
-    private DirectString csviewB(int columnIndex) {
-        if (csviewsB.getQuiet(columnIndex) == null) {
-            csviewsB.extendAndSet(columnIndex, new DirectString());
+    private DirectString csViewB(int columnIndex) {
+        if (csViewsB.getQuiet(columnIndex) == null) {
+            csViewsB.extendAndSet(columnIndex, new DirectString(this));
         }
-        return csviewsB.getQuick(columnIndex);
+        return csViewsB.getQuick(columnIndex);
     }
 
     private BinarySequence getBin(long base, long offset, long pageLimit, MemoryCR.ByteSequenceView view) {
@@ -500,14 +505,14 @@ public class PageFrameMemoryRecord implements Record, Closeable {
 
     private Utf8SplitString utf8ViewA(int columnIndex) {
         if (utf8ViewsA.getQuiet(columnIndex) == null) {
-            utf8ViewsA.extendAndSet(columnIndex, new Utf8SplitString(false));
+            utf8ViewsA.extendAndSet(columnIndex, new Utf8SplitString(this));
         }
         return utf8ViewsA.getQuick(columnIndex);
     }
 
     private Utf8SplitString utf8ViewB(int columnIndex) {
         if (utf8ViewsB.getQuiet(columnIndex) == null) {
-            utf8ViewsB.extendAndSet(columnIndex, new Utf8SplitString(false));
+            utf8ViewsB.extendAndSet(columnIndex, new Utf8SplitString(this));
         }
         return utf8ViewsB.getQuick(columnIndex);
     }
@@ -527,6 +532,7 @@ public class PageFrameMemoryRecord implements Record, Closeable {
     ) {
         this.frameIndex = frameIndex;
         this.frameFormat = frameFormat;
+        this.stableStrings = (frameFormat == PageFrame.NATIVE_FORMAT);
         this.rowIdOffset = rowIdOffset;
         this.pageAddresses = pageAddresses;
         this.auxPageAddresses = auxPageAddresses;

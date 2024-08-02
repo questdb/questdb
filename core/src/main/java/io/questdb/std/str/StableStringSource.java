@@ -25,17 +25,15 @@
 package io.questdb.std.str;
 
 /**
- * A specialization of {@link DirectString} that does not add new methods, but provides additional
- * guarantees about the stability of the pointer returned by {@link DirectString#ptr()} method.
+ * Defines if a {@link DirectString} or {@link Utf8SplitString} is stable.
+ * Stable string means that the pointer returned by its ptr() method is stable during query execution.
  * <p>
- * Indicates that a pointer returned by {@link DirectString#ptr()} method is stable during a query execution.
- * Stable is defined as:
- * - the pointer remains valid for the duration of the query execution
- * - the sequence of bytes pointed to by the pointer does not change during the query execution
- * <p>
- * Note: this class should be only used for direct {@link CharSequence}s. For {@link Utf8Sequence}s
- * we have special {@link Utf8Sequence#isStable()} method.
+ * Aimed at avoiding having to update string flyweights individually, but instead update the stable
+ * string flag once in the owner record.
  */
-// TODO(puzpuzpuz): we can't use this class anymore as there may be Parquet partitions
-public class StableDirectString extends DirectString {
+@FunctionalInterface
+public interface StableStringSource {
+    StableStringSource UNSTABLE_SOURCE = () -> false;
+
+    boolean isStable();
 }
