@@ -126,6 +126,7 @@
                             <release>${qdbr.release}</release>
                             <environmentVariables>
                                 <RUSTFLAGS>${qdbr.rustflags}</RUSTFLAGS>
+                                <LLVM_PROFILE_FILE>questdbr-cargo-test.profraw</LLVM_PROFILE_FILE>
                             </environmentVariables>
                             <features>
                                 <feature>${qdbr.failpoints}</feature>
