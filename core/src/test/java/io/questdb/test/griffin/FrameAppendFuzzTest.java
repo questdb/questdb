@@ -37,7 +37,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class FrameAppendFuzzTest extends AbstractFuzzTest {
-
     private int partitionCount;
 
     @Test
@@ -77,7 +76,8 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testSimple() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        // TODO(puzpuzpuz): revert me after fixing the flakiness
+        Rnd rnd = generateRandom(LOG, 709766831882L, 1722602126217L);
         setFuzzProperties(rnd.nextLong(50), getRndO3PartitionSplit(rnd), getRndO3PartitionSplit(rnd));
 
         setFuzzProbabilities(

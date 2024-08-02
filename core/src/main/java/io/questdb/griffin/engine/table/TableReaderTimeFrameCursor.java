@@ -147,8 +147,8 @@ public class TableReaderTimeFrameCursor implements TimeFrameRecordCursor {
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
-        ((TableReaderSelectedColumnRecord) record).jumpTo(Rows.toPartitionIndex(atRowId), Rows.toLocalRowID(atRowId));
+    public void recordAt(Record record, long rowId) {
+        ((TableReaderSelectedColumnRecord) record).jumpTo(Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
     }
 
     @Override
