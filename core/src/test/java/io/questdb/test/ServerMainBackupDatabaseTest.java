@@ -62,7 +62,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.test.griffin.TableBackupTest.executeCreateTableStmt;
 import static io.questdb.test.griffin.TableBackupTest.executeInsertGeneratorStmt;
-import static io.questdb.test.tools.TestUtils.*;
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+import static io.questdb.test.tools.TestUtils.createSqlExecutionCtx;
 
 public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
 
@@ -212,7 +213,10 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                             "WHERE table_name='" + tableToken.getTableName() + '\'',
                     context
             );
-            try (RecordCursorFactory factory = cc.getRecordCursorFactory(); RecordCursor cursor = factory.getCursor(context)) {
+            try (
+                    RecordCursorFactory factory = cc.getRecordCursorFactory();
+                    RecordCursor cursor = factory.getCursor(context)
+            ) {
                 RecordMetadata metadata = factory.getMetadata();
                 CursorPrinter.println(cursor, metadata, sink, false, false);
                 String expected = tableToken.getTableName() + "\ttimestamp2\t" + PartitionBy.toString(partitionBy) + '\t' + isWal + '\t' + tableToken.getDirName();

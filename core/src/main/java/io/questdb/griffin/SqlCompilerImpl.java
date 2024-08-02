@@ -3392,8 +3392,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             LOG.info().$("starting backup of ").$(tableToken).$();
 
             // the table is copied to a TMP folder and then this folder is moved to the final destination (dstPath)
-            if (null == cachedBackupTmpRoot) {
-                if (null == configuration.getBackupRoot()) {
+            if (cachedBackupTmpRoot == null) {
+                if (configuration.getBackupRoot() == null) {
                     throw CairoException.nonCritical()
                             .put("backup is disabled, server.conf property 'cairo.sql.backup.root' is not set");
                 }
@@ -3518,14 +3518,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             );
                             tableBackupRowCopiedCache.put(srcPath, recordToRowCopier);
                         }
+
+                        sink.clear();
+                        sink.put('\'').put(tableName).put('\'');
                         try (
-                                RecordCursorFactory factory = engine.select(tableToken.getTableName(), executionContext);
+                                RecordCursorFactory factory = engine.select(sink, executionContext);
                                 RecordCursor cursor = factory.getCursor(executionContext)
                         ) {
                             // statement/query timeout value is most likely too small for backup operation
                             copyTableData(
                                     cursor,
-                                    reader.getMetadata(),
+                                    factory.getMetadata(),
                                     backupWriter,
                                     writerMetadata,
                                     recordToRowCopier,
