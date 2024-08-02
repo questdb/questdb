@@ -2474,6 +2474,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 Assert.assertTrue(reader.reload());
 
+                cursor.toTop();
                 println(reader.getMetadata(), cursor);
                 TestUtils.assertEquals(
                         "l\ttimestamp\txyz\n" +
@@ -2562,6 +2563,7 @@ public class TableReaderTest extends AbstractCairoTest {
 
                 Assert.assertTrue(reader.reload());
 
+                cursor.toTop();
                 rnd.reset();
                 final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
