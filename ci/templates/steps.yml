@@ -156,8 +156,7 @@ steps:
   #        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
   #      )
 
-  - bash: |
-      find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x" "$(ARCHIVED_CRASH_LOG)"' \;
+  - bash: find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x" "$(ARCHIVED_CRASH_LOG)"' \;
     displayName: "Tests failed -- rename crash dump"
     workingDirectory: $(Build.SourcesDirectory)/core/
     condition: failed()
@@ -186,6 +185,7 @@ steps:
       ## Generate Rust coverage report
       set -eux
       export PATH=/usr/lib/llvm-$LLVM_VERSION/bin:$PATH
+      # List profraw files for debugging purposes
       find . -name \*.profraw
 
       FROM_RUST_TEST=core/rust/qdbr/questdbr-cargo-test.profraw
@@ -202,8 +202,6 @@ steps:
         llvm-profdata merge -sparse -o questdbr.profdata $FROM_RUST_TEST $FROM_JAVA_TEST
       else
         echo "LLVM profiling files not found"
-        ls -al
-        ls -al core
         exit -1
       fi
 
