@@ -31,8 +31,6 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cairo.TableReaderRecord.ifOffsetNegThen0ElseValue;
-
 // TODO(puzpuzpuz): delete me
 @Deprecated
 public class TableReaderSelectedColumnRecord implements Record {
@@ -340,6 +338,10 @@ public class TableReaderSelectedColumnRecord implements Record {
 
     public void setRecordIndex(long recordIndex) {
         this.recordIndex = recordIndex;
+    }
+
+    private static int ifOffsetNegThen0ElseValue(long offset, int value) {
+        return offset < 0 ? 0 : value;
     }
 
     private int deferenceColumn(int columnIndex) {

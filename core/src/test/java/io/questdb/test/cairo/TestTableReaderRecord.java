@@ -46,10 +46,6 @@ public class TestTableReaderRecord implements Record, Sinkable {
     private TableReader reader;
     private long recordIndex = 0;
 
-    public static int ifOffsetNegThen0ElseValue(long offset, int value) {
-        return offset < 0 ? 0 : value;
-    }
-
     @Override
     public BinarySequence getBin(int col) {
         final long recordIndex = getAdjustedRecordIndex(col) * Long.BYTES;
@@ -350,6 +346,10 @@ public class TestTableReaderRecord implements Record, Sinkable {
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("TableReaderRecord [columnBase=").put(columnBase).putAscii(", recordIndex=").put(recordIndex).putAscii(']');
+    }
+
+    private static int ifOffsetNegThen0ElseValue(long offset, int value) {
+        return offset < 0 ? 0 : value;
     }
 
     private long getAdjustedRecordIndex(int col) {

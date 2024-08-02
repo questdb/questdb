@@ -1892,7 +1892,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     TableReader reader = getReader(tableToken);
                     TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
             ) {
-                final TableReaderRecord record = (TableReaderRecord) cursor.getRecord();
+                final TestTableReaderRecord record = (TestTableReaderRecord) cursor.getRecord();
                 assertIndex(reader, record, 0);
                 assertIndex(reader, record, 1);
 
@@ -3367,7 +3367,7 @@ public class TableWriterTest extends AbstractCairoTest {
         assertGeoStringy(hash, tableBits, expected, false);
     }
 
-    private void assertIndex(TableReader reader, TableReaderRecord record, int columnIndex) {
+    private void assertIndex(TableReader reader, TestTableReaderRecord record, int columnIndex) {
         final int partitionIndex = 0;
         reader.openPartition(partitionIndex);
         final BitmapIndexReader indexReader = reader.getBitmapIndexReader(partitionIndex, columnIndex, BitmapIndexReader.DIR_FORWARD);
@@ -4262,7 +4262,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     TableReader reader = getReader(tableToken);
                     TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
             ) {
-                final TableReaderRecord record = (TableReaderRecord) cursor.getRecord();
+                final TestTableReaderRecord record = (TestTableReaderRecord) cursor.getRecord();
                 assertIndex(reader, record, 0);
                 assertIndex(reader, record, 1);
 
@@ -4289,7 +4289,7 @@ public class TableWriterTest extends AbstractCairoTest {
                     TableReader reader = getReader(tableToken);
                     TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
             ) {
-                final TableReaderRecord record = (TableReaderRecord) cursor.getRecord();
+                final TestTableReaderRecord record = (TestTableReaderRecord) cursor.getRecord();
                 assertIndex(reader, record, 0);
                 assertIndex(reader, record, 1);
 

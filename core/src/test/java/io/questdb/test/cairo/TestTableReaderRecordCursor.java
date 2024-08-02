@@ -25,15 +25,14 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Rows;
 
 public class TestTableReaderRecordCursor implements RecordCursor {
-    protected final TableReaderRecord recordA = new TableReaderRecord();
-    private final TableReaderRecord recordB = new TableReaderRecord();
+    protected final TestTableReaderRecord recordA = new TestTableReaderRecord();
+    private final TestTableReaderRecord recordB = new TestTableReaderRecord();
     protected TableReader reader;
     private long maxRecordIndex = -1;
     private int partitionHi;
@@ -98,7 +97,7 @@ public class TestTableReaderRecordCursor implements RecordCursor {
 
     @Override
     public void recordAt(Record record, long rowId) {
-        ((TableReaderRecord) record).jumpTo(Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
+        ((TestTableReaderRecord) record).jumpTo(Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
     }
 
     @Override
