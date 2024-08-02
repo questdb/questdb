@@ -60,7 +60,7 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
             // we need to return some nulls and the whole set of actual index values
             final NullCursor nullCursor = getNullCursor(cachedInstance);
             nullCursor.nullPos = minValue;
-            nullCursor.nullCount = unindexedNullCount;
+            nullCursor.nullCount = Math.min(unindexedNullCount, maxValue + 1);
             nullCursor.of(key, 0, maxValue, indexSkew, keyCount);
             return nullCursor;
         }
