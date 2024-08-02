@@ -131,7 +131,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     @Override
-    public String getSqlStatement() {
+    public String getSqlText() {
         return sqlStatement;
     }
 
@@ -300,8 +300,8 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         return this;
     }
 
-    public void withSqlStatement(String sqlStatement) {
-        this.sqlStatement = sqlStatement;
+    public void withSqlText(String sqlText) {
+        this.sqlStatement = sqlText;
     }
 
     private CompiledQuery of(short type, RecordCursorFactory factory, TableToken tableToken) {

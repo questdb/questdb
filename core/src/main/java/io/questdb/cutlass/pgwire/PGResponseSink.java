@@ -24,29 +24,49 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.InsertOperation;
-import io.questdb.std.WeakSelfReturningObjectPool;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.str.Utf8Sink;
 
-public class TypesAndInsert extends AbstractTypeContainer<TypesAndInsert> {
-    private boolean hasBindVariables;
-    private InsertOperation insert;
+public interface PGResponseSink extends Utf8Sink {
+    void bookmark();
 
-    public TypesAndInsert(WeakSelfReturningObjectPool<TypesAndInsert> parentPool) {
-        super(parentPool);
-    }
+    void bump(int size);
 
-    public InsertOperation getInsert() {
-        return insert;
-    }
+    void put(BinarySequence sequence);
 
-    public boolean hasBindVariables() {
-        return hasBindVariables;
-    }
+    void putIntDirect(int value);
 
-    public void of(InsertOperation insert, BindVariableService bindVariableService) {
-        this.insert = insert;
-        copyTypesFrom(bindVariableService);
-        this.hasBindVariables = bindVariableService.getIndexedVariableCount() > 0;
-    }
+    void putIntUnsafe(long offset, int value);
+
+    void putLen(long start);
+
+    void putLenEx(long start);
+
+    void putNetworkDouble(double value);
+
+    void putNetworkFloat(float value);
+
+    void putNetworkInt(int value);
+
+    void putNetworkLong(long value);
+
+    void putNetworkShort(short value);
+
+    void putZ(CharSequence value);
+
+    void resetToBookmark();
+
+    long skipInt();
+
+    void checkCapacity(long size);
+
+    void reset();
+
+    void setNullValue();
+
+    void sendBufferAndReset() throws PeerDisconnectedException, PeerIsSlowToReadException;
+
+    void assignCallback(PGResumeCallback callback);
 }

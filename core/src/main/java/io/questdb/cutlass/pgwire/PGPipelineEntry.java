@@ -25,29 +25,37 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.TelemetryOrigin;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.*;
+import io.questdb.cairo.pool.WriterSource;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.*;
-import io.questdb.griffin.engine.ops.AlterOperation;
-import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.network.NoSpaceLeftInResponseBufferException;
+import io.questdb.network.QueryPausedException;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
+import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.pgwire.PGConnectionContext.*;
 import static io.questdb.cutlass.pgwire.PGOids.*;
+import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
 public class PGPipelineEntry implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(PGPipelineEntry.class);
+    private final CompiledQueryImpl compiledQuery;
     // stores result format codes (0=Text,1=Binary) from the latest bind message
     // we need it in case cursor gets invalidated and bind used non-default binary format for some column(s)
     // pg clients (like asyncpg) fail when format sent by server is not the same as requested in bind message
     private final IntList msgBindSelectFormatCodes = new IntList();
-    private AlterOperation alterOp = null;
+    // types are sent to us via "parse" message
+    private final IntList msgParseParameterTypes = new IntList();
+    private boolean cacheHit = false;    // extended protocol cursor resume callback
+    private RecordCursor cursor;
     private boolean empty;
     // this is a "union", so should only be one, depending on SQL type
     // SELECT or EXPLAIN
@@ -55,31 +63,48 @@ public class PGPipelineEntry implements QuietCloseable {
     private InsertOperation insertOp = null;
     private int msgBindParameterFormatCodeCount;
     private int msgBindParameterValueCount;
-    // types are sent to us via "parse" message
-    private IntList msgParseParameterTypes = new IntList();
+    private boolean outRecordPending = false;
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
-    private IntList pgResultSetColumnTypes;
+    private IntList pgResultSetColumnTypes;    private final PGResumeCallback outResumeExtCursorCompleteCallbackRef = this::outResumeExtCursorCompleteCallback;
     private boolean portal = false;
     private boolean preparedStatement = false;
+    // the name of the prepared statement as used by "deallocate" SQL
+    // not to be confused with prepared statements that come on the
+    // PostgresSQL wire.
+    private CharSequence preparedStatementName;
     private long sqlAffectedRowCount = 0;
+    private long sqlReturnRowCount = 0;
     private long sqlReturnRowCountLimit = 0;
+    private long sqlReturnRowCountLimitComputed = 0;
     private CharSequence sqlTag = null;
     private CharSequence sqlText = null;
     private boolean sqlTextHasSecret = false;
-    private int sqlType = 0;
+    private short sqlType = 0;
+    private boolean stateBind;
+    private int stateDesc;
+    private boolean stateExec;
+    // boolean state, bitset?
+    private boolean stateParse;
+    private int stateSync = 0;
     private TypesAndInsert tai = null;
     private TypesAndSelect tas = null;
-    private TypesAndUpdate tau = null;
-    private UpdateOperation updateOp = null;
-    private String updateOpSql = null;
-    private boolean cacheHit = false;
-    private RecordCursor cursor;
+    public PGPipelineEntry(CairoEngine engine) {
+        this.compiledQuery = new CompiledQueryImpl(engine);
+    }
 
     @Override
     public void close() {
     }
 
-    public void execute(SqlExecutionContext executionContext) throws SqlException {
+    // return transaction state
+    public int execute(
+            SqlExecutionContext sqlExecutionContext,
+            int transactionState,
+            SimpleAssociativeCache<TypesAndInsert> taiCache,
+            ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
+            WriterSource writerSource,
+            CharSequenceObjHashMap<PGPipelineEntry> namedStatements
+    ) throws SqlException {
         // todo: we must not throw exception as this step, instead we must cache the outcome and
         //     send it when the client is ready to receive
         switch (this.sqlType) {
@@ -89,99 +114,38 @@ public class PGPipelineEntry implements QuietCloseable {
             case CompiledQuery.EXPLAIN:
             case CompiledQuery.SELECT:
             case CompiledQuery.PSEUDO_SELECT:
-                if (cursor == null) {
-                    executionContext.getCircuitBreaker().resetTimer();
-                    executionContext.setCacheHit(cacheHit);
-                    try {
-                        cursor = factory.getCursor(executionContext);
-                        // cache random if it was replaced
-                        rnd = executionContext.getRandom();
-                    } catch (TableReferenceOutOfDateException e) {
-                        // We cannot simply recompile SQL at this stage because
-                        // we have a bunch of other things, like bind variables,
-                        // client supplied types, flags etc. All of this might just
-                        // go out of sync leading to non-deterministic outcome.
-                        //
-                        // Instead of recompiling however, we can just "un-cache" the SQL
-                        tas = Misc.free(tas);
-                        factory = null;
-                        throw e;
-                    }
-                }
+                executeSelect(sqlExecutionContext);
                 break;
             case CompiledQuery.INSERT:
-                this.insertOp = cq.getInsertOperation();
-                tai = taiPool.pop();
-                // todo: check why TypeAndSelect has separate method for copying types from BindVariableService
-                tai.of(insertOp, executionContext.getBindVariableService());
-                if (executionContext.getBindVariableService().getIndexedVariableCount() > 0) {
-                    // TypeAndInsert cache is connection local, we decide to cache insert if it has
-                    // bind variables.
-                    taiCache.put(sqlText, tai);
-                }
-                sqlTag = TAG_INSERT;
-                break;
-            case CompiledQuery.UPDATE:
-                this.updateOp = cq.getUpdateOperation();
-                this.updateOpSql = cq.getSqlStatement();
-
-                tau = tauPool.pop();
-                tau.of(cq, executionContext.getBindVariableService());
-                if (executionContext.getBindVariableService().getIndexedVariableCount() > 0) {
-                    // TypeAndUpdate cache is connection local, we decide to cache insert if it has
-                    // bind variables.
-                    tauCache.put(sqlText, tau);
-                }
-                sqlTag = TAG_UPDATE;
-                break;
             case CompiledQuery.INSERT_AS_SELECT:
-                this.insertOp = cq.getInsertOperation();
-                sqlTag = TAG_INSERT_AS_SELECT;
-                break;
-            case CompiledQuery.SET:
-                sqlTag = TAG_SET;
-                break;
-            case CompiledQuery.DEALLOCATE:
-                sqlTag = TAG_DEALLOCATE;
-                break;
-            case CompiledQuery.BEGIN:
-                sqlTag = TAG_BEGIN;
-                break;
-            case CompiledQuery.COMMIT:
-                sqlTag = TAG_COMMIT;
-                break;
-            case CompiledQuery.ROLLBACK:
-                sqlTag = TAG_ROLLBACK;
-                break;
-            case CompiledQuery.ALTER_USER:
-                sqlTextHasSecret = executionContext.containsSecret();
-                sqlTag = TAG_ALTER_ROLE;
-                break;
-            case CompiledQuery.CREATE_USER:
-                sqlTextHasSecret = executionContext.containsSecret();
-                sqlTag = TAG_CREATE_ROLE;
+                executeInsert(sqlExecutionContext, transactionState, taiCache, pendingWriters, writerSource);
                 break;
             case CompiledQuery.ALTER:
-                // future-proofing ALTER execution
-                this.alterOp = cq.getAlterOperation();
-                // fall through
+            case CompiledQuery.ALTER_USER:
+            case CompiledQuery.CREATE_USER:
+            case CompiledQuery.UPDATE:
+                sqlExecutionContext.containsSecret(sqlTextHasSecret);
+                executeCompiledQuery(sqlExecutionContext, transactionState);
+                break;
+            case CompiledQuery.DEALLOCATE:
+                // this is our own SQL query, which is intended to remove named statement from
+                // connection cache.
+                PGPipelineEntry pe = namedStatements.get(this.preparedStatementName);
+                if (pe != null) {
+                    pe.setPreparedStatement(false);
+                    PGConnectionContext.freeIfAbandoned(pe);
+                }
+                break;
+            case CompiledQuery.BEGIN:
+                return IN_TRANSACTION;
+            case CompiledQuery.COMMIT:
+            case CompiledQuery.ROLLBACK:
+                freePendingWriters(pendingWriters, this.sqlType == CompiledQuery.COMMIT);
+                return NO_TRANSACTION;
             default:
-                // DDL
-                sqlTag = TAG_OK;
                 break;
         }
-    }
-
-    public int getMsgParseParameterTypeCount() {
-        return msgParseParameterTypes.size();
-    }
-
-    public CharSequence getSqlText() {
-        return sqlText;
-    }
-
-    public boolean isEmpty() {
-        return empty;
+        return transactionState;
     }
 
     public boolean isPortal() {
@@ -190,49 +154,6 @@ public class PGPipelineEntry implements QuietCloseable {
 
     public boolean isPreparedStatement() {
         return preparedStatement;
-    }
-
-    public boolean lookup(
-            SimpleAssociativeCache<TypesAndInsert> taiCache,
-            SimpleAssociativeCache<TypesAndUpdate> tauCache,
-            AssociativeCache<TypesAndSelect> tasCache,
-            BindVariableService bindVariableService
-    ) throws SqlException {
-        bindVariableService.clear();
-
-        tai = taiCache.peek(sqlText);
-
-        // not found or not insert, try select
-        // poll this cache because it is shared, and we do not want
-        // select factory to be used by another thread concurrently
-        if (tai != null) {
-            tai.defineBindVariables(bindVariableService);
-            insertOp = tai.getInsert();
-            sqlTag = TAG_INSERT;
-            return true;
-        }
-
-        tau = tauCache.peek(sqlText);
-
-        if (tau != null) {
-            tau.defineBindVariables(bindVariableService);
-            updateOp = tau.getCompiledQuery().getUpdateOperation();
-            updateOpSql = tau.getCompiledQuery().getSqlStatement();
-            sqlTag = TAG_UPDATE;
-            return true;
-        }
-
-        tas = tasCache.poll(sqlText);
-
-        if (tas != null) {
-            // cache hit, define bind variables
-            tas.defineBindVariables(bindVariableService);
-            factory = tas.getFactory();
-            sqlTag = TAG_SELECT;
-            return true;
-        }
-
-        return false;
     }
 
     public void msgBindCopyParameterFormatCodes(long lo, long msgLimit, short formatCodeCount) throws BadProtocolException {
@@ -355,7 +276,7 @@ public class PGPipelineEntry implements QuietCloseable {
     public void of(
             CharSequence sqlText,
             CairoEngine engine,
-            SqlExecutionContext executionContext,
+            SqlExecutionContext sqlExecutionContext,
             SimpleAssociativeCache<TypesAndInsert> taiCache,
             SimpleAssociativeCache<TypesAndUpdate> tauCache,
             AssociativeCache<TypesAndSelect> tasCache,
@@ -371,173 +292,19 @@ public class PGPipelineEntry implements QuietCloseable {
             if (
                     !lookup(
                             taiCache,
-                            tauCache,
                             tasCache,
-                            executionContext.getBindVariableService()
+                            sqlExecutionContext.getBindVariableService()
                     )
             ) {
                 cacheHit = false;
                 parseNew(
                         engine,
-                        executionContext,
+                        sqlExecutionContext,
                         taiPool,
-                        tauPool,
-                        taiCache,
-                        tauCache
+                        tauPool
                 );
             }
             buildResultSetColumnTypes();
-        }
-    }
-
-    private void parseNew(
-            CairoEngine engine,
-            SqlExecutionContext executionContext,
-            WeakSelfReturningObjectPool<TypesAndInsert> taiPool,
-            WeakSelfReturningObjectPool<TypesAndUpdate> tauPool,
-            SimpleAssociativeCache<TypesAndInsert> taiCache,
-            SimpleAssociativeCache<TypesAndUpdate> tauCache
-    ) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            CompiledQuery cq = compiler.compile(sqlText, executionContext);
-
-            executionContext.storeTelemetry(cq.getType(), TelemetryOrigin.POSTGRES);
-
-            this.sqlType = cq.getType();
-
-            switch (cq.getType()) {
-                case CompiledQuery.CREATE_TABLE_AS_SELECT:
-                    sqlTag = TAG_CTAS;
-                    sqlAffectedRowCount = cq.getAffectedRowsCount();
-                    break;
-                case CompiledQuery.EXPLAIN:
-                    this.factory = cq.getRecordCursorFactory();
-                    // After parsing SQL text the bind variable service contains types of the variables
-                    // the compiler could work out. Caching SQL plan involved not recompiling SQL text over
-                    // and over. For that reason the types of the bind variables will have to be
-                    // preserved when SQL factory is taken from cache and reused. This is what
-                    // TypesAndSelect is for.
-
-                    // SQL cache is global and multithreaded. For that reason we must
-                    // move "tas" into the cache only when the current context is guaranteed not
-                    // to use it.
-                    tas = new TypesAndSelect(this.factory);
-                    tas.copyTypesFrom(executionContext.getBindVariableService());
-                    sqlTag = TAG_EXPLAIN;
-                case CompiledQuery.SELECT:
-                    this.factory = cq.getRecordCursorFactory();
-                    tas = new TypesAndSelect(this.factory);
-                    tas.copyTypesFrom(executionContext.getBindVariableService());
-                    sqlTag = TAG_SELECT;
-                    break;
-                case CompiledQuery.PSEUDO_SELECT:
-                    // the PSEUDO_SELECT comes from a "copy" SQL, which is why
-                    // we do not intend to cache it. The fact we don't have
-                    // TypesAndSelect instance here should be enough to tell the
-                    // system not to cache.
-                    this.factory = cq.getRecordCursorFactory();
-                    sqlTag = TAG_PSEUDO_SELECT;
-                    break;
-                case CompiledQuery.INSERT:
-                    this.insertOp = cq.getInsertOperation();
-                    tai = taiPool.pop();
-                    // todo: check why TypeAndSelect has separate method for copying types from BindVariableService
-                    tai.of(insertOp, executionContext.getBindVariableService());
-                    if (executionContext.getBindVariableService().getIndexedVariableCount() > 0) {
-                        // TypeAndInsert cache is connection local, we decide to cache insert if it has
-                        // bind variables.
-                        taiCache.put(sqlText, tai);
-                    }
-                    sqlTag = TAG_INSERT;
-                    break;
-                case CompiledQuery.UPDATE:
-                    this.updateOp = cq.getUpdateOperation();
-                    this.updateOpSql = cq.getSqlStatement();
-
-                    tau = tauPool.pop();
-                    tau.of(cq, executionContext.getBindVariableService());
-                    if (executionContext.getBindVariableService().getIndexedVariableCount() > 0) {
-                        // TypeAndUpdate cache is connection local, we decide to cache insert if it has
-                        // bind variables.
-                        tauCache.put(sqlText, tau);
-                    }
-                    sqlTag = TAG_UPDATE;
-                    break;
-                case CompiledQuery.INSERT_AS_SELECT:
-                    this.insertOp = cq.getInsertOperation();
-                    sqlTag = TAG_INSERT_AS_SELECT;
-                    break;
-                case CompiledQuery.SET:
-                    sqlTag = TAG_SET;
-                    break;
-                case CompiledQuery.DEALLOCATE:
-                    sqlTag = TAG_DEALLOCATE;
-                    break;
-                case CompiledQuery.BEGIN:
-                    sqlTag = TAG_BEGIN;
-                    break;
-                case CompiledQuery.COMMIT:
-                    sqlTag = TAG_COMMIT;
-                    break;
-                case CompiledQuery.ROLLBACK:
-                    sqlTag = TAG_ROLLBACK;
-                    break;
-                case CompiledQuery.ALTER_USER:
-                    sqlTextHasSecret = executionContext.containsSecret();
-                    sqlTag = TAG_ALTER_ROLE;
-                    break;
-                case CompiledQuery.CREATE_USER:
-                    sqlTextHasSecret = executionContext.containsSecret();
-                    sqlTag = TAG_CREATE_ROLE;
-                    break;
-                case CompiledQuery.ALTER:
-                    // future-proofing ALTER execution
-                    this.alterOp = cq.getAlterOperation();
-                    // fall through
-                default:
-                    // DDL
-                    sqlTag = TAG_OK;
-                    break;
-            }
-        }
-    }
-
-    public void setBindVariableAsStr(
-            int variableIndex,
-            long valueAddr,
-            int valueSize,
-            BindVariableService bindVariableService,
-            CharacterStore characterStore,
-            DirectUtf8String utf8String
-    ) throws BadProtocolException, SqlException {
-        CharacterStoreEntry e = characterStore.newEntry();
-        Function fn = bindVariableService.getFunction(variableIndex);
-        // If the function type is VARCHAR, there's no need to convert to UTF-16
-        if (fn != null && fn.getType() == ColumnType.VARCHAR) {
-            final int sequenceType = Utf8s.getUtf8SequenceType(valueAddr, valueAddr + valueSize);
-            boolean ascii;
-            switch (sequenceType) {
-                case 0:
-                    // ascii sequence
-                    ascii = true;
-                    break;
-                case 1:
-                    // non-ASCII sequence
-                    ascii = false;
-                    break;
-                default:
-                    LOG.error().$("invalid varchar bind variable type [variableIndex=").$(variableIndex).I$();
-                    throw BadProtocolException.INSTANCE;
-            }
-            bindVariableService.setVarchar(variableIndex, utf8String.of(valueAddr, valueAddr + valueSize, ascii));
-
-        } else {
-            if (Utf8s.utf8ToUtf16(valueAddr, valueAddr + valueSize, e)) {
-                bindVariableService.setStr(variableIndex, characterStore.toImmutable());
-            } else {
-                LOG.error().$("invalid str bind variable type [variableIndex=").$(variableIndex).I$();
-                throw BadProtocolException.INSTANCE;
-            }
         }
     }
 
@@ -553,6 +320,124 @@ public class PGPipelineEntry implements QuietCloseable {
         this.sqlReturnRowCountLimit = rowCountLimit;
     }
 
+    public void setStateBind(boolean stateBind) {
+        this.stateBind = stateBind;
+    }
+
+    public void setStateDesc(int stateDesc) {
+        this.stateDesc = stateDesc;
+    }
+
+    public void setStateExec(boolean stateExec) {
+        this.stateExec = stateExec;
+    }
+
+    public void setStateParse(boolean stateParse) {
+        this.stateParse = stateParse;
+    }
+
+    /**
+     * This method writes the response to the provided sink. The response is typically
+     * larger than the available buffer. For that reason this method also flushes the buffers. During the
+     * buffer flush it is entirely possible that nothing is receiving our data on the other side of the
+     * network. For that reason this method maintains state and is re-entrant. If it is to throw an exception
+     * pertaining network difficulties, the calling party must fix those difficulties and call this method
+     * again.
+     *
+     * @param sqlExecutionContext
+     * @param transactionState
+     * @param utf8Sink
+     * @return
+     * @throws Exception
+     */
+    public int sync(
+            SqlExecutionContext sqlExecutionContext,
+            int transactionState,
+            PGResponseSink utf8Sink
+    ) throws Exception {
+
+        switch (stateSync) {
+            case 0:
+                if (stateParse) {
+                    outParseComplete(utf8Sink);
+                }
+                stateSync = 1;
+            case 1:
+                if (stateBind) {
+                    outBindComplete(utf8Sink);
+                }
+                stateSync = 2;
+            case 2:
+                switch (stateDesc) {
+                    case 3:
+                        // named prepared statement
+                        outParameterTypeDescription(utf8Sink);
+                        // fall through
+                    case 2:
+                    case 1:
+                        // portal
+                        if (factory != null) {
+                            outRowDescription(utf8Sink);
+                        } else {
+                            outNoData(utf8Sink);
+                        }
+                        break;
+                }
+                stateSync = 3;
+            case 3:
+            case 4:
+                // state goes deeper
+                if (empty) {
+                    outEmptyQuery(utf8Sink);
+                } else {
+                    switch (sqlType) {
+                        case CompiledQuery.CREATE_TABLE_AS_SELECT:
+                        case CompiledQuery.SET:
+                        case CompiledQuery.BEGIN:
+                        case CompiledQuery.COMMIT:
+                        case CompiledQuery.ROLLBACK:
+                        case CompiledQuery.ALTER_USER:
+                        case CompiledQuery.CREATE_USER:
+                        case CompiledQuery.DEALLOCATE:
+                        case CompiledQuery.ALTER: {
+                            // create table is just "OK"
+                            utf8Sink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
+                            long addr = utf8Sink.skipInt();
+                            utf8Sink.put(sqlTag).put((byte) 0);
+                            utf8Sink.putLen(addr);
+                            stateSync = 5;
+                            break;
+                        }
+                        case CompiledQuery.EXPLAIN:
+                        case CompiledQuery.SELECT:
+                        case CompiledQuery.PSEUDO_SELECT:
+                            // This is a long response (data set) and because of
+                            // this we are entering the interruptible state machine here. In that,
+                            // this call may end up in an exception and the code will have to be re-entered
+                            // at some point. Our own completion callback will invoke the pipeline callback
+                            outCursor(sqlExecutionContext, utf8Sink);
+                            // the above method changes state
+                            break;
+                        case CompiledQuery.INSERT_AS_SELECT:
+                        case CompiledQuery.INSERT: {
+                            utf8Sink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
+                            long addr = utf8Sink.skipInt();
+                            utf8Sink.put(sqlTag).putAscii(" 0 ").put(sqlAffectedRowCount).put((byte) 0);
+                            utf8Sink.putLen(addr);
+                            stateSync = 5;
+                            break;
+                        }
+                        case CompiledQuery.UPDATE: {
+                            outCommandComplete(utf8Sink, sqlAffectedRowCount);
+                            stateSync = 5;
+                            break;
+                        }
+                    }
+                }
+        }
+        return transactionState;
+    }
+
     private static void ensureValueLength(int variableIndex, int sizeRequired, int sizeActual) throws BadProtocolException {
         if (sizeRequired == sizeActual) {
             return;
@@ -563,6 +448,32 @@ public class PGPipelineEntry implements QuietCloseable {
                 .$(", variableIndex=").$(variableIndex)
                 .I$();
         throw BadProtocolException.INSTANCE;
+    }
+
+    private static void outBindComplete(PGResponseSink utf8Sink) {
+        outSimpleMsg(utf8Sink, MESSAGE_TYPE_BIND_COMPLETE);
+    }
+
+    private static void outEmptyQuery(PGResponseSink utf8Sink) {
+        outSimpleMsg(utf8Sink, MESSAGE_TYPE_EMPTY_QUERY);
+    }
+
+    private static void outNoData(PGResponseSink utf8Sink) {
+        outSimpleMsg(utf8Sink, MESSAGE_TYPE_NO_DATA);
+    }
+
+    private static void outParseComplete(PGResponseSink utf8Sink) {
+        outSimpleMsg(utf8Sink, MESSAGE_TYPE_PARSE_COMPLETE);
+    }
+
+    private static void outPortalSuspended(PGResponseSink utf8Sink) {
+        utf8Sink.put(MESSAGE_TYPE_PORTAL_SUSPENDED);
+        utf8Sink.putIntDirect(INT_BYTES_X);
+    }
+
+    private static void outSimpleMsg(PGResponseSink utf8Sink, byte msgByte) {
+        utf8Sink.put(msgByte);
+        utf8Sink.putIntDirect(INT_BYTES_X);
     }
 
     private static void setBindVariableAsBin(
@@ -690,6 +601,149 @@ public class PGPipelineEntry implements QuietCloseable {
         long hi = getLongUnsafe(valueAddr);
         long lo = getLongUnsafe(valueAddr + Long.BYTES);
         bindVariableService.setUuid(variableIndex, lo, hi);
+    }
+
+    private void buildResultSetColumnTypes() {
+        if (factory != null) {
+            final RecordMetadata m = factory.getMetadata();
+            final int columnCount = m.getColumnCount();
+            pgResultSetColumnTypes.setPos(2 * columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                final int columnType = m.getColumnType(i);
+                pgResultSetColumnTypes.setQuick(2 * i, columnType);
+                // the extra values stored here are used to render geo-hashes as strings
+                pgResultSetColumnTypes.setQuick(2 * i + 1, GeoHashes.getBitFlags(columnType));
+            }
+        }
+    }
+
+    private void executeCompiledQuery(SqlExecutionContext sqlExecutionContext, int transactionState) throws SqlException {
+        if (transactionState != ERROR_TRANSACTION) {
+            // execute against writer from the engine, synchronously (null sequence)
+            try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, null, true)) {
+                // this doesn't actually wait, because the call is synchronous
+                fut.await();
+                sqlAffectedRowCount = fut.getAffectedRowsCount();
+            }
+        }
+    }
+
+    private void executeInsert(
+            SqlExecutionContext sqlExecutionContext,
+            int transactionState,
+            // todo: WriterSource is the interface used exclusively in PG Wire. We should not need to pass
+            //    around heaps of state in very long call stacks
+            SimpleAssociativeCache<TypesAndInsert> taiCache,
+            ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
+            WriterSource writerSource
+    ) throws SqlException {
+        try {
+            switch (transactionState) {
+                case IN_TRANSACTION:
+                    final InsertMethod m = insertOp.createMethod(sqlExecutionContext, writerSource);
+                    try {
+                        sqlAffectedRowCount = m.execute();
+                        TableWriterAPI writer = m.popWriter();
+                        pendingWriters.put(writer.getTableToken(), writer);
+                        if (tai.hasBindVariables()) {
+                            taiCache.put(sqlText, tai);
+                        }
+                    } catch (Throwable e) {
+                        Misc.free(m);
+                        throw e;
+                    }
+                    break;
+                case ERROR_TRANSACTION:
+                    // when transaction is in error state, skip execution
+                    break;
+                default:
+                    // in any other case we will commit in place
+                    try (final InsertMethod m2 = insertOp.createMethod(sqlExecutionContext, writerSource)) {
+                        sqlAffectedRowCount = m2.execute();
+                        m2.commit();
+                    }
+                    if (tai.hasBindVariables()) {
+                        taiCache.put(sqlText, tai);
+                    }
+                    break;
+            }
+        } catch (Throwable e) {
+            // todo: find out why "tai" does not close the underlying insertOp
+            tai = Misc.free(tai);
+            insertOp = Misc.free(insertOp);
+            throw e;
+        }
+    }
+
+    private void executeSelect(SqlExecutionContext sqlExecutionContext) throws SqlException {
+        // todo: we should reuse cursor for portal executions, but not others
+        if (cursor == null) {
+            sqlExecutionContext.getCircuitBreaker().resetTimer();
+            sqlExecutionContext.setCacheHit(cacheHit);
+            try {
+                cursor = factory.getCursor(sqlExecutionContext);
+                // cache random if it was replaced (this make no difference on tests)
+                // todo: investigate why this was here
+//                        rnd = sqlExecutionContext.getRandom();
+            } catch (Throwable e) {
+                // un-cache the erroneous SQL
+                tas = Misc.free(tas);
+                factory = null;
+                throw e;
+            }
+        }
+    }
+
+    private void freePendingWriters(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters, boolean commit) {
+        try {
+            for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
+                final TableWriterAPI m = pendingWriter.value;
+                if (commit) {
+                    m.commit();
+                } else {
+                    m.rollback();
+                }
+                Misc.free(m);
+            }
+        } finally {
+            pendingWriters.clear();
+        }
+    }
+
+    private int getMsgParseParameterTypeCount() {
+        return msgParseParameterTypes.size();
+    }
+
+    private boolean lookup(
+            SimpleAssociativeCache<TypesAndInsert> taiCache,
+            AssociativeCache<TypesAndSelect> tasCache,
+            BindVariableService bindVariableService
+    ) throws SqlException {
+        bindVariableService.clear();
+
+        tai = taiCache.peek(sqlText);
+
+        // not found or not insert, try select
+        // poll this cache because it is shared, and we do not want
+        // select factory to be used by another thread concurrently
+        if (tai != null) {
+            tai.defineBindVariables(bindVariableService);
+            insertOp = tai.getInsert();
+            sqlTag = TAG_INSERT;
+            return true;
+        }
+
+        tas = tasCache.poll(sqlText);
+
+        if (tas != null) {
+            // cache hit, define bind variables
+            tas.defineBindVariables(bindVariableService);
+            factory = tas.getFactory();
+            sqlTag = TAG_SELECT;
+            return true;
+        }
+
+        return false;
     }
 
     private long msgBindDefineBindVariablesAsStrings(
@@ -837,17 +891,733 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
-    private void buildResultSetColumnTypes() {
-        if (factory != null) {
-            final RecordMetadata m = factory.getMetadata();
-            final int columnCount = m.getColumnCount();
-            pgResultSetColumnTypes.setPos(2 * columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                final int columnType = m.getColumnType(i);
-                pgResultSetColumnTypes.setQuick(2 * i, columnType);
-                // the extra values stored here are used to render geo-hashes as strings
-                pgResultSetColumnTypes.setQuick(2 * i + 1, GeoHashes.getBitFlags(columnType));
+    private void outColBinBool(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        utf8Sink.putNetworkInt(Byte.BYTES);
+        utf8Sink.put(record.getBool(columnIndex) ? (byte) 1 : (byte) 0);
+    }
+
+    private void outColBinByte(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final byte value = record.getByte(columnIndex);
+        utf8Sink.putNetworkInt(Short.BYTES);
+        utf8Sink.putNetworkShort(value);
+    }
+
+    private void outColBinDate(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final long longValue = record.getDate(columnIndex);
+        if (longValue != Numbers.LONG_NULL) {
+            utf8Sink.putNetworkInt(Long.BYTES);
+            // PG epoch starts at 2000 rather than 1970
+            utf8Sink.putNetworkLong(longValue * 1000 - Numbers.JULIAN_EPOCH_OFFSET_USEC);
+        } else {
+            utf8Sink.setNullValue();
+        }
+    }
+
+    private void outColBinDouble(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final double value = record.getDouble(columnIndex);
+        if (value == value) {
+            utf8Sink.putNetworkInt(Double.BYTES);
+            utf8Sink.putNetworkDouble(value);
+        } else {
+            utf8Sink.setNullValue();
+        }
+    }
+
+    private void outColBinFloat(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final float value = record.getFloat(columnIndex);
+        if (value == value) {
+            utf8Sink.putNetworkInt(Float.BYTES);
+            utf8Sink.putNetworkFloat(value);
+        } else {
+            utf8Sink.setNullValue();
+        }
+    }
+
+    private void outColBinInt(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final int value = record.getInt(columnIndex);
+        if (value != Numbers.INT_NULL) {
+            utf8Sink.checkCapacity(8);
+            utf8Sink.putIntUnsafe(0, INT_BYTES_X);
+            utf8Sink.putIntUnsafe(4, Numbers.bswap(value));
+            utf8Sink.bump(8);
+        } else {
+            utf8Sink.setNullValue();
+        }
+    }
+
+    private void outColBinLong(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final long longValue = record.getLong(columnIndex);
+        if (longValue != Numbers.LONG_NULL) {
+            utf8Sink.putNetworkInt(Long.BYTES);
+            utf8Sink.putNetworkLong(longValue);
+        } else {
+            utf8Sink.setNullValue();
+        }
+    }
+
+    private void outColBinShort(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final short value = record.getShort(columnIndex);
+        utf8Sink.putNetworkInt(Short.BYTES);
+        utf8Sink.putNetworkShort(value);
+    }
+
+    private void outColBinTimestamp(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final long longValue = record.getTimestamp(columnIndex);
+        if (longValue == Numbers.LONG_NULL) {
+            utf8Sink.setNullValue();
+        } else {
+            utf8Sink.putNetworkInt(Long.BYTES);
+            // PG epoch starts at 2000 rather than 1970
+            utf8Sink.putNetworkLong(longValue - Numbers.JULIAN_EPOCH_OFFSET_USEC);
+        }
+    }
+
+    private void outColBinUuid(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final long lo = record.getLong128Lo(columnIndex);
+        final long hi = record.getLong128Hi(columnIndex);
+        if (Uuid.isNull(lo, hi)) {
+            utf8Sink.setNullValue();
+        } else {
+            utf8Sink.putNetworkInt(Long.BYTES * 2);
+            utf8Sink.putNetworkLong(hi);
+            utf8Sink.putNetworkLong(lo);
+        }
+    }
+
+    private void outColBinary(PGResponseSink utf8Sink, Record record, int i) throws SqlException {
+        BinarySequence sequence = record.getBin(i);
+        if (sequence == null) {
+            utf8Sink.setNullValue();
+        } else {
+            // if length is above max we will error out the result set
+            long blobSize = sequence.length();
+            if (blobSize < maxBlobSizeOnQuery) {
+                utf8Sink.put(sequence);
+            } else {
+                throw SqlException.position(0).put("blob is too large [blobSize=").put(blobSize).put(", max=").put(maxBlobSizeOnQuery).put(", columnIndex=").put(i).put(']');
             }
         }
     }
+
+    private void outColChar(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final char charValue = record.getChar(columnIndex);
+        if (charValue == 0) {
+            utf8Sink.setNullValue();
+        } else {
+            long a = utf8Sink.skipInt();
+            utf8Sink.put(charValue);
+            utf8Sink.putLenEx(a);
+        }
+    }
+
+    private void outColLong256(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final Long256 long256Value = record.getLong256A(columnIndex);
+        if (long256Value.getLong0() == Numbers.LONG_NULL && long256Value.getLong1() == Numbers.LONG_NULL && long256Value.getLong2() == Numbers.LONG_NULL && long256Value.getLong3() == Numbers.LONG_NULL) {
+            utf8Sink.setNullValue();
+        } else {
+            final long a = utf8Sink.skipInt();
+            Numbers.appendLong256(long256Value.getLong0(), long256Value.getLong1(), long256Value.getLong2(), long256Value.getLong3(), utf8Sink);
+            utf8Sink.putLenEx(a);
+        }
+    }
+
+    private void outColString(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final CharSequence strValue = record.getStrA(columnIndex);
+        if (strValue == null) {
+            utf8Sink.setNullValue();
+        } else {
+            final long a = utf8Sink.skipInt();
+            utf8Sink.put(strValue);
+            utf8Sink.putLenEx(a);
+        }
+    }
+
+    private void outColSymbol(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final CharSequence strValue = record.getSymA(columnIndex);
+        if (strValue == null) {
+            utf8Sink.setNullValue();
+        } else {
+            final long a = utf8Sink.skipInt();
+            utf8Sink.put(strValue);
+            utf8Sink.putLenEx(a);
+        }
+    }
+
+    private void outColTxtBool(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        utf8Sink.putNetworkInt(Byte.BYTES);
+        utf8Sink.put(record.getBool(columnIndex) ? 't' : 'f');
+    }
+
+    private void outColTxtByte(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        long a = utf8Sink.skipInt();
+        utf8Sink.put((int) record.getByte(columnIndex));
+        utf8Sink.putLenEx(a);
+    }
+
+    private void outColTxtDate(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final long longValue = record.getDate(columnIndex);
+        if (longValue != Numbers.LONG_NULL) {
+            final long a = utf8Sink.skipInt();
+            PG_DATE_MILLI_TIME_Z_PRINT_FORMAT.format(longValue, DateFormatUtils.EN_LOCALE, null, utf8Sink);
+            utf8Sink.putLenEx(a);
+        } else {
+            utf8Sink.setNullValue();
+        }
+    }
+
+    private void outColTxtDouble(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final double doubleValue = record.getDouble(columnIndex);
+        if (doubleValue == doubleValue) {
+            final long a = utf8Sink.skipInt();
+            utf8Sink.put(doubleValue);
+            utf8Sink.putLenEx(a);
+        } else {
+            utf8Sink.setNullValue();
+        }
+    }
+
+    private void outColTxtFloat(PGResponseSink responseUtf8Sink, Record record, int columnIndex) {
+        final float floatValue = record.getFloat(columnIndex);
+        if (floatValue == floatValue) {
+            final long a = responseUtf8Sink.skipInt();
+            responseUtf8Sink.put(floatValue, 3);
+            responseUtf8Sink.putLenEx(a);
+        } else {
+            responseUtf8Sink.setNullValue();
+        }
+    }
+
+    private void outColTxtGeoByte(PGResponseSink utf8Sink, Record rec, int col, int bitFlags) {
+        outColTxtGeoHash(utf8Sink, rec.getGeoByte(col), bitFlags);
+    }
+
+    private void outColTxtGeoHash(PGResponseSink utf8Sink, long value, int bitFlags) {
+        if (value == GeoHashes.NULL) {
+            utf8Sink.setNullValue();
+        } else {
+            final long a = utf8Sink.skipInt();
+            if (bitFlags < 0) {
+                GeoHashes.appendCharsUnsafe(value, -bitFlags, utf8Sink);
+            } else {
+                GeoHashes.appendBinaryStringUnsafe(value, bitFlags, utf8Sink);
+            }
+            utf8Sink.putLenEx(a);
+        }
+    }
+
+    private void outColTxtGeoInt(PGResponseSink utf8Sink, Record rec, int col, int bitFlags) {
+        outColTxtGeoHash(utf8Sink, rec.getGeoInt(col), bitFlags);
+    }
+
+    private void outColTxtGeoLong(PGResponseSink utf8Sink, Record rec, int col, int bitFlags) {
+        outColTxtGeoHash(utf8Sink, rec.getGeoLong(col), bitFlags);
+    }
+
+    private void outColTxtGeoShort(PGResponseSink utf8Sink, Record rec, int col, int bitFlags) {
+        outColTxtGeoHash(utf8Sink, rec.getGeoShort(col), bitFlags);
+    }
+
+    private void outColTxtIPv4(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        int value = record.getIPv4(columnIndex);
+        if (value == Numbers.IPv4_NULL) {
+            utf8Sink.setNullValue();
+        } else {
+            final long a = utf8Sink.skipInt();
+            Numbers.intToIPv4Sink(utf8Sink, value);
+            utf8Sink.putLenEx(a);
+        }
+    }
+
+    private void outColTxtInt(PGResponseSink utf8Sink, Record record, int i) {
+        final int intValue = record.getInt(i);
+        if (intValue != Numbers.INT_NULL) {
+            final long a = utf8Sink.skipInt();
+            utf8Sink.put(intValue);
+            utf8Sink.putLenEx(a);
+        } else {
+            utf8Sink.setNullValue();
+        }
+    }
+
+    private void outColTxtLong(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final long longValue = record.getLong(columnIndex);
+        if (longValue != Numbers.LONG_NULL) {
+            final long a = utf8Sink.skipInt();
+            utf8Sink.put(longValue);
+            utf8Sink.putLenEx(a);
+        } else {
+            utf8Sink.setNullValue();
+        }
+    }
+
+    private void outColTxtShort(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final long a = utf8Sink.skipInt();
+        utf8Sink.put(record.getShort(columnIndex));
+        utf8Sink.putLenEx(a);
+    }
+
+    private void outColTxtTimestamp(PGResponseSink utf8Sink, Record record, int i) {
+        long a;
+        long longValue = record.getTimestamp(i);
+        if (longValue == Numbers.LONG_NULL) {
+            utf8Sink.setNullValue();
+        } else {
+            a = utf8Sink.skipInt();
+            TimestampFormatUtils.PG_TIMESTAMP_FORMAT.format(longValue, DateFormatUtils.EN_LOCALE, null, utf8Sink);
+            utf8Sink.putLenEx(a);
+        }
+    }
+
+    private void outColTxtUuid(PGResponseSink utf8Sink, Record record, int columnIndex) {
+        final long lo = record.getLong128Lo(columnIndex);
+        final long hi = record.getLong128Hi(columnIndex);
+        if (Uuid.isNull(lo, hi)) {
+            utf8Sink.setNullValue();
+        } else {
+            final long a = utf8Sink.skipInt();
+            Numbers.appendUuid(lo, hi, utf8Sink);
+            utf8Sink.putLenEx(a);
+        }
+    }
+
+    private void outColVarchar(PGResponseSink responseUtf8Sink, Record record, int i) {
+        final Utf8Sequence strValue = record.getVarcharA(i);
+        if (strValue == null) {
+            responseUtf8Sink.setNullValue();
+        } else {
+            responseUtf8Sink.putNetworkInt(strValue.size());
+            responseUtf8Sink.put(strValue);
+        }
+    }
+
+    private void outCommandComplete(PGResponseSink utf8Sink, long rowCount) {
+        utf8Sink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
+        long addr = utf8Sink.skipInt();
+        utf8Sink.put(sqlTag).putAscii(' ').put(rowCount).put((byte) 0);
+        utf8Sink.putLen(addr);
+    }
+
+    private void outComputeCursorSize(SqlExecutionContext sqlExecutionContext) throws QueryPausedException {
+        try {
+            final long cursorRowCount = cursor.size();
+            if (sqlReturnRowCountLimit > 0) {
+                this.sqlReturnRowCountLimitComputed = cursorRowCount > 0 ? Long.min(sqlReturnRowCountLimit, cursorRowCount) : sqlReturnRowCountLimit;
+            } else {
+                this.sqlReturnRowCountLimitComputed = Long.MAX_VALUE;
+            }
+        } catch (DataUnavailableException e) {
+            stateSync = 100; // query is paused
+            throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
+        }
+    }
+
+    private void outCursor(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink) throws Exception {
+        switch (stateSync) {
+            case 3:
+                outComputeCursorSize(sqlExecutionContext);
+                stateSync = 4;
+            case 4:
+                utf8Sink.bookmark();
+                outCursor(
+                        sqlExecutionContext,
+                        utf8Sink,
+                        cursor.getRecord(),
+                        factory.getMetadata().getColumnCount()
+                );
+                break;
+            case 10:
+                utf8Sink.sendBufferAndReset();
+                outCommandComplete(utf8Sink, sqlReturnRowCount);
+                break;
+            case 20:
+                outPortalSuspended(utf8Sink);
+                break;
+            default:
+                assert false;
+        }
+    }
+
+    private void outCursor(
+            SqlExecutionContext sqlExecutionContext,
+            PGResponseSink utf8Sink,
+            Record record,
+            int columnCount
+    ) throws Exception {
+
+        if (!sqlExecutionContext.getCircuitBreaker().isTimerSet()) {
+            sqlExecutionContext.getCircuitBreaker().resetTimer();
+        }
+
+        try {
+
+            if (outRecordPending) {
+                outRecord(utf8Sink, record, columnCount);
+                outRecordPending = false;
+            }
+
+            while (cursor.hasNext()) {
+                try {
+                    try {
+                        outRecordPending = true;
+                        outRecord(utf8Sink, record, columnCount);
+                        outRecordPending = false;
+                        utf8Sink.bookmark();
+                    } catch (NoSpaceLeftInResponseBufferException e) {
+                        utf8Sink.resetToBookmark();
+                        utf8Sink.sendBufferAndReset();
+                        outRecordOrFail(utf8Sink, record, columnCount);
+                        utf8Sink.bookmark();
+                    }
+                    if (sqlReturnRowCount >= sqlReturnRowCountLimitComputed) {
+                        break;
+                    }
+                } catch (SqlException e) {
+                    utf8Sink.resetToBookmark();
+                    throw e;
+                }
+            }
+        } catch (DataUnavailableException e) {
+            stateSync = 100; // query is paused
+            utf8Sink.resetToBookmark();
+            throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
+        }
+
+        // the above loop may have exited due to the return row limit as prescribed by the portal
+        // either way, the result set was sent out as intended. The difference is in what we
+        // send as the suffix.
+
+        if (sqlReturnRowCountLimitComputed == Long.MAX_VALUE || sqlReturnRowCount < sqlReturnRowCountLimitComputed) {
+            // the limit was not set, we sent all we had
+            stateSync = 20;
+        } else {
+            // we sent as many rows as was requested, but we have more to send
+            stateSync = 30;
+        }
+        outResumeExtCursorCompleteCallbackRef.resume(sqlExecutionContext, utf8Sink);
+    }
+
+    private void outParameterTypeDescription(PGResponseSink utf8Sink) {
+        utf8Sink.put(MESSAGE_TYPE_PARAMETER_DESCRIPTION);
+        final long offset = utf8Sink.skipInt();
+        final int n = msgParseParameterTypes.size();
+        utf8Sink.putNetworkShort((short) n);
+        if (n > 0) {
+            for (int i = 0; i < n; i++) {
+                utf8Sink.putIntDirect(toParamType(msgParseParameterTypes.getQuick(i)));
+            }
+        }
+        utf8Sink.putLen(offset);
+    }
+
+    private void outRecord(PGResponseSink utf8Sink, Record record, int columnCount) throws SqlException {
+        utf8Sink.put(MESSAGE_TYPE_DATA_ROW); // data
+        final long offset = utf8Sink.skipInt();
+        utf8Sink.putNetworkShort((short) columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            final int type = pgResultSetColumnTypes.getQuick(2 * i);
+            final short columnBinaryFlag = getColumnBinaryFlag(type);
+            final int typeTag = ColumnType.tagOf(type);
+
+            final int tagWithFlag = toColumnBinaryType(columnBinaryFlag, typeTag);
+            switch (tagWithFlag) {
+                case BINARY_TYPE_INT:
+                    outColBinInt(utf8Sink, record, i);
+                    break;
+                case ColumnType.INT:
+                    outColTxtInt(utf8Sink, record, i);
+                    break;
+                case ColumnType.IPv4:
+                    outColTxtIPv4(utf8Sink, record, i);
+                    break;
+                case ColumnType.VARCHAR:
+                case BINARY_TYPE_VARCHAR:
+                    outColVarchar(utf8Sink, record, i);
+                    break;
+                case ColumnType.STRING:
+                case BINARY_TYPE_STRING:
+                    outColString(utf8Sink, record, i);
+                    break;
+                case ColumnType.SYMBOL:
+                case BINARY_TYPE_SYMBOL:
+                    outColSymbol(utf8Sink, record, i);
+                    break;
+                case BINARY_TYPE_LONG:
+                    outColBinLong(utf8Sink, record, i);
+                    break;
+                case ColumnType.LONG:
+                    outColTxtLong(utf8Sink, record, i);
+                    break;
+                case ColumnType.SHORT:
+                    outColTxtShort(utf8Sink, record, i);
+                    break;
+                case BINARY_TYPE_DOUBLE:
+                    outColBinDouble(utf8Sink, record, i);
+                    break;
+                case ColumnType.DOUBLE:
+                    outColTxtDouble(utf8Sink, record, i);
+                    break;
+                case BINARY_TYPE_FLOAT:
+                    outColBinFloat(utf8Sink, record, i);
+                    break;
+                case BINARY_TYPE_SHORT:
+                    outColBinShort(utf8Sink, record, i);
+                    break;
+                case BINARY_TYPE_DATE:
+                    outColBinDate(utf8Sink, record, i);
+                    break;
+                case BINARY_TYPE_TIMESTAMP:
+                    outColBinTimestamp(utf8Sink, record, i);
+                    break;
+                case BINARY_TYPE_BYTE:
+                    outColBinByte(utf8Sink, record, i);
+                    break;
+                case BINARY_TYPE_UUID:
+                    outColBinUuid(utf8Sink, record, i);
+                    break;
+                case ColumnType.FLOAT:
+                    outColTxtFloat(utf8Sink, record, i);
+                    break;
+                case ColumnType.TIMESTAMP:
+                    outColTxtTimestamp(utf8Sink, record, i);
+                    break;
+                case ColumnType.DATE:
+                    outColTxtDate(utf8Sink, record, i);
+                    break;
+                case ColumnType.BOOLEAN:
+                    outColTxtBool(utf8Sink, record, i);
+                    break;
+                case BINARY_TYPE_BOOLEAN:
+                    outColBinBool(utf8Sink, record, i);
+                    break;
+                case ColumnType.BYTE:
+                    outColTxtByte(utf8Sink, record, i);
+                    break;
+                case ColumnType.BINARY:
+                case BINARY_TYPE_BINARY:
+                    outColBinary(utf8Sink, record, i);
+                    break;
+                case ColumnType.CHAR:
+                case BINARY_TYPE_CHAR:
+                    outColChar(utf8Sink, record, i);
+                    break;
+                case ColumnType.LONG256:
+                case BINARY_TYPE_LONG256:
+                    outColLong256(utf8Sink, record, i);
+                    break;
+                case ColumnType.GEOBYTE:
+                    outColTxtGeoByte(utf8Sink, record, i, pgResultSetColumnTypes.getQuick(2 * i + 1));
+                    break;
+                case ColumnType.GEOSHORT:
+                    outColTxtGeoShort(utf8Sink, record, i, pgResultSetColumnTypes.getQuick(2 * i + 1));
+                    break;
+                case ColumnType.GEOINT:
+                    outColTxtGeoInt(utf8Sink, record, i, pgResultSetColumnTypes.getQuick(2 * i + 1));
+                    break;
+                case ColumnType.GEOLONG:
+                    outColTxtGeoLong(utf8Sink, record, i, pgResultSetColumnTypes.getQuick(2 * i + 1));
+                    break;
+                case ColumnType.NULL:
+                    utf8Sink.setNullValue();
+                    break;
+                case ColumnType.UUID:
+                    outColTxtUuid(utf8Sink, record, i);
+                    break;
+                default:
+                    assert false;
+            }
+        }
+        utf8Sink.putLen(offset);
+        // todo: may be we can count outside?
+        sqlReturnRowCount++;
+    }
+
+    private void outRecordOrFail(PGResponseSink utf8Sink, Record record, int columnCount) throws SqlException {
+        try {
+            outRecord(utf8Sink, record, columnCount);
+        } catch (NoSpaceLeftInResponseBufferException e1) {
+            // oopsie, buffer is too small for single record
+            LOG.error().$("not enough space in buffer for row data [buffer=").$(sendBufferSize).I$();
+            utf8Sink.reset();
+            freeFactory();
+            throw CairoException.critical(0).put("server configuration error: not enough space in send buffer for row data");
+        }
+    }
+
+    private void outResumeExtCursorCompleteCallback(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink) throws Exception {
+
+    }
+
+    private void outRowDescription(PGResponseSink utf8Sink) {
+        final RecordMetadata metadata = factory.getMetadata();
+        utf8Sink.put(MESSAGE_TYPE_ROW_DESCRIPTION);
+        final long addr = utf8Sink.skipInt();
+        final int n = pgResultSetColumnTypes.size() / 2;
+        utf8Sink.putNetworkShort((short) n);
+        for (int i = 0; i < n; i++) {
+            final int typeFlag = pgResultSetColumnTypes.getQuick(2 * i);
+            final int columnType = toColumnType(ColumnType.isNull(typeFlag) ? ColumnType.STRING : typeFlag);
+            utf8Sink.putZ(metadata.getColumnName(i));
+            utf8Sink.putIntDirect(0); //tableOid ?
+            utf8Sink.putNetworkShort((short) (i + 1)); //column number, starting from 1
+            utf8Sink.putNetworkInt(PGOids.getTypeOid(columnType)); // type
+            if (ColumnType.tagOf(columnType) < ColumnType.STRING) {
+                // type size
+                // todo: cache small endian type sizes and do not check if type is valid - its coming from metadata, must be always valid
+                utf8Sink.putNetworkShort((short) ColumnType.sizeOf(columnType));
+            } else {
+                // type size
+                utf8Sink.putNetworkShort((short) -1);
+            }
+
+            // type modifier
+            utf8Sink.putIntDirect(INT_NULL_X);
+            // this is special behaviour for binary fields to prevent binary data being hex encoded on the wire
+            // format code
+            utf8Sink.putNetworkShort(ColumnType.isBinary(columnType) ? 1 : getColumnBinaryFlag(typeFlag)); // format code
+        }
+        utf8Sink.putLen(addr);
+    }
+
+    private void parseNew(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            WeakSelfReturningObjectPool<TypesAndInsert> taiPool,
+            WeakSelfReturningObjectPool<TypesAndUpdate> tauPool
+    ) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            CompiledQuery cq = compiler.compile(sqlText, sqlExecutionContext);
+
+            sqlExecutionContext.storeTelemetry(cq.getType(), TelemetryOrigin.POSTGRES);
+
+            this.sqlType = cq.getType();
+
+            switch (sqlType) {
+                case CompiledQuery.CREATE_TABLE_AS_SELECT:
+                    sqlTag = TAG_CTAS;
+                    sqlAffectedRowCount = cq.getAffectedRowsCount();
+                    break;
+                case CompiledQuery.EXPLAIN:
+                    this.factory = cq.getRecordCursorFactory();
+                    // After parsing SQL text the bind variable service contains types of the variables
+                    // the compiler could work out. Caching SQL plan involved not recompiling SQL text over
+                    // and over. For that reason the types of the bind variables will have to be
+                    // preserved when SQL factory is taken from cache and reused. This is what
+                    // TypesAndSelect is for.
+
+                    // SQL cache is global and multithreaded. For that reason we must
+                    // move "tas" into the cache only when the current context is guaranteed not
+                    // to use it.
+                    tas = new TypesAndSelect(this.factory);
+                    tas.copyTypesFrom(sqlExecutionContext.getBindVariableService());
+                    sqlTag = TAG_EXPLAIN;
+                case CompiledQuery.SELECT:
+                    this.factory = cq.getRecordCursorFactory();
+                    tas = new TypesAndSelect(this.factory);
+                    tas.copyTypesFrom(sqlExecutionContext.getBindVariableService());
+                    sqlTag = TAG_SELECT;
+                    break;
+                case CompiledQuery.PSEUDO_SELECT:
+                    // the PSEUDO_SELECT comes from a "copy" SQL, which is why
+                    // we do not intend to cache it. The fact we don't have
+                    // TypesAndSelect instance here should be enough to tell the
+                    // system not to cache.
+                    this.factory = cq.getRecordCursorFactory();
+                    sqlTag = TAG_PSEUDO_SELECT;
+                    break;
+                case CompiledQuery.INSERT:
+                    this.insertOp = cq.getInsertOperation();
+                    tai = taiPool.pop();
+                    // todo: check why TypeAndSelect has separate method for copying types from BindVariableService
+                    tai.of(insertOp, sqlExecutionContext.getBindVariableService());
+                    sqlTag = TAG_INSERT;
+                    break;
+                case CompiledQuery.UPDATE:
+                    // copy contents of the mutable CompiledQuery into our cache
+                    compiledQuery.ofUpdate(cq.getUpdateOperation());
+                    compiledQuery.withSqlText(cq.getSqlText());
+                    sqlTag = TAG_UPDATE;
+                    break;
+                case CompiledQuery.INSERT_AS_SELECT:
+                    this.insertOp = cq.getInsertOperation();
+                    sqlTag = TAG_INSERT_AS_SELECT;
+                    break;
+                case CompiledQuery.SET:
+                    sqlTag = TAG_SET;
+                    break;
+                case CompiledQuery.DEALLOCATE:
+                    this.preparedStatementName = cq.getStatementName();
+                    sqlTag = TAG_DEALLOCATE;
+                    break;
+                case CompiledQuery.BEGIN:
+                    sqlTag = TAG_BEGIN;
+                    break;
+                case CompiledQuery.COMMIT:
+                    sqlTag = TAG_COMMIT;
+                    break;
+                case CompiledQuery.ROLLBACK:
+                    sqlTag = TAG_ROLLBACK;
+                    break;
+                case CompiledQuery.ALTER_USER:
+                    sqlTextHasSecret = sqlExecutionContext.containsSecret();
+                    sqlTag = TAG_ALTER_ROLE;
+                    break;
+                case CompiledQuery.CREATE_USER:
+                    sqlTextHasSecret = sqlExecutionContext.containsSecret();
+                    sqlTag = TAG_CREATE_ROLE;
+                    break;
+                case CompiledQuery.ALTER:
+                    // future-proofing ALTER execution
+                    compiledQuery.ofAlter(cq.getAlterOperation());
+                    compiledQuery.withSqlText(cq.getSqlText());
+                    // fall through
+                default:
+                    // DDL
+                    sqlTag = TAG_OK;
+                    break;
+            }
+        }
+    }
+
+    private void setBindVariableAsStr(
+            int variableIndex,
+            long valueAddr,
+            int valueSize,
+            BindVariableService bindVariableService,
+            CharacterStore characterStore,
+            DirectUtf8String utf8String
+    ) throws BadProtocolException, SqlException {
+        CharacterStoreEntry e = characterStore.newEntry();
+        Function fn = bindVariableService.getFunction(variableIndex);
+        // If the function type is VARCHAR, there's no need to convert to UTF-16
+        if (fn != null && fn.getType() == ColumnType.VARCHAR) {
+            final int sequenceType = Utf8s.getUtf8SequenceType(valueAddr, valueAddr + valueSize);
+            boolean ascii;
+            switch (sequenceType) {
+                case 0:
+                    // ascii sequence
+                    ascii = true;
+                    break;
+                case 1:
+                    // non-ASCII sequence
+                    ascii = false;
+                    break;
+                default:
+                    LOG.error().$("invalid varchar bind variable type [variableIndex=").$(variableIndex).I$();
+                    throw BadProtocolException.INSTANCE;
+            }
+            bindVariableService.setVarchar(variableIndex, utf8String.of(valueAddr, valueAddr + valueSize, ascii));
+
+        } else {
+            if (Utf8s.utf8ToUtf16(valueAddr, valueAddr + valueSize, e)) {
+                bindVariableService.setStr(variableIndex, characterStore.toImmutable());
+            } else {
+                LOG.error().$("invalid str bind variable type [variableIndex=").$(variableIndex).I$();
+                throw BadProtocolException.INSTANCE;
+            }
+        }
+    }
+
+
+
+
 }

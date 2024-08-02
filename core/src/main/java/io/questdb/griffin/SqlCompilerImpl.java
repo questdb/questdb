@@ -1623,7 +1623,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         final short type = compiledQuery.getType();
         if ((type == CompiledQuery.ALTER || type == CompiledQuery.UPDATE) && !executionContext.isWalApplication()) {
-            compiledQuery.withSqlStatement(Chars.toString(sqlText));
+            compiledQuery.withSqlText(Chars.toString(sqlText));
         }
         compiledQuery.withContext(executionContext);
     }

@@ -24,29 +24,9 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.InsertOperation;
-import io.questdb.std.WeakSelfReturningObjectPool;
+import io.questdb.griffin.SqlExecutionContext;
 
-public class TypesAndInsert extends AbstractTypeContainer<TypesAndInsert> {
-    private boolean hasBindVariables;
-    private InsertOperation insert;
-
-    public TypesAndInsert(WeakSelfReturningObjectPool<TypesAndInsert> parentPool) {
-        super(parentPool);
-    }
-
-    public InsertOperation getInsert() {
-        return insert;
-    }
-
-    public boolean hasBindVariables() {
-        return hasBindVariables;
-    }
-
-    public void of(InsertOperation insert, BindVariableService bindVariableService) {
-        this.insert = insert;
-        copyTypesFrom(bindVariableService);
-        this.hasBindVariables = bindVariableService.getIndexedVariableCount() > 0;
-    }
+@FunctionalInterface
+interface PGResumeCallback {
+    void resume(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink) throws Exception;
 }
