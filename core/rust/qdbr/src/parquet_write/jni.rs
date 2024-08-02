@@ -63,7 +63,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     data_page_size: jlong,
     version: jint,
 ) {
-    println!("mock code -- encode partition");
     let encode = || -> anyhow::Result<()> {
         let col_count = col_count as usize;
         let col_names = read_utf8_encoded_string_list(
@@ -212,7 +211,7 @@ fn version_from_i32(value: i32) -> Result<Version, ParquetError> {
         _ => {
             return Err(ParquetError::OutOfSpec(
                 "Invalid value for Version".to_string(),
-            ));
+            ))
         }
     })
 }
@@ -236,7 +235,7 @@ fn compression_from_i64(value: i64) -> Result<CompressionOptions, ParquetError> 
         _ => {
             return Err(ParquetError::OutOfSpec(
                 "Invalid value for CompressionCodec".to_string(),
-            ));
+            ))
         }
     })
 }
