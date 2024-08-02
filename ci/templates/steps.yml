@@ -46,9 +46,8 @@ steps:
       export $(grep CURRENT_LLVM_STABLE= llvm.sh)
       # ... and set a task variable to its value
       echo "##vso[task.setvariable variable=LLVM_VERSION]$CURRENT_LLVM_STABLE"
-      
       sudo apt-get install llvm-$CURRENT_LLVM_STABLE
-      
+
       # Install Cobertura
       wget https://raw.githubusercontent.com/eriwen/lcov-to-cobertura-xml/master/lcov_cobertura/lcov_cobertura.py
       chmod +x lcov_cobertura.py
@@ -59,9 +58,7 @@ steps:
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
       )
 
-  - script: |
-      set -eux
-      python3 ci/prepare_rust_env.py --export-cargo-install-env
+  - script: python3 ci/prepare_rust_env.py --export-cargo-install-env
     displayName: "Ensure Rust is installed"
     # Note, the `prepare_rust_env.py` script exports a number of variables.
   - task: Cache@2

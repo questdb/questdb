@@ -113,24 +113,12 @@ stages:
               key: '"questdb_main" | "maven"'
               restoreKeys: |
               path: $(MAVEN_CACHE_FOLDER)
-          #          - task: Maven@3
-          #            displayName: "Compile with Maven"
-          #            inputs:
-          #              mavenPomFile: "core/pom.xml"
-          #              mavenOptions: "$(MAVEN_OPTS)"
-          #              options: "compile -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
-          #              jdkVersionOption: "1.11"
           - download: current
             artifact: jacoco-coverage
           - download: current
             artifact: rust-llvm-coverage
           - bash: |
               set -eux
-              
-              ls -al $(Pipeline.Workspace)
-              ls -al $(Pipeline.Workspace)/jacoco-coverage
-              ls -al $(Pipeline.Workspace)/rust-llvm-coverage
-              
               JACOCO_FILE="$(Pipeline.Workspace)/jacoco-coverage/jacoco.xml"
               RUST_FILE="$(Pipeline.Workspace)/rust-llvm-coverage/cobertura.xml"
               if [ -f $JACOCO_FILE ]; then
@@ -148,23 +136,3 @@ stages:
                 $JACOCO_ARGS $RUST_ARGS --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) \
                 -t $(DIFF_COVER_THRESHOLD_PCT) --github-token $(GH_TOKEN)
             displayName: "Diff coverage PR report"
-
-
-
-#          - task: Maven@3
-#            displayName: "Merge coverage reports"
-#            inputs:
-#              mavenPomFile: "ci/jacoco-merge.xml"
-#              goals: "verify"
-#              options:
-#                "-Dhttp.keepAlive=false -DincludeRoot=$(Pipeline.Workspace)
-#                -DoutputDirectory=$(Pipeline.Workspace)/jacoco-aggregate
-#                -DcoverDiff=$(COVERAGE_DIFF)
-#                -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
-#          - bash:
-#              $JAVA_HOME_11_X64/bin/java -jar
-#              $(Build.SourcesDirectory)/ci/cover-checker-console-1.4.2-jar-with-dependencies.jar
-#              -c $(Pipeline.Workspace)/jacoco-aggregate/jacoco.xml
-#              --github-token $(GH_TOKEN) --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber)
-#              -t $(DIFF_COVER_THRESHOLD_PCT) -type jacoco;
-#            displayName: "Diff coverage PR report"
