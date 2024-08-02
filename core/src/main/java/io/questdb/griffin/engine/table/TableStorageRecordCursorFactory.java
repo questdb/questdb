@@ -202,7 +202,6 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
                 try (TableReaderMetadata metadataReader = TableUtils.openMetadataReader(configuration, token)) {
                     partitionBy = metadataReader.getPartitionBy();
                 }
-
                 FilesFacade ff = configuration.getFilesFacade();
                 try (Path path = TableUtils.getTablePath(configuration, token)) {
                     diskSize = Files.getDirSize(path); // path is modified by next expression
