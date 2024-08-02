@@ -766,6 +766,12 @@ public final class TableUtils {
         return Chars.toString(privateName).substring(0, suffixIndex);
     }
 
+    public static Path getTablePath(@NotNull CairoConfiguration configuration, @NotNull TableToken token) {
+        Path path = new Path();
+        path.of(configuration.getRoot()).concat(token.getDirName()).trimTo(path.size());
+        return path;
+    }
+
     public static int getTimestampIndex(MemoryMR metaMem, long offset, int columnCount) {
         final int timestampIndex = metaMem.getInt(offset);
         if (timestampIndex < -1 || timestampIndex >= columnCount) {
@@ -1133,6 +1139,24 @@ public final class TableUtils {
         return openRW(ff, path, LOG, opts);
     }
 
+    /**
+     * Opens and loads a metadata file.
+     *
+     * @param configuration
+     * @param tableToken
+     * @return
+     */
+    public static TableReaderMetadata openMetadataReader(@NotNull CairoConfiguration configuration, @NotNull TableToken tableToken) {
+        TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableToken);
+        try {
+            metadata.load();
+            return metadata;
+        } catch (Throwable th) {
+            metadata.close();
+            throw th;
+        }
+    }
+
     public static int openRO(FilesFacade ff, Path path, CharSequence fileName, Log log) {
         final int rootLen = path.size();
         path.concat(fileName);
@@ -1168,6 +1192,18 @@ public final class TableUtils {
         } finally {
             path.trimTo(rootLen);
         }
+    }
+
+    /**
+     * Opens a TxReader when given a path to a table directory.
+     *
+     * @param ff
+     * @param path
+     * @param partitionBy
+     * @return
+     */
+    public static TxReader openTxReader(@NotNull FilesFacade ff, @NotNull Path path, int partitionBy) {
+        return new TxReader(ff).ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy);
     }
 
     public static void overwriteTableNameFile(Path tablePath, MemoryMAR memory, FilesFacade ff, @NotNull CharSequence tableName) {
