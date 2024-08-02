@@ -52,6 +52,9 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
     private final TableStorageRecordCursor cursor = new TableStorageRecordCursor();
     private CairoConfiguration configuration;
     private SqlExecutionContext executionContext;
+    private FilesFacade ff;
+    private Path path = new Path();
+    private TxReader reader;
 
 
     public TableStorageRecordCursorFactory() {
@@ -63,12 +66,16 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
         cursor.close();
         executionContext = null;
         configuration = null;
+        path.close();
+        reader.close();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         this.executionContext = executionContext;
         this.configuration = executionContext.getCairoEngine().getConfiguration();
+        this.ff = configuration.getFilesFacade();
+        reader = new TxReader(ff);
         return cursor.initialize();
     }
 
@@ -199,23 +206,28 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
                 reset();
                 walEnabled = token.isWal();
                 tableName = token.getTableName();
+
+                // TableReaderMetadata
                 try (TableReaderMetadata metadataReader = TableUtils.openMetadataReader(configuration, token)) {
                     partitionBy = metadataReader.getPartitionBy();
                 }
-                FilesFacade ff = configuration.getFilesFacade();
-                try (Path path = TableUtils.getTablePath(configuration, token)) {
-                    diskSize = Files.getDirSize(path); // path is modified by next expression
-                    try (TxReader txReader = TableUtils.openTxReader(ff, path, partitionBy)) {
-                        rowCount = txReader.unsafeLoadRowCount();
-                        partitionCount = txReader.getPartitionCount();
-                    }
-                }
+
+                // Path
+                TableUtils.setPathTable(path, configuration, token);
+                diskSize = Files.getDirSize(path);
+
+                // TxReader
+                TableUtils.setTxReaderPath(reader, ff, path, partitionBy); // modifies path
+                rowCount = reader.unsafeLoadRowCount();
+                partitionCount = reader.getPartitionCount();
             }
 
             private void reset() {
                 rowCount = -1;
                 partitionCount = -1;
                 diskSize = -1;
+                path.close();
+                reader.close();
             }
         }
     }
