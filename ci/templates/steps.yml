@@ -142,19 +142,19 @@ steps:
         )
       )
 
-  - bash: |
-      set -eux
-      pushd core/rust/qdbr
-      RUSTFLAGS="-C instrument-coverage -D warnings" cargo build --tests
-      popd
-      QUESTDBR_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdbr/debug/deps/questdbr-* -type f -executable)
-      LLVM_PROFILE_FILE="questdbr-cargo-test.profraw" $QUESTDBR_TEST_BIN
-    displayName: "Run Rust tests for code coverage"
-    condition: |
-      and(
-        eq(variables['testset'], 'coverage'),
-        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
-      )
+  #  - bash: |
+  #      set -eux
+  #      pushd core/rust/qdbr
+  #      RUSTFLAGS="-C instrument-coverage -D warnings" cargo build --tests
+  #      popd
+  #      QUESTDBR_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdbr/debug/deps/questdbr-* -type f -executable)
+  #      LLVM_PROFILE_FILE="questdbr-cargo-test.profraw" $QUESTDBR_TEST_BIN
+  #    displayName: "Run Rust tests for code coverage"
+  #    condition: |
+  #      and(
+  #        eq(variables['testset'], 'coverage'),
+  #        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+  #      )
 
   - bash: |
       find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x" "$(ARCHIVED_CRASH_LOG)"' \;
@@ -188,8 +188,7 @@ steps:
       export PATH=/usr/lib/llvm-$LLVM_VERSION/bin:$PATH
       find . -name \*.profraw
 
-      # Merge the raw Rust coverage reports
-      FROM_RUST_TEST=questdbr-cargo-test.profraw
+      FROM_RUST_TEST=core/rust/qdbr/questdbr-cargo-test.profraw
       FROM_JAVA_TEST=core/rust/qdbr/questdbr-junit.profraw
       if [ ! -f $FROM_RUST_TEST ]; then
         FROM_RUST_TEST=""
@@ -197,6 +196,8 @@ steps:
       if [ ! -f $FROM_JAVA_TEST ]; then
         FROM_JAVA_TEST=""
       fi
+
+      # Merge the raw Rust coverage reports
       if [ -n "$FROM_RUST_TEST" -o -n "$FROM_JAVA_TEST" ]; then
         llvm-profdata merge -sparse -o questdbr.profdata $FROM_RUST_TEST $FROM_JAVA_TEST
       else
