@@ -25,8 +25,8 @@
 extern crate core;
 pub extern crate jni;
 
+use jni::{JNIEnv, objects::JClass};
 use jni::sys::jlong;
-use jni::{objects::JClass, JNIEnv};
 use once_cell::sync::Lazy;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
@@ -55,10 +55,10 @@ const _: fn() = || {
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_std_Os_initRust(_env: JNIEnv, _class: JClass) {
+    println!("Rust jni init enter");
     if std::env::var("RUST_BACKTRACE").is_err() {
         std::env::set_var("RUST_BACKTRACE", "1");
     }
-    println!("Rust init success")
 }
 
 #[no_mangle]
