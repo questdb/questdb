@@ -208,10 +208,8 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
                     diskSize = Files.getDirSize(path); // path is modified by next expression
                     try (TxReader txReader = TableUtils.openTxReader(ff, path, partitionBy)) {
                         rowCount = txReader.unsafeLoadRowCount();
-                        rowCount = txReader.getRowCount();
                         partitionCount = txReader.getPartitionCount();
                     }
-
                 }
             }
 
