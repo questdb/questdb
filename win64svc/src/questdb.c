@@ -10,7 +10,6 @@
 #include "getopt.h"
 #else
 
-#include <rpc.h>
 #include <handleapi.h>
 #include <synchapi.h>
 #include <processthreadsapi.h>
@@ -97,8 +96,8 @@ void buildJavaArgs(CONFIG *config) {
 
     // put together command line, dir is x2 because we're including the path to `hs_err_pid`
     // 512 is extra for the constant strings
-    char *args = malloc((strlen(javaOpts) + strlen(classpath) + strlen(mainClass) + strlen(config->dir)*2 + 512) *
-                        sizeof(char));
+    char *args = malloc(
+            (strlen(javaOpts) + strlen(classpath) + strlen(mainClass) + strlen(config->dir) * 2 + 512) * sizeof(char));
     strcpy(args, javaOpts);
     // quote the directory in case it contains spaces
     strcat(args, " -XX:ErrorFile=\"");
@@ -110,6 +109,7 @@ void buildJavaArgs(CONFIG *config) {
         strcat(args, classpath);
         strcat(args, "\"");
     }
+    strcat(args, " -Dcontainerized=false");
     strcat(args, " -m ");
     strcat(args, mainClass);
     strcat(args, " -d \"");
