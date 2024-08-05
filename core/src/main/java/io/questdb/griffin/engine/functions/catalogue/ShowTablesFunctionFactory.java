@@ -177,12 +177,6 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
 
             private class TableListRecord implements Record {
                 private final CairoTable localTableCopy = new CairoTable();
-                private boolean isDedup;
-                private boolean isSoftLink;
-                private int maxUncommittedRows;
-                private long o3MaxLag;
-                private int partitionBy;
-                private CharSequence timestampColumnName;
 
                 @Override
                 public boolean getBool(int col) {
@@ -265,6 +259,7 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
 
                     CairoTable table = metadata.getTableQuiet(lastTableToken.getTableName());
 
+                    // if not present, lets populate it
                     if (table == null) {
                         try (TableMetadata tableMetadata = executionContext.getMetadataForRead(lastTableToken)) {
                             metadata.upsertTable(tableMetadata);

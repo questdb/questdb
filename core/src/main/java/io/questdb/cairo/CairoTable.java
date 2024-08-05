@@ -25,6 +25,8 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.std.CairoColumn;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.SimpleReadWriteLock;
 import org.jetbrains.annotations.NotNull;
 
@@ -36,8 +38,9 @@ import org.jetbrains.annotations.NotNull;
 // designated timestamp and partition by are final
 // todo: intern column names
 public class CairoTable {
+    private final CharSequenceObjHashMap<CairoColumn> columns = new CharSequenceObjHashMap<>();
     // consider a versioned lock. consider more granular locking
-    private final SimpleReadWriteLock tableWideLock;
+    private final SimpleReadWriteLock lock;
     private int columnCount;
     private int designatedTimestampIndex;
     // todo: intern, its a column name
@@ -46,32 +49,30 @@ public class CairoTable {
     private boolean isDedup;
     private boolean isSoftLink;
     private long lastMetadataVersion = -1;
-    private long maxTimestamp;
     private int maxUncommittedRows;
-    private long minTimestamp;
     private long o3MaxLag;
     private String partitionBy;
     private TableToken token;
 
 
     public CairoTable() {
-        this.tableWideLock = new SimpleReadWriteLock();
+        this.lock = new SimpleReadWriteLock();
     }
 
     public CairoTable(@NotNull TableToken token) {
         this.token = token;
-        this.tableWideLock = new SimpleReadWriteLock();
+        this.lock = new SimpleReadWriteLock();
     }
 
     public CairoTable(@NotNull TableReader tableReader) {
         this.token = tableReader.getTableToken();
-        this.tableWideLock = new SimpleReadWriteLock();
+        this.lock = new SimpleReadWriteLock();
         updateMetadataIfRequired(tableReader);
     }
 
     public CairoTable(@NotNull TableMetadata tableMetadata) {
         this.token = tableMetadata.getTableToken();
-        this.tableWideLock = new SimpleReadWriteLock();
+        this.lock = new SimpleReadWriteLock();
         updateMetadataIfRequired(tableMetadata);
     }
 
@@ -79,8 +80,33 @@ public class CairoTable {
         return new CairoTable(token);
     }
 
+    // fails if table already exists
+    public void addColumn(@NotNull CairoColumn newColumn) {
+        lock.writeLock().lock();
+        final CharSequence columnName = newColumn.getName();
+        final CairoColumn existingColumn = columns.get(columnName);
+        if (existingColumn != null) {
+            throw CairoException.nonCritical().put("table [name=").put(columnName).put("] already exists in CairoMetadata");
+        }
+        columns.put(columnName, newColumn);
+        lock.writeLock().unlock();
+    }
+
+    // fails if table already exists
+    public void addColumnUnsafe(@NotNull CairoColumn newColumn) {
+        final CharSequence columnName = newColumn.getName();
+        final CairoColumn existingColumn = columns.get(columnName);
+        if (existingColumn != null) {
+            throw CairoException.nonCritical().put("table [name=").put(columnName).put("] already exists in CairoMetadata");
+        }
+        columns.put(columnName, newColumn);
+    }
+
+
     public void copyTo(@NotNull CairoTable target) {
-        target.tableWideLock.writeLock();
+        lock.readLock().lock();
+        target.lock.writeLock().lock();
+
         target.token = token;
         target.columnCount = columnCount;
         target.designatedTimestampIndex = designatedTimestampIndex;
@@ -89,32 +115,47 @@ public class CairoTable {
         target.isDedup = isDedup;
         target.isSoftLink = isSoftLink;
         target.lastMetadataVersion = lastMetadataVersion;
-        target.maxTimestamp = maxTimestamp;
         target.maxUncommittedRows = maxUncommittedRows;
-        target.minTimestamp = minTimestamp;
         target.o3MaxLag = o3MaxLag;
         target.partitionBy = partitionBy;
-        target.tableWideLock.writeLock().unlock();
+
+        target.lock.writeLock().unlock();
+        lock.readLock().unlock();
     }
 
     public long getColumnCount() {
-        tableWideLock.readLock().lock();
+        lock.readLock().lock();
         final long columnCount = this.columnCount;
-        tableWideLock.readLock().unlock();
+        lock.readLock().unlock();
         return columnCount;
     }
 
+    public CairoColumn getColumnQuick(@NotNull CharSequence columnName) {
+        final CairoColumn col = getColumnQuiet(columnName);
+        if (col == null) {
+            throw CairoException.tableDoesNotExist(columnName);
+        }
+        return col;
+    }
+
+    public CairoColumn getColumnQuiet(@NotNull CharSequence columnName) {
+        lock.readLock().lock();
+        final CairoColumn col = columns.get(columnName);
+        lock.readLock().unlock();
+        return col;
+    }
+
     public int getDesignatedTimestampIndex() {
-        tableWideLock.readLock().lock();
+        lock.readLock().lock();
         final int designatedTimestampIndex = this.designatedTimestampIndex;
-        tableWideLock.readLock().unlock();
+        lock.readLock().unlock();
         return designatedTimestampIndex;
     }
 
     public String getDesignatedTimestampName() {
-        tableWideLock.readLock().lock();
+        lock.readLock().lock();
         final String designatedTimestampName = this.designatedTimestampName;
-        tableWideLock.readLock().unlock();
+        lock.readLock().unlock();
         return designatedTimestampName;
     }
 
@@ -127,9 +168,9 @@ public class CairoTable {
     }
 
     public String getDirectoryName() {
-        tableWideLock.readLock().lock();
+        lock.readLock().lock();
         final String directoryName = this.directoryName;
-        tableWideLock.readLock().unlock();
+        lock.readLock().unlock();
         return directoryName;
     }
 
@@ -138,9 +179,9 @@ public class CairoTable {
     }
 
     public int getId() {
-        tableWideLock.readLock().lock();
+        lock.readLock().lock();
         final int id = this.token.getTableId();
-        tableWideLock.readLock().unlock();
+        lock.readLock().unlock();
         return id;
     }
 
@@ -149,9 +190,9 @@ public class CairoTable {
     }
 
     public boolean getIsDedup() {
-        tableWideLock.readLock().lock();
+        lock.readLock().lock();
         final boolean isDedup = this.isDedup;
-        tableWideLock.readLock().unlock();
+        lock.readLock().unlock();
         return isDedup;
     }
 
@@ -160,9 +201,9 @@ public class CairoTable {
     }
 
     public boolean getIsSoftLink() {
-        tableWideLock.readLock().lock();
+        lock.readLock().lock();
         final boolean isSoftLink = this.isSoftLink;
-        tableWideLock.readLock().unlock();
+        lock.readLock().unlock();
         return isSoftLink;
     }
 
@@ -170,21 +211,10 @@ public class CairoTable {
         return isSoftLink;
     }
 
-    public long getMaxTimestamp() {
-        tableWideLock.readLock().lock();
-        final long maxTimestamp = this.maxTimestamp;
-        tableWideLock.readLock().unlock();
-        return maxTimestamp;
-    }
-
-    public long getMaxTimestampUnsafe() {
-        return maxTimestamp;
-    }
-
     public int getMaxUncommittedRows() {
-        tableWideLock.readLock().lock();
+        lock.readLock().lock();
         final int maxUncommittedRows = this.maxUncommittedRows;
-        tableWideLock.readLock().unlock();
+        lock.readLock().unlock();
         return maxUncommittedRows;
     }
 
@@ -192,21 +222,10 @@ public class CairoTable {
         return maxUncommittedRows;
     }
 
-    public long getMinTimestamp() {
-        tableWideLock.readLock().lock();
-        final long minTimestamp = this.minTimestamp;
-        tableWideLock.readLock().unlock();
-        return minTimestamp;
-    }
-
-    public long getMinTimestampUnsafe() {
-        return minTimestamp;
-    }
-
     public @NotNull String getName() {
-        tableWideLock.readLock().lock();
+        lock.readLock().lock();
         final String name = this.token.getTableName();
-        tableWideLock.readLock().unlock();
+        lock.readLock().unlock();
         return name;
     }
 
@@ -215,9 +234,9 @@ public class CairoTable {
     }
 
     public long getO3MaxLag() {
-        tableWideLock.readLock().lock();
+        lock.readLock().lock();
         final long o3MaxLag = this.o3MaxLag;
-        tableWideLock.readLock().unlock();
+        lock.readLock().unlock();
         return o3MaxLag;
     }
 
@@ -226,9 +245,9 @@ public class CairoTable {
     }
 
     public String getPartitionBy() {
-        tableWideLock.readLock().lock();
+        lock.readLock().lock();
         final String partitionBy = this.partitionBy;
-        tableWideLock.readLock().unlock();
+        lock.readLock().unlock();
         return partitionBy;
     }
 
@@ -237,9 +256,9 @@ public class CairoTable {
     }
 
     public boolean getWalEnabled() {
-        tableWideLock.readLock().lock();
+        lock.readLock().lock();
         final boolean walEnabled = this.token.isWal();
-        tableWideLock.readLock().unlock();
+        lock.readLock().unlock();
         return walEnabled;
     }
 
@@ -254,27 +273,22 @@ public class CairoTable {
     public void updateMetadataIfRequired(@NotNull TableReader tableReader) {
         final long lastMetadataVersion = getLastMetadataVersion();
         if (lastMetadataVersion < tableReader.getMetadataVersion()) {
-            tableWideLock.writeLock().lock();
-            token = tableReader.getTableToken();
-            minTimestamp = tableReader.getMinTimestamp();
-            maxTimestamp = tableReader.getMaxTimestamp();
-            maxUncommittedRows = tableReader.getMaxUncommittedRows();
-            o3MaxLag = tableReader.getO3MaxLag();
-            partitionBy = PartitionBy.toString(tableReader.getPartitionedBy()); // intern this
-            isSoftLink = tableReader.getMetadata().isSoftLink();
-            this.lastMetadataVersion = tableReader.getMetadataVersion();
-            designatedTimestampIndex = tableReader.getMetadata().timestampIndex;
-            designatedTimestampName = designatedTimestampIndex > -1 ? tableReader.getMetadata().getColumnName(designatedTimestampIndex) : null;
-            isDedup = designatedTimestampIndex >= 0 && token.isWal() && tableReader.getMetadata().isDedupKey(designatedTimestampIndex);
-            columnCount = tableReader.getColumnCount();
-            tableWideLock.writeLock().unlock();
+            updateMetadataIfRequired(tableReader, tableReader.getMetadata());
+        }
+    }
+
+    public void updateMetadataIfRequired(@NotNull TableReader tableReader, @NotNull TableMetadata tableMetadata) {
+        final long lastMetadataVersion = getLastMetadataVersion();
+        if (lastMetadataVersion < tableReader.getMetadataVersion()) {
+            updateMetadataIfRequired(tableReader.getMetadata());
         }
     }
 
     public void updateMetadataIfRequired(@NotNull TableMetadata tableMetadata) {
         final long lastMetadataVersion = getLastMetadataVersion();
         if (lastMetadataVersion < tableMetadata.getMetadataVersion()) {
-            tableWideLock.writeLock().lock();
+            lock.writeLock().lock();
+
             token = tableMetadata.getTableToken();
             maxUncommittedRows = tableMetadata.getMaxUncommittedRows();
             o3MaxLag = tableMetadata.getO3MaxLag();
@@ -285,19 +299,62 @@ public class CairoTable {
             designatedTimestampName = designatedTimestampIndex > -1 ? tableMetadata.getColumnName(designatedTimestampIndex) : null;
             isDedup = designatedTimestampIndex >= 0 && token.isWal() && tableMetadata.isDedupKey(designatedTimestampIndex);
             columnCount = tableMetadata.getColumnCount();
-            tableWideLock.writeLock().unlock();
+
+            // now handle columns
+
+            for (int position = 0; position < columnCount; position++) {
+                final TableColumnMetadata columnMetadata = tableMetadata.getColumnMetadata(position);
+                upsertColumnUnsafe(tableMetadata, columnMetadata);
+                // symbols tba
+//                cairoColumn.updateMetadata(columnMetadata, isDesignated, position);
+//                if (ColumnType.isSymbol(columnMetadata.getType())) {
+//                    final SymbolMapReader symbolReader = tableMetadata
+//                }
+//                if (col == N_SYMBOL_CACHED_COL) {
+//                    if (ColumnType.isSymbol(reader.getMetadata().getColumnType(columnIndex))) {
+//                        return reader.getSymbolMapReader(columnIndex).isCached();
+//                    } else {
+//                        return false;
+//                    }
+//                }
+            }
+
+            lock.writeLock().unlock();
+        }
+    }
+
+    public void upsertColumn(@NotNull TableMetadata tableMetadata, @NotNull TableColumnMetadata columnMetadata) {
+        CairoColumn col = getColumnQuiet(columnMetadata.getName());
+        final int position = tableMetadata.getColumnIndex(columnMetadata.getName());
+        final boolean designated = position == designatedTimestampIndex;
+        if (col == null) {
+            col = new CairoColumn(columnMetadata, designated, position);
+            addColumn(col);
+        } else {
+            col.updateMetadata(columnMetadata, designated, position);
+        }
+    }
+
+    public void upsertColumnUnsafe(@NotNull TableMetadata tableMetadata, @NotNull TableColumnMetadata columnMetadata) {
+        CairoColumn col = columns.get(columnMetadata.getName());
+        final int position = tableMetadata.getColumnIndex(columnMetadata.getName());
+        final boolean designated = position == designatedTimestampIndex;
+        if (col == null) {
+            col = new CairoColumn(columnMetadata, designated, position);
+            addColumnUnsafe(col);
+        } else {
+            col.updateMetadata(columnMetadata, designated, position);
         }
     }
 
     private long getLastMetadataVersion() {
-        tableWideLock.readLock().lock();
+        lock.readLock().lock();
         final long lastMetadataVersion = this.lastMetadataVersion;
-        tableWideLock.readLock().unlock();
+        lock.readLock().unlock();
         return lastMetadataVersion;
     }
 
     private long getLastMetadataVersionUnsafe() {
         return lastMetadataVersion;
     }
-    
 }
