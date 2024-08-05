@@ -103,6 +103,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
 
     public void of(PageFrameAddressCache addressCache) {
         this.addressCache = addressCache;
+        frameMemory.clear();
     }
 
     private class PageFrameMemoryImpl implements PageFrameMemory, Mutable {
