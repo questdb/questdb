@@ -161,7 +161,7 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
             copyTableDir(src, merged);
             mergeAllPartitions(merged);
 
-            String limit = "";
+            String limit = ""; // For debugging
             TestUtils.assertSqlCursors(
                     engine,
                     sqlExecutionContext,

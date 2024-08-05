@@ -54,10 +54,10 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
         }
 
         final long indexSkew = relativeIndex ? minValue : 0;
-        if (key == 0 && unindexedNullCount > 0) {
+        if (key == 0 && unindexedNullCount > 0 && minValue < unindexedNullCount) {
             // we need to return the whole set of actual index values and then some nulls
             final NullCursor nullCursor = getNullCursor(cachedInstance);
-            nullCursor.nullCount = unindexedNullCount;
+            nullCursor.nullCount = Math.min(unindexedNullCount, maxValue + 1);
             nullCursor.of(key, minValue, maxValue, indexSkew, keyCount);
             return nullCursor;
         }
