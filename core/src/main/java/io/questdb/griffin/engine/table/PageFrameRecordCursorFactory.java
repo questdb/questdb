@@ -48,7 +48,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     private final boolean supportsRandomAccess;
     protected FwdTableReaderPageFrameCursor fwdPageFrameCursor;
     private BwdTableReaderPageFrameCursor bwdPageFrameCursor;
-    private TimeFrameCursorImpl timeFrameCursor;
+    private TimeFrameRecordCursorImpl timeFrameCursor;
 
     public PageFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -114,7 +114,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         if (framingSupported) {
             PageFrameCursor pageFrameCursor = initPageFrameCursor(executionContext);
             if (timeFrameCursor == null) {
-                timeFrameCursor = new TimeFrameCursorImpl(configuration, getMetadata());
+                timeFrameCursor = new TimeFrameRecordCursorImpl(configuration, getMetadata());
             }
             return timeFrameCursor.of(pageFrameCursor);
         }

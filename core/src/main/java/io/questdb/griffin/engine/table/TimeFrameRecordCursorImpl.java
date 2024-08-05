@@ -34,7 +34,7 @@ import org.jetbrains.annotations.NotNull;
  * The only supported partition order is forward, i.e. navigation
  * should start with a {@link #next()} call.
  */
-public class TimeFrameCursorImpl implements TimeFrameRecordCursor {
+public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     private final PageFrameAddressCache frameAddressCache;
     private final PageFrameMemoryPool frameMemoryPool;
     private final IntList framePartitionIndexes = new IntList();
@@ -50,7 +50,7 @@ public class TimeFrameCursorImpl implements TimeFrameRecordCursor {
     private int partitionHi;
     private TableReader reader;
 
-    public TimeFrameCursorImpl(
+    public TimeFrameRecordCursorImpl(
             @NotNull CairoConfiguration configuration,
             @NotNull @Transient RecordMetadata metadata
     ) {
@@ -96,15 +96,15 @@ public class TimeFrameCursorImpl implements TimeFrameRecordCursor {
         buildFrameCache();
 
         int frameIndex = timeFrame.frameIndex;
-        if (++frameIndex < partitionHi) {
+        if (++frameIndex < frameCount) {
             int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
             long timestampLo = reader.getPartitionTimestampByIndex(partitionIndex);
-            long maxTimestampHi = frameIndex < partitionHi - 2 ? reader.getPartitionTimestampByIndex(partitionIndex + 1) : Long.MAX_VALUE;
+            long maxTimestampHi = partitionIndex < partitionHi - 2 ? reader.getPartitionTimestampByIndex(partitionIndex + 1) : Long.MAX_VALUE;
             timeFrame.of(frameIndex, timestampLo, estimatePartitionHi(timestampLo, maxTimestampHi));
             return true;
         }
         // Update frame index in case of subsequent prev() call.
-        timeFrame.of(partitionHi, Long.MIN_VALUE, Long.MIN_VALUE);
+        timeFrame.of(frameCount, Long.MIN_VALUE, Long.MIN_VALUE);
         return false;
     }
 
@@ -112,16 +112,12 @@ public class TimeFrameCursorImpl implements TimeFrameRecordCursor {
         this.frameCursor = frameCursor;
         frameAddressCache.clear();
         frameMemoryPool.of(frameAddressCache);
-        frameCount = 0;
-        framePartitionIndexes.clear();
-        frameRowCounts.clear();
-        isFrameCacheBuilt = false;
-        frameCursor.toTop();
         reader = frameCursor.getTableReader();
         recordA.of(frameCursor);
         recordB.of(frameCursor);
         partitionHi = reader.getPartitionCount();
         partitionCeilMethod = PartitionBy.getPartitionCeilMethod(reader.getPartitionedBy());
+        isFrameCacheBuilt = false;
         toTop();
         return this;
     }
@@ -176,8 +172,12 @@ public class TimeFrameCursorImpl implements TimeFrameRecordCursor {
     @Override
     public void toTop() {
         timeFrame.clear();
-        frameCount = 0;
-        frameCursor.toTop();
+        if (!isFrameCacheBuilt) {
+            frameCount = 0;
+            frameCursor.toTop();
+            framePartitionIndexes.clear();
+            frameRowCounts.clear();
+        }
     }
 
     private void buildFrameCache() {
