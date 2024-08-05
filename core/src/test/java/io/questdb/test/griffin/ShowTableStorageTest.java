@@ -24,7 +24,12 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.std.Files;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Test;
 
 public class ShowTableStorageTest extends AbstractCairoTest {
@@ -53,10 +58,12 @@ public class ShowTableStorageTest extends AbstractCairoTest {
             );
             drainWalQueue();
             engine.releaseAllWriters();
+            final CharSequence size1 = Long.toString(getDirSize("trades_1"));
+            final CharSequence size2 = Long.toString(getDirSize("trades_2"));
             assertSql(
                     "tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
-                            "trades_2\tfalse\tHOUR\t4\t4\t344109\n" +
-                            "trades_1\tfalse\tHOUR\t4\t4\t344109\n",
+                            "trades_2\tfalse\tHOUR\t4\t4\t" + size1 + "\n" +
+                            "trades_1\tfalse\tHOUR\t4\t4\t" + size2 + "\n",
                     "select * from table_storage()"
             );
         });
@@ -87,10 +94,12 @@ public class ShowTableStorageTest extends AbstractCairoTest {
             );
             drainWalQueue();
             engine.releaseAllWriters();
+            final CharSequence size1 = Long.toString(getDirSize("trades_1"));
+            final CharSequence size2 = Long.toString(getDirSize("trades_2"));
             assertSql(
                     "tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
-                            "trades_2\tfalse\tNONE\t1\t4\t196653\n" +
-                            "trades_1\tfalse\tNONE\t1\t4\t196653\n",
+                            "trades_2\tfalse\tNONE\t1\t4\t" + size1 + "\n" +
+                            "trades_1\tfalse\tNONE\t1\t4\t" + size2 + "\n",
                     "select * from table_storage()"
             );
         });
@@ -111,8 +120,10 @@ public class ShowTableStorageTest extends AbstractCairoTest {
             );
             drainWalQueue();
             engine.releaseAllWriters();
+            engine.releaseAllWriters();
+            final CharSequence size = Long.toString(getDirSize("trades_1"));
             assertSql("tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
-                            "trades_1\tfalse\tHOUR\t4\t4\t344109\n",
+                            "trades_1\tfalse\tHOUR\t4\t4\t" + size + "\n",
                     "select * from table_storage()"
             );
         });
@@ -133,10 +144,20 @@ public class ShowTableStorageTest extends AbstractCairoTest {
             );
             drainWalQueue();
             engine.releaseAllWriters();
+            final CharSequence size = Long.toString(getDirSize("trades_1"));
             assertSql("tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
-                            "trades_1\tfalse\tNONE\t1\t4\t196653\n",
+                            "trades_1\tfalse\tNONE\t1\t4\t" + size + "\n",
                     "select * from table_storage()"
             );
         });
+    }
+
+    private long getDirSize(@NotNull CharSequence tableName) {
+        Path path = new Path();
+        TableToken token = sqlExecutionContext.getTableToken(tableName);
+        TableUtils.setPathTable(path, configuration, token);
+        final long size = Files.getDirSize(path);
+        path.close();
+        return size;
     }
 }
