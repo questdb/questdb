@@ -169,6 +169,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         dispatchStartFrameIndex = 0;
         collectedFrameIndex = -1;
         readyToDispatch = false;
+        frameRowCounts.clear();
         frameAddressCache.clear();
         atom.clear();
         frameCursor = Misc.freeIfCloseable(frameCursor);
@@ -393,7 +394,6 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
     public void reset() {
         // prepare to resend the same sequence as it might be required by toTop()
-        frameRowCounts.clear();
         assert !done;
         done = true;
     }
@@ -405,7 +405,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     public void toTop() {
         if (frameCount > 0) {
             long newId = ID_SEQ.incrementAndGet();
-            LOG.debug().$("toTop [shard=").$(shard)
+            LOG.debug()
+                    .$("toTop [shard=").$(shard)
                     .$(", id=").$(id)
                     .$(", newId=").$(newId)
                     .I$();

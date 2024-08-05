@@ -261,8 +261,8 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             PageFrameReduceTask task
     ) {
         task.populateJitData();
-        final DirectLongList data = task.getData();
-        final DirectLongList varSizeAux = task.getVarSizeAux();
+        final DirectLongList data = task.getDataAddresses();
+        final DirectLongList varSizeAux = task.getAuxAddresses();
         final DirectLongList rows = task.getFilteredRows();
         long hi = compiledFilter.call(
                 data.getAddress(),

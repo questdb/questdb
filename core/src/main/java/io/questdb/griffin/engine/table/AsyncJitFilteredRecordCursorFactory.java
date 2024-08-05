@@ -49,7 +49,6 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
 
 public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFactory implements StealableFilterRecordCursorFactory {
-
     private static final PageFrameReducer REDUCER = AsyncJitFilteredRecordCursorFactory::filter;
 
     private final RecordCursorFactory base;
@@ -320,13 +319,13 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         // Use JIT-compiled filter.
 
         task.populateJitData();
-        final DirectLongList data = task.getData();
-        final DirectLongList varSizeAux = task.getVarSizeAux();
+        final DirectLongList dataAddresses = task.getDataAddresses();
+        final DirectLongList auxAddresses = task.getAuxAddresses();
 
         long hi = atom.compiledFilter.call(
-                data.getAddress(),
-                data.size(),
-                varSizeAux.getAddress(),
+                dataAddresses.getAddress(),
+                dataAddresses.size(),
+                auxAddresses.getAddress(),
                 atom.bindVarMemory.getAddress(),
                 atom.bindVarFunctions.size(),
                 rows.getAddress(),

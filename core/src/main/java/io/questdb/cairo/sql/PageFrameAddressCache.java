@@ -41,7 +41,7 @@ public class PageFrameAddressCache implements Mutable {
     private final IntList columnTypes = new IntList();
     private final ByteList frameFormats = new ByteList();
     private final LongList frameSizes = new LongList();
-    private final ObjectPool<LongList> longListPool = new ObjectPool<>(LongList::new, 16);
+    private final ObjectPool<LongList> longListPool = new ObjectPool<>(LongList::new, 64);
     private final long nativeCacheSizeThreshold;
     private final ObjList<LongList> pageAddresses = new ObjList<>();
     private final ObjList<LongList> pageSizes = new ObjList<>();

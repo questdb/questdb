@@ -38,18 +38,17 @@ import io.questdb.std.str.StringSink;
 import java.io.Closeable;
 
 public class PageFrameReduceTask implements Closeable {
-
     public static final byte TYPE_FILTER = 0;
     public static final byte TYPE_GROUP_BY = 1;
     public static final byte TYPE_GROUP_BY_NOT_KEYED = 2;
     private static final String exceptionMessage = "unexpected filter error";
-    // Used to pass the list of column page frame addresses to a JIT-compiled filter.
-    private final DirectLongList columns;
+
+    private final DirectLongList auxAddresses;
+    private final DirectLongList dataAddresses;
     private final StringSink errorMsg = new StringSink();
     private final DirectLongList filteredRows; // Used for TYPE_FILTER.
     private final PageFrameMemoryPool frameMemoryPool;
     private final long frameQueueCapacity;
-    private final DirectLongList varSizeAux;
     private int errorMessagePosition;
     private int frameIndex = Integer.MAX_VALUE;
     private PageFrameMemory frameMemory;
@@ -61,8 +60,8 @@ public class PageFrameReduceTask implements Closeable {
     public PageFrameReduceTask(CairoConfiguration configuration, int memoryTag) {
         try {
             this.filteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
-            this.columns = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
-            this.varSizeAux = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
+            this.dataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
+            this.auxAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
             this.frameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
             this.frameMemoryPool = new PageFrameMemoryPool();
         } catch (Throwable th) {
@@ -75,15 +74,22 @@ public class PageFrameReduceTask implements Closeable {
     public void close() {
         Misc.free(frameMemoryPool);
         Misc.free(filteredRows);
-        Misc.free(columns);
-        Misc.free(varSizeAux);
+        Misc.free(dataAddresses);
+        Misc.free(auxAddresses);
+    }
+
+    /**
+     * Returns list of pointers to aux vectors (var-size columns only).
+     */
+    public DirectLongList getAuxAddresses() {
+        return auxAddresses;
     }
 
     /**
      * Returns list of pointers to data vectors.
      */
-    public DirectLongList getData() {
-        return columns;
+    public DirectLongList getDataAddresses() {
+        return dataAddresses;
     }
 
     public int getErrorMessagePosition() {
@@ -127,13 +133,6 @@ public class PageFrameReduceTask implements Closeable {
         return type;
     }
 
-    /**
-     * Returns list of pointers to aux vectors (var-size columns only).
-     */
-    public DirectLongList getVarSizeAux() {
-        return varSizeAux;
-    }
-
     public boolean hasError() {
         return errorMsg.length() > 0;
     }
@@ -151,9 +150,7 @@ public class PageFrameReduceTask implements Closeable {
         errorMsg.clear();
         isCancelled = false;
         frameMemory = null;
-        if (type == TYPE_FILTER) {
-            filteredRows.clear();
-        }
+        filteredRows.clear();
     }
 
     public PageFrameMemory populateFrameMemory() {
@@ -168,25 +165,21 @@ public class PageFrameReduceTask implements Closeable {
 
         final PageFrameAddressCache pageAddressCache = frameSequence.getPageFrameAddressCache();
         final long columnCount = pageAddressCache.getColumnCount();
-        if (columns.getCapacity() < columnCount) {
-            columns.setCapacity(columnCount);
-        }
-        columns.clear();
+
+        dataAddresses.clear();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            columns.add(frameMemory.getPageAddress(columnIndex));
+            dataAddresses.add(frameMemory.getPageAddress(columnIndex));
         }
 
-        if (varSizeAux.getCapacity() < columnCount) {
-            varSizeAux.setCapacity(columnCount);
-        }
-        varSizeAux.clear();
+        auxAddresses.clear();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            varSizeAux.add(
+            auxAddresses.add(
                     pageAddressCache.isVarSizeColumn(columnIndex)
                             ? frameMemory.getAuxPageAddress(columnIndex)
                             : 0
             );
         }
+
         final long rowCount = getFrameRowCount();
         if (filteredRows.getCapacity() < rowCount) {
             filteredRows.setCapacity(rowCount);
@@ -200,8 +193,8 @@ public class PageFrameReduceTask implements Closeable {
 
     public void resetCapacities() {
         filteredRows.resetCapacity();
-        columns.resetCapacity();
-        varSizeAux.resetCapacity();
+        dataAddresses.resetCapacity();
+        auxAddresses.resetCapacity();
         frameMemoryPool.close();
     }
 
