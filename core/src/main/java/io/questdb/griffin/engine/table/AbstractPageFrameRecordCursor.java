@@ -83,10 +83,10 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
     }
 
     @Override
-    public void recordAt(Record record, long atRowId) {
+    public void recordAt(Record record, long rowId) {
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
-        frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId), frameMemoryRecord);
-        frameMemoryRecord.setRowIndex(Rows.toLocalRowID(atRowId));
+        frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), frameMemoryRecord);
+        frameMemoryRecord.setRowIndex(Rows.toLocalRowID(rowId));
     }
 
     @Override

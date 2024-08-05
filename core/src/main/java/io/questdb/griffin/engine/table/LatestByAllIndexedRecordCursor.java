@@ -190,11 +190,12 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         final Sequence pubSeq = bus.getLatestByPubSeq();
         final Sequence subSeq = bus.getLatestBySubSeq();
 
-        PageFrame frame;
-        long foundRowCount = 0;
+
         int queuedCount = 0;
+        long foundRowCount = 0;
         try {
             // First, build address cache as we'll be publishing it to other threads.
+            PageFrame frame;
             if (!isFrameCacheBuilt) {
                 while ((frame = frameCursor.next()) != null) {
                     frameAddressCache.add(frameCount++, frame);

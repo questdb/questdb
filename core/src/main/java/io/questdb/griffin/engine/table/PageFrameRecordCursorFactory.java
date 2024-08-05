@@ -39,15 +39,16 @@ import org.jetbrains.annotations.Nullable;
 import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
 
 public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
-    protected final PageFrameRecordCursor cursor;
-    protected final RowCursorFactory rowCursorFactory;
+    private final CairoConfiguration configuration;
+    private final PageFrameRecordCursor cursor;
     private final Function filter;
     private final boolean followsOrderByAdvice;
     private final boolean framingSupported;
+    private final RowCursorFactory rowCursorFactory;
     private final boolean supportsRandomAccess;
-    protected BwdTableReaderPageFrameCursor bwdPageFrameCursor;
     protected FwdTableReaderPageFrameCursor fwdPageFrameCursor;
-    protected TableReaderTimeFrameCursor timeFrameCursor;
+    private BwdTableReaderPageFrameCursor bwdPageFrameCursor;
+    private TimeFrameCursorImpl timeFrameCursor;
 
     public PageFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -64,6 +65,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     ) {
         super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
 
+        this.configuration = configuration;
         this.rowCursorFactory = rowCursorFactory;
         cursor = new PageFrameRecordCursorImpl(
                 configuration,
@@ -110,11 +112,11 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     @Override
     public TimeFrameRecordCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         if (framingSupported) {
-            DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, ORDER_ASC);
+            PageFrameCursor pageFrameCursor = initPageFrameCursor(executionContext);
             if (timeFrameCursor == null) {
-                timeFrameCursor = new TableReaderTimeFrameCursor(columnIndexes);
+                timeFrameCursor = new TimeFrameCursorImpl(configuration, getMetadata());
             }
-            return timeFrameCursor.of(dataFrameCursor);
+            return timeFrameCursor.of(pageFrameCursor);
         }
         return null;
     }
@@ -162,6 +164,8 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     protected void _close() {
         super._close();
         Misc.free(filter);
+        Misc.free(fwdPageFrameCursor);
+        Misc.free(bwdPageFrameCursor);
     }
 
     protected PageFrameCursor initBwdPageFrameCursor(

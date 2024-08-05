@@ -31,6 +31,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
 public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends PageFrameRecordCursorFactory {
@@ -96,15 +97,20 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
         assert convertedToFrame;
         DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, order);
         initFwdPageFrameCursor(dataFrameCursor, executionContext);
-        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-            final CharSequence symbol = symbolFunc.getStrA(null);
-            final StaticSymbolTable symbolMapReader = fwdPageFrameCursor.getSymbolTable(symbolColumnIndex);
-            symbolKey = symbolMapReader.keyOf(symbol);
-            if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                symbolKey = TableUtils.toIndexKey(symbolKey);
+        try {
+            if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                final CharSequence symbol = symbolFunc.getStrA(null);
+                final StaticSymbolTable symbolMapReader = fwdPageFrameCursor.getSymbolTable(symbolColumnIndex);
+                symbolKey = symbolMapReader.keyOf(symbol);
+                if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+                    symbolKey = TableUtils.toIndexKey(symbolKey);
+                }
             }
+            return fwdPageFrameCursor;
+        } catch (Throwable th) {
+            Misc.free(fwdPageFrameCursor);
+            throw th;
         }
-        return fwdPageFrameCursor;
     }
 
     @Override

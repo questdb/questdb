@@ -428,8 +428,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private void buildAddressCache() {
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            frameAddressCache.add(frameCount++, frame);
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+            frameAddressCache.add(frameCount++, frame);
         }
 
         // dispatch tasks only if there is anything to dispatch
