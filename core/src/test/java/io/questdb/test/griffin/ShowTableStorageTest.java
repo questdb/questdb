@@ -27,17 +27,10 @@ package io.questdb.test.griffin;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
-import java.util.Arrays;
-import java.util.List;
-
 public class ShowTableStorageTest extends AbstractCairoTest {
     @Test
     public void testAllPartitionsStorageForMultipleTablesPartitionByHour() throws Exception {
         assertMemoryLeak(() -> {
-            List<String> partitionNameColumnsForTrades1 = Arrays.asList("2021-10-05T11", "2021-10-05T12",
-                    "2021-10-05T13", "2021-10-05T14");
-            List<String> partitionNameColumnsForTrades2 = Arrays.asList("2021-10-05T11", "2021-10-05T12",
-                    "2021-10-05T13", "2021-10-05T14");
             ddl("create table trades_1(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
             ddl("create table trades_2(timestamp TIMESTAMP, " +
@@ -59,10 +52,11 @@ public class ShowTableStorageTest extends AbstractCairoTest {
                             "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
             );
             drainWalQueue();
+            engine.releaseAllWriters();
             assertSql(
                     "tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
-                            "trades_2\tfalse\tHOUR\t4\t4\t7618605\n" +
-                            "trades_1\tfalse\tHOUR\t4\t4\t7618605\n",
+                            "trades_2\tfalse\tHOUR\t4\t4\t344109\n" +
+                            "trades_1\tfalse\tHOUR\t4\t4\t344109\n",
                     "select * from table_storage()"
             );
         });
@@ -92,10 +86,11 @@ public class ShowTableStorageTest extends AbstractCairoTest {
                             "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
             );
             drainWalQueue();
+            engine.releaseAllWriters();
             assertSql(
                     "tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
-                            "trades_2\tfalse\tNONE\t1\t4\t7471149\n" +
-                            "trades_1\tfalse\tNONE\t1\t4\t7471149\n",
+                            "trades_2\tfalse\tNONE\t1\t4\t196653\n" +
+                            "trades_1\tfalse\tNONE\t1\t4\t196653\n",
                     "select * from table_storage()"
             );
         });
@@ -115,8 +110,9 @@ public class ShowTableStorageTest extends AbstractCairoTest {
                             "    ('2021-10-05T14:31:35.878Z', 's4', 250);\n"
             );
             drainWalQueue();
+            engine.releaseAllWriters();
             assertSql("tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
-                            "trades_1\tfalse\tHOUR\t4\t4\t7618605\n",
+                            "trades_1\tfalse\tHOUR\t4\t4\t344109\n",
                     "select * from table_storage()"
             );
         });
@@ -136,12 +132,11 @@ public class ShowTableStorageTest extends AbstractCairoTest {
                             "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
             );
             drainWalQueue();
+            engine.releaseAllWriters();
             assertSql("tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
-                            "trades_1\tfalse\tNONE\t1\t4\t7471149\n",
+                            "trades_1\tfalse\tNONE\t1\t4\t196653\n",
                     "select * from table_storage()"
             );
         });
     }
-
-
 }
