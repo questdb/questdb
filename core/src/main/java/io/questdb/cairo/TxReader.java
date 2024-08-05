@@ -471,7 +471,7 @@ public class TxReader implements Closeable, Mutable {
         clearData();
         return -1;
     }
-    
+
     public long unsafeReadColumnVersion() {
         return getLong(TX_OFFSET_COLUMN_VERSION_64);
     }
