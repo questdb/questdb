@@ -765,7 +765,7 @@ public final class TableUtils {
         }
         return Chars.toString(privateName).substring(0, suffixIndex);
     }
-    
+
     public static int getTimestampIndex(MemoryMR metaMem, long offset, int columnCount) {
         final int timestampIndex = metaMem.getInt(offset);
         if (timestampIndex < -1 || timestampIndex >= columnCount) {
