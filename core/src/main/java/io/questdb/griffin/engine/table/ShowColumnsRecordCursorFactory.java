@@ -30,7 +30,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Misc;
+import io.questdb.std.CairoColumn;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -71,12 +72,17 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
     public static class ShowColumnsCursor implements NoRandomAccessRecordCursor {
         private final ShowColumnsRecord record = new ShowColumnsRecord();
+        private CairoColumn cairoColumn = new CairoColumn();
+        private CairoMetadata cairoMetadata;
+        private CairoTable cairoTable;
         private int columnIndex;
-        private TableReader reader;
+        private SqlExecutionContext executionContext;
+        //        private TableReader reader;
+        private ObjList<CharSequence> names;
 
         @Override
         public void close() {
-            reader = Misc.free(reader);
+//            reader = Misc.free(reader);
         }
 
         @Override
@@ -87,16 +93,20 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         @Override
         public boolean hasNext() {
             columnIndex++;
-            if (columnIndex < reader.getMetadata().getColumnCount()) {
+            if (columnIndex < cairoTable.getColumnCount()) {
+                cairoTable.getColumnQuick(names.getQuick(columnIndex)).copyTo(cairoColumn);
                 return true;
             }
-            columnIndex--;
             return false;
         }
 
         public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition) {
             try {
-                reader = executionContext.getReader(tableToken);
+//                reader = executionContext.getReader(tableToken);
+                this.executionContext = executionContext;
+                cairoMetadata = executionContext.getCairoEngine().getCairoMetadata();
+                cairoTable = cairoMetadata.getTableQuick(tableToken.getTableName());
+                names = cairoTable.getColumnNames();
             } catch (CairoException e) {
                 e.position(tokenPosition);
                 throw e;
@@ -124,23 +134,21 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             @Override
             public boolean getBool(int col) {
                 if (col == N_INDEXED_COL) {
-                    return reader.getMetadata().isColumnIndexed(columnIndex);
+                    return cairoColumn.getIsIndexedUnsafe();
                 }
                 if (col == N_SYMBOL_CACHED_COL) {
-                    if (ColumnType.isSymbol(reader.getMetadata().getColumnType(columnIndex))) {
-                        return reader.getSymbolMapReader(columnIndex).isCached();
-                    } else {
-                        return false;
-                    }
+                    return cairoColumn.getSymbolCachedUnsafe();
+//                    if (ColumnType.isSymbol(reader.getMetadata().getColumnType(columnIndex))) {
+//                        return reader.getSymbolMapReader(columnIndex).isCached();
+//                    } else {
+//                        return false;
+//                    }
                 }
                 if (col == N_DESIGNATED_COL) {
-                    return reader.getMetadata().getTimestampIndex() == columnIndex;
+                    return cairoColumn.getDesignatedUnsafe();
                 }
                 if (col == N_UPSERT_KEY_COL) {
-                    int timestampIndex = reader.getMetadata().getTimestampIndex();
-                    return reader.getMetadata().isDedupKey(columnIndex) && reader.getMetadata().isWalEnabled()
-                            && timestampIndex > -1
-                            && reader.getMetadata().isDedupKey(timestampIndex);
+                    return cairoColumn.getIsDedupKeyUnsafe();
                 }
                 throw new UnsupportedOperationException();
             }
@@ -148,14 +156,15 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             @Override
             public int getInt(int col) {
                 if (col == N_INDEX_BLOCK_CAPACITY_COL) {
-                    return reader.getMetadata().getIndexValueBlockCapacity(columnIndex);
+                    return cairoColumn.getIndexBlockCapacityUnsafe();
                 }
                 if (col == N_SYMBOL_CAPACITY_COL) {
-                    if (ColumnType.isSymbol(reader.getMetadata().getColumnType(columnIndex))) {
-                        return reader.getSymbolMapReader(columnIndex).getSymbolCapacity();
-                    } else {
-                        return 0;
-                    }
+                    return cairoColumn.getSymbolCapacityUnsafe();
+//                    if (ColumnType.isSymbol(reader.getMetadata().getColumnType(columnIndex))) {
+//                        return reader.getSymbolMapReader(columnIndex).getSymbolCapacity();
+//                    } else {
+//                        return 0;
+//                    }
                 }
                 throw new UnsupportedOperationException();
             }
@@ -164,10 +173,10 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             @NotNull
             public CharSequence getStrA(int col) {
                 if (col == N_NAME_COL) {
-                    return reader.getMetadata().getColumnName(columnIndex);
+                    return cairoColumn.getNameUnsafe();
                 }
                 if (col == N_TYPE_COL) {
-                    return ColumnType.nameOf(reader.getMetadata().getColumnType(columnIndex));
+                    return ColumnType.nameOf(cairoColumn.getTypeUnsafe());
                 }
                 throw new UnsupportedOperationException();
             }

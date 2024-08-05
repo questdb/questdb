@@ -31,27 +31,24 @@ import org.jetbrains.annotations.NotNull;
 
 public class CairoMetadata {
     public static final CairoMetadata INSTANCE = new CairoMetadata();
-
+    private final SimpleReadWriteLock lock; // consider StampedLock
     private final CharSequenceObjHashMap<CairoTable> tables;
-
-    // used to protect the tables hashmap
-    private final SimpleReadWriteLock tablesLock; // consider StampedLock
 
     public CairoMetadata() {
         this.tables = new CharSequenceObjHashMap<>();
-        this.tablesLock = new SimpleReadWriteLock();
+        this.lock = new SimpleReadWriteLock();
     }
 
     // fails if table already exists
     public void addTable(@NotNull CairoTable newTable) {
-        tablesLock.writeLock().lock();
+        lock.writeLock().lock();
         final String tableName = newTable.getName();
         final CairoTable existingTable = tables.get(tableName);
         if (existingTable != null) {
             throw CairoException.nonCritical().put("table [name=").put(tableName).put("] already exists in CairoMetadata");
         }
         tables.put(tableName, newTable);
-        tablesLock.writeLock().unlock();
+        lock.writeLock().unlock();
     }
 
     public CairoTable getTableQuick(@NotNull CharSequence tableName) {
@@ -63,29 +60,41 @@ public class CairoMetadata {
     }
 
     public CairoTable getTableQuiet(@NotNull CharSequence tableName) {
-        tablesLock.readLock().lock();
+        lock.readLock().lock();
         final CairoTable tbl = tables.get(tableName);
-        tablesLock.readLock().unlock();
+        lock.readLock().unlock();
         return tbl;
     }
 
-    public void upsertTable(@NotNull TableReader tableReader) {
+    public boolean upsertTable(@NotNull TableReader tableReader) {
         CairoTable tbl = getTableQuiet(tableReader.getTableToken().getTableName());
         if (tbl == null) {
             tbl = new CairoTable(tableReader);
-            addTable(tbl);
+            try {
+                addTable(tbl);
+                return true;
+            } catch (CairoException e) {
+                return false;
+            }
         } else {
             tbl.updateMetadataIfRequired(tableReader);
+            return true;
         }
     }
-    
-    public void upsertTable(@NotNull TableMetadata tableMetadata) {
+
+    public boolean upsertTable(@NotNull TableMetadata tableMetadata) {
         CairoTable tbl = getTableQuiet(tableMetadata.getTableToken().getTableName());
         if (tbl == null) {
             tbl = new CairoTable(tableMetadata);
-            addTable(tbl);
+            try {
+                addTable(tbl);
+                return true;
+            } catch (CairoException e) {
+                return false;
+            }
         } else {
             tbl.updateMetadataIfRequired(tableMetadata);
+            return true;
         }
     }
 

@@ -66,13 +66,6 @@ public class CairoColumn {
         lock.readLock().unlock();
     }
 
-    public boolean getDedupKey() {
-        lock.readLock().lock();
-        final boolean upsertKey = this.isDedupKey;
-        lock.readLock().unlock();
-        return upsertKey;
-    }
-
     public boolean getDesignated() {
         lock.readLock().lock();
         final boolean designated = this.designated;
@@ -95,14 +88,25 @@ public class CairoColumn {
         return indexBlockCapacity;
     }
 
-    public boolean getIndexed() {
+    public boolean getIsDedupKey() {
+        lock.readLock().lock();
+        final boolean upsertKey = this.isDedupKey;
+        lock.readLock().unlock();
+        return upsertKey;
+    }
+
+    public boolean getIsDedupKeyUnsafe() {
+        return isDedupKey;
+    }
+
+    public boolean getIsIndexed() {
         lock.readLock().lock();
         final boolean indexed = this.isIndexed;
         lock.readLock().unlock();
         return indexed;
     }
 
-    public boolean getIndexedUnsafe() {
+    public boolean getIsIndexedUnsafe() {
         return isIndexed;
     }
 

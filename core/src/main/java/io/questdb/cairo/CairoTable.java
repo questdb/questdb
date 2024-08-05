@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.std.CairoColumn;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.ObjList;
 import io.questdb.std.SimpleReadWriteLock;
 import org.jetbrains.annotations.NotNull;
 
@@ -81,18 +82,6 @@ public class CairoTable {
     }
 
     // fails if table already exists
-    public void addColumn(@NotNull CairoColumn newColumn) {
-        lock.writeLock().lock();
-        final CharSequence columnName = newColumn.getName();
-        final CairoColumn existingColumn = columns.get(columnName);
-        if (existingColumn != null) {
-            throw CairoException.nonCritical().put("table [name=").put(columnName).put("] already exists in CairoMetadata");
-        }
-        columns.put(columnName, newColumn);
-        lock.writeLock().unlock();
-    }
-
-    // fails if table already exists
     public void addColumnUnsafe(@NotNull CairoColumn newColumn) {
         final CharSequence columnName = newColumn.getName();
         final CairoColumn existingColumn = columns.get(columnName);
@@ -101,7 +90,6 @@ public class CairoTable {
         }
         columns.put(columnName, newColumn);
     }
-
 
     public void copyTo(@NotNull CairoTable target) {
         lock.readLock().lock();
@@ -128,6 +116,13 @@ public class CairoTable {
         final long columnCount = this.columnCount;
         lock.readLock().unlock();
         return columnCount;
+    }
+
+    public ObjList<CharSequence> getColumnNames() {
+        lock.readLock().lock();
+        final ObjList<CharSequence> names = this.columns.keys();
+        lock.readLock().unlock();
+        return names;
     }
 
     public CairoColumn getColumnQuick(@NotNull CharSequence columnName) {
@@ -323,27 +318,21 @@ public class CairoTable {
         }
     }
 
-    public void upsertColumn(@NotNull TableMetadata tableMetadata, @NotNull TableColumnMetadata columnMetadata) {
-        CairoColumn col = getColumnQuiet(columnMetadata.getName());
-        final int position = tableMetadata.getColumnIndex(columnMetadata.getName());
-        final boolean designated = position == designatedTimestampIndex;
-        if (col == null) {
-            col = new CairoColumn(columnMetadata, designated, position);
-            addColumn(col);
-        } else {
-            col.updateMetadata(columnMetadata, designated, position);
-        }
-    }
-
-    public void upsertColumnUnsafe(@NotNull TableMetadata tableMetadata, @NotNull TableColumnMetadata columnMetadata) {
+    public boolean upsertColumnUnsafe(@NotNull TableMetadata tableMetadata, @NotNull TableColumnMetadata columnMetadata) {
         CairoColumn col = columns.get(columnMetadata.getName());
         final int position = tableMetadata.getColumnIndex(columnMetadata.getName());
         final boolean designated = position == designatedTimestampIndex;
         if (col == null) {
             col = new CairoColumn(columnMetadata, designated, position);
-            addColumnUnsafe(col);
+            try {
+                addColumnUnsafe(col);
+            } catch (CairoException e) {
+                return false;
+            }
+            return true;
         } else {
             col.updateMetadata(columnMetadata, designated, position);
+            return true;
         }
     }
 
