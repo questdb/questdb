@@ -154,11 +154,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             close();
             throw e;
         }
-        if (!CairoMetadata.INSTANCE.upsertTable(this)) {
-            if (!CairoMetadata.INSTANCE.upsertTable(this)) {
-                throw CairoException.nonCritical().put("Could not update CairoMetadata for table " + this.tableToken.getTableName());
-            }
-        }
     }
 
     public static int getPrimaryColumnIndex(int base, int index) {

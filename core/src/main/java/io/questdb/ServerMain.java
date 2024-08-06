@@ -85,7 +85,6 @@ public class ServerMain implements Closeable {
             config.init(engine, freeOnExit);
             freeOnExit.register(config.getFactoryProvider());
             engine.load();
-            CairoMetadata.hydrate(engine);
         } catch (Throwable th) {
             Misc.free(freeOnExit);
             throw th;
@@ -352,7 +351,7 @@ public class ServerMain implements Closeable {
                     }
 
                     // metadata
-                    final HydrateMetadataJob hydrateMetadataJob = new HydrateMetadataJob(engine.getMessageBus(), engine.getConfiguration().getFilesFacade(), engine.getConfiguration());
+                    final HydrateMetadataJob hydrateMetadataJob = new HydrateMetadataJob(engine);
                     sharedPool.assign(hydrateMetadataJob);
                     sharedPool.freeOnExit(hydrateMetadataJob);
 

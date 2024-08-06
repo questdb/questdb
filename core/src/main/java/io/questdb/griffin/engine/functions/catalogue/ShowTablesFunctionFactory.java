@@ -213,7 +213,7 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                         return localTableCopy.getPartitionByUnsafe();
                     }
                     if (col == DESIGNATED_TIMESTAMP_COLUMN) {
-                        return localTableCopy.getDesignatedTimestampNameUnsafe();
+                        return localTableCopy.getTimestampNameUnsafe();
                     }
                     if (col == DIRECTORY_NAME_COLUMN) {
                         if (localTableCopy.getIsDedupUnsafe()) {

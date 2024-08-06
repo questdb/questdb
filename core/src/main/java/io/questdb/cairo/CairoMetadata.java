@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.mp.RingQueue;
 import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.ObjHashSet;
 import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.HydrateMetadataTask;
@@ -47,18 +46,10 @@ public class CairoMetadata {
         this.lock = new SimpleReadWriteLock();
     }
 
-    public static void hydrate(@NotNull CairoEngine engine) {
-        ObjHashSet<TableToken> tokens = new ObjHashSet<>();
-        engine.getTableTokens(tokens, false);
-        HydrateMetadataTask task = engine.getMessageBus().getHydrateMetadataTaskQueue().get(0);
-        task.tableTokens = tokens;
-        task.position = 0;
-    }
-
     // fails if table already exists
     public void addTable(@NotNull CairoTable newTable) {
         lock.writeLock().lock();
-        final String tableName = newTable.getName();
+        final String tableName = newTable.getNameUnsafe();
         final CairoTable existingTable = tables.get(tableName);
         if (existingTable != null) {
             throw CairoException.nonCritical().put("table [name=").put(tableName).put("] already exists in CairoMetadata");

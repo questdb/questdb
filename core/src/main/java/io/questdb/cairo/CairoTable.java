@@ -37,23 +37,19 @@ import org.jetbrains.annotations.NotNull;
 // todo: intern column names
 // todo: update this to use column order map, column name index map etc.
 public class CairoTable {
-    public final ObjList<CairoColumn> columns2 = new ObjList<>();
+    public final ObjList<CairoColumn> columns = new ObjList<>();
     // consider a versioned lock. consider more granular locking
     public final SimpleReadWriteLock lock;
-    private final CharSequenceObjHashMap<CairoColumn> columns = new CharSequenceObjHashMap<>();
     public LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     public IntList columnOrderMap = new IntList();
-    private int columnCount;
-    private int designatedTimestampIndex;
     // todo: intern, its a column name
-    private String designatedTimestampName;
-    private String directoryName;
     private boolean isDedup;
     private boolean isSoftLink;
     private long lastMetadataVersion = -1;
     private int maxUncommittedRows;
     private long o3MaxLag;
     private String partitionBy;
+    private int timestampIndex;
     private TableToken token;
 
     public CairoTable() {
@@ -83,11 +79,14 @@ public class CairoTable {
 
     public void addColumnUnsafe(@NotNull CairoColumn newColumn) {
         final CharSequence columnName = newColumn.getNameUnsafe();
-        final CairoColumn existingColumn = columns.get(columnName);
+        final CairoColumn existingColumn = getColumnQuietUnsafe(columnName);
         if (existingColumn != null) {
             throw CairoException.nonCritical().put("table [name=").put(columnName).put("] already exists in `").put(getName()).put("`");
         }
-        columns.put(columnName, newColumn);
+        columns.add(newColumn);
+
+        final int denseIndex = columns.size() - 1;
+        columnNameIndexMap.put(columnName, denseIndex);
     }
 
     public void copyTo(@NotNull CairoTable target) {
@@ -95,10 +94,7 @@ public class CairoTable {
         target.lock.writeLock().lock();
 
         target.token = token;
-        target.columnCount = columnCount;
-        target.designatedTimestampIndex = designatedTimestampIndex;
-        target.designatedTimestampName = designatedTimestampName;
-        target.directoryName = directoryName;
+        target.timestampIndex = timestampIndex;
         target.isDedup = isDedup;
         target.isSoftLink = isSoftLink;
         target.lastMetadataVersion = lastMetadataVersion;
@@ -112,14 +108,14 @@ public class CairoTable {
 
     public long getColumnCount() {
         lock.readLock().lock();
-        final long columnCount = this.columnCount;
+        final long columnCount = this.columns.size();
         lock.readLock().unlock();
         return columnCount;
     }
 
     public ObjList<CharSequence> getColumnNames() {
         lock.readLock().lock();
-        final ObjList<CharSequence> names = this.columns.keys();
+        final ObjList<CharSequence> names = this.columnNameIndexMap.keys();
         lock.readLock().unlock();
         return names;
     }
@@ -132,38 +128,33 @@ public class CairoTable {
         return col;
     }
 
+    public CairoColumn getColumnQuickUnsafe(@NotNull CharSequence columnName) {
+        final CairoColumn col = getColumnQuietUnsafe(columnName);
+        if (col == null) {
+            throw CairoException.tableDoesNotExist(columnName);
+        }
+        return col;
+    }
+
     public CairoColumn getColumnQuiet(@NotNull CharSequence columnName) {
         lock.readLock().lock();
-        final CairoColumn col = columns.get(columnName);
+        final CairoColumn col = getColumnQuietUnsafe(columnName);
         lock.readLock().unlock();
         return col;
     }
 
-    public int getDesignatedTimestampIndex() {
-        lock.readLock().lock();
-        final int designatedTimestampIndex = this.designatedTimestampIndex;
-        lock.readLock().unlock();
-        return designatedTimestampIndex;
-    }
-
-    public int getDesignatedTimestampIndexUnsafe() {
-        return designatedTimestampIndex;
-    }
-
-    public String getDesignatedTimestampName() {
-        lock.readLock().lock();
-        final String designatedTimestampName = this.designatedTimestampName;
-        lock.readLock().unlock();
-        return designatedTimestampName;
-    }
-
-    public String getDesignatedTimestampNameUnsafe() {
-        return designatedTimestampName;
+    public CairoColumn getColumnQuietUnsafe(@NotNull CharSequence columnName) {
+        final int index = columnNameIndexMap.get(columnName);
+        if (index != -1) {
+            return columns.getQuiet(index);
+        } else {
+            return null;
+        }
     }
 
     public String getDirectoryName() {
         lock.readLock().lock();
-        final String directoryName = this.directoryName;
+        final String directoryName = this.token.getDirName();
         lock.readLock().unlock();
         return directoryName;
     }
@@ -260,6 +251,28 @@ public class CairoTable {
         return partitionBy;
     }
 
+    public int getTimestampIndex() {
+        lock.readLock().lock();
+        final int timestampIndex = this.timestampIndex;
+        lock.readLock().unlock();
+        return timestampIndex;
+    }
+
+    public int getTimestampIndexUnsafe() {
+        return timestampIndex;
+    }
+
+    public CharSequence getTimestampName() {
+        lock.readLock().lock();
+        final CharSequence timestampIndex = getColumnQuickUnsafe(this.timestampIndex).getNameUnsafe();
+        lock.readLock().unlock();
+        return timestampIndex;
+    }
+
+    public CharSequence getTimestampNameUnsafe() {
+        return getColumnQuickUnsafe(timestampIndex).getNameUnsafe();
+    }
+
     public boolean getWalEnabled() {
         lock.readLock().lock();
         final boolean walEnabled = this.token.isWal();
@@ -276,11 +289,7 @@ public class CairoTable {
     }
 
     public void setDesignatedTimestampIndexUnsafe(int designatedTimestampIndex) {
-        this.designatedTimestampIndex = designatedTimestampIndex;
-    }
-
-    public void setDesignatedTimestampNameUnsafe(String designatedTimestampName) {
-        this.designatedTimestampName = designatedTimestampName;
+        this.timestampIndex = designatedTimestampIndex;
     }
 
     public void setIsDedupUnsafe(boolean isDedup) {
@@ -332,10 +341,9 @@ public class CairoTable {
             partitionBy = PartitionBy.toString(tableMetadata.getPartitionBy()); // intern this
             isSoftLink = tableMetadata.isSoftLink();
             this.lastMetadataVersion = tableMetadata.getMetadataVersion();
-            designatedTimestampIndex = tableMetadata.getTimestampIndex();
-            designatedTimestampName = designatedTimestampIndex > -1 ? tableMetadata.getColumnName(designatedTimestampIndex) : null;
-            isDedup = designatedTimestampIndex >= 0 && token.isWal() && tableMetadata.isDedupKey(designatedTimestampIndex);
-            columnCount = tableMetadata.getColumnCount();
+            timestampIndex = tableMetadata.getTimestampIndex();
+            isDedup = timestampIndex >= 0 && token.isWal() && tableMetadata.isDedupKey(timestampIndex);
+            int columnCount = tableMetadata.getColumnCount();
 
             // now handle columns
             boolean successful;
@@ -366,9 +374,9 @@ public class CairoTable {
     }
 
     public boolean upsertColumnUnsafe(@NotNull TableMetadata tableMetadata, @NotNull TableColumnMetadata columnMetadata) {
-        CairoColumn col = columns.get(columnMetadata.getName());
+        CairoColumn col = getColumnQuietUnsafe(columnMetadata.getName());
         final int position = tableMetadata.getColumnIndex(columnMetadata.getName());
-        final boolean designated = position == designatedTimestampIndex;
+        final boolean designated = position == timestampIndex;
         if (col == null) {
             col = new CairoColumn(columnMetadata, designated, position);
             try {
@@ -381,5 +389,9 @@ public class CairoTable {
             col.updateMetadata(columnMetadata, designated, position);
             return true;
         }
+    }
+
+    private CairoColumn getColumnQuickUnsafe(int position) {
+        return columns.getQuick(position);
     }
 }

@@ -295,16 +295,6 @@ public class MessageBusImpl implements MessageBus {
     }
 
     @Override
-    public RingQueue<HydrateMetadataTask> getHydrateMetadataTaskQueue() {
-        return hydrateMetadataTaskQueue;
-    }
-
-    @Override
-    public MCSequence getHydrateMetadataTaskSubSeq() {
-        return hydrateMetadataTaskSubSeq;
-    }
-
-    @Override
     public MPSequence getIndexerPubSequence() {
         return indexerPubSeq;
     }
