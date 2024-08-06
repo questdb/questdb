@@ -173,7 +173,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         try (RecordCursor cursor2 = factory2.getCursor(sqlExecutionContext)) {
                             Assert.fail();
                         } catch (CairoException e) {
-                            TestUtils.assertContains(e.getMessage(), "could not open read-only");
+                            TestUtils.assertContains(e.getMessage(), "could not open, file does not exists");
                         }
                     }
                 }
@@ -192,7 +192,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     select("select * from read_parquet('" + path + "')  where 1 = 2");
                     Assert.fail();
                 } catch (SqlException e) {
-                    TestUtils.assertContains(e.getMessage(), "could not open read-only");
+                    TestUtils.assertContains(e.getMessage(), "could not open, file does not exists");
                 }
             }
         });

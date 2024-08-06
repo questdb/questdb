@@ -506,7 +506,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         Assert.fail();
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(),
-                                "could not open read-only"
+                                "could not open, file does not exists"
                         );
                         TestUtils.assertContains(e.getFlyweightMessage(),
                                 "ts1.d"
@@ -997,7 +997,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "srcTs", "dstTs", false, "could not open read-only");
+        testSqlFailedOnFsOperation(ff, "srcTs", "dstTs", false, "could not open, file does not exists");
     }
 
     @Test
@@ -1013,7 +1013,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "srcTs2", "dstTs2", false, "could not open read-only", "ts.d");
+        testSqlFailedOnFsOperation(ff, "srcTs2", "dstTs2", false, "could not open, file does not exists", "ts.d");
     }
 
     @Test
