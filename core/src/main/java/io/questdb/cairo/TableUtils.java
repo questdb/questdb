@@ -1150,7 +1150,7 @@ public final class TableUtils {
             return fd;
         }
         int errno = ff.errno();
-        if (CairoException.errnoPathDoesNotExist(errno)) {
+        if (CairoException.errnoReadPathDoesNotExist(errno)) {
             throw CairoException.critical(errno).put("could not open, file does not exists: ").put(path).put(']');
         }
         throw CairoException.critical(errno).put("could not open read-only [file=").put(path).put(']');

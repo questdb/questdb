@@ -164,6 +164,7 @@ public class CopyWalSegmentUtils {
             throw CairoException.critical(ff.errno()).put("failed to copy column file to new segment" +
                             " [path=").put(newSegPath)
                     .put(", column=").put(columnName)
+                    .put(", errno=").put(ff.errno())
                     .put(", startRowNumber=").put(startRowNumber)
                     .put(", rowCount=").put(rowCount)
                     .put(", columnType=").put(columnType)
