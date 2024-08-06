@@ -38,6 +38,8 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 
 
+// todo: potentially refactor some of the logic into static functions
+// todo: lots of cleanup
 public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
     public static final Log LOG = LogFactory.getLog(HydrateMetadataJob.class);
     public static boolean completed = false;
@@ -137,7 +139,7 @@ public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
                     return true;
                 }
 
-                LOG.debugW().$("Updating metadata [table=").$(token.getTableName()).I$();
+                LOG.debugW().$("Updating metadata for existing table [table=").$(token.getTableName()).I$();
 
                 table = alreadyHydrated;
 
@@ -146,22 +148,20 @@ public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
             }
         }
 
-        // [NW] - continue hydrating table and columns etc.
+        // get basic metadata
         int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
-        int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-        int partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
-        int maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
-        long o3MaxLag = metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
 
-        table.setPartitionByUnsafe(PartitionBy.toString(partitionBy));
-        table.setMaxUncommittedRowsUnsafe(maxUncommittedRows);
-        table.setO3MaxLagUnsafe(o3MaxLag);
         table.setLastMetadataVersionUnsafe(metadataVersion);
-        table.setDesignatedTimestampIndexUnsafe(timestampIndex);
+        table.setPartitionByUnsafe(PartitionBy.toString(metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY)));
+        table.setMaxUncommittedRowsUnsafe(metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS));
+        table.setO3MaxLagUnsafe(metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG));
+        table.setTimestampIndexUnsafe(metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX));
 
         TableUtils.buildWriterOrderMap(metaMem, table.columnOrderMap, metaMem, columnCount);
 
+        // populate columns
         for (int i = 0, n = table.columnOrderMap.size(); i < n; i += 3) {
+
             int writerIndex = table.columnOrderMap.get(i);
             if (writerIndex < 0) {
                 continue;
@@ -177,6 +177,7 @@ public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
                 String columnName = Chars.toString(name);
                 CairoColumn column = new CairoColumn();
 
+                // set basic values
                 column.setNameUnsafe(columnName);
                 column.setTypeUnsafe(columnType);
                 column.setIsIndexedUnsafe(TableUtils.isColumnIndexed(metaMem, writerIndex));
@@ -186,39 +187,42 @@ public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
                 column.setWriterIndexUnsafe(writerIndex);
                 column.setDenseSymbolIndexUnsafe(denseSymbolIndex);
                 column.setStableIndex(stableIndex);
-                column.setDesignated(writerIndex == timestampIndex);
+                column.setDesignated(writerIndex == table.getTimestampIndexUnsafe());
 
-                path.trimTo(configuration.getRoot().length())
-                        .concat(table.getDirectoryNameUnsafe())
-                        .concat(TableUtils.COLUMN_VERSION_FILE_NAME);
-                columnVersionReader.ofRO(configuration.getFilesFacade(),
-                        path.$());
-
-                final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
 
                 if (ColumnType.isSymbol(columnType)) {
+                    // get column version
+                    path.trimTo(configuration.getRoot().length())
+                            .concat(table.getDirectoryNameUnsafe())
+                            .concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+                    columnVersionReader.ofRO(configuration.getFilesFacade(),
+                            path.$());
+
+                    final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
+                    columnVersionReader.close();
+
+                    // use txn to find correct symbol entry
                     final LPSZ offsetFileName = TableUtils.offsetFileName(
                             path.trimTo(configuration.getRoot().length()).concat(table.getDirectoryNameUnsafe())
                             , columnName, columnNameTxn);
 
+                    // initialise symbol map memory
                     offsetMem = Vm.getCMRInstance();
                     final long offsetMemSize = SymbolMapWriter.keyToOffset(0) + Long.BYTES;
                     offsetMem.of(configuration.getFilesFacade(), offsetFileName, offsetMemSize, offsetMemSize, MemoryTag.NATIVE_METADATA_READER);
+
+                    // get symbol properties
                     column.setSymbolCapacityUnsafe(offsetMem.getInt(SymbolMapWriter.HEADER_CAPACITY));
                     assert column.getSymbolCapacityUnsafe() > 0;
+
                     column.setSymbolCachedUnsafe(offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED));
 
                     offsetMem.close();
-                    columnVersionReader.close();
                 }
 
                 LOG.debugW().$("Hydrating column [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
 
                 table.addColumnUnsafe(column);
-
-                if (writerIndex == timestampIndex) {
-                    table.setDesignatedTimestampIndexUnsafe(table.columns.size() - 1);
-                }
             }
         }
 

@@ -24,7 +24,10 @@
 
 package io.questdb.cairo;
 
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.ObjList;
+import io.questdb.std.SimpleReadWriteLock;
 import org.jetbrains.annotations.NotNull;
 
 
@@ -279,10 +282,6 @@ public class CairoTable {
         return getLastMetadataVersion() != -1;
     }
 
-    public void setDesignatedTimestampIndexUnsafe(int designatedTimestampIndex) {
-        this.timestampIndex = designatedTimestampIndex;
-    }
-
     public void setIsDedupUnsafe(boolean isDedup) {
         this.isDedup = isDedup;
     }
@@ -305,6 +304,10 @@ public class CairoTable {
 
     public void setPartitionByUnsafe(String partitionBy) {
         this.partitionBy = partitionBy;
+    }
+
+    public void setTimestampIndexUnsafe(int timestampIndex) {
+        this.timestampIndex = timestampIndex;
     }
 
     private CairoColumn getColumnQuickUnsafe(int position) {
