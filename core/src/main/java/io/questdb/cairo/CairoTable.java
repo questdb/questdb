@@ -37,11 +37,11 @@ import org.jetbrains.annotations.NotNull;
 // todo: intern column names
 // todo: update this to use column order map, column name index map etc.
 public class CairoTable {
-    public final ObjList<CairoColumn> columns = new ObjList<>();
     // consider a versioned lock. consider more granular locking
     public final SimpleReadWriteLock lock;
     public LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     public IntList columnOrderMap = new IntList();
+    public ObjList<CairoColumn> columns = new ObjList<>();
     // todo: intern, its a column name
     private boolean isDedup;
     private boolean isSoftLink;
@@ -93,6 +93,9 @@ public class CairoTable {
         lock.readLock().lock();
         target.lock.writeLock().lock();
 
+        target.columns = columns;
+        target.columnOrderMap = columnOrderMap;
+        target.columnNameIndexMap = columnNameIndexMap;
         target.token = token;
         target.timestampIndex = timestampIndex;
         target.isDedup = isDedup;
@@ -264,13 +267,18 @@ public class CairoTable {
 
     public CharSequence getTimestampName() {
         lock.readLock().lock();
-        final CharSequence timestampIndex = getColumnQuickUnsafe(this.timestampIndex).getNameUnsafe();
+        final CharSequence timestampName = getTimestampNameUnsafe();
         lock.readLock().unlock();
-        return timestampIndex;
+        return timestampName;
     }
 
     public CharSequence getTimestampNameUnsafe() {
-        return getColumnQuickUnsafe(timestampIndex).getNameUnsafe();
+        final CairoColumn timestampColumn = getColumnQuietUnsafe(this.timestampIndex);
+        if (timestampColumn != null) {
+            return timestampColumn.getNameUnsafe();
+        } else {
+            return null;
+        }
     }
 
     public boolean getWalEnabled() {
@@ -393,5 +401,13 @@ public class CairoTable {
 
     private CairoColumn getColumnQuickUnsafe(int position) {
         return columns.getQuick(position);
+    }
+
+    private CairoColumn getColumnQuietUnsafe(int position) {
+        if (position > -1) {
+            return columns.getQuiet(position);
+        } else {
+            return null;
+        }
     }
 }

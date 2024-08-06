@@ -216,7 +216,7 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                         return localTableCopy.getTimestampNameUnsafe();
                     }
                     if (col == DIRECTORY_NAME_COLUMN) {
-                        if (localTableCopy.getIsDedupUnsafe()) {
+                        if (localTableCopy.getIsSoftLinkUnsafe()) {
                             return localTableCopy.getDirectoryNameUnsafe() + " (->)";
                         }
                         return localTableCopy.getDirectoryNameUnsafe();

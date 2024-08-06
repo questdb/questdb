@@ -177,6 +177,7 @@ public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
                 column.setWriterIndexUnsafe(writerIndex);
                 column.setDenseSymbolIndexUnsafe(denseSymbolIndex);
                 column.setStableIndex(stableIndex);
+                column.setDesignated(writerIndex == timestampIndex);
 
                 LOG.debugW().$("Hydrating column [table=").$(token.getTableName()).$(", column=").$(colName).I$();
 

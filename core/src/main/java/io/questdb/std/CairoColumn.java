@@ -65,6 +65,10 @@ public class CairoColumn {
         return denseSymbolIndex;
     }
 
+    public boolean getDesignated() {
+        return designated;
+    }
+
     public boolean getDesignatedUnsafe() {
         return designated;
     }
@@ -120,6 +124,10 @@ public class CairoColumn {
 
     public void setDenseSymbolIndexUnsafe(int denseSymbolIndex) {
         this.denseSymbolIndex = denseSymbolIndex;
+    }
+
+    public void setDesignated(boolean designated) {
+        this.designated = designated;
     }
 
     public void setDesignatedUnsafe(boolean designated) {
