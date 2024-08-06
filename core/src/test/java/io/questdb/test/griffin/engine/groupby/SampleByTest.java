@@ -4868,6 +4868,25 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByRunsSequentiallyWithNonConstantFrom() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE 'trades' (\n" +
+                    "  symbol SYMBOL capacity 256 CACHE,\n" +
+                    "  side SYMBOL capacity 256 CACHE,\n" +
+                    "  price DOUBLE,\n" +
+                    "  amount DOUBLE,\n" +
+                    "  timestamp TIMESTAMP\n" +
+                    ") timestamp (timestamp) PARTITION BY DAY WAL;");
+            drainWalQueue();
+
+            String query = "select timestamp, count() from trades\n" +
+                    "sample by 1m FROM date_trunc('day', now()) FILL (null) \n";
+
+            assertSql("timestamp\tcount\n", query);
+        });
+    }
+
+    @Test
     public void testSampleByWithAsofJoin() throws Exception {
         assertMemoryLeak(() -> {
             ddl("CREATE TABLE 'trades1' (\n" +
