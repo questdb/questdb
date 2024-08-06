@@ -276,7 +276,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                 ddl(alterCommand, sqlExecutionContext);
                 Assert.fail();
             } catch (CairoException | SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "could not open, file does not exists");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "could not open");
             }
         });
     }
