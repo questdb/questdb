@@ -24,10 +24,7 @@
 
 package io.questdb;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.FlushQueryCacheJob;
+import io.questdb.cairo.*;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -88,6 +85,7 @@ public class ServerMain implements Closeable {
             config.init(engine, freeOnExit);
             freeOnExit.register(config.getFactoryProvider());
             engine.load();
+            CairoMetadata.hydrate(engine);
         } catch (Throwable th) {
             Misc.free(freeOnExit);
             throw th;

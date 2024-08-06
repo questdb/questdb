@@ -191,6 +191,46 @@ public final class TableUtils {
         allocateDiskSpace(ff, fd, size);
     }
 
+    public static void buildWriterOrderMap(MemoryMR metaMem, IntList columnOrderMap, MemoryMR newMeta, int newColumnCount) {
+        int nameOffset = (int) TableUtils.getColumnNameOffset(newColumnCount);
+        columnOrderMap.clear();
+
+        int denseSymbolIndex = 0;
+        for (int i = 0; i < newColumnCount; i++) {
+            int strLen = TableUtils.getInt(newMeta, newMeta.size(), nameOffset);
+            if (strLen == TableUtils.NULL_LEN) {
+                throw validationException(metaMem).put("NULL column name at [").put(i).put(']');
+            }
+            if (strLen < 1 || strLen > 255) {
+                // EXT4 and many others do not allow file name length > 255 bytes
+                throw validationException(metaMem).put("String length of ").put(strLen).put(" is invalid at offset ").put(nameOffset);
+            }
+            int nameLen = (int) Vm.getStorageLength(strLen);
+            int newOrderIndex = TableUtils.getReplacingColumnIndex(newMeta, i);
+            boolean isSymbol = ColumnType.isSymbol(TableUtils.getColumnType(newMeta, i));
+
+            if (newOrderIndex > -1 && newOrderIndex < newColumnCount - 1) {
+                // Replace the column index
+                columnOrderMap.set(3 * newOrderIndex, i);
+                columnOrderMap.set(3 * newOrderIndex + 1, nameOffset);
+                columnOrderMap.set(3 * newOrderIndex + 2, isSymbol ? denseSymbolIndex : -1);
+
+                columnOrderMap.add(-newOrderIndex - 1);
+                columnOrderMap.add(0);
+                columnOrderMap.add(0);
+
+            } else {
+                columnOrderMap.add(i);
+                columnOrderMap.add(nameOffset);
+                columnOrderMap.add(isSymbol ? denseSymbolIndex : -1);
+            }
+            nameOffset += nameLen;
+            if (isSymbol) {
+                denseSymbolIndex++;
+            }
+        }
+    }
+
     public static int calculateTxRecordSize(int bytesSymbols, int bytesPartitions) {
         return TX_RECORD_HEADER_SIZE + Integer.BYTES + bytesSymbols + Integer.BYTES + bytesPartitions;
     }

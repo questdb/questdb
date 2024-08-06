@@ -159,12 +159,21 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
                     return cairoColumn.getIndexBlockCapacityUnsafe();
                 }
                 if (col == N_SYMBOL_CAPACITY_COL) {
-                    return cairoColumn.getSymbolCapacityUnsafe();
-//                    if (ColumnType.isSymbol(reader.getMetadata().getColumnType(columnIndex))) {
-//                        return reader.getSymbolMapReader(columnIndex).getSymbolCapacity();
-//                    } else {
-//                        return 0;
-//                    }
+                    if (ColumnType.isSymbol(cairoColumn.getTypeUnsafe())) {
+                        int symbolCapacity = cairoColumn.getSymbolCapacityUnsafe();
+                        if (symbolCapacity == 0) {
+                            // uninitialised
+                            TableReader reader = executionContext.getCairoEngine().getReader(
+                                    executionContext.getTableToken(cairoTable.getName())
+                            );
+                            cairoTable.updateMetadataIfRequired(reader);
+                        }
+                        symbolCapacity = cairoColumn.getSymbolCapacityUnsafe();
+                        assert symbolCapacity != 0;
+                        return symbolCapacity;
+                    } else {
+                        return 0;
+                    }
                 }
                 throw new UnsupportedOperationException();
             }

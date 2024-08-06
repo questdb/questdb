@@ -28,30 +28,28 @@ import io.questdb.cairo.TableColumnMetadata;
 import org.jetbrains.annotations.NotNull;
 
 public class CairoColumn {
+    private int denseSymbolIndex;
     private boolean designated;
     private int indexBlockCapacity;
     private boolean isDedupKey;
     private boolean isIndexed;
-    private SimpleReadWriteLock lock;
+    private boolean isSymbolTableStatic;
     private CharSequence name;
     private int position;
+    private int stableIndex;
     private boolean symbolCached;
     private int symbolCapacity;
     private int type;
+    private int writerIndex;
 
     public CairoColumn() {
-        this.lock = new SimpleReadWriteLock();
     }
 
     public CairoColumn(@NotNull TableColumnMetadata metadata, boolean designated, int position) {
-        this.lock = new SimpleReadWriteLock();
         updateMetadata(metadata, designated, position);
     }
 
     public void copyTo(@NotNull CairoColumn target) {
-        lock.readLock().lock();
-        target.lock.writeLock().lock();
-
         target.indexBlockCapacity = this.indexBlockCapacity;
         target.isIndexed = this.isIndexed;
         target.name = this.name;
@@ -61,117 +59,122 @@ public class CairoColumn {
         target.symbolCached = this.symbolCached;
         target.symbolCapacity = this.symbolCapacity;
         target.isDedupKey = this.isDedupKey;
-
-        target.lock.writeLock().unlock();
-        lock.readLock().unlock();
     }
 
-    public boolean getDesignated() {
-        lock.readLock().lock();
-        final boolean designated = this.designated;
-        lock.readLock().unlock();
-        return designated;
+    public int getDenseSymbolIndexUnsafe() {
+        return denseSymbolIndex;
     }
 
     public boolean getDesignatedUnsafe() {
         return designated;
     }
 
-    public int getIndexBlockCapacity() {
-        lock.readLock().lock();
-        final int indexBlockCapacity = this.indexBlockCapacity;
-        lock.readLock().unlock();
-        return indexBlockCapacity;
-    }
-
     public int getIndexBlockCapacityUnsafe() {
         return indexBlockCapacity;
-    }
-
-    public boolean getIsDedupKey() {
-        lock.readLock().lock();
-        final boolean upsertKey = this.isDedupKey;
-        lock.readLock().unlock();
-        return upsertKey;
     }
 
     public boolean getIsDedupKeyUnsafe() {
         return isDedupKey;
     }
 
-    public boolean getIsIndexed() {
-        lock.readLock().lock();
-        final boolean indexed = this.isIndexed;
-        lock.readLock().unlock();
-        return indexed;
-    }
-
     public boolean getIsIndexedUnsafe() {
         return isIndexed;
     }
 
-    public CharSequence getName() {
-        lock.readLock().lock();
-        final CharSequence name = this.name;
-        lock.readLock().unlock();
-        return name;
+    public boolean getIsSymbolTableStaticUnsafe() {
+        return isSymbolTableStatic;
     }
 
     public CharSequence getNameUnsafe() {
         return name;
     }
 
-    public int getPosition() {
-        lock.readLock().lock();
-        final int position = this.position;
-        lock.readLock().unlock();
-        return position;
-    }
-
     public int getPositionUnsafe() {
         return position;
     }
 
-    public boolean getSymbolCached() {
-        lock.readLock().lock();
-        final boolean symbolCached = this.symbolCached;
-        lock.readLock().unlock();
-        return symbolCached;
+    public int getStableIndex() {
+        return stableIndex;
     }
 
     public boolean getSymbolCachedUnsafe() {
         return symbolCached;
     }
 
-    public int getSymbolCapacity() {
-        lock.readLock().lock();
-        final int symbolCapacity = this.symbolCapacity;
-        lock.readLock().unlock();
-        return symbolCapacity;
-    }
-
     public int getSymbolCapacityUnsafe() {
         return symbolCapacity;
-    }
-
-    public int getType() {
-        lock.readLock().lock();
-        final int type = this.type;
-        lock.readLock().unlock();
-        return type;
     }
 
     public int getTypeUnsafe() {
         return type;
     }
 
+    // todo: review naming
     public boolean getUpsertKeyUnsafe() {
         return isDedupKey;
     }
 
-    public void updateMetadata(@NotNull TableColumnMetadata tableColumnMetadata, boolean designated, int position) {
-        lock.writeLock().lock();
+    public int getWriterIndexUnsafe() {
+        return writerIndex;
+    }
 
+    public void setDenseSymbolIndexUnsafe(int denseSymbolIndex) {
+        this.denseSymbolIndex = denseSymbolIndex;
+    }
+
+    public void setDesignatedUnsafe(boolean designated) {
+        this.designated = designated;
+    }
+
+    public void setIndexBlockCapacityUnsafe(int indexBlockCapacity) {
+        this.indexBlockCapacity = indexBlockCapacity;
+    }
+
+    public void setIsDedupKeyUnsafe(boolean isDedupKey) {
+        this.isDedupKey = isDedupKey;
+    }
+
+    public void setIsIndexedUnsafe(boolean isIndexed) {
+        this.isIndexed = isIndexed;
+    }
+
+    public void setIsSymbolTableStaticUnsafe(boolean symbolTableStatic) {
+        isSymbolTableStatic = symbolTableStatic;
+    }
+
+    public void setNameUnsafe(CharSequence name) {
+        this.name = name;
+    }
+
+    public void setPositionUnsafe(int position) {
+        this.position = position;
+    }
+
+    public void setStableIndex(int stableIndex) {
+        this.stableIndex = stableIndex;
+    }
+
+    public void setSymbolCachedUnsafe(boolean symbolCached) {
+        this.symbolCached = symbolCached;
+    }
+
+    public void setSymbolCapacityUnsafe(int symbolCapacity) {
+        this.symbolCapacity = symbolCapacity;
+    }
+
+    public void setTypeUnsafe(int type) {
+        this.type = type;
+    }
+
+    public void setUpsertKeyUnsafe(boolean upsertKey) {
+        this.isDedupKey = upsertKey;
+    }
+
+    public void setWriterIndexUnsafe(int writerIndex) {
+        this.writerIndex = writerIndex;
+    }
+
+    public void updateMetadata(@NotNull TableColumnMetadata tableColumnMetadata, boolean designated, int position) {
         name = tableColumnMetadata.getName();
         type = tableColumnMetadata.getType();
         isDedupKey = tableColumnMetadata.isDedupKey();
@@ -183,9 +186,6 @@ public class CairoColumn {
 
 //        private boolean symbolCached;
 //        private int symbolCapacity;
-
-
-        lock.writeLock().unlock();
 
     }
 }

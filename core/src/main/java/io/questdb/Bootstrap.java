@@ -197,7 +197,7 @@ public class Bootstrap {
             log.advisoryW().$("Metrics are disabled, health check endpoint will not consider unhandled errors").$();
         }
         Unsafe.setRssMemLimit(config.getMemoryConfiguration().getResolvedRamUsageLimitBytes());
-
+        // [NW] start metadata cache job
     }
 
     public static String[] getServerMainArgs(CharSequence root) {

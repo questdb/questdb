@@ -25,10 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.TableMetadata;
-import io.questdb.std.CairoColumn;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.ObjList;
-import io.questdb.std.SimpleReadWriteLock;
+import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
 
@@ -38,10 +35,14 @@ import org.jetbrains.annotations.NotNull;
 
 // designated timestamp and partition by are final
 // todo: intern column names
+// todo: update this to use column order map, column name index map etc.
 public class CairoTable {
-    private final CharSequenceObjHashMap<CairoColumn> columns = new CharSequenceObjHashMap<>();
+    public final ObjList<CairoColumn> columns2 = new ObjList<>();
     // consider a versioned lock. consider more granular locking
-    private final SimpleReadWriteLock lock;
+    public final SimpleReadWriteLock lock;
+    private final CharSequenceObjHashMap<CairoColumn> columns = new CharSequenceObjHashMap<>();
+    public LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
+    public IntList columnOrderMap = new IntList();
     private int columnCount;
     private int designatedTimestampIndex;
     // todo: intern, its a column name
@@ -54,7 +55,6 @@ public class CairoTable {
     private long o3MaxLag;
     private String partitionBy;
     private TableToken token;
-
 
     public CairoTable() {
         this.lock = new SimpleReadWriteLock();
@@ -81,12 +81,11 @@ public class CairoTable {
         return new CairoTable(token);
     }
 
-    // fails if table already exists
     public void addColumnUnsafe(@NotNull CairoColumn newColumn) {
-        final CharSequence columnName = newColumn.getName();
+        final CharSequence columnName = newColumn.getNameUnsafe();
         final CairoColumn existingColumn = columns.get(columnName);
         if (existingColumn != null) {
-            throw CairoException.nonCritical().put("table [name=").put(columnName).put("] already exists in CairoMetadata");
+            throw CairoException.nonCritical().put("table [name=").put(columnName).put("] already exists in `").put(getName()).put("`");
         }
         columns.put(columnName, newColumn);
     }
@@ -147,6 +146,10 @@ public class CairoTable {
         return designatedTimestampIndex;
     }
 
+    public int getDesignatedTimestampIndexUnsafe() {
+        return designatedTimestampIndex;
+    }
+
     public String getDesignatedTimestampName() {
         lock.readLock().lock();
         final String designatedTimestampName = this.designatedTimestampName;
@@ -156,10 +159,6 @@ public class CairoTable {
 
     public String getDesignatedTimestampNameUnsafe() {
         return designatedTimestampName;
-    }
-
-    public int getDesignatedTimestampUnsafe() {
-        return designatedTimestampIndex;
     }
 
     public String getDirectoryName() {
@@ -204,6 +203,17 @@ public class CairoTable {
 
     public boolean getIsSoftLinkUnsafe() {
         return isSoftLink;
+    }
+
+    public long getLastMetadataVersion() {
+        lock.readLock().lock();
+        final long lastMetadataVersion = this.lastMetadataVersion;
+        lock.readLock().unlock();
+        return lastMetadataVersion;
+    }
+
+    public long getLastMetadataVersionUnsafe() {
+        return lastMetadataVersion;
     }
 
     public int getMaxUncommittedRows() {
@@ -265,6 +275,38 @@ public class CairoTable {
         return getLastMetadataVersion() != -1;
     }
 
+    public void setDesignatedTimestampIndexUnsafe(int designatedTimestampIndex) {
+        this.designatedTimestampIndex = designatedTimestampIndex;
+    }
+
+    public void setDesignatedTimestampNameUnsafe(String designatedTimestampName) {
+        this.designatedTimestampName = designatedTimestampName;
+    }
+
+    public void setIsDedupUnsafe(boolean isDedup) {
+        this.isDedup = isDedup;
+    }
+
+    public void setIsSoftLinkUnsafe(boolean isSoftLink) {
+        this.isSoftLink = isSoftLink;
+    }
+
+    public void setLastMetadataVersionUnsafe(long lastMetadataVersion) {
+        this.lastMetadataVersion = lastMetadataVersion;
+    }
+
+    public void setMaxUncommittedRowsUnsafe(int maxUncommittedRows) {
+        this.maxUncommittedRows = maxUncommittedRows;
+    }
+
+    public void setO3MaxLagUnsafe(long o3MaxLag) {
+        this.o3MaxLag = o3MaxLag;
+    }
+
+    public void setPartitionByUnsafe(String partitionBy) {
+        this.partitionBy = partitionBy;
+    }
+
     public void updateMetadataIfRequired(@NotNull TableReader tableReader) {
         final long lastMetadataVersion = getLastMetadataVersion();
         if (lastMetadataVersion < tableReader.getMetadataVersion()) {
@@ -296,10 +338,15 @@ public class CairoTable {
             columnCount = tableMetadata.getColumnCount();
 
             // now handle columns
-
+            boolean successful;
             for (int position = 0; position < columnCount; position++) {
                 final TableColumnMetadata columnMetadata = tableMetadata.getColumnMetadata(position);
-                upsertColumnUnsafe(tableMetadata, columnMetadata);
+
+                successful = false;
+                do {
+                    successful = upsertColumnUnsafe(tableMetadata, columnMetadata);
+                } while (!successful);
+
                 // symbols tba
 //                cairoColumn.updateMetadata(columnMetadata, isDesignated, position);
 //                if (ColumnType.isSymbol(columnMetadata.getType())) {
@@ -334,16 +381,5 @@ public class CairoTable {
             col.updateMetadata(columnMetadata, designated, position);
             return true;
         }
-    }
-
-    private long getLastMetadataVersion() {
-        lock.readLock().lock();
-        final long lastMetadataVersion = this.lastMetadataVersion;
-        lock.readLock().unlock();
-        return lastMetadataVersion;
-    }
-
-    private long getLastMetadataVersionUnsafe() {
-        return lastMetadataVersion;
     }
 }

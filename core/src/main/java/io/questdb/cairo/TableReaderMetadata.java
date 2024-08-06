@@ -383,7 +383,10 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.tableToken = tableToken;
     }
 
+
     private void buildWriterOrderMap(MemoryMR newMeta, int newColumnCount) {
+        TableUtils.buildWriterOrderMap(metaMem, columnOrderMap, newMeta, newColumnCount);
+
         int nameOffset = (int) TableUtils.getColumnNameOffset(newColumnCount);
         columnOrderMap.clear();
 
