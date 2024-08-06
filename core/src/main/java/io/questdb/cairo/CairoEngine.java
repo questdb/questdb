@@ -1161,10 +1161,6 @@ public class CairoEngine implements Closeable, WriterSource {
         this.snapshotAgent.setWalPurgeJobRunLock(walPurgeJobRunLock);
     }
 
-    public void unLockTableCreate(TableToken tableToken) {
-        createTableLock.remove(tableToken.getTableName(), tableToken);
-    }
-
     public void unlock(
             @SuppressWarnings("unused") SecurityContext securityContext,
             TableToken tableToken,
@@ -1184,6 +1180,10 @@ public class CairoEngine implements Closeable, WriterSource {
     public void unlockReadersAndMetadata(TableToken tableToken) {
         readerPool.unlock(tableToken);
         tableMetadataPool.unlock(tableToken);
+    }
+
+    public void unlockTableCreate(TableToken tableToken) {
+        createTableLock.remove(tableToken.getTableName(), tableToken);
     }
 
     public void unlockTableName(TableToken tableToken) {
@@ -1370,7 +1370,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 throw th;
             } finally {
                 tableNameRegistry.unlockTableName(tableToken);
-                unLockTableCreate(tableToken);
+                unlockTableCreate(tableToken);
             }
 
             getDdlListener(tableToken).onTableCreated(securityContext, tableToken);
@@ -1425,7 +1425,7 @@ public class CairoEngine implements Closeable, WriterSource {
             return toTableToken;
         } finally {
             tableNameRegistry.unlockTableName(toTableToken);
-            unLockTableCreate(toTableToken);
+            unlockTableCreate(toTableToken);
         }
     }
 

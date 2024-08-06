@@ -30,5 +30,10 @@ import io.questdb.std.ObjHashSet;
 public class HydrateMetadataTask {
     public int position = -1;
     public ObjHashSet<TableToken> tableTokens = null;
-    public TableToken token = null;
+
+    public void clear() {
+        tableTokens.clear();
+        position = -1;
+        tableTokens = null;
+    }
 }

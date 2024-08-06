@@ -350,6 +350,12 @@ public class ServerMain implements Closeable {
                             sharedPool.assign(telemetryJob);
                         }
                     }
+
+                    // metadata
+                    final HydrateMetadataJob hydrateMetadataJob = new HydrateMetadataJob(engine.getMessageBus(), engine.getConfiguration().getFilesFacade(), engine.getConfiguration());
+                    sharedPool.assign(hydrateMetadataJob);
+                    sharedPool.freeOnExit(hydrateMetadataJob);
+
                 } catch (Throwable thr) {
                     throw new Bootstrap.BootstrapException(thr);
                 }
@@ -418,6 +424,19 @@ public class ServerMain implements Closeable {
 
     protected Services services() {
         return Services.INSTANCE;
+    }
+
+    protected void setupHydrateMetadataJob(
+            WorkerPool workerPool,
+            CairoEngine engine,
+            int sharedWorkerCount
+    ) {
+        for (int i = 0, workerCount = workerPool.getWorkerCount(); i < workerCount; i++) {
+            // create job per worker
+            final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine, workerCount, sharedWorkerCount);
+            workerPool.assign(i, applyWal2TableJob);
+            workerPool.freeOnExit(applyWal2TableJob);
+        }
     }
 
     protected void setupWalApplyJob(

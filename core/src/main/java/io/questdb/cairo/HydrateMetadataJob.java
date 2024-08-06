@@ -24,143 +24,175 @@
 
 package io.questdb.cairo;
 
-import io.questdb.MessageBus;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
-import io.questdb.mp.AbstractQueueConsumerJob;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.CairoColumn;
 import io.questdb.std.Chars;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.ObjHashSet;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.HydrateMetadataTask;
-import org.jetbrains.annotations.NotNull;
+
+import java.io.Closeable;
+import java.io.IOException;
 
 import static io.questdb.cairo.TableUtils.validationException;
 
 
-public class HydrateMetadataJob extends AbstractQueueConsumerJob<HydrateMetadataTask> {
+public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
+    public static final Log LOG = LogFactory.getLog(HydrateMetadataJob.class);
+    public static boolean completed = false;
+    CairoConfiguration configuration;
+    FilesFacade ff;
     MemoryCMR metaMem;
     Path path = new Path();
-    public static boolean completed = false;
+    RingQueue<HydrateMetadataTask> tasks;
 
-    public HydrateMetadataJob(MessageBus messageBus) {
-        super(messageBus.getHydrateMetadataTaskQueue(), null);
+    public HydrateMetadataJob(CairoEngine engine) {
+        this.tasks = messageBus.getHydrateMetadataTaskQueue();
+        this.ff = ff;
+        this.configuration = configuration;
     }
 
-    public static void produceTasks(@NotNull HydrateMetadataTask taskWithState) {
-        assert taskWithState.token == null;
-        assert taskWithState.position != -1;
-        assert taskWithState.tableTokens != null;
+    @Override
+    public void close() throws IOException {
+        if (metaMem != null) {
+            metaMem.close();
+        }
+        path.close();
+    }
 
-        for (int i = taskWithState.position, n = taskWithState.tableTokens.size(); i < n; i++) {
-            queue.getCycle()
+    @Override
+    protected boolean runSerially() {
+
+        if (completed) {
+            // error, we should not have any tasks
+            throw CairoException.nonCritical().put("Could not execute HydrateMetadataJob... already completed!");
         }
 
-    }
+        final HydrateMetadataTask queueItem = tasks.get();
+        final TableToken token = queueItem.tableTokens.get(queueItem.position);
 
-    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
-        final HydrateMetadataTask queueItem = queue.get(cursor);
-        final TableToken token = queueItem.token;
+        LOG.debugW().$("Hydrating metadata for [table=").$(token.getTableName()).I$();
 
-        if (queueItem.token == null) {
-            // continuation
-            produceTasks(queueItem);
+        // if at end
+        if (queueItem.position >= queueItem.tableTokens.size()) {
+            queueItem.clear();
+            completed = true;
+            metaMem.close();
+            path.close();
+            LOG.infoW().$("Metadata hydration completed.").I$();
             return true;
         }
 
-        // set up table path
-        path.of(token.getDirName());
-        path.trimTo(path.size());
+        if (!token.isSystem()) {
 
-        // open metadata
-        metaMem = Vm.getCMRInstance();
-        metaMem.smallFile(metaMem.getFilesFacade(), path.$(), MemoryTag.NATIVE_METADATA_READER);
-        TableUtils.validateMeta(metaMem, null, ColumnType.VERSION);
+            // set up table path
+            path.of(configuration.getRoot());
+            path.concat(token.getDirName());
+            path.concat("_meta");
+            path.trimTo(path.size());
 
-        // create table to work with
-        CairoTable table = new CairoTable(token);
-        table.lock.writeLock().lock();
+            // open metadata
+            metaMem = Vm.getCMRInstance();
+            metaMem.smallFile(ff, path.$(), MemoryTag.NATIVE_METADATA_READER);
+            TableUtils.validateMeta(metaMem, null, ColumnType.VERSION);
 
-        table.setLastMetadataVersionUnsafe(Long.MIN_VALUE);
+            // create table to work with
+            CairoTable table = new CairoTable(token);
+            table.lock.writeLock().lock();
 
-        int metadataVersion = metaMem.getInt(TableUtils.META_OFFSET_METADATA_VERSION);
+            table.setLastMetadataVersionUnsafe(Long.MIN_VALUE);
 
-        // make sure we aren't duplicating work
-        try {
-            CairoMetadata.INSTANCE.addTable(table);
-        } catch (CairoException e) {
-            final CairoTable alreadyHydrated = CairoMetadata.INSTANCE.getTableQuick(token.getTableName());
-            if (alreadyHydrated != null) {
-                alreadyHydrated.lock.writeLock().lock();
-                long version = alreadyHydrated.getLastMetadataVersionUnsafe();
-                alreadyHydrated.lock.writeLock().unlock();
+            int metadataVersion = metaMem.getInt(TableUtils.META_OFFSET_METADATA_VERSION);
 
-                if (version == metadataVersion) {
-                    return true;
+            // make sure we aren't duplicating work
+            try {
+                CairoMetadata.INSTANCE.addTable(table);
+                LOG.debugW().$("Added stub table [table=").$(token.getTableName()).I$();
+            } catch (CairoException e) {
+                final CairoTable alreadyHydrated = CairoMetadata.INSTANCE.getTableQuick(token.getTableName());
+                LOG.debugW().$("Table already present [table=").$(token.getTableName()).I$();
+                if (alreadyHydrated != null) {
+                    alreadyHydrated.lock.writeLock().lock();
+                    long version = alreadyHydrated.getLastMetadataVersionUnsafe();
+                    alreadyHydrated.lock.writeLock().unlock();
+
+                    if (version == metadataVersion) {
+                        return true;
+                    }
+
+                    LOG.debugW().$("Updating metadata [table=").$(token.getTableName()).I$();
+
+                    table = alreadyHydrated;
+
+                } else {
+                    throw e;
                 }
-
-                table = alreadyHydrated;
-
-            } else {
-                throw e;
             }
-        }
 
-        // [NW] - continue hydrating table and columns etc.
-        int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
-        int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
-        int partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
+            // [NW] - continue hydrating table and columns etc.
+            int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+            int timestampIndex = metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX);
+            int partitionBy = metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY);
 //        int tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-        int maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
-        long o3MaxLag = metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
+            int maxUncommittedRows = metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS);
+            long o3MaxLag = metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG);
 
 //        boolean walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
 
-        table.setPartitionByUnsafe(PartitionBy.toString(partitionBy));
-        table.setMaxUncommittedRowsUnsafe(maxUncommittedRows);
-        table.setO3MaxLagUnsafe(o3MaxLag);
-        table.setLastMetadataVersionUnsafe(metadataVersion);
+            table.setPartitionByUnsafe(PartitionBy.toString(partitionBy));
+            table.setMaxUncommittedRowsUnsafe(maxUncommittedRows);
+            table.setO3MaxLagUnsafe(o3MaxLag);
+            table.setLastMetadataVersionUnsafe(metadataVersion);
 
-        TableUtils.buildWriterOrderMap(metaMem, table.columnOrderMap, metaMem, columnCount);
+            TableUtils.buildWriterOrderMap(metaMem, table.columnOrderMap, metaMem, columnCount);
 
-        for (int i = 0, n = table.columnOrderMap.size(); i < n; i += 3) {
-            int writerIndex = table.columnOrderMap.get(i);
-            if (writerIndex < 0) {
-                continue;
-            }
-            int stableIndex = i / 3;
-            CharSequence name = metaMem.getStrA(table.columnOrderMap.get(i + 1));
-            int denseSymbolIndex = table.columnOrderMap.get(i + 2);
-
-            assert name != null;
-            int columnType = TableUtils.getColumnType(metaMem, writerIndex);
-
-            if (columnType > -1) {
-                String colName = Chars.toString(name);
-                CairoColumn column = new CairoColumn();
-
-                column.setNameUnsafe(colName);
-                column.setTypeUnsafe(columnType);
-                column.setIsIndexedUnsafe(TableUtils.isColumnIndexed(metaMem, writerIndex));
-                column.setIndexBlockCapacityUnsafe(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
-                column.setIsSymbolTableStaticUnsafe(true);
-                column.setIsDedupKeyUnsafe(TableUtils.isColumnDedupKey(metaMem, writerIndex));
-                column.setWriterIndexUnsafe(writerIndex);
-                column.setDenseSymbolIndexUnsafe(denseSymbolIndex);
-                column.setStableIndex(stableIndex);
-
-                table.addColumnUnsafe(column);
-
-                int denseIndex = table.columns2.size() - 1;
-                if (!table.columnNameIndexMap.put(colName, denseIndex)) {
-                    throw validationException(metaMem).put("Duplicate column [name=").put(name).put("] at ").put(i);
+            for (int i = 0, n = table.columnOrderMap.size(); i < n; i += 3) {
+                int writerIndex = table.columnOrderMap.get(i);
+                if (writerIndex < 0) {
+                    continue;
                 }
-                if (writerIndex == timestampIndex) {
-                    table.setDesignatedTimestampIndexUnsafe(denseIndex);
+                int stableIndex = i / 3;
+                CharSequence name = metaMem.getStrA(table.columnOrderMap.get(i + 1));
+                int denseSymbolIndex = table.columnOrderMap.get(i + 2);
+
+                assert name != null;
+                int columnType = TableUtils.getColumnType(metaMem, writerIndex);
+
+                if (columnType > -1) {
+                    String colName = Chars.toString(name);
+                    CairoColumn column = new CairoColumn();
+
+                    column.setNameUnsafe(colName);
+                    column.setTypeUnsafe(columnType);
+                    column.setIsIndexedUnsafe(TableUtils.isColumnIndexed(metaMem, writerIndex));
+                    column.setIndexBlockCapacityUnsafe(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
+                    column.setIsSymbolTableStaticUnsafe(true);
+                    column.setIsDedupKeyUnsafe(TableUtils.isColumnDedupKey(metaMem, writerIndex));
+                    column.setWriterIndexUnsafe(writerIndex);
+                    column.setDenseSymbolIndexUnsafe(denseSymbolIndex);
+                    column.setStableIndex(stableIndex);
+
+                    table.addColumnUnsafe(column);
+
+                    int denseIndex = table.columns2.size() - 1;
+                    if (!table.columnNameIndexMap.put(colName, denseIndex)) {
+                        throw validationException(metaMem).put("Duplicate column [name=").put(name).put("] at ").put(i);
+                    }
+                    if (writerIndex == timestampIndex) {
+                        table.setDesignatedTimestampIndexUnsafe(denseIndex);
+                    }
                 }
             }
+            metaMem.close();
         }
+
+        queueItem.position++;
 
         return false;
     }

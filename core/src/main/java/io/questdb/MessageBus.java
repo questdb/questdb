@@ -59,6 +59,8 @@ public interface MessageBus extends Closeable {
 
     RingQueue<HydrateMetadataTask> getHydrateMetadataTaskQueue();
 
+    MCSequence getHydrateMetadataTaskSubSeq();
+
     MPSequence getIndexerPubSequence();
 
     RingQueue<ColumnIndexerTask> getIndexerQueue();

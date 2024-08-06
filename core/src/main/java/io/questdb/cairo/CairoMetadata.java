@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.mp.RingQueue;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.HydrateMetadataTask;
@@ -44,6 +45,14 @@ public class CairoMetadata {
     public CairoMetadata() {
         this.tables = new CharSequenceObjHashMap<>();
         this.lock = new SimpleReadWriteLock();
+    }
+
+    public static void hydrate(@NotNull CairoEngine engine) {
+        ObjHashSet<TableToken> tokens = new ObjHashSet<>();
+        engine.getTableTokens(tokens, false);
+        HydrateMetadataTask task = engine.getMessageBus().getHydrateMetadataTaskQueue().get(0);
+        task.tableTokens = tokens;
+        task.position = 0;
     }
 
     // fails if table already exists
