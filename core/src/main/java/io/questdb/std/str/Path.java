@@ -44,7 +44,7 @@ import java.io.Closeable;
 public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     private static final byte NULL = (byte) 0;
     private static final int OVERHEAD = 4;
-    private static final boolean PARANOIA_MODE = true;
+    private static final boolean PARANOIA_MODE = false;
     public static final ThreadLocal<Path> PATH = new ThreadLocal<>(Path::new);
     public static final ThreadLocal<Path> PATH2 = new ThreadLocal<>(Path::new);
     public static final Closeable THREAD_LOCAL_CLEANER = Path::clearThreadLocals;

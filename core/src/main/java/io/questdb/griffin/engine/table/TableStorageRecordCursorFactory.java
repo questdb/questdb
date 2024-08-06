@@ -207,10 +207,7 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
                 walEnabled = token.isWal();
                 tableName = token.getTableName();
 
-                // TableReaderMetadata
-                try (TableReaderMetadata metadataReader = TableUtils.openMetadataReader(configuration, token)) {
-                    partitionBy = metadataReader.getPartitionBy();
-                }
+                executionContext.getMetadataForRead(token).getPartitionBy();
 
                 // Path
                 TableUtils.setPathTable(path, configuration, token);
