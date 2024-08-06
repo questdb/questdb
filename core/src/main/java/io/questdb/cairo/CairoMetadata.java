@@ -52,7 +52,7 @@ public class CairoMetadata {
         final String tableName = newTable.getNameUnsafe();
         final CairoTable existingTable = tables.get(tableName);
         if (existingTable != null) {
-            throw CairoException.nonCritical().put("table [name=").put(tableName).put("] already exists in CairoMetadata");
+            throw CairoException.nonCritical().put("already exists in CairoMetadata [table=").put(tableName).put("]");
         }
         tables.put(tableName, newTable);
         lock.writeLock().unlock();

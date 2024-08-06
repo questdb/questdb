@@ -176,15 +176,15 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
             }
 
             private class TableListRecord implements Record {
-                private final CairoTable localTableCopy = new CairoTable();
+                private final CairoTable table = new CairoTable();
 
                 @Override
                 public boolean getBool(int col) {
                     if (col == WAL_ENABLED_COLUMN) {
-                        return localTableCopy.getWalEnabledUnsafe();
+                        return table.getWalEnabledUnsafe();
                     }
                     if (col == DEDUP_NAME_COLUMN) {
-                        return localTableCopy.getIsDedupUnsafe();
+                        return table.getIsDedupUnsafe();
                     }
                     return false;
                 }
@@ -192,34 +192,34 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                 @Override
                 public int getInt(int col) {
                     if (col == ID_COLUMN) {
-                        return localTableCopy.getIdUnsafe();
+                        return table.getIdUnsafe();
                     }
                     assert col == MAX_UNCOMMITTED_ROWS_COLUMN;
-                    return localTableCopy.getMaxUncommittedRowsUnsafe();
+                    return table.getMaxUncommittedRowsUnsafe();
                 }
 
                 @Override
                 public long getLong(int col) {
                     assert col == O3_MAX_LAG_COLUMN;
-                    return localTableCopy.getO3MaxLagUnsafe();
+                    return table.getO3MaxLagUnsafe();
                 }
 
                 @Override
                 public CharSequence getStrA(int col) {
                     if (Chars.equals(ShowTablesCursorFactory.TABLE_NAME_COLUMN_NAME, getMetadata().getColumnName(col))) {
-                        return localTableCopy.getNameUnsafe();
+                        return table.getNameUnsafe();
                     }
                     if (col == PARTITION_BY_COLUMN) {
-                        return localTableCopy.getPartitionByUnsafe();
+                        return table.getPartitionByUnsafe();
                     }
                     if (col == DESIGNATED_TIMESTAMP_COLUMN) {
-                        return localTableCopy.getTimestampNameUnsafe();
+                        return table.getTimestampNameUnsafe();
                     }
                     if (col == DIRECTORY_NAME_COLUMN) {
-                        if (localTableCopy.getIsSoftLinkUnsafe()) {
-                            return localTableCopy.getDirectoryNameUnsafe() + " (->)";
+                        if (table.getIsSoftLinkUnsafe()) {
+                            return table.getDirectoryNameUnsafe() + " (->)";
                         }
-                        return localTableCopy.getDirectoryNameUnsafe();
+                        return table.getDirectoryNameUnsafe();
                     }
                     return null;
                 }
@@ -253,37 +253,12 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                     final TableToken lastTableToken = engine.getTableTokenIfExists(tableToken.getTableName());
 
                     if (lastTableToken == null) {
-                        // table is dropped
                         return false;
                     }
 
-                    CairoTable table = metadata.getTableQuiet(lastTableToken.getTableName());
+                    CairoTable table = metadata.getTableQuick(lastTableToken.getTableName());
 
-                    // if not present, lets populate it
-                    if (table == null) {
-                        try (TableMetadata tableMetadata = executionContext.getMetadataForRead(lastTableToken)) {
-                            metadata.upsertTable(tableMetadata);
-                            table = metadata.getTableQuiet(lastTableToken.getTableName());
-                        } catch (CairoException e) {
-                            // perhaps this folder is not a table remove it from the result set
-                            LOG.info()
-                                    .$("cannot query table metadata [table=").$(tableToken)
-                                    .$(", error=").$(e.getFlyweightMessage())
-                                    .$(", errno=").$(e.getErrno())
-                                    .I$();
-                            return false;
-                        } catch (TableReferenceOutOfDateException e) {
-                            LOG.info()
-                                    .$("cannot query table metadata, can be concurrent table drop [table=").$(tableToken)
-                                    .$(", error=").$(e.getFlyweightMessage())
-                                    .I$();
-                            return false;
-                        }
-                    }
-
-                    assert table != null;
-
-                    table.copyTo(localTableCopy);
+                    table.copyTo(this.table);
 
                     return true;
                 }
