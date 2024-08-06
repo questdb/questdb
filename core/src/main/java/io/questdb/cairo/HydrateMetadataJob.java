@@ -66,6 +66,10 @@ public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
             path.close();
             path = null;
         }
+        if (offsetMem != null) {
+            offsetMem.close();
+            offsetMem = null;
+        }
     }
 
     @Override
@@ -84,7 +88,7 @@ public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
             completed = true;
             metaMem.close();
             path.close();
-            LOG.infoW().$("Metadata hydration completed.").$();
+            LOG.infoW().$("Metadata hydration completed [num_tables=").$(CairoMetadata.INSTANCE.getTablesCountUnsafe()).I$();
             tokens.clear();
             position = -1;
             return true;

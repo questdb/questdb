@@ -90,7 +90,10 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
             private RecordCursor allTablesCursor;
             private int columIdx;
             private SqlExecutionContext executionContext;
+            private int getColumnIndex;
+            private int tableIndex;
             private CharSequence tableName;
+            private ObjList<CharSequence> tableNames;
 
             private ColumnRecordCursor(CairoConfiguration configuration) {
                 allTables = new ShowTablesCursorFactory(configuration, AllTablesFunctionFactory.METADATA, AllTablesFunctionFactory.SIGNATURE);

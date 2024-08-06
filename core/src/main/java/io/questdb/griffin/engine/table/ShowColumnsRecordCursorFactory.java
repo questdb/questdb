@@ -71,18 +71,16 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     public static class ShowColumnsCursor implements NoRandomAccessRecordCursor {
+        private final CairoColumn cairoColumn = new CairoColumn();
         private final ShowColumnsRecord record = new ShowColumnsRecord();
-        private CairoColumn cairoColumn = new CairoColumn();
-        private CairoMetadata cairoMetadata;
         private CairoTable cairoTable;
         private int columnIndex;
         private SqlExecutionContext executionContext;
-        //        private TableReader reader;
         private ObjList<CharSequence> names;
 
         @Override
         public void close() {
-//            reader = Misc.free(reader);
+
         }
 
         @Override
@@ -102,9 +100,8 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
         public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition) {
             try {
-//                reader = executionContext.getReader(tableToken);
                 this.executionContext = executionContext;
-                cairoMetadata = executionContext.getCairoEngine().getCairoMetadata();
+                CairoMetadata cairoMetadata = executionContext.getCairoEngine().getCairoMetadata();
                 cairoTable = cairoMetadata.getTableQuick(tableToken.getTableName());
                 names = cairoTable.getColumnNames();
             } catch (CairoException e) {
@@ -138,11 +135,6 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
                 }
                 if (col == N_SYMBOL_CACHED_COL) {
                     return cairoColumn.getSymbolCachedUnsafe();
-//                    if (ColumnType.isSymbol(reader.getMetadata().getColumnType(columnIndex))) {
-//                        return reader.getSymbolMapReader(columnIndex).isCached();
-//                    } else {
-//                        return false;
-//                    }
                 }
                 if (col == N_DESIGNATED_COL) {
                     return cairoColumn.getDesignatedUnsafe();
@@ -161,14 +153,6 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
                 if (col == N_SYMBOL_CAPACITY_COL) {
                     if (ColumnType.isSymbol(cairoColumn.getTypeUnsafe())) {
                         int symbolCapacity = cairoColumn.getSymbolCapacityUnsafe();
-                        if (symbolCapacity == 0) {
-                            // uninitialised
-                            TableReader reader = executionContext.getCairoEngine().getReader(
-                                    executionContext.getTableToken(cairoTable.getName())
-                            );
-//                            cairoTable.updateMetadataIfRequired(reader);
-                        }
-                        symbolCapacity = cairoColumn.getSymbolCapacityUnsafe();
                         assert symbolCapacity != 0;
                         return symbolCapacity;
                     } else {

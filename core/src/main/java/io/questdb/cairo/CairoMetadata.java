@@ -65,6 +65,10 @@ public class CairoMetadata {
         lock.readLock().unlock();
         return tbl;
     }
+
+    public int getTablesCountUnsafe() {
+        return tables.size();
+    }
 }
 
 
