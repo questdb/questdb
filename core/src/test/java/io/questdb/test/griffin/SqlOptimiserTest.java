@@ -2313,10 +2313,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
-    /*TODO: Line 722 and 723 are doing a forward scan on selected model y2 whereas it should be a backward scan
-        Suspected issue is with SqlOptimiser.optimiseOrderBy() , raise a github issue for the same
-     */
-
     @Test
     public void testQueryPlanForWhereClauseOnNestedModelWithLastAggregateFunctionOnParentModel() throws Exception {
         assertMemoryLeak(() -> {
@@ -2653,6 +2649,17 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByFromToDisallowedQueryWithKey() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(SampleByTest.DDL_FROMTO);
+            assertException("SELECT ts, count, s\n" +
+                    "FROM fromto\n" +
+                    "SAMPLE BY 5d FROM '2018-01-01' TO '2019-01-01'\n" +
+                    "LIMIT 6", 0, "are not supported for keyed SAMPLE BY");
+        });
+    }
+
+    @Test
     public void testSampleByFromToFillNullWithExtraColumns() throws Exception {
         assertMemoryLeak(() -> {
             ddl(SampleByTest.DDL_FROMTO);
@@ -2743,7 +2750,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
-    // [NW] revisit
     @Test
     public void testSampleByFromToParallelSampleByRewriteMultipleFills() throws Exception {
         assertMemoryLeak(() -> {
@@ -3262,6 +3268,30 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "2018-01-19T00:00:00.000000Z\tnull\tnull\n" +
                     "2018-01-24T00:00:00.000000Z\tnull\tnull\n" +
                     "2018-01-29T00:00:00.000000Z\tnull\tnull\n", unionQuery);
+        });
+    }
+
+    @Test
+    public void testSampleByFromToParallelSequentialEquivalence() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(SampleByTest.DDL_FROMTO);
+
+            final String parallel = "select ts, avg(x) from fromto\n" +
+                    "sample by 1w from '2017-12-20' to '2018-01-31' fill(null)";
+
+            // offset is ignored
+            final String sequential = parallel + " align to calendar with offset '10:00'";
+
+            final String result = "ts\tavg\n" +
+                    "2017-12-20T00:00:00.000000Z\tnull\n" +
+                    "2017-12-27T00:00:00.000000Z\t48.5\n" +
+                    "2018-01-03T00:00:00.000000Z\t264.5\n" +
+                    "2018-01-10T00:00:00.000000Z\t456.5\n" +
+                    "2018-01-17T00:00:00.000000Z\tnull\n" +
+                    "2018-01-24T00:00:00.000000Z\tnull\n";
+
+            assertSql(result, parallel);
+            assertSql(result, sequential);
         });
     }
 
