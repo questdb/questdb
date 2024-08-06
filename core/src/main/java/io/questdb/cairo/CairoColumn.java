@@ -22,9 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.cairo;
 
-import io.questdb.cairo.TableColumnMetadata;
 import org.jetbrains.annotations.NotNull;
 
 public class CairoColumn {

@@ -29,7 +29,6 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
-import io.questdb.std.CairoColumn;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjHashSet;

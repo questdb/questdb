@@ -24,13 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
-
-
-// For show tables
-// require id, designatedTimestamp, partitionBy, maxUncommittedRows, o3MaxLag, walEnabled, directoryName, dedup
 
 
 // designated timestamp and partition by are final
@@ -310,38 +305,6 @@ public class CairoTable {
 
     public void setPartitionByUnsafe(String partitionBy) {
         this.partitionBy = partitionBy;
-    }
-
-    // symbols tba
-//                cairoColumn.updateMetadata(columnMetadata, isDesignated, position);
-//                if (ColumnType.isSymbol(columnMetadata.getType())) {
-//                    final SymbolMapReader symbolReader = tableMetadata
-//                }
-//                if (col == N_SYMBOL_CACHED_COL) {
-//                    if (ColumnType.isSymbol(reader.getMetadata().getColumnType(columnIndex))) {
-//                        return reader.getSymbolMapReader(columnIndex).isCached();
-//                    } else {
-//                        return false;
-//                    }
-//                }
-
-
-    public boolean upsertColumnUnsafe(@NotNull TableMetadata tableMetadata, @NotNull TableColumnMetadata columnMetadata) {
-        CairoColumn col = getColumnQuietUnsafe(columnMetadata.getName());
-        final int position = tableMetadata.getColumnIndex(columnMetadata.getName());
-        final boolean designated = position == timestampIndex;
-        if (col == null) {
-            col = new CairoColumn(columnMetadata, designated, position);
-            try {
-                addColumnUnsafe(col);
-            } catch (CairoException e) {
-                return false;
-            }
-            return true;
-        } else {
-            col.updateMetadata(columnMetadata, designated, position);
-            return true;
-        }
     }
 
     private CairoColumn getColumnQuickUnsafe(int position) {

@@ -424,20 +424,7 @@ public class ServerMain implements Closeable {
     protected Services services() {
         return Services.INSTANCE;
     }
-
-    protected void setupHydrateMetadataJob(
-            WorkerPool workerPool,
-            CairoEngine engine,
-            int sharedWorkerCount
-    ) {
-        for (int i = 0, workerCount = workerPool.getWorkerCount(); i < workerCount; i++) {
-            // create job per worker
-            final ApplyWal2TableJob applyWal2TableJob = new ApplyWal2TableJob(engine, workerCount, sharedWorkerCount);
-            workerPool.assign(i, applyWal2TableJob);
-            workerPool.freeOnExit(applyWal2TableJob);
-        }
-    }
-
+    
     protected void setupWalApplyJob(
             WorkerPool workerPool,
             CairoEngine engine,
