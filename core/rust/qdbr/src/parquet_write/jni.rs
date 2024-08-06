@@ -3,16 +3,16 @@ use std::path::Path;
 use std::slice;
 
 use anyhow::Context;
-use jni::JNIEnv;
 use jni::objects::JClass;
 use jni::sys::{jboolean, jint, jlong};
+use jni::JNIEnv;
 use parquet2::compression::{BrotliLevel, CompressionOptions, GzipLevel, ZstdLevel};
 use parquet2::metadata::SortingColumn;
 use parquet2::write::Version;
 
 use crate::parquet_write::file::ParquetWriter;
-use crate::parquet_write::ParquetError;
 use crate::parquet_write::schema::{Column, Partition};
+use crate::parquet_write::ParquetError;
 
 fn read_utf8_encoded_string_list(
     count: usize,
@@ -137,7 +137,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 table_name_size as usize,
             ))
         }
-            .to_string();
+        .to_string();
         let partition = Partition { table, columns };
 
         let compression_options =
@@ -219,7 +219,6 @@ fn version_from_i32(value: i32) -> Result<Version, ParquetError> {
 /// The `i64` value is expected to encode two `i32` values:
 /// - The higher 32 bits represent the `level_id`.
 /// - The lower 32 bits represent the optional `codec_id`.
-///
 /// `let value: i64 = (3 << 32) | 2;` Gzip with level 3.
 fn compression_from_i64(value: i64) -> Result<CompressionOptions, ParquetError> {
     let codec_id = value as i32;
