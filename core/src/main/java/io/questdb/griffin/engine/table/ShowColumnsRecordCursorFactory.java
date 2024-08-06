@@ -166,7 +166,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
                             TableReader reader = executionContext.getCairoEngine().getReader(
                                     executionContext.getTableToken(cairoTable.getName())
                             );
-                            cairoTable.updateMetadataIfRequired(reader);
+//                            cairoTable.updateMetadataIfRequired(reader);
                         }
                         symbolCapacity = cairoColumn.getSymbolCapacityUnsafe();
                         assert symbolCapacity != 0;

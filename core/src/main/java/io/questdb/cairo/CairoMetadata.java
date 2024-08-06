@@ -24,22 +24,15 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.TableMetadata;
-import io.questdb.mp.RingQueue;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.SimpleReadWriteLock;
-import io.questdb.std.str.Path;
-import io.questdb.tasks.HydrateMetadataTask;
 import org.jetbrains.annotations.NotNull;
 
-// todo: produce hydration tasks
+
 public class CairoMetadata {
     public static final CairoMetadata INSTANCE = new CairoMetadata();
-    public static final RingQueue<HydrateMetadataTask> hydrationTasks = new RingQueue<>(HydrateMetadataTask::new, 64);
     private final SimpleReadWriteLock lock; // consider StampedLock
     private final CharSequenceObjHashMap<CairoTable> tables;
-    private Path path = new Path();
-
 
     public CairoMetadata() {
         this.tables = new CharSequenceObjHashMap<>();
@@ -72,39 +65,6 @@ public class CairoMetadata {
         lock.readLock().unlock();
         return tbl;
     }
-
-    public boolean upsertTable(@NotNull TableReader tableReader) {
-        CairoTable tbl = getTableQuiet(tableReader.getTableToken().getTableName());
-        if (tbl == null) {
-            tbl = new CairoTable(tableReader);
-            try {
-                addTable(tbl);
-                return true;
-            } catch (CairoException e) {
-                return false;
-            }
-        } else {
-            tbl.updateMetadataIfRequired(tableReader);
-            return true;
-        }
-    }
-
-    public boolean upsertTable(@NotNull TableMetadata tableMetadata) {
-        CairoTable tbl = getTableQuiet(tableMetadata.getTableToken().getTableName());
-        if (tbl == null) {
-            tbl = new CairoTable(tableMetadata);
-            try {
-                addTable(tbl);
-                return true;
-            } catch (CairoException e) {
-                return false;
-            }
-        } else {
-            tbl.updateMetadataIfRequired(tableMetadata);
-            return true;
-        }
-    }
-
 }
 
 

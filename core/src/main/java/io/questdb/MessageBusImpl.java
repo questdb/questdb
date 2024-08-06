@@ -46,8 +46,6 @@ public class MessageBusImpl implements MessageBus {
     private final MPSequence groupByMergeShardPubSeq;
     private final RingQueue<GroupByMergeShardTask> groupByMergeShardQueue;
     private final MCSequence groupByMergeShardSubSeq;
-    private final RingQueue<HydrateMetadataTask> hydrateMetadataTaskQueue;
-    private final MCSequence hydrateMetadataTaskSubSeq;
     private final MPSequence indexerPubSeq;
     private final RingQueue<ColumnIndexerTask> indexerQueue;
     private final MCSequence indexerSubSeq;
@@ -196,9 +194,6 @@ public class MessageBusImpl implements MessageBus {
             this.queryCacheEventPubSeq = new MPSequence(configuration.getQueryCacheEventQueueCapacity());
             this.queryCacheEventSubSeq = new MCSequence(configuration.getQueryCacheEventQueueCapacity());
             queryCacheEventPubSeq.then(queryCacheEventSubSeq).then(queryCacheEventPubSeq);
-
-            this.hydrateMetadataTaskQueue = new RingQueue<>(HydrateMetadataTask::new, 1);
-            this.hydrateMetadataTaskSubSeq = new MCSequence(hydrateMetadataTaskQueue.getCycle());
         } catch (Throwable th) {
             close();
             throw th;

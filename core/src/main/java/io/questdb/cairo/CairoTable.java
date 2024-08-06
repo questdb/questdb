@@ -61,18 +61,6 @@ public class CairoTable {
         this.lock = new SimpleReadWriteLock();
     }
 
-    public CairoTable(@NotNull TableReader tableReader) {
-        this.token = tableReader.getTableToken();
-        this.lock = new SimpleReadWriteLock();
-        updateMetadataIfRequired(tableReader);
-    }
-
-    public CairoTable(@NotNull TableMetadata tableMetadata) {
-        this.token = tableMetadata.getTableToken();
-        this.lock = new SimpleReadWriteLock();
-        updateMetadataIfRequired(tableMetadata);
-    }
-
     public static CairoTable newInstanceFromToken(@NotNull TableToken token) {
         return new CairoTable(token);
     }
@@ -324,46 +312,7 @@ public class CairoTable {
         this.partitionBy = partitionBy;
     }
 
-    public void updateMetadataIfRequired(@NotNull TableReader tableReader) {
-        final long lastMetadataVersion = getLastMetadataVersion();
-        if (lastMetadataVersion < tableReader.getMetadataVersion()) {
-            updateMetadataIfRequired(tableReader, tableReader.getMetadata());
-        }
-    }
-
-    public void updateMetadataIfRequired(@NotNull TableReader tableReader, @NotNull TableMetadata tableMetadata) {
-        final long lastMetadataVersion = getLastMetadataVersion();
-        if (lastMetadataVersion < tableReader.getMetadataVersion()) {
-            updateMetadataIfRequired(tableReader.getMetadata());
-        }
-    }
-
-    public void updateMetadataIfRequired(@NotNull TableMetadata tableMetadata) {
-        final long lastMetadataVersion = getLastMetadataVersion();
-        if (lastMetadataVersion < tableMetadata.getMetadataVersion()) {
-            lock.writeLock().lock();
-
-            token = tableMetadata.getTableToken();
-            maxUncommittedRows = tableMetadata.getMaxUncommittedRows();
-            o3MaxLag = tableMetadata.getO3MaxLag();
-            partitionBy = PartitionBy.toString(tableMetadata.getPartitionBy()); // intern this
-            isSoftLink = tableMetadata.isSoftLink();
-            this.lastMetadataVersion = tableMetadata.getMetadataVersion();
-            timestampIndex = tableMetadata.getTimestampIndex();
-            isDedup = timestampIndex >= 0 && token.isWal() && tableMetadata.isDedupKey(timestampIndex);
-            int columnCount = tableMetadata.getColumnCount();
-
-            // now handle columns
-            boolean successful;
-            for (int position = 0; position < columnCount; position++) {
-                final TableColumnMetadata columnMetadata = tableMetadata.getColumnMetadata(position);
-
-                successful = false;
-                do {
-                    successful = upsertColumnUnsafe(tableMetadata, columnMetadata);
-                } while (!successful);
-
-                // symbols tba
+    // symbols tba
 //                cairoColumn.updateMetadata(columnMetadata, isDesignated, position);
 //                if (ColumnType.isSymbol(columnMetadata.getType())) {
 //                    final SymbolMapReader symbolReader = tableMetadata
@@ -375,11 +324,7 @@ public class CairoTable {
 //                        return false;
 //                    }
 //                }
-            }
 
-            lock.writeLock().unlock();
-        }
-    }
 
     public boolean upsertColumnUnsafe(@NotNull TableMetadata tableMetadata, @NotNull TableColumnMetadata columnMetadata) {
         CairoColumn col = getColumnQuietUnsafe(columnMetadata.getName());

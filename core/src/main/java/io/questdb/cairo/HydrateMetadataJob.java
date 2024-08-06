@@ -33,17 +33,19 @@ import io.questdb.std.CairoColumn;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 
 public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
     public static final Log LOG = LogFactory.getLog(HydrateMetadataJob.class);
     public static boolean completed = false;
+    ColumnVersionReader columnVersionReader = new ColumnVersionReader();
     CairoConfiguration configuration;
     MemoryCMR metaMem;
+    MemoryCMR offsetMem;
     Path path = new Path();
     int position;
     ObjHashSet<TableToken> tokens = new ObjHashSet<>();
@@ -55,19 +57,23 @@ public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
     }
 
     @Override
-    public void close() throws IOException {
+    public void close() {
         if (metaMem != null) {
             metaMem.close();
+            metaMem = null;
         }
-        path.close();
+        if (path != null) {
+            path.close();
+            path = null;
+        }
     }
 
     @Override
     protected boolean runSerially() {
 
         if (completed) {
-            // error, we should not have any tasks
-            throw CairoException.nonCritical().put("Could not execute HydrateMetadataJob... already completed!");
+            close();
+            return true;
         }
 
         if (position == -1) {
@@ -78,7 +84,7 @@ public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
             completed = true;
             metaMem.close();
             path.close();
-            LOG.infoW().$("Metadata hydration completed.").I$();
+            LOG.infoW().$("Metadata hydration completed.").$();
             tokens.clear();
             position = -1;
             return true;
@@ -94,10 +100,10 @@ public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
         }
 
         // set up table path
-        path.of(configuration.getRoot());
-        path.concat(token.getDirName());
-        path.concat("_meta");
-        path.trimTo(path.size());
+        path.of(configuration.getRoot())
+                .concat(token.getDirName())
+                .concat(TableUtils.META_FILE_NAME)
+                .trimTo(path.size());
 
         // open metadata
         metaMem = Vm.getCMRInstance();
@@ -165,10 +171,10 @@ public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
             int columnType = TableUtils.getColumnType(metaMem, writerIndex);
 
             if (columnType > -1) {
-                String colName = Chars.toString(name);
+                String columnName = Chars.toString(name);
                 CairoColumn column = new CairoColumn();
 
-                column.setNameUnsafe(colName);
+                column.setNameUnsafe(columnName);
                 column.setTypeUnsafe(columnType);
                 column.setIsIndexedUnsafe(TableUtils.isColumnIndexed(metaMem, writerIndex));
                 column.setIndexBlockCapacityUnsafe(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
@@ -179,7 +185,31 @@ public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
                 column.setStableIndex(stableIndex);
                 column.setDesignated(writerIndex == timestampIndex);
 
-                LOG.debugW().$("Hydrating column [table=").$(token.getTableName()).$(", column=").$(colName).I$();
+                path.trimTo(configuration.getRoot().length())
+                        .concat(table.getDirectoryNameUnsafe())
+                        .concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+                columnVersionReader.ofRO(configuration.getFilesFacade(),
+                        path.$());
+
+                final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
+
+                if (ColumnType.isSymbol(columnType)) {
+                    final LPSZ offsetFileName = TableUtils.offsetFileName(
+                            path.trimTo(configuration.getRoot().length()).concat(table.getDirectoryNameUnsafe())
+                            , columnName, columnNameTxn);
+
+                    offsetMem = Vm.getCMRInstance();
+                    final long offsetMemSize = SymbolMapWriter.keyToOffset(0) + Long.BYTES;
+                    offsetMem.of(configuration.getFilesFacade(), offsetFileName, offsetMemSize, offsetMemSize, MemoryTag.NATIVE_METADATA_READER);
+                    column.setSymbolCapacityUnsafe(offsetMem.getInt(SymbolMapWriter.HEADER_CAPACITY));
+                    assert column.getSymbolCapacityUnsafe() > 0;
+                    column.setSymbolCachedUnsafe(offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED));
+
+                    offsetMem.close();
+                    columnVersionReader.close();
+                }
+
+                LOG.debugW().$("Hydrating column [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
 
                 table.addColumnUnsafe(column);
 
@@ -197,59 +227,3 @@ public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
         return false;
     }
 }
-//
-//public void load() {
-//    final long timeout = configuration.getSpinLockTimeout();
-//    final MillisecondClock millisecondClock = configuration.getMillisecondClock();
-//    long deadline = configuration.getMillisecondClock().getTicks() + timeout;
-//    this.path.trimTo(plen).concat(TableUtils.META_FILE_NAME);
-//    boolean existenceChecked = false;
-//    while (true) {
-//        try {
-//            load(path.$());
-//            return;
-//        } catch (CairoException ex) {
-//            if (!existenceChecked) {
-//                path.trimTo(plen).slash();
-//                if (!ff.exists(path.$())) {
-//                    throw CairoException.tableDoesNotExist(tableToken.getTableName());
-//                }
-//                path.trimTo(plen).concat(TableUtils.META_FILE_NAME).$();
-//            }
-//            existenceChecked = true;
-//            TableUtils.handleMetadataLoadException(tableToken.getTableName(), deadline, ex, millisecondClock, timeout);
-//        }
-//    }
-//}
-
-
-//
-//public class ColumnIndexerJob extends AbstractQueueConsumerJob<ColumnIndexerTask> {
-//
-//    public ColumnIndexerJob(MessageBus messageBus) {
-//        super(messageBus.getIndexerQueue(), messageBus.getIndexerSubSequence());
-//    }
-//
-//    protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
-//        final ColumnIndexerTask queueItem = queue.get(cursor);
-//        // copy values and release queue item
-//        final ColumnIndexer indexer = queueItem.indexer;
-//        final long lo = queueItem.lo;
-//        final long hi = queueItem.hi;
-//        final long indexSequence = queueItem.sequence;
-//        final SOCountDownLatch latch = queueItem.countDownLatch;
-//        subSeq.done(cursor);
-//
-//        // On the face of it main thread could have consumed same sequence as
-//        // child workers. The reason it is undesirable is that all writers
-//        // share the same queue and main thread end up indexing content for other writers.
-//        // Using CAS allows main thread to steal only parts of its own job.
-//        if (indexer.tryLock(indexSequence)) {
-//            TableWriter.indexAndCountDown(indexer, lo, hi, latch);
-//            return true;
-//        }
-//        // This is hard to test. Condition occurs when main thread successfully steals
-//        // work from under nose of this worker.
-//        return false;
-//    }
-//}

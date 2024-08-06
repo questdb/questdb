@@ -50,15 +50,19 @@ public class CairoColumn {
     }
 
     public void copyTo(@NotNull CairoColumn target) {
-        target.indexBlockCapacity = this.indexBlockCapacity;
-        target.isIndexed = this.isIndexed;
-        target.name = this.name;
-        target.type = this.type;
+        target.denseSymbolIndex = this.denseSymbolIndex;
         target.designated = this.designated;
+        target.indexBlockCapacity = this.indexBlockCapacity;
+        target.isDedupKey = this.isDedupKey;
+        target.isIndexed = this.isIndexed;
+        target.isSymbolTableStatic = this.isSymbolTableStatic;
+        target.name = this.name;
         target.position = this.position;
+        target.stableIndex = this.stableIndex;
         target.symbolCached = this.symbolCached;
         target.symbolCapacity = this.symbolCapacity;
-        target.isDedupKey = this.isDedupKey;
+        target.type = this.type;
+        target.writerIndex = this.writerIndex;
     }
 
     public int getDenseSymbolIndexUnsafe() {
