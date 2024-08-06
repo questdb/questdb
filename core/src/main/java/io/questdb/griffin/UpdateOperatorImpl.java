@@ -353,11 +353,11 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             MemoryCMARW dstVarMem = dstColumns.get(2 * i + 1);
 
             final int columnIndex = updateColumnIndexes.get(i);
-            final long oldColumnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1);
-            final long newColumnTop = calculatedEffectiveColumnTop(firstUpdatedRowId, oldColumnTop);
             final int toType = tableMetadata.getColumnType(columnIndex);
 
             if (currentRow > prevRow) {
+                final long oldColumnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1);
+                final long newColumnTop = calculatedEffectiveColumnTop(firstUpdatedRowId, oldColumnTop);
                 copyColumn(
                         prevRow,
                         currentRow,

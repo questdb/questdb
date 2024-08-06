@@ -157,7 +157,7 @@ public class ConvertOperatorImpl implements Closeable {
                 if (symbolMapReader == null) {
                     symbolMapReader = new SymbolMapReaderImpl();
                 }
-                long existingColNameTxn = tableWriter.getDefaultColumnNameTxn(existingColIndex);
+                long existingColNameTxn = columnVersionWriter.getDefaultColumnNameTxn(existingColIndex);
                 int symbolCount = tableWriter.getSymbolMapWriter(existingColIndex).getSymbolCount();
                 symbolMapReader.of(configuration, path, columnName, existingColNameTxn, symbolCount);
             }
