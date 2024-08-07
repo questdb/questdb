@@ -190,9 +190,9 @@ public class CopyWalSegmentUtils {
         if (success) {
             newOffsets.setSrcOffsets(offset, -1);
             newOffsets.setDestSizes(length, -1);
-        }
-        if (commitMode != CommitMode.NOSYNC) {
-            ff.fsync(primaryFd);
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.fsync(primaryFd);
+            }
         }
         return success;
     }
