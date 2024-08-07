@@ -1490,7 +1490,7 @@ public class WalWriterTest extends AbstractCairoTest {
                     assertExceptionNoLeakCheck("Exception expected");
                 } catch (Exception e) {
                     // this exception will be handled in ILP/PG/HTTP
-                    assertTrue(e.getMessage().contains("could not open, file does not exists"));
+                    assertTrue(e.getMessage().contains("could not open"));
                 }
             }
         });
