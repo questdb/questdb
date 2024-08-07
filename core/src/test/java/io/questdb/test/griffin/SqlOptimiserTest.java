@@ -2527,6 +2527,33 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testRangeFillWhenThereAreNoRecords() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE 'trades' (\n" +
+                    "  symbol SYMBOL capacity 256 CACHE,\n" +
+                    "  side SYMBOL capacity 256 CACHE,\n" +
+                    "  price DOUBLE,\n" +
+                    "  amount DOUBLE,\n" +
+                    "  timestamp TIMESTAMP\n" +
+                    ") timestamp (timestamp) PARTITION BY DAY WAL;");
+            drainWalQueue();
+
+            String query = "with a as (\n" +
+                    "SELECT \n" +
+                    "    timestamp,\n" +
+                    "    vwap(price, amount) AS vwap_price,\n" +
+                    "    sum(amount) AS volume\n" +
+                    "FROM trades\n" +
+                    "WHERE symbol = 'MEH' AND timestamp > dateadd('d', -1, now())\n" +
+                    "SAMPLE by 1h FILL(NULL)\n" +
+                    ")\n" +
+                    "select * from a;";
+
+            assertSql("timestamp\tvwap_price\tvolume\n", query);
+        });
+    }
+
+    @Test
     public void testSampleByFromToBasicWhereOptimisationBetween() throws Exception {
         assertMemoryLeak(() -> {
             ddl(SampleByTest.DDL_FROMTO);
