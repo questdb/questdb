@@ -2145,16 +2145,19 @@ public class SqlParser {
                                 }
 
                                 tok = tok(lexer, "'inclusive' 'exclusive' 'left' 'right'");
-
+                                int betweenType = 0;
                                 if(SqlKeywords.isInclusiveKeyword(tok)) {
                                     // for INCLUSIVE
+                                    betweenType = 1;
 
                                 } else if(SqlKeywords.isExclusiveKeyword(tok)) {
                                     // for EXCLUSIVE
+                                    betweenType = 2;
                                 } else if (SqlKeywords.isRightKeyword(tok)) {
                                     tok = tok(lexer, "'open'");
                                     if(SqlKeywords.isOpenKeyword(tok)) {
                                         // RIGHT OPEN
+                                        betweenType = 3;
                                     } else {
                                         throw SqlException.$(lexer.lastTokenPosition(), "'open' expected");
                                     }
@@ -2162,12 +2165,14 @@ public class SqlParser {
                                     tok = tok(lexer, "'open'");
                                     if(SqlKeywords.isOpenKeyword(tok)) {
                                         // LEFT OPEN
+                                        betweenType = 4;
                                     } else {
                                         throw SqlException.$(lexer.lastTokenPosition(), "'open' expected");
                                     }
                                 } else {
-                                    // equivalent to INCLUSIVE
+                                    // INCLUSIVE
                                 }
+                                model.setBetweenType(betweenType);
 
 
                             } else {
