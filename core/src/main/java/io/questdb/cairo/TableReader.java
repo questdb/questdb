@@ -110,7 +110,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             this.rootLen = path.size();
             path.trimTo(rootLen);
 
-            metadata = TableUtils.openMetadataReader(configuration, tableToken);
+            metadata = openMetaFile();
             partitionBy = metadata.getPartitionBy();
             columnVersionReader = new ColumnVersionReader().ofRO(ff, path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME).$());
             txnScoreboard = new TxnScoreboard(ff, configuration.getTxnScoreboardEntryCount()).ofRW(path.trimTo(rootLen));
@@ -820,6 +820,17 @@ public class TableReader implements Closeable, SymbolTableSource {
                 columnVersionReader.getDefaultColumnNameTxn(metadata.getWriterIndex(columnIndex)),
                 txFile.getSymbolValueCount(symbolColumnIndex)
         );
+    }
+
+    private TableReaderMetadata openMetaFile() {
+        TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableToken);
+        try {
+            metadata.load();
+            return metadata;
+        } catch (Throwable th) {
+            metadata.close();
+            throw th;
+        }
     }
 
     @NotNull

@@ -1133,24 +1133,6 @@ public final class TableUtils {
         return openRW(ff, path, LOG, opts);
     }
 
-    /**
-     * Opens and loads a metadata file.
-     *
-     * @param configuration
-     * @param tableToken
-     * @return
-     */
-    public static TableReaderMetadata openMetadataReader(@NotNull CairoConfiguration configuration, @NotNull TableToken tableToken) {
-        TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableToken);
-        try {
-            metadata.load();
-            return metadata;
-        } catch (Throwable th) {
-            metadata.close();
-            throw th;
-        }
-    }
-
     public static int openRO(FilesFacade ff, Path path, CharSequence fileName, Log log) {
         final int rootLen = path.size();
         path.concat(fileName);
