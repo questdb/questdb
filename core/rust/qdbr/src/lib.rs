@@ -35,15 +35,15 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 
 pub static POOL: Lazy<ThreadPool> = Lazy::new(|| {
     let num_threads = std::env::var("QUESTDB_MAX_THREADS") // TODO: Use a proper config system
-        .map(|s| s.parse::<usize>().expect("max_threads"))
+        .map(|s| s.parse::<usize>().expect("max_threads should be a valid usize"))
         .unwrap_or_else(|_| {
             std::thread::available_parallelism()
-                .unwrap_or(std::num::NonZeroUsize::new(1).unwrap())
+                .unwrap_or_else(|| std::num::NonZeroUsize::new(1).unwrap())
                 .get()
         });
     ThreadPoolBuilder::new()
         .num_threads(num_threads)
-        .thread_name(move |i| format!("questdb-parquet-{}", i))
+        .thread_name(|i| format!("questdb-parquet-{}", i))
         .build()
         .expect("could not spawn threads")
 });
