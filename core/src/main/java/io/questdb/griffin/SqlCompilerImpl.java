@@ -913,21 +913,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         );
         int existingColumnType = tableMetadata.getColumnType(columnIndex);
         int newColumnType = addColumnWithType(changeColumn, columnName, columnNamePosition);
-        if (tableMetadata.isWalEnabled()
-                && ColumnType.isVarSize(newColumnType)
-                && !ColumnType.isVarSize(existingColumnType)
-        ) {
-            // This may remove deduplication from the column since var len columns don't support deduplication.
-            // Check for it.
-            try (TableReader reader = executionContext.getReader(tableToken)) {
-                if (reader.getMetadata().isDedupKey(columnIndex)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "cannot change type of deduplicated key column '").put(columnName)
-                            .put("' to variable size type '").put(ColumnType.nameOf(newColumnType))
-                            .put("', deduplication is only supported for fixed size types");
-                }
-            }
-        }
-
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && !isSemicolon(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change column type");
@@ -1078,12 +1063,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                 if (colIndex == tableMetadata.getTimestampIndex()) {
                     tsIncludedInDedupColumns = true;
-                } else {
-                    int columnType = tableMetadata.getColumnType(colIndex);
-                    if (ColumnType.isVarSize(columnType) || columnType < 0) {
-                        throw SqlException.position(lexer.lastTokenPosition()).put("deduplicate key column can only be fixed size column [column=").put(columnName)
-                                .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
-                    }
                 }
                 setDedup.setDedupKeyFlag(tableMetadata.getWriterIndex(colIndex));
 

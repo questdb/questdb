@@ -598,7 +598,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConvertFromSymbolToStringDedupFlagNotAllowed() throws Exception {
+    public void testConvertFromSymbolToStringDedupFlagIsAllowed() throws Exception {
         assumeWal();
         assertMemoryLeak(() -> {
             createX();
@@ -607,26 +607,12 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             drainWalQueue();
             checkDedupSet("ik", true);
 
-            try {
-                ddl("alter table x alter column ik type varchar");
-                Assert.fail();
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "cannot change type of deduplicated key column 'ik' to variable size type 'VARCHAR', deduplication is only supported for fixed size types");
-                Assert.assertEquals(35, ex.getPosition());
-            }
-
-            ddl("alter table x dedup disable");
-            drainWalQueue();
-
-            // In one go, enable dedup and change type
-            ddl("alter table x dedup enable upsert keys(timestamp, ik)");
             ddl("alter table x alter column ik type varchar");
             drainWalQueue();
-
-            checkDedupSet("ik", false);
+            checkDedupSet("ik", true);
 
             engine.releaseInactive();
-            checkDedupSet("ik", false);
+            checkDedupSet("ik", true);
 
             insert("insert into x(ik, d, timestamp) values('abc', 2, '2044-02-24')", sqlExecutionContext);
             insert("insert into x(ik, d, timestamp) values('abc', 3, '2044-02-25')", sqlExecutionContext);

@@ -1600,12 +1600,6 @@ public final class TableUtils {
                     throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(i).put(']');
                 }
 
-                if (isColumnDedupKey(metaMem, i)) {
-                    if (ColumnType.isVarSize(type)) {
-                        throw validationException(metaMem).put("DEDUPLICATION KEY flag is only supported for fixed size column types").put(" at [").put(i).put(']');
-                    }
-                }
-
                 if (isColumnIndexed(metaMem, i)) {
                     if (!ColumnType.isSymbol(type)) {
                         throw validationException(metaMem).put("Index flag is only supported for SYMBOL").put(" at [").put(i).put(']');

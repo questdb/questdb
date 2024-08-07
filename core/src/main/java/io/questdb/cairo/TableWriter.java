@@ -870,7 +870,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", to=").$(ColumnType.nameOf(newType)).I$();
 
             boolean isDedupKey = metadata.isDedupKey(existingColIndex);
-            boolean newColumnDedupKey = isDedupKey && !ColumnType.isVarSize(newType);
             int columnIndex = columnCount;
             long columnNameTxn = getTxn();
 
@@ -891,7 +890,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 convertOperator.convertColumn(columnName, existingColIndex, existingType, columnIndex, newType);
 
                 // Column converted, add new one to _meta file and remove the existing column
-                addColumnToMeta(columnName, newType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, newColumnDedupKey, columnNameTxn, existingColIndex);
+                addColumnToMeta(columnName, newType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, columnNameTxn, existingColIndex);
 
                 // close old column files
                 freeColumnMemory(existingColIndex);
@@ -901,7 +900,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // remove old column to in-memory metadata object and add new one
                 metadata.removeColumn(existingColIndex);
-                metadata.addColumn(columnName, newType, isIndexed, indexValueBlockCapacity, existingColIndex, isSequential, symbolCapacity, newColumnDedupKey);
+                metadata.addColumn(columnName, newType, isIndexed, indexValueBlockCapacity, existingColIndex, isSequential, symbolCapacity, isDedupKey);
 
                 // open new column files
                 if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
@@ -934,13 +933,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // commit transaction to _txn file
                 bumpMetadataAndColumnStructureVersion();
-
-                if (isDeduplicationEnabled() && !newColumnDedupKey && isDedupKey) {
-                    // Converting a column that used to be a dedup column
-                    // to a type that is not supported to be a dedup key (var size)
-                    // effectively removes that column from being a dedup flag.
-                    dedupColumnCommitAddresses.setDedupColumnCount(dedupColumnCommitAddresses.getColumnCount() - 1);
-                }
             } finally {
                 // clear temp resources
                 convertOperator.finishColumnConversion();
@@ -4534,28 +4526,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 for (int i = 0; i < metadata.getColumnCount(); i++) {
                     int columnType = metadata.getColumnType(i);
                     if (i != metadata.getTimestampIndex() && columnType > 0 && metadata.isDedupKey(i)) {
-                        int shl = ColumnType.pow2SizeOf(columnType);
-                        long lagMemOffset = lagRows > 0 ? (txWriter.getTransientRowCount() - getColumnTop(i)) << shl : 0L;
-                        long lagMapSize = lagRows << shl;
+                        if (ColumnType.isFixedSize(columnType)) {
+                            int shl = ColumnType.pow2SizeOf(columnType);
+                            long lagMemOffset = lagRows > 0 ? (txWriter.getTransientRowCount() - getColumnTop(i)) << shl : 0L;
+                            long lagMapSize = lagRows << shl;
 
-                        // Map column buffers for lag rows for deduplication
-                        long lagKeyAddr = lagRows > 0 ? mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagMemOffset, lagMapSize, false) : 0L;
-                        MemoryCR o3Column = o3Columns.get(getPrimaryColumnIndex(i));
-                        long o3ColumnData = o3Column.addressOf(0);
-                        assert o3ColumnData != 0;
+                            // Map column buffers for lag rows for deduplication
+                            long lagKeyAddr = lagRows > 0 ? mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagMemOffset, lagMapSize, false) : 0L;
+                            MemoryCR o3Column = o3Columns.get(getPrimaryColumnIndex(i));
+                            long o3ColumnData = o3Column.addressOf(0);
+                            assert o3ColumnData != 0;
 
-                        dedupColumnCommitAddresses.setArrayValues(
-                                dedupCommitAddr,
-                                dedupKeyIndex++,
-                                columnType,
-                                ColumnType.sizeOf(columnType),
-                                0L,
-                                o3ColumnData,
-                                Math.abs(lagKeyAddr),
-                                lagKeyAddr,
-                                lagMemOffset,
-                                lagMapSize
-                        );
+                            dedupColumnCommitAddresses.setArrayValues(
+                                    dedupCommitAddr,
+                                    dedupKeyIndex++,
+                                    columnType,
+                                    ColumnType.sizeOf(columnType),
+                                    0L,
+                                    o3ColumnData,
+                                    Math.abs(lagKeyAddr),
+                                    lagKeyAddr,
+                                    lagMemOffset,
+                                    lagMapSize
+                            );
+                        } else {
+                            assert false;
+                        }
                     }
                 }
             }
