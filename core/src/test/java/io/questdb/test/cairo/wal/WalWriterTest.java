@@ -592,7 +592,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 2, 1);
                 assertExceptionNoLeakCheck("Segment 2 should not exist");
             } catch (CairoException e) {
-                assertTrue(e.getMessage().endsWith("could not open, file does not exists: " + engine.getConfiguration().getRoot() +
+                assertTrue(e.getMessage().endsWith("could not open, file does not exist: " + engine.getConfiguration().getRoot() +
                         File.separatorChar + tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + "1" +
                         File.separatorChar + walName +
                         File.separatorChar + "2" +
@@ -1980,7 +1980,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 engine.getWalReader(sqlExecutionContext.getSecurityContext(), tableToken, walName, 1, 0);
                 assertExceptionNoLeakCheck("Segment 1 should not exist");
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not open, file does not exists: " + engine.getConfiguration().getRoot() +
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open, file does not exist: " + engine.getConfiguration().getRoot() +
                         File.separatorChar + tableName + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + "1" +
                         File.separatorChar + walName +
                         File.separatorChar + "1" +

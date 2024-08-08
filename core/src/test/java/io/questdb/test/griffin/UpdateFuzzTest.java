@@ -156,6 +156,7 @@ public class UpdateFuzzTest extends AbstractCairoTest {
                 }
             }
 
+            // This will read whole table, verifying that the TableReader can handle the column top / versions / types
             printSql("up");
         });
     }
