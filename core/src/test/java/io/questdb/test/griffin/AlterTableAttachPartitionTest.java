@@ -506,7 +506,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         Assert.fail();
                     } catch (CairoException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(),
-                                "could not open, file does not exists"
+                                "could not open, file does not exist"
                         );
                         TestUtils.assertContains(e.getFlyweightMessage(),
                                 "ts1.d"
@@ -997,7 +997,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "srcTs", "dstTs", false, "could not open, file does not exists");
+        testSqlFailedOnFsOperation(ff, "srcTs", "dstTs", false, "could not open, file does not exist");
     }
 
     @Test
@@ -1013,7 +1013,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
             }
         };
 
-        testSqlFailedOnFsOperation(ff, "srcTs2", "dstTs2", false, "could not open, file does not exists", "ts.d");
+        testSqlFailedOnFsOperation(ff, "srcTs2", "dstTs2", false, "could not open, file does not exist", "ts.d");
     }
 
     @Test
