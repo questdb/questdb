@@ -36,7 +36,7 @@ public class UpdateFuzzTest extends AbstractCairoTest {
     public void testConvertColumnAndUpdate() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
-            boolean partitioned = rnd.nextBoolean();
+            boolean partitioned = rnd.nextInt(10) > 2;
             if (partitioned) {
                 ddl(
                         "create table up as" +
