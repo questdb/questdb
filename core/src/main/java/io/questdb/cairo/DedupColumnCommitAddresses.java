@@ -38,8 +38,12 @@ public class DedupColumnCommitAddresses implements Closeable {
     private static final long VAL_SIZE_32 = COL_TYPE_32 + 4L;
     private static final long COL_TOP_64 = VAL_SIZE_32 + 4L;
     private static final long COL_DATA_64 = COL_TOP_64 + 8L;
-    private static final long O3_DATA_64 = COL_DATA_64 + 8L;
-    private static final long RESERVED1 = O3_DATA_64 + 8L;
+    private static final long COL_VAR_DATA_64 = COL_DATA_64 + 8L;
+    private static final long COL_VAR_DATA_LEN_64 = COL_VAR_DATA_64 + 8L;
+    private static final long O3_DATA_64 = COL_VAR_DATA_LEN_64 + 8L;
+    private static final long O3_VAR_DATA_64 = O3_DATA_64 + 8L;
+    private static final long O3_VAR_DATA_LEN_64 = O3_VAR_DATA_64 + 8L;
+    private static final long RESERVED1 = O3_VAR_DATA_LEN_64 + 8L;
     private static final long RESERVED2 = RESERVED1 + 8L;
     private static final long RESERVED3 = RESERVED2 + 8L;
     private static final long NULL_VAL_256 = RESERVED3 + 8L;
@@ -98,6 +102,7 @@ public class DedupColumnCommitAddresses implements Closeable {
             int valueSizeBytes,
             long columnTop,
             long columnDataAddress,
+//            long columnVarDataAddress,
             long o3DataAddress,
             long reserved1,
             long reserved2,
@@ -108,6 +113,7 @@ public class DedupColumnCommitAddresses implements Closeable {
         Unsafe.getUnsafe().putInt(addr + VAL_SIZE_32, valueSizeBytes);
         Unsafe.getUnsafe().putLong(addr + COL_TOP_64, columnTop);
         Unsafe.getUnsafe().putLong(addr + COL_DATA_64, columnDataAddress);
+//        Unsafe.getUnsafe().putLong(addr + COL_VAR_DATA_64, columnVarDataAddress);
         Unsafe.getUnsafe().putLong(addr + O3_DATA_64, o3DataAddress);
         Unsafe.getUnsafe().putLong(addr + RESERVED1, reserved1);
         Unsafe.getUnsafe().putLong(addr + RESERVED2, reserved2);
