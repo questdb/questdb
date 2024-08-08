@@ -25,10 +25,8 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -50,10 +48,10 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
     private static final int TABLE_NAME = 0;
     private static final int WAL_ENABLED = 1;
     private final TableStorageRecordCursor cursor = new TableStorageRecordCursor();
+    private final Path path = new Path();
     private CairoConfiguration configuration;
     private SqlExecutionContext executionContext;
     private FilesFacade ff;
-    private Path path = new Path();
     private TxReader reader;
 
 
@@ -207,7 +205,10 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
                 walEnabled = token.isWal();
                 tableName = token.getTableName();
 
-                partitionBy = executionContext.getMetadataForRead(token).getPartitionBy();
+                // Metadata
+                TableMetadata tm = executionContext.getMetadataForRead(token);
+                partitionBy = tm.getPartitionBy();
+                tm.close();
 
                 // Path
                 TableUtils.setPathTable(path, configuration, token);
@@ -217,6 +218,7 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
                 TableUtils.setTxReaderPath(reader, ff, path, partitionBy); // modifies path
                 rowCount = reader.unsafeLoadRowCount();
                 partitionCount = reader.getPartitionCount();
+                reader.close();
             }
 
             private void reset() {
