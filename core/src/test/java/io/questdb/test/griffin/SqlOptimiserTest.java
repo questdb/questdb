@@ -2313,10 +2313,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
-    /*TODO: Line 722 and 723 are doing a forward scan on selected model y2 whereas it should be a backward scan
-        Suspected issue is with SqlOptimiser.optimiseOrderBy() , raise a github issue for the same
-     */
-
     @Test
     public void testQueryPlanForWhereClauseOnNestedModelWithLastAggregateFunctionOnParentModel() throws Exception {
         assertMemoryLeak(() -> {
@@ -2531,6 +2527,33 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testRangeFillWhenThereAreNoRecords() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE 'trades' (\n" +
+                    "  symbol SYMBOL capacity 256 CACHE,\n" +
+                    "  side SYMBOL capacity 256 CACHE,\n" +
+                    "  price DOUBLE,\n" +
+                    "  amount DOUBLE,\n" +
+                    "  timestamp TIMESTAMP\n" +
+                    ") timestamp (timestamp) PARTITION BY DAY WAL;");
+            drainWalQueue();
+
+            String query = "with a as (\n" +
+                    "SELECT \n" +
+                    "    timestamp,\n" +
+                    "    vwap(price, amount) AS vwap_price,\n" +
+                    "    sum(amount) AS volume\n" +
+                    "FROM trades\n" +
+                    "WHERE symbol = 'MEH' AND timestamp > dateadd('d', -1, now())\n" +
+                    "SAMPLE by 1h FILL(NULL)\n" +
+                    ")\n" +
+                    "select * from a;";
+
+            assertSql("timestamp\tvwap_price\tvolume\n", query);
+        });
+    }
+
+    @Test
     public void testSampleByFromToBasicWhereOptimisationBetween() throws Exception {
         assertMemoryLeak(() -> {
             ddl(SampleByTest.DDL_FROMTO);
@@ -2649,6 +2672,17 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "2018-01-16T00:00:00.000000Z\tnull\t\tnull\tnull\tnull\tnull\tnull\t\tnull\tnull\tnull\tnull\n" +
                     "2018-01-21T00:00:00.000000Z\tnull\t\tnull\tnull\tnull\tnull\tnull\t\tnull\tnull\tnull\tnull\n" +
                     "2018-01-26T00:00:00.000000Z\tnull\t\tnull\tnull\tnull\tnull\tnull\t\tnull\tnull\tnull\tnull\n", query);
+        });
+    }
+
+    @Test
+    public void testSampleByFromToDisallowedQueryWithKey() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(SampleByTest.DDL_FROMTO);
+            assertException("SELECT ts, count, s\n" +
+                    "FROM fromto\n" +
+                    "SAMPLE BY 5d FROM '2018-01-01' TO '2019-01-01'\n" +
+                    "LIMIT 6", 0, "are not supported for keyed SAMPLE BY");
         });
     }
 
