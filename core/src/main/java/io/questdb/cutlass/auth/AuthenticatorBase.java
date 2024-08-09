@@ -24,32 +24,34 @@
 
 package io.questdb.cutlass.auth;
 
-import io.questdb.network.Socket;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.Nullable;
 
-public interface Authenticator extends AuthenticatorBase {
+public interface AuthenticatorBase extends QuietCloseable, Mutable {
 
-    int NEEDS_DISCONNECT = 3;
-    int NEEDS_READ = 0;
-    int NEEDS_WRITE = 1;
-    int OK = -1;
-    int QUEUE_FULL = 2;
-
-    default int denyAccess(CharSequence message) throws AuthenticatorException {
-        throw new UnsupportedOperationException();
+    @Override
+    default void clear() {
     }
 
-    long getRecvBufPos();
-
-    long getRecvBufPseudoStart();
-
-    int handleIO() throws AuthenticatorException;
-
-    void init(@NotNull Socket socket, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit);
-
-    boolean isAuthenticated();
-
-    default int loginOK() throws AuthenticatorException {
-        throw new UnsupportedOperationException();
+    @Override
+    default void close() {
     }
+
+    default byte getAuthType() {
+        return SecurityContext.AUTH_TYPE_NONE;
+    }
+
+    /**
+     * Returns list of groups provided by external identity provider, such as OpenID Connect provider.
+     * For other authentication types returns null.
+     */
+    @Nullable
+    default ObjList<CharSequence> getGroups() {
+        return null;
+    }
+
+    CharSequence getPrincipal();
 }

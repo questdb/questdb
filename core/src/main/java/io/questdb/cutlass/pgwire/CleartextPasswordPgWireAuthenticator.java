@@ -499,6 +499,7 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
         return Authenticator.NEEDS_WRITE;
     }
 
+    // kept protected for ent
     protected boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
         return matcher.verifyPassword(username, passwordPtr, passwordLen);
     }
