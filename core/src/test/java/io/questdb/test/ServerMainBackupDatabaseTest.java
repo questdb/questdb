@@ -34,6 +34,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -119,7 +120,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
             // - the first error breaks the test
 
             AtomicReference<ObjList<TableToken>> tableTokens = new AtomicReference<>(new ObjList<>());
-            AtomicLong expectedTotalRows = new AtomicLong();
+            AtomicLong expectedRowsOnBackUpStarted;
 
             try (
                     ServerMain qdb = new ServerMain(getServerMainArgs());
@@ -137,6 +138,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
 
                 CairoEngine engine = qdb.getEngine();
                 ObjList<SqlExecutionContext> contexts = new ObjList<>();
+                AtomicLong expectedTotalRows = new AtomicLong();
 
                 // create/populate tables concurrently
                 for (int t = 0; t < N; t++) {
@@ -146,10 +148,11 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                 // insert into tables concurrently
                 for (int t = 0; t < N; t++) {
                     contexts.add(createSqlExecutionCtx(engine));
-                    startTableWriter(t, engine, contexts.get(t), tableTokens, expectedTotalRows, createsCompleted, writersCompleted, endWriters, errors);
+                    startTableWriter(t, engine, isWal, contexts.get(t), tableTokens, expectedTotalRows, createsCompleted, writersCompleted, endWriters, errors);
                 }
+
                 // backup database concurrently 3 seconds from now
-                startBackupDatabase(defaultCompiler, defaultContext, expectedTotalRows, createsCompleted, backupCompleted, errors);
+                expectedRowsOnBackUpStarted = startBackupDatabase(defaultCompiler, defaultContext, expectedTotalRows, createsCompleted, backupCompleted, errors);
 
                 // wait for the backup to complete, end the writers
                 Assert.assertTrue(backupCompleted.await(TimeUnit.SECONDS.toNanos(60L)));
@@ -191,7 +194,8 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                     executeInsertGeneratorStmt(tableToken, 10, qdb.getEngine(), defaultContext);
                     drainWalQueue(qdb.getEngine());
                 }
-                Assert.assertTrue(totalRows > (expectedTotalRows.get() * 0.5));
+                long expected = expectedRowsOnBackUpStarted.get();
+                Assert.assertTrue("expected min rows: " + expected + ", actual: " + totalRows, totalRows > expected);
             } finally {
                 Assert.assertTrue(Files.rmdir(dbPath.of(newRoot), true));
             }
@@ -256,7 +260,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
         return newRoot;
     }
 
-    private static void startBackupDatabase(
+    private static AtomicLong startBackupDatabase(
             SqlCompiler compiler,
             SqlExecutionContext context,
             AtomicLong expectedTotalRows,
@@ -264,6 +268,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
             SOCountDownLatch backupCompleted,
             AtomicReference<ObjList<Throwable>> errors
     ) {
+        AtomicLong expectedRowsOnBackUpStarted = new AtomicLong();
         startThread(backupCompleted, errors, () -> {
             long deadline = System.currentTimeMillis() + 3000L;
             while (!createsCompleted.await(TimeUnit.SECONDS.toNanos(3L))) {
@@ -272,10 +277,12 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
             while (System.currentTimeMillis() < deadline) {
                 Os.sleep(200L);
             }
-            Assert.assertTrue(expectedTotalRows.get() > 0);
+            expectedRowsOnBackUpStarted.set(expectedTotalRows.get());
+            Assert.assertTrue(expectedRowsOnBackUpStarted.get() > 0);
             compiler.compile("BACKUP DATABASE", context);
             return null;
         });
+        return expectedRowsOnBackUpStarted;
     }
 
     private static void startTableCreator(
@@ -301,6 +308,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
     private static void startTableWriter(
             int tableId,
             CairoEngine engine,
+            boolean isWal,
             SqlExecutionContext context,
             AtomicReference<ObjList<TableToken>> tableTokens,
             AtomicLong expectedTotalRows,
@@ -311,22 +319,30 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
     ) {
         startThread(writersCompleted, errors, () -> {
             TableToken tableToken = null;
-            while (!createsCompleted.await(TimeUnit.MILLISECONDS.toNanos(5L))) {
-                if (Thread.currentThread().isInterrupted() || endWriters.get()) {
-                    return null;
+            try (ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 1, 1)) {
+                while (!createsCompleted.await(TimeUnit.MILLISECONDS.toNanos(5L))) {
+                    if (Thread.currentThread().isInterrupted() || endWriters.get()) {
+                        return null;
+                    }
+                    if (tableId < tableTokens.get().size()) {
+                        tableToken = tableTokens.get().get(tableId);
+                        break;
+                    }
                 }
-                if (tableId < tableTokens.get().size()) {
-                    tableToken = tableTokens.get().get(tableId);
-                    break;
+                Assert.assertNotNull(tableToken);
+                while (!Thread.currentThread().isInterrupted() && !endWriters.get()) {
+                    int numRows = ThreadLocalRandom.current().nextInt(1, 50);
+                    executeInsertGeneratorStmt(tableToken, numRows, engine, context);
+                    if (isWal) {
+                        while (job.run(0)) {
+                            LOG.info().$("WAL apply ran").I$();
+                        }
+                    }
+                    expectedTotalRows.getAndAdd(numRows);
+                    Os.sleep(1L);
                 }
             }
-            Assert.assertNotNull(tableToken);
-            while (!Thread.currentThread().isInterrupted() && !endWriters.get()) {
-                int numRows = ThreadLocalRandom.current().nextInt(1, 50);
-                executeInsertGeneratorStmt(tableToken, numRows, engine, context);
-                expectedTotalRows.getAndAdd(numRows);
-                Os.sleep(1L);
-            }
+
             return null;
         });
     }
