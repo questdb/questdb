@@ -353,11 +353,11 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             MemoryCMARW dstVarMem = dstColumns.get(2 * i + 1);
 
             final int columnIndex = updateColumnIndexes.get(i);
-            final long oldColumnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1);
-            final long newColumnTop = calculatedEffectiveColumnTop(firstUpdatedRowId, oldColumnTop);
             final int toType = tableMetadata.getColumnType(columnIndex);
 
             if (currentRow > prevRow) {
+                final long oldColumnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1);
+                final long newColumnTop = calculatedEffectiveColumnTop(firstUpdatedRowId, oldColumnTop);
                 copyColumn(
                         prevRow,
                         currentRow,
@@ -625,6 +625,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     private void openColumns(ObjList<? extends MemoryCM> columns, int partitionIndex, boolean forWrite) {
         long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
         long partitionNameTxn = tableWriter.getPartitionNameTxn(partitionIndex);
+        long partitionSize = tableWriter.getPartitionSize(partitionIndex);
         RecordMetadata metadata = tableWriter.getMetadata();
         try {
             path.trimTo(rootLen);
@@ -636,11 +637,12 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                 int columnType = metadata.getColumnType(columnIndex);
 
                 final long columnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1L);
+                long rowCount = columnTop > -1 ? partitionSize - columnTop : 0;
 
                 if (forWrite) {
                     long existingVersion = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
                     tableWriter.upsertColumnVersion(partitionTimestamp, columnIndex, columnTop);
-                    if (columnTop > -1) {
+                    if (rowCount > 0) {
                         // columnTop == -1 means column did not exist at the partition
                         purgingOperator.add(columnIndex, existingVersion, partitionTimestamp, partitionNameTxn);
                     }
@@ -655,7 +657,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     colMemVar.close();
                     assert !colMemVar.isOpen();
 
-                    if (forWrite || columnTop != -1) {
+                    if (forWrite || rowCount > 0) {
                         colMemIndex.of(
                                 ff,
                                 iFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
@@ -678,7 +680,7 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                     colMem.close();
                     assert !colMem.isOpen();
 
-                    if (forWrite || columnTop != -1) {
+                    if (forWrite || rowCount > 0) {
                         colMem.of(
                                 ff,
                                 dFile(path.trimTo(pathTrimToLen), name, columnNameTxn),
