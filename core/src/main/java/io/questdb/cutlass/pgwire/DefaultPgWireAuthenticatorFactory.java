@@ -27,7 +27,7 @@ package io.questdb.cutlass.pgwire;
 import io.questdb.DynamicUsernamePasswordMatcher;
 import io.questdb.ServerConfiguration;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cutlass.auth.Authenticator;
+import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.auth.UsernamePasswordMatcher;
 import org.jetbrains.annotations.Nullable;
 
@@ -40,7 +40,7 @@ public final class DefaultPgWireAuthenticatorFactory implements PgWireAuthentica
     }
 
     @Override
-    public Authenticator getPgWireAuthenticator(
+    public SocketAuthenticator getPgWireAuthenticator(
             PGWireConfiguration configuration,
             NetworkSqlExecutionCircuitBreaker circuitBreaker,
             CircuitBreakerRegistry registry,

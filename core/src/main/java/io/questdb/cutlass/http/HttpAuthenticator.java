@@ -24,9 +24,9 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.cutlass.auth.AuthenticatorBase;
+import io.questdb.cutlass.auth.Authenticator;
 
-public interface HttpAuthenticator extends AuthenticatorBase {
+public interface HttpAuthenticator extends Authenticator {
 
     /**
      * Authenticates incoming HTTP request.
