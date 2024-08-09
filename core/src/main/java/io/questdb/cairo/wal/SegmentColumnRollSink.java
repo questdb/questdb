@@ -30,16 +30,11 @@ import io.questdb.std.LongList;
 public class SegmentColumnRollSink implements ColumnConversionOffsetSink {
     private final int ENTRIES_PER_COLUMN = 6;
     private final LongList data = new LongList();
-    private int baseIndex = 0;
-
-    public SegmentColumnRollSink() {
-        data.extendAndSet(ENTRIES_PER_COLUMN - 1, -1);
-    }
+    private int baseIndex = -ENTRIES_PER_COLUMN;
 
     public void clear() {
         data.clear();
-        data.extendAndSet(ENTRIES_PER_COLUMN - 1, -1);
-        baseIndex = 0;
+        baseIndex = -ENTRIES_PER_COLUMN;
     }
 
     public int count() {
@@ -72,7 +67,8 @@ public class SegmentColumnRollSink implements ColumnConversionOffsetSink {
 
     public void nextColumn() {
         baseIndex += ENTRIES_PER_COLUMN;
-        data.extendAndSet(baseIndex + ENTRIES_PER_COLUMN - 1, -1);
+        data.setPos(baseIndex + ENTRIES_PER_COLUMN);
+        data.fill(baseIndex, baseIndex + ENTRIES_PER_COLUMN, -1);
     }
 
     public void setDestPrimaryFd(long fd) {

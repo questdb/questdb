@@ -104,12 +104,12 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return nonCritical().setEntityDisabled(true).put("entity is disabled [name=").put(entityName).put(']');
     }
 
-    public static boolean errnoReadPathDoesNotExist(int errno) {
-        return errnoRemovePathDoesNotExist(errno) || (Os.type == Os.WINDOWS && errno == ERRNO_ACCESS_DENIED_WIN);
+    public static boolean errnoPathDoesNotExist(int errno) {
+        return errno == ERRNO_FILE_DOES_NOT_EXIST || (Os.type == Os.WINDOWS && errno == ERRNO_FILE_DOES_NOT_EXIST_WIN);
     }
 
-    public static boolean errnoRemovePathDoesNotExist(int errno) {
-        return errno == ERRNO_FILE_DOES_NOT_EXIST || (Os.type == Os.WINDOWS && errno == ERRNO_FILE_DOES_NOT_EXIST_WIN);
+    public static boolean errnoReadPathDoesNotExist(int errno) {
+        return errnoPathDoesNotExist(errno) || (Os.type == Os.WINDOWS && errno == ERRNO_ACCESS_DENIED_WIN);
     }
 
     public static CairoException invalidMetadataRecoverable(@NotNull CharSequence msg, @NotNull CharSequence columnName) {

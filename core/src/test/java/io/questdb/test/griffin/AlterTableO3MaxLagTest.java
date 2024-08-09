@@ -126,7 +126,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                 ddl(alterCommand, sqlExecutionContext);
                 Assert.fail("Alter table should fail");
             } catch (CairoError e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-only");
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open, file does not exist");
             }
 
             engine.releaseAllReaders();
@@ -276,7 +276,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                 ddl(alterCommand, sqlExecutionContext);
                 Assert.fail();
             } catch (CairoException | SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-only");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "could not open");
             }
         });
     }
