@@ -849,7 +849,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         );
                         dedupCommitAddresses.setColAddressValues(addr, mappedAddress - columnTop * columnSize);
                         dedupCommitAddresses.setO3DataAddressValues(addr, oooColAddress);
-                        dedupCommitAddresses.setReservedValues(
+                        dedupCommitAddresses.setReservedValuesSet1(
                                 addr,
                                 mappedAddress,
                                 mapSize,

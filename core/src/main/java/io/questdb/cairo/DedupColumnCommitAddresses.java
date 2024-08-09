@@ -167,7 +167,7 @@ public class DedupColumnCommitAddresses implements Closeable {
         Unsafe.getUnsafe().putLong(addr + O3_VAR_DATA_LEN_64, o3VarDataLen);
     }
 
-    public void setReservedValues(
+    public void setReservedValuesSet1(
             long addr,
             long reserved1,
             long reserved2,
@@ -176,21 +176,13 @@ public class DedupColumnCommitAddresses implements Closeable {
         Unsafe.getUnsafe().putLong(addr + RESERVED1, reserved1);
         Unsafe.getUnsafe().putLong(addr + RESERVED2, reserved2);
         Unsafe.getUnsafe().putLong(addr + RESERVED3, reserved3);
-        Unsafe.getUnsafe().putLong(addr + RESERVED4, NULL);
-        Unsafe.getUnsafe().putLong(addr + RESERVED5, NULL);
     }
 
-    public void setReservedValues(
+    public void setReservedValuesSet2(
             long addr,
-            long reserved1,
-            long reserved2,
-            long reserved3,
             long reserved4,
             long reserved5
     ) {
-        Unsafe.getUnsafe().putLong(addr + RESERVED1, reserved1);
-        Unsafe.getUnsafe().putLong(addr + RESERVED2, reserved2);
-        Unsafe.getUnsafe().putLong(addr + RESERVED3, reserved3);
         Unsafe.getUnsafe().putLong(addr + RESERVED4, reserved4);
         Unsafe.getUnsafe().putLong(addr + RESERVED5, reserved5);
     }

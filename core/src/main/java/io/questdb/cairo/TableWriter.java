@@ -4539,58 +4539,53 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                             long colAddr = dedupColumnCommitAddresses.setColValues(
                                     dedupCommitAddr,
-                                    dedupKeyIndex,
+                                    dedupKeyIndex++,
                                     columnType,
                                     ColumnType.sizeOf(columnType),
                                     0L
                             );
                             dedupColumnCommitAddresses.setColAddressValues(colAddr, o3ColumnData);
                             dedupColumnCommitAddresses.setO3DataAddressValues(colAddr, Math.abs(lagKeyAddr));
-                            dedupColumnCommitAddresses.setReservedValues(
+                            dedupColumnCommitAddresses.setReservedValuesSet1(
                                     colAddr,
                                     lagKeyAddr,
                                     lagMemOffset,
                                     lagMapSize
                             );
-                            dedupKeyIndex++;
                         } else {
-                            assert false;
-//                            ColumnTypeDriver driver = ColumnType.getDriver(columnType);
-//                            long roLo = txWriter.getTransientRowCount() - getColumnTop(i);
-//                            long roHi = roLo + lagRows;
-//
-//                            long lagAuxOffset = driver.getAuxVectorOffset(roLo);
-//                            // TODO: check that it works for Strings when offset is > 0
-//                            long lagAuxSize = driver.getAuxVectorSize(lagRows);
-//                            long lagAuxKeyAddr = lagRows > 0 ? mapAppendColumnBuffer(columns.get(getSecondaryColumnIndex(i)), lagAuxOffset, lagAuxSize, false) : DedupColumnCommitAddresses.NULL;
-//
-//                            long lagVarDataOffset = driver.getDataVectorOffset(lagAuxKeyAddr, roLo);
-//                            long lagVarDataSize = driver.getDataVectorSize(lagAuxKeyAddr, roLo, roHi);
-//                            long lagVarDataAddr = lagVarDataSize > 0 ? mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagVarDataOffset, lagVarDataSize, false) : DedupColumnCommitAddresses.NULL;
-//
-//                            MemoryCR o3Column = o3Columns.get(getPrimaryColumnIndex(i));
-//                            long o3ColumnVarDataAddr = o3Column.addressOf(0);
-//                            long o3ColumnVarDataSize = o3Column.size();
-//                            long o3ColumnVarAuxAddr = o3Columns.get(getSecondaryColumnIndex(i)).addressOf(0);
-//
-//                            dedupColumnCommitAddresses.setArrayValues(
-//                                    dedupCommitAddr,
-//                                    dedupKeyIndex++,
-//                                    columnType,
-//                                    ColumnType.sizeOf(columnType),
-//                                    0L,
-//                                    o3ColumnVarAuxAddr,
-//                                    o3ColumnVarDataAddr,
-//                                    o3ColumnVarDataSize,
-//                                    Math.abs(lagAuxKeyAddr),
-//                                    Math.abs(lagVarDataAddr),
-//                                    lagVarDataSize,
-//                                    lagAuxKeyAddr,
-//                                    lagAuxOffset,
-//                                    lagAuxSize,
-//                                    lagVarDataAddr,
-//                                    lagVarDataOffset
-//                            );
+                            ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+                            long addr = dedupColumnCommitAddresses.setColValues(
+                                    dedupCommitAddr,
+                                    dedupKeyIndex++,
+                                    columnType,
+                                    (int) driver.auxRowsToBytes(1),
+                                    0L
+                            );
+
+                            MemoryCR o3Column = o3Columns.get(getPrimaryColumnIndex(i));
+                            long o3ColumnVarDataAddr = o3Column.addressOf(0);
+                            long o3ColumnVarDataSize = o3Column.size();
+                            long o3ColumnVarAuxAddr = o3Columns.get(getSecondaryColumnIndex(i)).addressOf(0);
+                            dedupColumnCommitAddresses.setColAddressValues(addr, o3ColumnVarAuxAddr, o3ColumnVarDataAddr, o3ColumnVarDataSize);
+
+                            if (lagRows > 0) {
+                                long roLo = txWriter.getTransientRowCount() - getColumnTop(i);
+                                long roHi = roLo + lagRows;
+
+                                long lagAuxOffset = driver.getAuxVectorOffset(roLo);
+                                // TODO: check that it works for Strings when offset is > 0
+                                long lagAuxSize = driver.getAuxVectorSize(lagRows);
+                                long lagAuxKeyAddr = mapAppendColumnBuffer(columns.get(getSecondaryColumnIndex(i)), lagAuxOffset, lagAuxSize, false);
+
+                                long lagVarDataOffset = driver.getDataVectorOffset(lagAuxKeyAddr, roLo);
+                                long lagVarDataSize = driver.getDataVectorSize(lagAuxKeyAddr, roLo, roHi);
+                                long lagVarDataAddr = mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagVarDataOffset, lagVarDataSize, false);
+                                dedupColumnCommitAddresses.setO3DataAddressValues(addr, Math.abs(lagAuxKeyAddr), Math.abs(lagVarDataAddr), lagVarDataSize);
+                                dedupColumnCommitAddresses.setReservedValuesSet1(addr, lagAuxKeyAddr, lagAuxOffset, lagAuxSize);
+                                dedupColumnCommitAddresses.setReservedValuesSet2(addr, lagVarDataAddr, lagVarDataOffset);
+                            } else {
+                                dedupColumnCommitAddresses.setO3DataAddressValues(addr, DedupColumnCommitAddresses.NULL, DedupColumnCommitAddresses.NULL, 0);
+                            }
                         }
                     }
                 }

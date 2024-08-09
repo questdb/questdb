@@ -299,7 +299,7 @@ public class VectTest {
                                 0L
                         );
 
-                        colBuffs.setReservedValues(
+                        colBuffs.setReservedValuesSet2(
                                 addr,
                                 0L,
                                 0L,
