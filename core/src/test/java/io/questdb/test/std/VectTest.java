@@ -277,13 +277,31 @@ public class VectTest {
                     colBuffs.setDedupColumnCount(keyCount);
                     long dedupColBuffPtr = colBuffs.allocateBlock();
                     for (int k = 0; k < keyCount; k++) {
-                        colBuffs.setArrayValues(
+                        long addr = colBuffs.setColValues(
                                 dedupColBuffPtr,
                                 k,
                                 ColumnType.SYMBOL,
                                 4,
-                                0,
+                                0
+                        );
+
+                        colBuffs.setColAddressValues(
+                                addr,
                                 keys.get(k).getAddress(),
+                                0L,
+                                0L
+                        );
+
+                        colBuffs.setO3DataAddressValues(
+                                addr,
+                                0L,
+                                0L,
+                                0L
+                        );
+
+                        colBuffs.setReservedValues(
+                                addr,
+                                0L,
                                 0L,
                                 0L,
                                 0L,
@@ -609,18 +627,17 @@ public class VectTest {
                     try (DedupColumnCommitAddresses colBuffs = new DedupColumnCommitAddresses()) {
                         colBuffs.setDedupColumnCount(1);
                         long address = colBuffs.allocateBlock();
-                        colBuffs.setArrayValues(
+
+                        long addr = colBuffs.setColValues(
                                 address,
                                 0,
                                 ColumnType.SYMBOL,
                                 4,
-                                0,
-                                srcDedupCol.getAddress(),
-                                indexDedupCol.getAddress(),
-                                0L,
-                                0L,
-                                0L
+                                0
                         );
+
+                        colBuffs.setColAddressValues(addr, srcDedupCol.getAddress());
+                        colBuffs.setO3DataAddressValues(addr, indexDedupCol.getAddress());
 
                         dest.setPos(index.size() + src.size() * 2);
                         long mergedCount = Vect.mergeDedupTimestampWithLongIndexIntKeys(

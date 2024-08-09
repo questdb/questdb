@@ -45,6 +45,8 @@ struct dedup_column {
     int64_t java_reserved_1;
     int64_t java_reserved_2;
     int64_t java_reserved_3;
+    int64_t java_reserved_4;
+    int64_t java_reserved_5;
     char null_value[32];
 };
 #pragma pack(pop)

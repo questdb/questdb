@@ -809,48 +809,55 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             for (int i = 0; i < metadata.getColumnCount(); i++) {
                 int columnType = metadata.getColumnType(i);
                 if (columnType > 0 && metadata.isDedupKey(i) && i != metadata.getTimestampIndex()) {
-                    final int columnSize = ColumnType.sizeOf(columnType);
+                    if (!ColumnType.isVarSize(columnType)) {
+                        final int columnSize = ColumnType.sizeOf(columnType);
 
-                    final long columnTop = tableWriter.getColumnTop(partitionTimestamp, i, mergeDataHi + 1);
-                    final int fd;
-                    final long mapSize, mappedAddress;
+                        final long columnTop = tableWriter.getColumnTop(partitionTimestamp, i, mergeDataHi + 1);
+                        final int fd;
+                        final long mapSize, mappedAddress;
 
-                    if (columnTop < mergeDataLo + 1) {
-                        CharSequence columnName = metadata.getColumnName(i);
-                        long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, i);
-                        TableUtils.setSinkForPartition(tableRootPath.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, srcNameTxn);
-                        TableUtils.dFile(tableRootPath, columnName, columnNameTxn);
-                        fd = TableUtils.openRO(ff, tableRootPath.$(), LOG);
+                        if (columnTop < mergeDataLo + 1) {
+                            CharSequence columnName = metadata.getColumnName(i);
+                            long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, i);
+                            TableUtils.setSinkForPartition(tableRootPath.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, srcNameTxn);
+                            TableUtils.dFile(tableRootPath, columnName, columnNameTxn);
+                            fd = TableUtils.openRO(ff, tableRootPath.$(), LOG);
 
-                        mapSize = (mergeDataHi + 1 - columnTop) * columnSize;
-                        mappedAddress = TableUtils.mapAppendColumnBuffer(
-                                ff,
-                                fd,
-                                0,
+                            mapSize = (mergeDataHi + 1 - columnTop) * columnSize;
+                            mappedAddress = TableUtils.mapAppendColumnBuffer(
+                                    ff,
+                                    fd,
+                                    0,
+                                    mapSize,
+                                    false,
+                                    mapMemTag
+                            );
+                        } else {
+                            // column is all nulls because of column top
+                            fd = -1;
+                            mapSize = 0;
+                            mappedAddress = 0;
+                        }
+
+                        final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
+                        long addr = dedupCommitAddresses.setColValues(
+                                dedupColSinkAddr,
+                                dedupColumnIndex,
+                                columnType,
+                                columnSize,
+                                columnTop
+                        );
+                        dedupCommitAddresses.setColAddressValues(addr, mappedAddress - columnTop * columnSize);
+                        dedupCommitAddresses.setO3DataAddressValues(addr, oooColAddress);
+                        dedupCommitAddresses.setReservedValues(
+                                addr,
+                                mappedAddress,
                                 mapSize,
-                                false,
-                                mapMemTag
+                                fd
                         );
                     } else {
-                        // column is all nulls because of column top
-                        fd = -1;
-                        mapSize = 0;
-                        mappedAddress = 0;
+                        assert false;
                     }
-
-                    final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
-                    dedupCommitAddresses.setArrayValues(
-                            dedupColSinkAddr,
-                            dedupColumnIndex,
-                            columnType,
-                            columnSize,
-                            columnTop,
-                            mappedAddress - columnTop * columnSize,
-                            oooColAddress,
-                            mappedAddress,
-                            mapSize,
-                            fd
-                    );
                     dedupColumnIndex++;
                 }
             }

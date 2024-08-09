@@ -4526,7 +4526,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 for (int i = 0; i < metadata.getColumnCount(); i++) {
                     int columnType = metadata.getColumnType(i);
                     if (i != metadata.getTimestampIndex() && columnType > 0 && metadata.isDedupKey(i)) {
-                        if (ColumnType.isFixedSize(columnType)) {
+                        if (!ColumnType.isVarSize(columnType)) {
                             int shl = ColumnType.pow2SizeOf(columnType);
                             long lagMemOffset = lagRows > 0 ? (txWriter.getTransientRowCount() - getColumnTop(i)) << shl : 0L;
                             long lagMapSize = lagRows << shl;
@@ -4537,20 +4537,60 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             long o3ColumnData = o3Column.addressOf(0);
                             assert o3ColumnData != 0;
 
-                            dedupColumnCommitAddresses.setArrayValues(
+                            long colAddr = dedupColumnCommitAddresses.setColValues(
                                     dedupCommitAddr,
-                                    dedupKeyIndex++,
+                                    dedupKeyIndex,
                                     columnType,
                                     ColumnType.sizeOf(columnType),
-                                    0L,
-                                    o3ColumnData,
-                                    Math.abs(lagKeyAddr),
+                                    0L
+                            );
+                            dedupColumnCommitAddresses.setColAddressValues(colAddr, o3ColumnData);
+                            dedupColumnCommitAddresses.setO3DataAddressValues(colAddr, Math.abs(lagKeyAddr));
+                            dedupColumnCommitAddresses.setReservedValues(
+                                    colAddr,
                                     lagKeyAddr,
                                     lagMemOffset,
                                     lagMapSize
                             );
+                            dedupKeyIndex++;
                         } else {
                             assert false;
+//                            ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+//                            long roLo = txWriter.getTransientRowCount() - getColumnTop(i);
+//                            long roHi = roLo + lagRows;
+//
+//                            long lagAuxOffset = driver.getAuxVectorOffset(roLo);
+//                            // TODO: check that it works for Strings when offset is > 0
+//                            long lagAuxSize = driver.getAuxVectorSize(lagRows);
+//                            long lagAuxKeyAddr = lagRows > 0 ? mapAppendColumnBuffer(columns.get(getSecondaryColumnIndex(i)), lagAuxOffset, lagAuxSize, false) : DedupColumnCommitAddresses.NULL;
+//
+//                            long lagVarDataOffset = driver.getDataVectorOffset(lagAuxKeyAddr, roLo);
+//                            long lagVarDataSize = driver.getDataVectorSize(lagAuxKeyAddr, roLo, roHi);
+//                            long lagVarDataAddr = lagVarDataSize > 0 ? mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagVarDataOffset, lagVarDataSize, false) : DedupColumnCommitAddresses.NULL;
+//
+//                            MemoryCR o3Column = o3Columns.get(getPrimaryColumnIndex(i));
+//                            long o3ColumnVarDataAddr = o3Column.addressOf(0);
+//                            long o3ColumnVarDataSize = o3Column.size();
+//                            long o3ColumnVarAuxAddr = o3Columns.get(getSecondaryColumnIndex(i)).addressOf(0);
+//
+//                            dedupColumnCommitAddresses.setArrayValues(
+//                                    dedupCommitAddr,
+//                                    dedupKeyIndex++,
+//                                    columnType,
+//                                    ColumnType.sizeOf(columnType),
+//                                    0L,
+//                                    o3ColumnVarAuxAddr,
+//                                    o3ColumnVarDataAddr,
+//                                    o3ColumnVarDataSize,
+//                                    Math.abs(lagAuxKeyAddr),
+//                                    Math.abs(lagVarDataAddr),
+//                                    lagVarDataSize,
+//                                    lagAuxKeyAddr,
+//                                    lagAuxOffset,
+//                                    lagAuxSize,
+//                                    lagVarDataAddr,
+//                                    lagVarDataOffset
+//                            );
                         }
                     }
                 }
@@ -4567,11 +4607,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (dedupColumnCommitAddresses.getColumnCount() > 0 && lagRows > 0) {
                 // Release mapped column buffers for lag rows
                 for (int i = 0; i < dedupKeyIndex; i++) {
-                    long lagAddr = dedupColumnCommitAddresses.getColReserved1(dedupCommitAddr, i);
-                    long lagMemOffset = dedupColumnCommitAddresses.getColReserved2(dedupCommitAddr, i);
-                    long mapSize = dedupColumnCommitAddresses.getColReserved3(dedupCommitAddr, i);
+                    long lagAuxAddr = dedupColumnCommitAddresses.getColReserved1(dedupCommitAddr, i);
+                    long lagAuxMemOffset = dedupColumnCommitAddresses.getColReserved2(dedupCommitAddr, i);
+                    long mapAuxSize = dedupColumnCommitAddresses.getColReserved3(dedupCommitAddr, i);
 
-                    mapAppendColumnBufferRelease(lagAddr, lagMemOffset, mapSize);
+                    mapAppendColumnBufferRelease(lagAuxAddr, lagAuxMemOffset, mapAuxSize);
+
+                    long lagVarAddr = dedupColumnCommitAddresses.getColReserved4(dedupCommitAddr, i);
+                    long lagVarMemOffset = dedupColumnCommitAddresses.getColReserved5(dedupCommitAddr, i);
+                    long mapVarSize = dedupColumnCommitAddresses.getVarDataLen(dedupCommitAddr, i);
+
+                    mapAppendColumnBufferRelease(lagVarAddr, lagVarMemOffset, mapVarSize);
                 }
             }
             dedupColumnCommitAddresses.clear();
