@@ -73,7 +73,7 @@ public class ReaderReloadTest extends AbstractCairoTest {
                 Assert.assertSame(reader1, reader2);
                 Assert.fail();
             } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "could not open read-only");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "could not open");
             }
 
             failToOpen.set(false);

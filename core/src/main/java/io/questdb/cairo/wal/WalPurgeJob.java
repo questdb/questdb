@@ -370,7 +370,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     private boolean recursiveDelete(Path path) {
-        if (!ff.rmdir(path, false) && !CairoException.errnoRemovePathDoesNotExist(ff.errno())) {
+        if (!ff.rmdir(path, false) && !CairoException.errnoPathDoesNotExist(ff.errno())) {
             LOG.debug()
                     .$("could not delete directory [path=").$(path)
                     .$(", errno=").$(ff.errno())
