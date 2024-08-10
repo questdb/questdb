@@ -34,16 +34,16 @@ public class WeightedMidPriceFunctionFactoryTest extends AbstractCairoTest {
     public void testWeightedMidPrice() throws Exception {
         assertMemoryLeak(() -> {
             assertSql("wmid\n2.0\n", "select wmid(100.0, 2.0, 2.0, 100.0)");
-            assertSql("wmid\n2.0\n", "select wmid(300.0, 1.0, 3.0, 200.0)");
-            assertSql("wmid\n2.0\n", "select wmid(400.0, 0.0, 4.0, 300.0)");
+            assertSql("wmid\n2.1999999999999997\n", "select wmid(300.0, 1.0, 3.0, 200.0)");
+            assertSql("wmid\n2.2857142857142856\n", "select wmid(400.0, 0.0, 4.0, 300.0)");
             assertSql("wmid\n1.5\n", "select wmid(100.0, 1.0, 2.0, 100.0)");
-            assertSql("wmid\n1.625\n", "select wmid(100.0, 1.5, 1.75, 1000.0)");
-            assertSql("wmid\n1.5550000000000002\n", "select wmid(100.0, 1.5, 1.61, 100.5)");
+            assertSql("wmid\n1.5227272727272727\n", "select wmid(100.0, 1.5, 1.75, 1000.0)");
+            assertSql("wmid\n1.554862842892768\n", "select wmid(100.0, 1.5, 1.61, 100.5)");
             assertSql("wmid\n0.0\n", "select wmid(200.0, 0.0, 0.0, 0.01)");
-            assertSql("wmid\n0.0\n", "select wmid(200.0, -1.0, 1.0, 100.0)");
-            assertSql("wmid\n-0.5\n", "select wmid(100.3, -1.0, 0.0, 200.1)");
-            assertSql("wmid\n-1.5\n", "select wmid(100.5, -2.0, -1.0, 100.4)");
-            assertSql("wmid\n-1.6666655000000001\n", "select wmid(100.2, -2.22222 -1.111111, 200.4)");
+            assertSql("wmid\n0.33333333333333326\n", "select wmid(200.0, -1.0, 1.0, 100.0)");
+            assertSql("wmid\n-0.6661118508655126\n", "select wmid(100.3, -1.0, 0.0, 200.1)");
+            assertSql("wmid\n-1.4997511199601792\n", "select wmid(100.5, -2.0, -1.0, 100.4)");
+            assertSql("wmid\n-1.8518503333333334\n", "select wmid(100.2, -2.22222, -1.111111, 200.4)");
         });
     }
 
@@ -72,8 +72,8 @@ public class WeightedMidPriceFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testThatOrderDoesNotMatter() throws Exception {
         assertMemoryLeak(() -> {
-            assertSql("wmid\n4.0\n", "select wmid(100.0, 1.0, 3.0, 100.0)");
-            assertSql("wmid\n4.0\n", "select wmid(100.0, 3.0, 1.0, 100.0)");
+            assertSql("wmid\n2.0\n", "select wmid(100.0, 1.0, 3.0, 100.0)");
+            assertSql("wmid\n2.0\n", "select wmid(100.0, 3.0, 1.0, 100.0)");
         });
     }
 
@@ -87,7 +87,7 @@ public class WeightedMidPriceFunctionFactoryTest extends AbstractCairoTest {
                             "select wmid($1, $2, $3, $4)")
             ) {
                 final String expected = "wmid\n" +
-                        "3.0";
+                        "2.0";
 
                 sqlExecutionContext.getBindVariableService().setDouble(0, 100.0);
                 sqlExecutionContext.getBindVariableService().setDouble(1, 3);
