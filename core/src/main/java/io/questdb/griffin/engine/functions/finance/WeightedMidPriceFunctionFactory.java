@@ -49,8 +49,8 @@ public class WeightedMidPriceFunctionFactory implements FunctionFactory {
     }
 
     private static class WeightedMidPriceFunction extends DoubleFunction implements QuaternaryFunction {
-        private final Function bid;
         private final Function bidSize;
+        private final Function bid;
         private final Function ask;
         private final Function askSize;
 
@@ -63,9 +63,9 @@ public class WeightedMidPriceFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            final double b = bid.getDouble(rec);
             final double bs = bidSize.getDouble(rec);
-            final double a = bid.getDouble(rec);
+            final double b = bid.getDouble(rec);
+            final double a = ask.getDouble(rec);
             final double as = askSize.getDouble(rec);
 
             if (Numbers.isNull(b) || Numbers.isNull(bs) || Numbers.isNull(a) || Numbers.isNull(as)) {
