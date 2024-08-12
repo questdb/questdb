@@ -59,15 +59,11 @@ public class CairoTable {
         this.lock = new SimpleReadWriteLock();
     }
 
-    public static CairoTable newInstanceFromToken(@NotNull TableToken token) {
-        return new CairoTable(token);
-    }
-
-    public void addColumnUnsafe(@NotNull CairoColumn newColumn) {
+    public void addColumnUnsafe(@NotNull CairoColumn newColumn) throws CairoException {
         final CharSequence columnName = newColumn.getNameUnsafe();
         final CairoColumn existingColumn = getColumnQuietUnsafe(columnName);
         if (existingColumn != null) {
-            throw CairoException.nonCritical().put("table [name=").put(columnName).put("] already exists in `").put(getName()).put("`");
+            throw CairoException.nonCritical().put("column already exists in table [table=").put(getNameUnsafe()).put(", column=").put(columnName).put("]");
         }
         columns.add(newColumn);
 

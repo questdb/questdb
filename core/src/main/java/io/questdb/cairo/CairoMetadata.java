@@ -49,7 +49,7 @@ public class CairoMetadata {
     }
 
     public static void hydrateTable(@NotNull TableToken token, @NotNull CairoConfiguration configuration, @NotNull Path path, @NotNull Log logger, @NotNull ColumnVersionReader columnVersionReader) {
-        logger.debugW().$("hydrating metadata for [table=").$(token.getTableName()).I$();
+        logger.debugW().$("hydrating metadata [table=").$(token.getTableName()).I$();
 
         // set up table path
         path.of(configuration.getRoot())
@@ -74,7 +74,7 @@ public class CairoMetadata {
         try {
             logger.debugW().$("trying to add table [table=").$(token.getTableName()).I$();
             CairoMetadata.INSTANCE.addTable(table);
-            logger.debugW().$("Added table [table=").$(token.getTableName()).I$();
+            logger.debugW().$("added table [table=").$(token.getTableName()).I$();
         } catch (CairoException e) {
             logger.debugW().$("table already present [table=").$(token.getTableName()).I$();
             final CairoTable alreadyHydrated = CairoMetadata.INSTANCE.getTableQuietUnsafe(token.getTableName());
@@ -82,11 +82,13 @@ public class CairoMetadata {
                 long version = alreadyHydrated.getLastMetadataVersionUnsafe();
 
                 if (version == metadataVersion) {
+                    logger.debugW().$("already up to date [table=").$(token.getTableName())
+                            .$(", version=").$(version).I$();
                     metaMem.close();
                     return;
                 }
 
-                logger.debugW().$("Updating metadata for existing table [table=").$(token.getTableName()).I$();
+                logger.debugW().$("updating metadata for existing table [table=").$(token.getTableName()).I$();
 
                 table.lock.writeLock().unlock();
                 table = alreadyHydrated;
@@ -100,7 +102,16 @@ public class CairoMetadata {
         // get basic metadata
         int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
 
+        logger.debugW().$("reading columns [table=").$(token.getTableName())
+                .$(", count=").$(columnCount)
+                .I$();
+
         table.setLastMetadataVersionUnsafe(metadataVersion);
+
+        logger.debugW().$("set metadata version [table=").$(token.getTableName())
+                .$(", version=").$(metadataVersion)
+                .I$();
+
         table.setPartitionByUnsafe(PartitionBy.toString(metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY)));
         table.setMaxUncommittedRowsUnsafe(metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS));
         table.setO3MaxLagUnsafe(metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG));
@@ -126,6 +137,8 @@ public class CairoMetadata {
                 String columnName = Chars.toString(name);
                 CairoColumn column = new CairoColumn();
 
+                logger.debugW().$("hydrating column [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
+
                 // set basic values
                 column.setNameUnsafe(columnName);
                 column.setTypeUnsafe(columnType);
@@ -136,9 +149,13 @@ public class CairoMetadata {
                 column.setWriterIndexUnsafe(writerIndex);
                 column.setDenseSymbolIndexUnsafe(denseSymbolIndex);
                 column.setStableIndex(stableIndex);
-                column.setDesignated(writerIndex == table.getTimestampIndexUnsafe());
+                column.setIsDesignatedUnsafe(writerIndex == table.getTimestampIndexUnsafe());
+                column.setIsSequentialusafe(TableUtils.isSequential(metaMem, writerIndex));
 
                 if (ColumnType.isSymbol(columnType)) {
+
+                    logger.debugW().$("hydrating symbol metadata [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
+
                     // get column version
                     path.trimTo(configuration.getRoot().length())
                             .concat(table.getDirectoryNameUnsafe())
@@ -168,7 +185,7 @@ public class CairoMetadata {
                     offsetMem.close();
                 }
 
-                logger.debugW().$("Hydrating column [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
+                logger.debugW().$("hydrating column [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
 
                 table.addColumnUnsafe(column);
             }
@@ -176,6 +193,60 @@ public class CairoMetadata {
 
         table.lock.writeLock().unlock();
         metaMem.close();
+    }
+
+    public void addColumn(@NotNull TableToken token,
+                          CharSequence columnName,
+                          int columnType,
+                          int symbolCapacity,
+                          boolean symbolCacheFlag,
+                          boolean isIndexed,
+                          int indexValueBlockCapacity,
+                          boolean isSequential,
+                          boolean isDedupKey,
+                          long metadataVersion
+    ) {
+
+        final CairoTable table = getTableQuick(token.getTableName());
+
+
+        LOG.debugW().$("adding column [table=").$(table.getNameUnsafe()).$(", column=").$(columnName).I$();
+        // ensure column is not present
+        CairoColumn existingColumn = table.getColumnQuiet(columnName);
+        if (existingColumn != null) {
+            assert Chars.equals(existingColumn.getNameUnsafe(), columnName);
+            throw CairoException.duplicateColumn(columnName);
+        }
+
+        CairoColumn newColumn = new CairoColumn();
+        newColumn.setNameUnsafe(columnName.toString());
+        newColumn.setTypeUnsafe(columnType);
+        newColumn.setSymbolCapacityUnsafe(symbolCapacity);
+        newColumn.setSymbolCachedUnsafe(symbolCacheFlag);
+        newColumn.setIsIndexedUnsafe(isIndexed);
+        newColumn.setIndexBlockCapacityUnsafe(indexValueBlockCapacity);
+        newColumn.setIsSequentialusafe(isSequential);
+        newColumn.setIsDedupKeyUnsafe(isDedupKey);
+
+        table.lock.writeLock().lock();
+
+        // ensure we are a newer version
+        try {
+            if (metadataVersion < table.getLastMetadataVersionUnsafe()) {
+                throw CairoException.staleTableMetadata(table.getNameUnsafe(),
+                        table.getLastMetadataVersionUnsafe(), metadataVersion);
+            }
+
+            // check if the column has been added in the meantime
+            existingColumn = table.getColumnQuietUnsafe(columnName);
+            if (existingColumn != null) {
+                throw CairoException.duplicateColumn(columnName);
+            }
+
+            table.addColumnUnsafe(newColumn);
+        } finally {
+            table.lock.writeLock().unlock();
+        }
     }
 
     // fails if table already exists
@@ -189,6 +260,14 @@ public class CairoMetadata {
         lock.writeLock().lock();
         tables.put(tableName, newTable);
         lock.writeLock().unlock();
+    }
+
+    public CairoTable getTableQuick(@NotNull CharSequence tableName) {
+        final CairoTable table = getTableQuiet(tableName);
+        if (table == null) {
+            throw CairoException.tableDoesNotExist(tableName);
+        }
+        return table;
     }
 
     public CairoTable getTableQuiet(@NotNull CharSequence tableName) {

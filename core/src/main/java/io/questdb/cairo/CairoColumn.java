@@ -28,10 +28,11 @@ import org.jetbrains.annotations.NotNull;
 
 public class CairoColumn {
     private int denseSymbolIndex;
-    private boolean designated;
     private int indexBlockCapacity;
     private boolean isDedupKey;
+    private boolean isDesignated;
     private boolean isIndexed;
+    private boolean isSequential;
     private boolean isSymbolTableStatic;
     private CharSequence name;
     private int position;
@@ -44,13 +45,9 @@ public class CairoColumn {
     public CairoColumn() {
     }
 
-    public CairoColumn(@NotNull TableColumnMetadata metadata, boolean designated, int position) {
-        updateMetadata(metadata, designated, position);
-    }
-
     public void copyTo(@NotNull CairoColumn target) {
         target.denseSymbolIndex = this.denseSymbolIndex;
-        target.designated = this.designated;
+        target.isDesignated = this.isDesignated;
         target.indexBlockCapacity = this.indexBlockCapacity;
         target.isDedupKey = this.isDedupKey;
         target.isIndexed = this.isIndexed;
@@ -62,6 +59,7 @@ public class CairoColumn {
         target.symbolCapacity = this.symbolCapacity;
         target.type = this.type;
         target.writerIndex = this.writerIndex;
+        target.isSequential = this.isSequential;
     }
 
     public int getDenseSymbolIndexUnsafe() {
@@ -69,11 +67,11 @@ public class CairoColumn {
     }
 
     public boolean getDesignated() {
-        return designated;
+        return isDesignated;
     }
 
     public boolean getDesignatedUnsafe() {
-        return designated;
+        return isDesignated;
     }
 
     public int getIndexBlockCapacityUnsafe() {
@@ -86,6 +84,10 @@ public class CairoColumn {
 
     public boolean getIsIndexedUnsafe() {
         return isIndexed;
+    }
+
+    public boolean getIsSequentialUnsafe() {
+        return isSequential;
     }
 
     public boolean getIsSymbolTableStaticUnsafe() {
@@ -129,14 +131,6 @@ public class CairoColumn {
         this.denseSymbolIndex = denseSymbolIndex;
     }
 
-    public void setDesignated(boolean designated) {
-        this.designated = designated;
-    }
-
-    public void setDesignatedUnsafe(boolean designated) {
-        this.designated = designated;
-    }
-
     public void setIndexBlockCapacityUnsafe(int indexBlockCapacity) {
         this.indexBlockCapacity = indexBlockCapacity;
     }
@@ -145,8 +139,16 @@ public class CairoColumn {
         this.isDedupKey = isDedupKey;
     }
 
+    public void setIsDesignatedUnsafe(boolean isDesignated) {
+        this.isDesignated = isDesignated;
+    }
+
     public void setIsIndexedUnsafe(boolean isIndexed) {
         this.isIndexed = isIndexed;
+    }
+
+    public void setIsSequentialusafe(boolean isSequential) {
+        this.isSequential = isSequential;
     }
 
     public void setIsSymbolTableStaticUnsafe(boolean symbolTableStatic) {
@@ -183,20 +185,5 @@ public class CairoColumn {
 
     public void setWriterIndexUnsafe(int writerIndex) {
         this.writerIndex = writerIndex;
-    }
-
-    public void updateMetadata(@NotNull TableColumnMetadata tableColumnMetadata, boolean designated, int position) {
-        name = tableColumnMetadata.getName();
-        type = tableColumnMetadata.getType();
-        isDedupKey = tableColumnMetadata.isDedupKey();
-        isIndexed = tableColumnMetadata.isIndexed();
-        indexBlockCapacity = tableColumnMetadata.getIndexValueBlockCapacity();
-        this.designated = designated;
-        this.position = position;
-
-
-//        private boolean symbolCached;
-//        private int symbolCapacity;
-
     }
 }

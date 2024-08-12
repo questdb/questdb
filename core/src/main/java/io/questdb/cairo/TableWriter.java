@@ -570,6 +570,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         bumpMetadataAndColumnStructureVersion();
 
         metadata.addColumn(columnName, columnType, isIndexed, indexValueBlockCapacity, columnIndex, isSequential, symbolCapacity, isDedupKey);
+        CairoMetadata.INSTANCE.addColumn(tableToken, columnName, columnType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, metadata.getMetadataVersion());
+
 
         if (!Os.isWindows()) {
             ff.fsyncAndClose(TableUtils.openRO(ff, path.$(), LOG));
