@@ -40,6 +40,7 @@ public class CairoTable {
     public LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     public IntList columnOrderMap = new IntList();
     public ObjList<CairoColumn> columns = new ObjList<>();
+    public TableToken token;
     // todo: intern, its a column name
     private boolean isDedup;
     private boolean isSoftLink;
@@ -48,7 +49,6 @@ public class CairoTable {
     private long o3MaxLag;
     private String partitionBy;
     private int timestampIndex;
-    private TableToken token;
 
     public CairoTable() {
         this.lock = new SimpleReadWriteLock();
@@ -304,6 +304,13 @@ public class CairoTable {
 
     public void setTimestampIndexUnsafe(int timestampIndex) {
         this.timestampIndex = timestampIndex;
+    }
+
+    public void updateColumnUnsafe(@NotNull CairoColumn newColumn, long metadataVersion) {
+        if (getLastMetadataVersionUnsafe() < metadataVersion) {
+            final CairoColumn existingColumn = getColumnQuietUnsafe(newColumn.getNameUnsafe());
+            newColumn.copyTo(existingColumn);
+        }
     }
 
     private CairoColumn getColumnQuickUnsafe(int position) {

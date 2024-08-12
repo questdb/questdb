@@ -147,7 +147,7 @@ public class CairoColumn {
         this.isIndexed = isIndexed;
     }
 
-    public void setIsSequentialusafe(boolean isSequential) {
+    public void setIsSequentialUnsafe(boolean isSequential) {
         this.isSequential = isSequential;
     }
 

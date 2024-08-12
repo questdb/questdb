@@ -150,7 +150,7 @@ public class CairoMetadata {
                 column.setDenseSymbolIndexUnsafe(denseSymbolIndex);
                 column.setStableIndex(stableIndex);
                 column.setIsDesignatedUnsafe(writerIndex == table.getTimestampIndexUnsafe());
-                column.setIsSequentialusafe(TableUtils.isSequential(metaMem, writerIndex));
+                column.setIsSequentialUnsafe(TableUtils.isSequential(metaMem, writerIndex));
 
                 if (ColumnType.isSymbol(columnType)) {
 
@@ -206,44 +206,43 @@ public class CairoMetadata {
                           boolean isDedupKey,
                           long metadataVersion
     ) {
-
         final CairoTable table = getTableQuick(token.getTableName());
-
-
-        LOG.debugW().$("adding column [table=").$(table.getNameUnsafe()).$(", column=").$(columnName).I$();
-        // ensure column is not present
-        CairoColumn existingColumn = table.getColumnQuiet(columnName);
-        if (existingColumn != null) {
-            assert Chars.equals(existingColumn.getNameUnsafe(), columnName);
-            throw CairoException.duplicateColumn(columnName);
-        }
-
-        CairoColumn newColumn = new CairoColumn();
-        newColumn.setNameUnsafe(columnName.toString());
-        newColumn.setTypeUnsafe(columnType);
-        newColumn.setSymbolCapacityUnsafe(symbolCapacity);
-        newColumn.setSymbolCachedUnsafe(symbolCacheFlag);
-        newColumn.setIsIndexedUnsafe(isIndexed);
-        newColumn.setIndexBlockCapacityUnsafe(indexValueBlockCapacity);
-        newColumn.setIsSequentialusafe(isSequential);
-        newColumn.setIsDedupKeyUnsafe(isDedupKey);
-
-        table.lock.writeLock().lock();
-
-        // ensure we are a newer version
         try {
+            table.lock.writeLock().lock();
+
             if (metadataVersion < table.getLastMetadataVersionUnsafe()) {
-                throw CairoException.staleTableMetadata(table.getNameUnsafe(),
+                throw CairoException.staleTableMetadata(table.getName(),
                         table.getLastMetadataVersionUnsafe(), metadataVersion);
             }
 
-            // check if the column has been added in the meantime
-            existingColumn = table.getColumnQuietUnsafe(columnName);
+            LOG.debugW().$("adding column [table=").$(table.getNameUnsafe()).$(", column=").$(columnName).I$();
+
+            // ensure column is not present
+            CairoColumn existingColumn = table.getColumnQuietUnsafe(columnName);
+            CairoColumn newColumn;
+
             if (existingColumn != null) {
-                throw CairoException.duplicateColumn(columnName);
+                assert Chars.equals(existingColumn.getNameUnsafe(), columnName);
+                LOG.debugW().$("column already present, updating instead [table=").$(table.getNameUnsafe()).$(", column=").$(columnName).I$();
+                newColumn = existingColumn;
+            } else {
+                newColumn = new CairoColumn();
             }
 
-            table.addColumnUnsafe(newColumn);
+            newColumn.setNameUnsafe(columnName.toString());
+            newColumn.setTypeUnsafe(columnType);
+            newColumn.setSymbolCapacityUnsafe(symbolCapacity);
+            newColumn.setSymbolCachedUnsafe(symbolCacheFlag);
+            newColumn.setIsIndexedUnsafe(isIndexed);
+            newColumn.setIndexBlockCapacityUnsafe(indexValueBlockCapacity);
+            newColumn.setIsSequentialUnsafe(isSequential);
+            newColumn.setIsDedupKeyUnsafe(isDedupKey);
+
+            if (newColumn != existingColumn) {
+                table.addColumnUnsafe(newColumn);
+            }
+
+            table.token = token;
         } finally {
             table.lock.writeLock().unlock();
         }
