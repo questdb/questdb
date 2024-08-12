@@ -49,7 +49,7 @@ public class CairoMetadata {
     }
 
     public static void hydrateTable(@NotNull TableToken token, @NotNull CairoConfiguration configuration, @NotNull Path path, @NotNull Log logger, @NotNull ColumnVersionReader columnVersionReader) {
-        logger.debugW().$("Hydrating metadata for [table=").$(token.getTableName()).I$();
+        logger.debugW().$("hydrating metadata for [table=").$(token.getTableName()).I$();
 
         // set up table path
         path.of(configuration.getRoot())
@@ -72,17 +72,16 @@ public class CairoMetadata {
 
         // make sure we aren't duplicating work
         try {
+            logger.debugW().$("trying to add table [table=").$(token.getTableName()).I$();
             CairoMetadata.INSTANCE.addTable(table);
             logger.debugW().$("Added table [table=").$(token.getTableName()).I$();
         } catch (CairoException e) {
-            final CairoTable alreadyHydrated = CairoMetadata.INSTANCE.getTableQuick(token.getTableName());
-            logger.debugW().$("Table already present [table=").$(token.getTableName()).I$();
+            logger.debugW().$("table already present [table=").$(token.getTableName()).I$();
+            final CairoTable alreadyHydrated = CairoMetadata.INSTANCE.getTableQuietUnsafe(token.getTableName());
             if (alreadyHydrated != null) {
-                alreadyHydrated.lock.writeLock().lock();
                 long version = alreadyHydrated.getLastMetadataVersionUnsafe();
 
                 if (version == metadataVersion) {
-                    alreadyHydrated.lock.writeLock().unlock();
                     return;
                 }
 
@@ -90,6 +89,7 @@ public class CairoMetadata {
 
                 table.lock.writeLock().unlock();
                 table = alreadyHydrated;
+                table.lock.writeLock().lock();
 
             } else {
                 throw e;
@@ -180,22 +180,14 @@ public class CairoMetadata {
 
     // fails if table already exists
     public void addTable(@NotNull CairoTable newTable) {
-        lock.writeLock().lock();
         final String tableName = newTable.getNameUnsafe();
-        final CairoTable existingTable = tables.get(tableName);
+        final CairoTable existingTable = getTableQuiet(tableName);
         if (existingTable != null) {
-            throw CairoException.nonCritical().put("already exists in CairoMetadata [table=").put(tableName).put("]");
+            throw CairoException.nonCritical().put("already exists in metadata [table=").put(tableName).put("]");
         }
+        lock.writeLock().lock();
         tables.put(tableName, newTable);
         lock.writeLock().unlock();
-    }
-
-    public CairoTable getTableQuick(@NotNull CharSequence tableName) {
-        final CairoTable tbl = getTableQuiet(tableName);
-        if (tbl == null) {
-            throw CairoException.tableDoesNotExist(tableName);
-        }
-        return tbl;
     }
 
     public CairoTable getTableQuiet(@NotNull CharSequence tableName) {
@@ -203,6 +195,10 @@ public class CairoMetadata {
         final CairoTable tbl = tables.get(tableName);
         lock.readLock().unlock();
         return tbl;
+    }
+
+    public CairoTable getTableQuietUnsafe(@NotNull CharSequence tableName) {
+        return tables.get(tableName);
     }
 
     public int getTablesCountUnsafe() {
