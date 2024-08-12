@@ -459,10 +459,10 @@ public class Bootstrap {
     }
 
     private void copyLogConfResource(byte[] buffer) throws IOException {
-        if (Chars.equalsIgnoreCaseNc("true", System.getProperty(CONTAINERIZED_SYSTEM_PROPERTY))) {
-            copyConfResource(rootDirectory, false, buffer, "conf/log.conf", null);
-        } else {
+        if (Chars.equalsIgnoreCaseNc("false", System.getProperty(CONTAINERIZED_SYSTEM_PROPERTY))) {
             copyConfResource(rootDirectory, false, buffer, "conf/non_containerized_log.conf", "conf/log.conf", null);
+        } else {
+            copyConfResource(rootDirectory, false, buffer, "conf/log.conf", null);
         }
     }
 
