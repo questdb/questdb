@@ -30,7 +30,10 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
 public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -42,6 +45,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     private static final int N_SYMBOL_CAPACITY_COL = N_SYMBOL_CACHED_COL + 1;
     private static final int N_DESIGNATED_COL = N_SYMBOL_CAPACITY_COL + 1;
     private static final int N_UPSERT_KEY_COL = N_DESIGNATED_COL + 1;
+    private static final Log LOG = LogFactory.getLog(ShowColumnsRecordCursorFactory.class);
     private static final RecordMetadata METADATA;
     private final ShowColumnsCursor cursor = new ShowColumnsCursor();
     private final TableToken tableToken;
@@ -74,7 +78,6 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         private final ShowColumnsRecord record = new ShowColumnsRecord();
         private CairoTable cairoTable;
         private int columnIndex;
-        private SqlExecutionContext executionContext;
         private ObjList<CharSequence> names;
 
         @Override
@@ -99,9 +102,17 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
         public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition) {
             try {
-                this.executionContext = executionContext;
                 CairoMetadata cairoMetadata = executionContext.getCairoEngine().getCairoMetadata();
-                cairoTable = cairoMetadata.getTableQuick(tableToken.getTableName());
+                cairoTable = cairoMetadata.getTableQuiet(tableToken.getTableName());
+
+                if (cairoTable == null) {
+                    Path path = new Path();
+                    CairoMetadata.hydrateTable(tableToken, executionContext.getCairoEngine().getConfiguration(), path, LOG, new ColumnVersionReader());
+                    cairoTable = cairoMetadata.getTableQuiet(tableToken.getTableName());
+                    path.close();
+                }
+
+                assert cairoTable != null;
                 names = cairoTable.getColumnNames();
             } catch (CairoException e) {
                 e.position(tokenPosition);

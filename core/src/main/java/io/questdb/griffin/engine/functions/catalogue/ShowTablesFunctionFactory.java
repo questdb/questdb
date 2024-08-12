@@ -38,6 +38,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
 
 public class ShowTablesFunctionFactory implements FunctionFactory {
@@ -79,6 +80,7 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
     }
 
     public static class ShowTablesCursorFactory extends AbstractRecordCursorFactory {
+        public static final Log LOG = LogFactory.getLog(ShowTablesCursorFactory.class);
         public static final String TABLE_NAME_COLUMN_NAME = "table_name";
         public static final TableColumnMetadata TABLE_NAME_COLUMN_META = new TableColumnMetadata(TABLE_NAME_COLUMN_NAME, ColumnType.STRING);
         private final TableListRecordCursor cursor = new TableListRecordCursor();
@@ -256,7 +258,16 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                         return false;
                     }
 
-                    CairoTable table = metadata.getTableQuick(lastTableToken.getTableName());
+                    CairoTable table = metadata.getTableQuiet(lastTableToken.getTableName());
+
+                    if (table == null) {
+                        Path path = new Path();
+                        CairoMetadata.hydrateTable(lastTableToken, engine.getConfiguration(), path, LOG, new ColumnVersionReader());
+                        table = metadata.getTableQuiet(lastTableToken.getTableName());
+                        path.close();
+                    }
+
+                    assert table != null;
 
                     table.copyTo(this.table);
 
