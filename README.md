@@ -71,6 +71,16 @@ Feature highlights include:
 - Excellent performance with
   [high data cardinality](https://questdb.io/glossary/high-cardinality/)
 
+And why use a time-series database?
+
+Beyond performance and efficiency, with a specialized [time-series database](https://questdb.io/glossary/time-series-database/), you don't need to worry about:
+
+- out-of-order data
+- duplicates
+- exactly one semantics
+- frequency of ingestion
+- many other expensive details found in demanding real-world scenarios
+
 ## Try QuestDB
 
 The [live, public demo](https://demo.questdb.io/) is provisioned with the latest
@@ -180,10 +190,6 @@ Visit the [Enterprise page](https://questdb.io/enterprise/) for further details
 and contact information.
 
 ### QuestDB performance vs. other open-source TSDBs
-
-There are many strong
-[time-series databases](https://questdb.io/glossary/time-series-database/)
-available.
 
 QuestDB performs very well in performance benchmarks compared to alternatives.
 
