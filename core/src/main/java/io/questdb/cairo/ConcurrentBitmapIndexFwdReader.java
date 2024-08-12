@@ -103,7 +103,7 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
         protected long next;
         protected long position;
         protected long valueCount;
-        private long indexSkew;
+        private long indexOffset;
         private long maxValue;
         private long nullCount;
         private long nullPos;
@@ -142,7 +142,7 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
 
         @Override
         public long next() {
-            return next - indexSkew;
+            return next - indexOffset;
         }
 
         private long getValueCellIndex(long absoluteValueIndex) {
@@ -168,7 +168,7 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
         }
 
         void of(int key, long minValue, long maxValue, long indexSkew, long keyCount, long nullPos, long nullCount) {
-            this.indexSkew = indexSkew;
+            this.indexOffset = indexSkew;
             this.nullPos = nullPos;
             this.nullCount = nullCount;
             if (keyCount == 0) {

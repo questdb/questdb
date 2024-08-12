@@ -80,7 +80,7 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
     }
 
     private class Cursor implements RowCursor, IndexFrameCursor {
-        protected long indexSkew;
+        protected long indexOffset;
         protected long minValue;
         protected long next;
         protected long valueCount;
@@ -116,7 +116,7 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
 
         @Override
         public long next() {
-            return next - indexSkew;
+            return next - indexOffset;
         }
 
         private long getPreviousBlock(long currentValueBlockOffset) {
@@ -139,7 +139,7 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
         }
 
         void of(int key, long minValue, long maxValue, long indexSkew, long keyCount) {
-            this.indexSkew = indexSkew;
+            this.indexOffset = indexSkew;
             if (keyCount == 0) {
                 valueCount = 0;
             } else {

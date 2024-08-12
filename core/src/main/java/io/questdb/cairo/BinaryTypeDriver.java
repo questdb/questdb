@@ -25,15 +25,10 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.MemoryA;
-import io.questdb.std.BinarySequence;
 import io.questdb.std.Vect;
 
 public class BinaryTypeDriver extends StringTypeDriver {
     public static final BinaryTypeDriver INSTANCE = new BinaryTypeDriver();
-
-    public static void appendValue(MemoryA auxMem, MemoryA dataMem, BinarySequence value) {
-        auxMem.putLong(dataMem.putBin(value));
-    }
 
     @Override
     public void appendNull(MemoryA auxMem, MemoryA dataMem) {

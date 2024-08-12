@@ -102,7 +102,7 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
         protected long next;
         protected long position;
         protected long valueCount;
-        private long indexSkew;
+        private long indexOffset;
         private long maxValue;
         private long valueBlockOffset;
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
@@ -150,7 +150,7 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
 
         @Override
         public long next() {
-            return next - indexSkew;
+            return next - indexOffset;
         }
 
         private long getNextBlock(long currentValueBlockOffset) {
@@ -173,7 +173,7 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
         }
 
         void of(int key, long minValue, long maxValue, long indexSkew, long keyCount) {
-            this.indexSkew = indexSkew;
+            this.indexOffset = indexSkew;
             if (keyCount == 0) {
                 valueCount = 0;
             } else {
