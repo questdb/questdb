@@ -82,6 +82,7 @@ public class CairoMetadata {
                 long version = alreadyHydrated.getLastMetadataVersionUnsafe();
 
                 if (version == metadataVersion) {
+                    metaMem.close();
                     return;
                 }
 
@@ -174,11 +175,11 @@ public class CairoMetadata {
         }
 
         table.lock.writeLock().unlock();
-
         metaMem.close();
     }
 
     // fails if table already exists
+    // assume newtable is locked already
     public void addTable(@NotNull CairoTable newTable) {
         final String tableName = newTable.getNameUnsafe();
         final CairoTable existingTable = getTableQuiet(tableName);
