@@ -50,31 +50,32 @@ public class WeightedMidPriceFunctionFactory implements FunctionFactory {
 
     private static class WeightedMidPriceFunction extends DoubleFunction implements QuaternaryFunction {
         private final Function bidSize;
-        private final Function bid;
-        private final Function ask;
+        private final Function bidPrice;
+        private final Function askPrice;
         private final Function askSize;
 
-        public WeightedMidPriceFunction(Function bidSize, Function bid, Function ask, Function askSize) {
+        // Argument order, e.g. `bidSize, bidPrice, askPrice, askSize`, follows the standard order commonly displayed on trading systems.
+        public WeightedMidPriceFunction(Function bidSize, Function bidPrice, Function askPrice, Function askSize) {
             this.bidSize = bidSize;
-            this.bid = bid;
-            this.ask = ask;
+            this.bidPrice = bidPrice;
+            this.askPrice = askPrice;
             this.askSize = askSize;
         }
 
         @Override
         public double getDouble(Record rec) {
             final double bs = bidSize.getDouble(rec);
-            final double b = bid.getDouble(rec);
-            final double a = ask.getDouble(rec);
+            final double bp = bidPrice.getDouble(rec);
+            final double ap = askPrice.getDouble(rec);
             final double as = askSize.getDouble(rec);
 
-            if (Numbers.isNull(b) || Numbers.isNull(bs) || Numbers.isNull(a) || Numbers.isNull(as)) {
+            if (Numbers.isNull(bp) || Numbers.isNull(bs) || Numbers.isNull(ap) || Numbers.isNull(as)) {
                 return Double.NaN;
             }
 
             double imbalance = bs / (bs + as);
 
-            return a * imbalance + b * (1 - imbalance);
+            return ap * imbalance + bp * (1 - imbalance);
         }
 
         @Override
@@ -84,12 +85,12 @@ public class WeightedMidPriceFunctionFactory implements FunctionFactory {
 
         @Override
         public Function getFunc1() {
-            return bid;
+            return bidPrice;
         }
 
         @Override
         public Function getFunc2() {
-            return ask;
+            return askPrice;
         }
 
         @Override
