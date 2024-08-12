@@ -5469,6 +5469,45 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.000008Z\t8.0\t9.0\n"
             );
 
+            // with a virtual column
+            assertSqlAndPlanNoLeakCheck(
+                    "SELECT timestamp, val, now() " +
+                            "FROM device_data " +
+                            "WHERE device_data.id = '12345678' " +
+                            "ORDER BY timestamp DESC " +
+                            "LIMIT 1",
+                    "VirtualRecord\n" +
+                            "  functions: [timestamp,val,now()]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      limit: 1\n" +
+                            "      filter: id='12345678'\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: device_data\n",
+                    "timestamp\tval\tnow\n" +
+                            "1970-01-01T00:00:00.000010Z\t10.0\t1970-01-01T00:00:00.000000Z\n"
+            );
+
+            assertSqlAndPlanNoLeakCheck(
+                    "SELECT timestamp, val, now() " +
+                            "FROM device_data " +
+                            "WHERE device_data.id = '12345678' " +
+                            "ORDER BY timestamp ASC " +
+                            "LIMIT -3",
+                    "VirtualRecord\n" +
+                            "  functions: [timestamp,val,now()]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      limit: 3\n" +
+                            "      filter: id='12345678'\n" +
+                            "        DataFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: device_data\n",
+                    "timestamp\tval\tnow\n" +
+                            "1970-01-01T00:00:00.000008Z\t8.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "1970-01-01T00:00:00.000009Z\t9.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "1970-01-01T00:00:00.000010Z\t10.0\t1970-01-01T00:00:00.000000Z\n"
+            );
+
             // use alias in order by
             assertSqlAndPlanNoLeakCheck(
                     "SELECT timestamp AS date, val, val + 1 " +
