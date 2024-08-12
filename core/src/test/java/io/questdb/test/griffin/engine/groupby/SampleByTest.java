@@ -4882,6 +4882,15 @@ public class SampleByTest extends AbstractCairoTest {
             String query = "select timestamp, count() from trades\n" +
                     "sample by 1m FROM date_trunc('day', now()) FILL (null) \n";
 
+            assertPlanNoLeakCheck(query, "Sample By\n" +
+                    "  fill: null\n" +
+                    "  range: (timestamp_floor('day',now()),null)\n" +
+                    "  values: [count(*)]\n" +
+                    "    DataFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Interval forward scan on: trades\n" +
+                    "          intervals: [(\"2024-08-12T00:00:00.000000Z\",\"MAX\")]\n");
+
             assertSql("timestamp\tcount\n", query);
         });
     }
