@@ -28,13 +28,15 @@ import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.SimpleReadWriteLock;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
 
 // designated timestamp and partition by are final
 // todo: intern column names
 // todo: update this to use column order map, column name index map etc.
-public class CairoTable {
+public class CairoTable implements Sinkable {
     // consider a versioned lock. consider more granular locking
     public final SimpleReadWriteLock lock;
     public LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
@@ -304,6 +306,44 @@ public class CairoTable {
 
     public void setTimestampIndexUnsafe(int timestampIndex) {
         this.timestampIndex = timestampIndex;
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        sink.put("CairoTable").put('\n');
+        sink.put("\t\t").put("id: ").put(getIdUnsafe()).put('\n');
+        sink.put("\t\t").put("directoryName: ").put(getDirectoryNameUnsafe()).put('\n');
+        sink.put("\t\t").put("isDedup: ").put(getIsDedupUnsafe()).put('\n');
+        sink.put("\t\t").put("isSoftLink: ").put(getIsSoftLinkUnsafe()).put('\n');
+        sink.put("\t\t").put("lastMetadataVersion: ").put(getLastMetadataVersionUnsafe()).put('\n');
+        sink.put("\t\t").put("maxUncommittedRows: ").put(getMaxUncommittedRowsUnsafe()).put('\n');
+        sink.put("\t\t").put("o3MaxLag: ").put(getO3MaxLagUnsafe()).put('\n');
+        sink.put("\t\t").put("partitionBy: ").put(getPartitionByUnsafe()).put('\n');
+        sink.put("\t\t").put("timestampIndex: ").put(getTimestampIndexUnsafe()).put('\n');
+        sink.put("\t\t").put("timestampName: ").put(getTimestampNameUnsafe()).put('\n');
+        sink.put("\t\t").put("walEnabled: ").put(getWalEnabledUnsafe()).put('\n');
+        sink.put("\t\t").put("columnCount: ").put(getColumnCount()).put('\n');
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            sink.put("\t\t");
+            columns.getQuick(i).toSink(sink);
+            sink.put('\n');
+        }
+
+
+//        // consider a versioned lock. consider more granular locking
+//        public final SimpleReadWriteLock lock;
+//        public LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
+//        public IntList columnOrderMap = new IntList();
+//        public ObjList<CairoColumn> columns = new ObjList<>();
+//        public TableToken token;
+//        // todo: intern, its a column name
+//        private boolean isDedup;
+//        private boolean isSoftLink;
+//        private long lastMetadataVersion = -1;
+//        private int maxUncommittedRows;
+//        private long o3MaxLag;
+//        private String partitionBy;
+//        private int timestampIndex;
     }
 
     public void updateColumnUnsafe(@NotNull CairoColumn newColumn, long metadataVersion) {

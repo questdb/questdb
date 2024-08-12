@@ -24,7 +24,44 @@
 
 package io.questdb.test.cairo;
 
-public class CairoMetadataTest {
+import io.questdb.griffin.SqlException;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Test;
+
+public class CairoMetadataTest extends AbstractCairoTest {
 
 
+    @Test
+    public void testBasicMetadataForATable() throws Exception {
+        assertMemoryLeak(() -> {
+            createX();
+
+        });
+    }
+
+
+    private void createX() throws SqlException {
+        ddl(
+                "create table x as (" +
+                        "select" +
+                        " cast(x as int) i," +
+                        " rnd_symbol('msft','ibm', 'googl') sym," +
+                        " round(rnd_double(0)*100, 3) amt," +
+                        " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
+                        " rnd_boolean() b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_double(2) d," +
+                        " rnd_float(2) e," +
+                        " rnd_short(10,1024) f," +
+                        " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 2) g," +
+                        " rnd_symbol(4,4,4,2) ik," +
+                        " rnd_long() j," +
+                        " timestamp_sequence(0, 1000000000) k," +
+                        " rnd_byte(2,50) l," +
+                        " rnd_bin(10, 20, 2) m," +
+                        " rnd_str(5,16,2) n" +
+                        " from long_sequence(10)" +
+                        ") timestamp (timestamp);"
+        );
+    }
 }

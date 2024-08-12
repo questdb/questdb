@@ -24,9 +24,11 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
-public class CairoColumn {
+public class CairoColumn implements Sinkable {
     private int denseSymbolIndex;
     private int indexBlockCapacity;
     private boolean isDedupKey;
@@ -185,5 +187,10 @@ public class CairoColumn {
 
     public void setWriterIndexUnsafe(int writerIndex) {
         this.writerIndex = writerIndex;
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+
     }
 }

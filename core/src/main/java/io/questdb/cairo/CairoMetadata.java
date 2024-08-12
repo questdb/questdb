@@ -28,16 +28,12 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.SimpleReadWriteLock;
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
+import io.questdb.std.*;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 
 
-public class CairoMetadata {
+public class CairoMetadata implements Sinkable {
     public static final CairoMetadata INSTANCE = new CairoMetadata();
     public static final Log LOG = LogFactory.getLog(CairoMetadata.class);
     private final SimpleReadWriteLock lock; // consider StampedLock
@@ -282,6 +278,23 @@ public class CairoMetadata {
 
     public int getTablesCountUnsafe() {
         return tables.size();
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        sink.put("CairoMetadata");
+        sink.put('\n');
+        for (int i = 0, n = tables.size(); i < n; i++) {
+            sink.put('\t');
+            tables.get(tables.keys().getQuick(i)).toSink(sink);
+            sink.put('\n');
+        }
+    }
+
+    public String toString0() {
+        StringSink sink = Misc.getThreadLocalSink();
+        this.toSink(sink);
+        return sink.toString();
     }
 }
 
