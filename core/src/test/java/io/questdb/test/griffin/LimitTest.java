@@ -843,6 +843,16 @@ public class LimitTest extends AbstractCairoTest {
                     true,
                     true
             );
+
+            // now with a virtual column
+            assertQueryAndCache(
+                    "the_answer\tts\tid\n" +
+                            "1764\t1970-01-01T00:00:00.000004Z\tabc\n",
+                    "select 42*42 as the_answer, ts, id from t1 where id = 'abc' limit -1",
+                    null,
+                    true,
+                    true
+            );
         });
     }
 }
