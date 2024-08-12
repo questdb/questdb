@@ -98,6 +98,36 @@ public class DistinctWithLimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDistinctOnNonIndexedColumnWithLimit() throws Exception {
+        assertQuery(
+                "id\treading\n" +
+                        "8\t8.0\n" +
+                        "9\t9.0\n",
+                "select DISTINCT id, reading FROM limtest LIMIT -2",
+                "CREATE TABLE limtest as (" +
+                        "select x as id, cast(x as double) as reading  from long_sequence(9))",
+                null,
+                true,
+                false
+        );
+    }
+
+    @Test
+    public void testDistinctOnNonIndexedColumnWithLimitAndVirtualColumn() throws Exception {
+        assertQuery(
+                "id\treading\tthe_answer\n" +
+                        "1\t1.0\t1764\n" +
+                        "2\t2.0\t1764\n",
+                "select DISTINCT id, reading, 42*42 the_answer FROM limtest LIMIT 2",
+                "CREATE TABLE limtest as (" +
+                        "select x as id, cast(x as double) as reading  from long_sequence(9))",
+                null,
+                true,
+                false
+        );
+    }
+
+    @Test
     public void testDistinctOnNonIndexedRepeatingSymbolColumnWithLimitOrderByAscInSubqueryV2() throws Exception {
         assertQuery(
                 "id\n1\n0\n",
