@@ -920,10 +920,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // This may remove deduplication from the column since var len columns don't support deduplication.
             // Check for it.
             try (TableReader reader = executionContext.getReader(tableToken)) {
-                if (reader.getMetadata().isDedupKey(columnIndex)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "cannot change type of deduplicated key column '").put(columnName)
-                            .put("' to variable size type '").put(ColumnType.nameOf(newColumnType))
-                            .put("', deduplication is only supported for fixed size types");
+                TableReaderMetadata meta = reader.getMetadata();
+                for (int ci = 0, n = meta.getColumnCount(); ci < n; ci++) {
+                    if (meta.getWriterIndex(ci) == columnIndex) {
+                        if (meta.isDedupKey(ci)) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "cannot change type of deduplicated key column '").put(columnName)
+                                    .put("' to variable size type '").put(ColumnType.nameOf(newColumnType))
+                                    .put("', deduplication is only supported for fixed size types");
+                        }
+                    }
                 }
             }
         }
@@ -3224,9 +3229,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     public final static class PartitionAction {
         public static final int ATTACH = 2;
+        public static final int CONVERT = 4;
         public static final int DETACH = 3;
         public static final int DROP = 1;
-        public static final int CONVERT = 4;
     }
 
     private static class TableStructureAdapter implements TableStructure {

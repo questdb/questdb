@@ -157,7 +157,7 @@ public class ConvertOperatorImpl implements Closeable {
                 if (symbolMapReader == null) {
                     symbolMapReader = new SymbolMapReaderImpl();
                 }
-                long existingColNameTxn = tableWriter.getDefaultColumnNameTxn(existingColIndex);
+                long existingColNameTxn = columnVersionWriter.getDefaultColumnNameTxn(existingColIndex);
                 int symbolCount = tableWriter.getSymbolMapWriter(existingColIndex).getSymbolCount();
                 symbolMapReader.of(configuration, path, columnName, existingColNameTxn, symbolCount);
             }
@@ -175,7 +175,7 @@ public class ConvertOperatorImpl implements Closeable {
                         final long maxRow = tableWriter.getPartitionSize(partitionIndex);
 
                         final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, existingColIndex);
-                        if (columnTop != -1) {
+                        if (columnTop > -1) {
                             long rowCount = maxRow - columnTop;
                             long partitionNameTxn = tableWriter.getPartitionNameTxn(partitionIndex);
 
@@ -217,11 +217,7 @@ public class ConvertOperatorImpl implements Closeable {
                         }
                         if (columnTop != tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1)) {
                             long partTs = tableWriter.getPartitionBy() != PartitionBy.NONE ? partitionTimestamp : TxReader.DEFAULT_PARTITION_TIMESTAMP;
-                            if (columnTop != -1) {
-                                columnVersionWriter.upsertColumnTop(partTs, columnIndex, columnTop);
-                            } else {
-                                columnVersionWriter.removeColumnTop(partTs, columnIndex);
-                            }
+                            columnVersionWriter.upsertColumnTop(partTs, columnIndex, columnTop > -1 ? columnTop : maxRow);
                         }
                     } catch (Throwable th) {
                         LOG.error().$("error converting column [at=").$(tableWriter.getTableToken().getDirNameUtf8())

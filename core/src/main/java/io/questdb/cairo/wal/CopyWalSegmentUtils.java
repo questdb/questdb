@@ -164,6 +164,7 @@ public class CopyWalSegmentUtils {
             throw CairoException.critical(ff.errno()).put("failed to copy column file to new segment" +
                             " [path=").put(newSegPath)
                     .put(", column=").put(columnName)
+                    .put(", errno=").put(ff.errno())
                     .put(", startRowNumber=").put(startRowNumber)
                     .put(", rowCount=").put(rowCount)
                     .put(", columnType=").put(columnType)
@@ -189,9 +190,9 @@ public class CopyWalSegmentUtils {
         if (success) {
             newOffsets.setSrcOffsets(offset, -1);
             newOffsets.setDestSizes(length, -1);
-        }
-        if (commitMode != CommitMode.NOSYNC) {
-            ff.fsync(primaryFd);
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.fsync(primaryFd);
+            }
         }
         return success;
     }
@@ -236,6 +237,7 @@ public class CopyWalSegmentUtils {
         final long auxMemAddr = TableUtils.mapRW(ff, auxMem.getFd(), auxMemSize, MEMORY_TAG);
         try {
             final long dataStartOffset = columnTypeDriver.getDataVectorOffset(auxMemAddr, startRowNumber);
+            assert dataStartOffset >= 0;
             final long dataSize = columnTypeDriver.getDataVectorSize(auxMemAddr, startRowNumber, startRowNumber + rowCount - 1);
 
             boolean success = dataSize == 0 || ff.copyData(dataMem.getFd(), primaryFd, dataStartOffset, dataSize) == dataSize;
