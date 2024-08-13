@@ -29,8 +29,8 @@
 
 ---
 
-QuestDB is the fastest growing open-source time-series database offering **high
-throughput ingestion** and **fast SQL queries**. The entire high-performance
+QuestDB is the fastest growing open-source time-series database offering **blazingly fast, high
+throughput ingestion** and **dynamic, low-latency SQL queries**. The entire high-performance
 codebase is built from the ground up in Java, C++ and Rust with no dependencies
 and zero garbage collection.
 
@@ -42,8 +42,8 @@ QuestDB implements ANSI SQL with native time-series SQL extensions. These SQL
 extensions make it simple to analyze, filter and downsample data, or to
 correlate data from multiple sources using relational and time-series joins.
 
-> Ready to go? Check out our
-> [quick start guide](https://questdb.io/docs/quick-start/).
+> Ready to go? Jump to the
+> [Get started](#get-started) section.
 
 <p>&nbsp;</p>
 
@@ -61,9 +61,8 @@ correlate data from multiple sources using relational and time-series joins.
 QuestDB excels with:
 
 - financial market data
-- IoT sensors and sensor arrays, or any IoT sensor data
+- IoT sensors with high data cardinality
 - real-time dashboards
-- time-series data with high data cardinality
 
 Feature highlights include:
 
@@ -122,6 +121,23 @@ We also have some public, real-time demo dashboards using our [Grafana-native](h
 - [NYC taxi geolocation data:](https://questdb.io/dashboards/taxi/) real-time
   replay of 146,393,317 taxi rides across New York City in 2016
 
+### QuestDB performance vs. other oss databases
+
+QuestDB performs very well in performance benchmarks compared to alternatives.
+
+For deep dives into internals and performance, see the following blog posts:
+
+- [QuestDB vs InfluxDB](https://questdb.io/blog/2024/02/26/questdb-versus-influxdb/)
+- [QuestDB vs TimescaleDB](https://questdb.io/blog/timescaledb-vs-questdb-comparison/)
+- [QuestDB vs MongoDB](https://questdb.io/blog/mongodb-time-series-benchmark-review/)
+
+As always, we encourage you to run your own benchmarks.
+
+<div align="center">
+    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
+  </a>
+</div>
+
 ## Get started
 
 Use [Docker](https://www.docker.com/) to start quickly:
@@ -130,7 +146,7 @@ Use [Docker](https://www.docker.com/) to start quickly:
 docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
 ```
 
-Alternatively, macOS users can use Homebrew:
+Or macOS users can use Homebrew:
 
 ```bash
 brew install questdb
@@ -142,7 +158,7 @@ questdb start
 questdb stop
 ```
 
-For a guided experience, start with our concise
+Alternatively, to kickoff the full onboarding journey, start with our concise
 [quick start guide](https://questdb.io/docs/quick-start/).
 
 ### First-party ingestion clients
@@ -207,23 +223,6 @@ Additional features include:
 
 Visit the [Enterprise page](https://questdb.io/enterprise/) for further details
 and contact information.
-
-### QuestDB performance vs. other oss databases
-
-QuestDB performs very well in performance benchmarks compared to alternatives.
-
-For deep dives into internals and performance, see the following blog posts:
-
-- [QuestDB vs InfluxDB](https://questdb.io/blog/2024/02/26/questdb-versus-influxdb/)
-- [QuestDB vs TimescaleDB](https://questdb.io/blog/timescaledb-vs-questdb-comparison/)
-- [QuestDB vs MongoDB](https://questdb.io/blog/mongodb-time-series-benchmark-review/)
-
-As always, we encourage you to run your own benchmarks.
-
-<div align="center">
-    <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.png" width="600"/>
-  </a>
-</div>
 
 ## Additional resources
 
