@@ -1655,6 +1655,25 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'e';
     }
 
+    public static boolean isTimestampFloorKeyword(CharSequence tok) {
+        return tok.length() == 15
+                && (tok.charAt(0) | 32) == 't'
+                && (tok.charAt(1) | 32) == 'i'
+                && (tok.charAt(2) | 32) == 'm'
+                && (tok.charAt(3) | 32) == 'e'
+                && (tok.charAt(4) | 32) == 's'
+                && (tok.charAt(5) | 32) == 't'
+                && (tok.charAt(6) | 32) == 'a'
+                && (tok.charAt(7) | 32) == 'm'
+                && (tok.charAt(8) | 32) == 'p'
+                && (tok.charAt(9)) == '_'
+                && (tok.charAt(10) | 32) == 'f'
+                && (tok.charAt(11) | 32) == 'l'
+                && (tok.charAt(12) | 32) == 'o'
+                && (tok.charAt(13) | 32) == 'o'
+                && (tok.charAt(14) | 32) == 'r';
+    }
+
     public static boolean isTimestampKeyword(CharSequence tok) {
         return tok.length() == 9
                 && (tok.charAt(0) | 32) == 't'

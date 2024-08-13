@@ -1762,7 +1762,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
                 final QueryColumn col = model.getColumns().getQuick(i);
                 final ExpressionNode ast = col.getAst();
-                if (Chars.equals(ast.token, "timestamp_floor")) {
+                if (isTimestampFloorKeyword(ast.token)) {
                     final CharSequence ts = ast.paramCount == 3 ? ast.args.getQuick(1).token : ast.rhs.token;
                     if (Chars.equals(ts, currTimestamp)) {
                         alias = col.getAlias();
