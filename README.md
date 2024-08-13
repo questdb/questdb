@@ -29,11 +29,18 @@
 
 ---
 
-QuestDB is the fastest growing open-source time-series database.
+QuestDB is the fastest growing open-source time-series database offering **high
+throughput ingestion** and **fast SQL queries**. The entire high-performance
+codebase is built from the ground up in Java, C++ and Rust with no dependencies
+and zero garbage collection.
 
-It provides **high throughput ingestion** and **fast SQL queries**.
-
+We achieve high performance via a column-oriented storage model, parallelized
+vector execution, SIMD instructions, and low-latency techniques. In addition,
 QuestDB is hardware efficient, with quick setup and operational efficiency.
+
+QuestDB implements ANSI SQL with native time-series SQL extensions. These SQL
+extensions make it simple to analyze, filter and downsample data, or to
+correlate data from multiple sources using relational and time-series joins.
 
 > Ready to go? Check out our
 > [quick start guide](https://questdb.io/docs/quick-start/).
@@ -54,34 +61,39 @@ QuestDB is hardware efficient, with quick setup and operational efficiency.
 QuestDB excels with:
 
 - financial market data
-- IoT sensor
+- IoT sensors and sensor arrays, or any IoT sensor data
 - real-time dashboards
 - time-series data with high data cardinality
 
 Feature highlights include:
 
-- SQL with powerful time-series extensions: PGWire, HTTP API
-- High-speed ingestion through the InfluxDB Line Protocol over TCP or HTTP
-- Strong and efficient performance on limited hardware (Raspberry Pi, 4 workers)
+- SQL with powerful, SIMD-optimized time-series extensions
+- High-speed ingestion via the InfluxDB Line Protocol
+- Strong and efficient performance on limited hardware
 - Columnar storage format (native or
   [Apache Parquet](https://questdb.io/glossary/apache-parquet/)), partitioned
   and ordered by time
 - Responsive and intuitive Web Console for query and data management, with error
   handling
 - Excellent performance with
-  [high data cardinality](https://questdb.io/glossary/high-cardinality/)
+  [high data cardinality](https://questdb.io/glossary/high-cardinality/) - see
+  [benchmarks](#questdb-performance-vs-other-oss-databases)
 
 And why use a time-series database?
 
-Beyond performance and efficiency, with a specialized [time-series database](https://questdb.io/glossary/time-series-database/), you don't need to worry about:
+Beyond performance and efficiency, with a specialized
+[time-series database](https://questdb.io/glossary/time-series-database/), you
+don't need to worry about:
 
 - out-of-order data
 - duplicates
 - exactly one semantics
-- frequency of ingestion
-- many other expensive details found in demanding real-world scenarios
+- streaming data (low latency)
+- high volumes of concurrent requests
+- volatile and "bursty" data
+- adding new columns - change schema "on the fly" while streaming data
 
-## Try QuestDB
+## Try QuestDB, demo and dashboards
 
 The [live, public demo](https://demo.questdb.io/) is provisioned with the latest
 QuestDB release and sample datasets:
@@ -102,6 +114,13 @@ of 96._
 | `SELECT avg(double) FROM trips WHERE time in '2019'`                          | [0.02 secs](<https://demo.questdb.io/?query=SELECT%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019%27;&executeQuery=true>)                                             |
 | `SELECT time, avg(double) FROM trips WHERE time in '2019-01-01' SAMPLE BY 1h` | [0.01 secs](<https://demo.questdb.io/?query=SELECT%20pickup_datetime,%20avg(trip_distance)%20FROM%20trips%20WHERE%20pickup_datetime%20IN%20%272019-01-01%27%20SAMPLE%20BY%201h;&executeQuery=true>) |
 | `SELECT * FROM trades LATEST ON timestamp PARTITION BY symbol`                | [0.00025 secs](https://demo.questdb.io/?query=SELECT%20*%20FROM%20trades%20LATEST%20ON%20timestamp%20PARTITION%20BY%20symbol;&executeQuery=true)                                                    |
+
+We also have some public, real-time demo dashboards using our [Grafana-native](https://questdb.io/docs/third-party-tools/grafana/) plugin:
+
+- [Real-time crypto trades:](https://questdb.io/dashboards/crypto/) executed
+  trades on Coinbase from more than 20 assets in real time
+- [NYC taxi geolocation data:](https://questdb.io/dashboards/taxi/) real-time
+  replay of 146,393,317 taxi rides across New York City in 2016
 
 ## Get started
 
@@ -130,12 +149,12 @@ For a guided experience, start with our concise
 
 QuestDB clients for ingesting data via the InfluxDB Line Protocol:
 
+- [Python](https://questdb.io/docs/clients/ingest-python/)
 - [.NET](https://questdb.io/docs/clients/ingest-dotnet/)
 - [C/C++](https://questdb.io/docs/clients/ingest-c-and-cpp/)
 - [Go](https://questdb.io/docs/clients/ingest-go/)
 - [Java](https://questdb.io/docs/clients/java_ilp/)
 - [NodeJS](https://questdb.io/docs/clients/ingest-node/)
-- [Python](https://questdb.io/docs/clients/ingest-python/)
 - [Rust](https://questdb.io/docs/clients/ingest-rust/)
 
 ### Connect to QuestDB
@@ -189,7 +208,7 @@ Additional features include:
 Visit the [Enterprise page](https://questdb.io/enterprise/) for further details
 and contact information.
 
-### QuestDB performance vs. other open-source TSDBs
+### QuestDB performance vs. other oss databases
 
 QuestDB performs very well in performance benchmarks compared to alternatives.
 
@@ -215,15 +234,6 @@ As always, we encourage you to run your own benchmarks.
   out our plan for upcoming releases
 - [Tutorials:](https://questdb.io/tutorial/) learn what's possible with QuestDB,
   step by step
-
-### 📈 Demo dashboards
-
-- [Live demo:](https://demo.questdb.io/) explore a live instance of QuestDB with
-  preloaded datasets
-- [Real-time crypto dashboard:](https://questdb.io/dashboards/crypto/)
-  executed trades on Coinbase from more than 20 assets in real time
-- [NYC taxi:](https://questdb.io/dashboards/taxi/) real-time replay of
-  146,393,317 taxi rides across New York City in 2016
 
 ### ❓ Get support
 
