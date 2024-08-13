@@ -31,9 +31,9 @@ public class BitmapIndexBwdNullReader implements BitmapIndexReader {
     private final NullCursor cursor = new NullCursor();
 
     @Override
-    public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue, boolean relativeIndex) {
+    public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
         final NullCursor cursor = getCursor(cachedInstance);
-        cursor.value = relativeIndex ? maxValue - minValue : maxValue;
+        cursor.value = maxValue - minValue;
         return cursor;
     }
 

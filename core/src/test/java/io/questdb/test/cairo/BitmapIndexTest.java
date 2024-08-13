@@ -54,7 +54,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 
 public class BitmapIndexTest extends AbstractCairoTest {
-
     private Path path;
     private int plen;
 
@@ -144,7 +143,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
                 for (int i = 0; i < N; i++) {
                     int key = i % maxKeys;
-                    long value = rnd.nextLong();
+                    long value = rnd.nextPositiveLong();
                     writer.add(key, value);
 
                     LongList list = lists.get(key);
@@ -161,7 +160,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     LongList list = lists.get(keys.getQuick(i));
                     Assert.assertNotNull(list);
-                    RowCursor cursor = reader.getCursor(true, keys.getQuick(i), Long.MIN_VALUE, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(true, keys.getQuick(i), 0, Long.MAX_VALUE);
                     int z = list.size();
                     while (cursor.hasNext()) {
                         Assert.assertTrue(z > -1);
@@ -179,7 +178,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 for (int i = 0, n = keys.size(); i < n; i++) {
                     LongList list = lists.get(keys.getQuick(i));
                     Assert.assertNotNull(list);
-                    RowCursor cursor = reader.getCursor(true, keys.getQuick(i), Long.MIN_VALUE, Long.MAX_VALUE);
+                    RowCursor cursor = reader.getCursor(true, keys.getQuick(i), 0, Long.MAX_VALUE);
                     int z = 0;
                     int sz = list.size();
                     while (cursor.hasNext()) {
@@ -1086,8 +1085,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             LongList tmp = new LongList();
             try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, nullsN)) {
-                assertBackwardCursorLimit(reader, 1, 260, tmp, nullsN - 1, true);
-                assertBackwardCursorLimit(reader, 1, 260, tmp, nullsN - 1, false);
+                assertBackwardCursorLimit(reader, 0, 260, tmp, nullsN, true);
+                assertBackwardCursorLimit(reader, 0, 260, tmp, nullsN, false);
             }
         });
     }
@@ -1831,7 +1830,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
                             for (int j = keys.size() - 1; j > -1; j--) {
                                 int key = keys.getQuick(j);
                                 LongList values = lists.get(key);
-                                cursor = reader.initCursor(cursor, key, 0, Long.MAX_VALUE, false);
+                                cursor = reader.initCursor(cursor, key, 0, Long.MAX_VALUE);
 
                                 tmp.clear();
                                 while (cursor.hasNext()) {

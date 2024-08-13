@@ -46,25 +46,24 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
     }
 
     @Override
-    public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue, boolean relativeIndex) {
+    public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
         assert minValue <= maxValue;
 
         if (key >= keyCount) {
             updateKeyCount();
         }
 
-        final long indexSkew = relativeIndex ? minValue : 0;
         if (key == 0 && unindexedNullCount > 0 && minValue < unindexedNullCount) {
             // we need to return the whole set of actual index values and then some nulls
             final NullCursor nullCursor = getNullCursor(cachedInstance);
             nullCursor.nullCount = Math.min(unindexedNullCount, maxValue + 1);
-            nullCursor.of(key, minValue, maxValue, indexSkew, keyCount);
+            nullCursor.of(key, minValue, maxValue, keyCount);
             return nullCursor;
         }
 
         if (key < keyCount) {
             final Cursor cursor = getCursor(cachedInstance);
-            cursor.of(key, minValue, maxValue, indexSkew, keyCount);
+            cursor.of(key, minValue, maxValue, keyCount);
             return cursor;
         }
 
@@ -80,18 +79,11 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
     }
 
     private class Cursor implements RowCursor, IndexFrameCursor {
-        protected long indexOffset;
         protected long minValue;
         protected long next;
         protected long valueCount;
         private long valueBlockOffset;
         private final BitmapIndexUtils.ValueBlockSeeker SEEKER = this::seekValue;
-
-        @Override
-        public IndexFrame getNext() {
-            // See BitmapIndexFwdReader if it needs implementing
-            throw new UnsupportedOperationException();
-        }
 
         @Override
         public boolean hasNext() {
@@ -116,7 +108,13 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
 
         @Override
         public long next() {
-            return next - indexOffset;
+            return next - minValue;
+        }
+
+        @Override
+        public IndexFrame nextIndexFrame() {
+            // See BitmapIndexFwdReader if it needs implementing
+            throw new UnsupportedOperationException();
         }
 
         private long getPreviousBlock(long currentValueBlockOffset) {
@@ -138,8 +136,7 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
             this.valueBlockOffset = offset;
         }
 
-        void of(int key, long minValue, long maxValue, long indexSkew, long keyCount) {
-            this.indexOffset = indexSkew;
+        void of(int key, long minValue, long maxValue, long keyCount) {
             if (keyCount == 0) {
                 valueCount = 0;
             } else {

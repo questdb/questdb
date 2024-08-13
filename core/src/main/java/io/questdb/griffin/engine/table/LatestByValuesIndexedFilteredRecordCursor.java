@@ -118,7 +118,7 @@ class LatestByValuesIndexedFilteredRecordCursor extends AbstractPageFrameRecordC
     private void addFoundKey(int symbolKey, BitmapIndexReader indexReader, int frameIndex, long partitionLo, long partitionHi) {
         int index = found.keyIndex(symbolKey);
         if (index > -1) {
-            RowCursor cursor = indexReader.getCursor(false, symbolKey, partitionLo, partitionHi, true);
+            RowCursor cursor = indexReader.getCursor(false, symbolKey, partitionLo, partitionHi);
             while (cursor.hasNext()) {
                 final long row = cursor.next();
                 recordA.setRowIndex(row - partitionLo);

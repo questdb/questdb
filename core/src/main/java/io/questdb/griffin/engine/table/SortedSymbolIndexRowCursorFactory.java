@@ -177,8 +177,7 @@ public class SortedSymbolIndexRowCursorFactory implements RowCursorFactory {
                                 true,
                                 symbolKeys.getQuick(index++),
                                 pageFrame.getPartitionLo(),
-                                pageFrame.getPartitionHi() - 1,
-                                true
+                                pageFrame.getPartitionHi() - 1
                         );
 
                 if (current.hasNext()) {

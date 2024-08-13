@@ -485,7 +485,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     }
 
                 case STATE_FETCH_NEXT_INDEX_FRAME:
-                    indexFrame = indexCursor.getNext();
+                    indexFrame = indexCursor.nextIndexFrame();
                     indexFramePosition = 0;
 
                     long indexFrameAddress = indexFrame.getAddress();

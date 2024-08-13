@@ -284,7 +284,9 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         public int keyOf(CharSequence value) {
             if (value != null) {
                 int hash = Hash.boundedHash(value, maxHash);
-                rowCursor = indexReader.initCursor(rowCursor, hash, 0, maxOffset - Long.BYTES, false);
+                // Here we need absolute row indexes within the partition while the cursor gives us relative ones.
+                // But since the minimum row index (minValue) is 0, they match.
+                rowCursor = indexReader.initCursor(rowCursor, hash, 0, maxOffset - Long.BYTES);
                 while (rowCursor.hasNext()) {
                     final long offsetOffset = rowCursor.next();
                     if (Chars.equals(value, charMem.getStr(offsetMem.getLong(offsetOffset), csviewInternal))) {
