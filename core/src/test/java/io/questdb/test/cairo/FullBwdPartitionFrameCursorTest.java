@@ -25,8 +25,8 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.sql.PartitionFrame;
+import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -36,9 +36,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_DESC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
-public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
+public class FullBwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testReload() throws Exception {
@@ -86,10 +86,10 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
                 writer.commit();
                 Assert.assertEquals(N, writer.size());
 
-                try (FullBwdDataFrameCursorFactory factory = new FullBwdDataFrameCursorFactory(writer.getTableToken(), 0, GenericRecordMetadata.deepCopyOf(writer.getMetadata()))) {
+                try (FullBwdPartitionFrameCursorFactory factory = new FullBwdPartitionFrameCursorFactory(writer.getTableToken(), 0, GenericRecordMetadata.deepCopyOf(writer.getMetadata()))) {
                     final TestTableReaderRecord record = new TestTableReaderRecord();
 
-                    try (final DataFrameCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine), ORDER_DESC)) {
+                    try (final PartitionFrameCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine), ORDER_DESC)) {
                         printCursor(record, cursor);
 
                         TestUtils.assertEquals(expected, sink);
@@ -123,10 +123,10 @@ public class FullBwdDataFrameCursorTest extends AbstractCairoTest {
         });
     }
 
-    private void printCursor(TestTableReaderRecord record, DataFrameCursor cursor) {
+    private void printCursor(TestTableReaderRecord record, PartitionFrameCursor cursor) {
         sink.clear();
         record.of(cursor.getTableReader());
-        DataFrame frame;
+        PartitionFrame frame;
         while ((frame = cursor.next()) != null) {
             record.jumpTo(frame.getPartitionIndex(), 0);
             for (long index = frame.getRowHi() - 1, lo = frame.getRowLo() - 1; index > lo; index--) {

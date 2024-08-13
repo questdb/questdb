@@ -69,7 +69,7 @@ import java.io.Closeable;
 import java.util.ArrayDeque;
 
 import static io.questdb.cairo.ColumnType.getGeoHashBits;
-import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.model.ExpressionNode.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
@@ -2425,9 +2425,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             @NotNull IntList columnSizeShifts,
             @NotNull LongList prefixes
     ) throws SqlException {
-        final DataFrameCursorFactory dataFrameCursorFactory;
+        final PartitionFrameCursorFactory partitionFrameCursorFactory;
         if (intrinsicModel.hasIntervalFilters()) {
-            dataFrameCursorFactory = new IntervalBwdDataFrameCursorFactory(
+            partitionFrameCursorFactory = new IntervalBwdPartitionFrameCursorFactory(
                     tableToken,
                     model.getMetadataVersion(),
                     intrinsicModel.buildIntervalModel(),
@@ -2435,7 +2435,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     GenericRecordMetadata.deepCopyOf(reader.getMetadata())
             );
         } else {
-            dataFrameCursorFactory = new FullBwdDataFrameCursorFactory(
+            partitionFrameCursorFactory = new FullBwdPartitionFrameCursorFactory(
                     tableToken,
                     model.getMetadataVersion(),
                     GenericRecordMetadata.deepCopyOf(reader.getMetadata())
@@ -2474,7 +2474,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return new LatestByAllSymbolsFilteredRecordCursorFactory(
                         configuration,
                         metadata,
-                        dataFrameCursorFactory,
+                        partitionFrameCursorFactory,
                         RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA),
                         keyTypes,
                         partitionByColumnIndexes,
@@ -2487,7 +2487,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return new LatestByAllFilteredRecordCursorFactory(
                     configuration,
                     metadata,
-                    dataFrameCursorFactory,
+                    partitionFrameCursorFactory,
                     RecordSinkFactory.getInstance(asm, metadata, listColumnFilterA),
                     keyTypes,
                     filter,
@@ -2507,14 +2507,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     rcf = generate(intrinsicModel.keySubQuery, executionContext);
                     func = validateSubQueryColumnAndGetGetter(intrinsicModel, rcf.getMetadata());
                 } catch (Throwable e) {
-                    Misc.free(dataFrameCursorFactory);
+                    Misc.free(partitionFrameCursorFactory);
                     throw e;
                 }
 
                 return new LatestBySubQueryRecordCursorFactory(
                         configuration,
                         metadata,
-                        dataFrameCursorFactory,
+                        partitionFrameCursorFactory,
                         latestByIndex,
                         rcf,
                         filter,
@@ -2558,7 +2558,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         return new PageFrameRecordCursorFactory(
                                 configuration,
                                 metadata,
-                                dataFrameCursorFactory,
+                                partitionFrameCursorFactory,
                                 rcf,
                                 false,
                                 null,
@@ -2573,7 +2573,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         return new LatestByValueDeferredIndexedFilteredRecordCursorFactory(
                                 configuration,
                                 metadata,
-                                dataFrameCursorFactory,
+                                partitionFrameCursorFactory,
                                 latestByIndex,
                                 symbolValueFunc,
                                 filter,
@@ -2584,7 +2584,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     return new LatestByValueIndexedFilteredRecordCursorFactory(
                             configuration,
                             metadata,
-                            dataFrameCursorFactory,
+                            partitionFrameCursorFactory,
                             latestByIndex,
                             symbol,
                             filter,
@@ -2596,7 +2596,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return new LatestByValuesIndexedFilteredRecordCursorFactory(
                         configuration,
                         metadata,
-                        dataFrameCursorFactory,
+                        partitionFrameCursorFactory,
                         latestByIndex,
                         intrinsicModel.keyValueFuncs,
                         symbolMapReader,
@@ -2614,7 +2614,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return new LatestByDeferredListValuesFilteredRecordCursorFactory(
                         configuration,
                         metadata,
-                        dataFrameCursorFactory,
+                        partitionFrameCursorFactory,
                         latestByIndex,
                         intrinsicModel.keyValueFuncs,
                         intrinsicModel.keyExcludedValueFuncs,
@@ -2636,7 +2636,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return new LatestByValueDeferredFilteredRecordCursorFactory(
                         configuration,
                         metadata,
-                        dataFrameCursorFactory,
+                        partitionFrameCursorFactory,
                         latestByIndex,
                         symbolKeyFunc,
                         filter,
@@ -2648,7 +2648,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return new LatestByValueFilteredRecordCursorFactory(
                     configuration,
                     metadata,
-                    dataFrameCursorFactory,
+                    partitionFrameCursorFactory,
                     latestByIndex,
                     symbolKey,
                     filter,
@@ -2665,7 +2665,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return new LatestByAllIndexedRecordCursorFactory(
                     configuration,
                     metadata,
-                    dataFrameCursorFactory,
+                    partitionFrameCursorFactory,
                     latestByIndex,
                     columnIndexes,
                     columnSizeShifts,
@@ -2675,7 +2675,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return new LatestByDeferredListValuesFilteredRecordCursorFactory(
                     configuration,
                     metadata,
-                    dataFrameCursorFactory,
+                    partitionFrameCursorFactory,
                     latestByIndex,
                     filter,
                     columnIndexes,
@@ -3119,7 +3119,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             boolean isFillNone = fillCount == 0 || fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "none");
             boolean allGroupsFirstLast = isFillNone && allGroupsFirstLastWithSingleSymbolFilter(model, metadata);
             if (allGroupsFirstLast) {
-                SingleSymbolFilter symbolFilter = factory.convertToSampleByIndexDataFrameCursorFactory();
+                SingleSymbolFilter symbolFilter = factory.convertToSampleByIndexPageFrameCursorFactory();
                 if (symbolFilter != null) {
                     int symbolColIndex = getSampleBySymbolKeyIndex(model, metadata);
                     if (symbolColIndex == -1 || symbolFilter.getColumnIndex() == symbolColIndex) {
@@ -3143,7 +3143,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 sampleToFuncPos
                         );
                     }
-                    factory.revertFromSampleByIndexDataFrameCursorFactory();
+                    factory.revertFromSampleByIndexPageFrameCursorFactory();
                 }
             }
 
@@ -4988,7 +4988,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return new EmptyTableRecordCursorFactory(myMeta);
             }
 
-            DataFrameCursorFactory dfcFactory;
+            PartitionFrameCursorFactory dfcFactory;
 
             if (latestByColumnCount > 0) {
                 Function filter = compileFilter(intrinsicModel, myMeta, executionContext);
@@ -5027,7 +5027,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (intrinsicModel.hasIntervalFilters()) {
                 RuntimeIntrinsicIntervalModel intervalModel = intrinsicModel.buildIntervalModel();
                 if (orderDescendingByDesignatedTimestampOnly) {
-                    dfcFactory = new IntervalBwdDataFrameCursorFactory(
+                    dfcFactory = new IntervalBwdPartitionFrameCursorFactory(
                             tableToken,
                             model.getMetadataVersion(),
                             intervalModel,
@@ -5035,7 +5035,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             dfcFactoryMeta
                     );
                 } else {
-                    dfcFactory = new IntervalFwdDataFrameCursorFactory(
+                    dfcFactory = new IntervalFwdPartitionFrameCursorFactory(
                             tableToken,
                             model.getMetadataVersion(),
                             intervalModel,
@@ -5046,9 +5046,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 intervalHitsOnlyOnePartition = intervalModel.allIntervalsHitOnePartition(reader.getPartitionedBy());
             } else {
                 if (orderDescendingByDesignatedTimestampOnly) {
-                    dfcFactory = new FullBwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
+                    dfcFactory = new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 } else {
-                    dfcFactory = new FullFwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
+                    dfcFactory = new FullFwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 }
                 intervalHitsOnlyOnePartition = reader.getPartitionedBy() == PartitionBy.NONE;
             }
@@ -5361,14 +5361,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // construct new metadata, which is a copy of what we constructed just above, but
             // in the interest of isolating problems we will only affect this factory
 
-            AbstractDataFrameCursorFactory cursorFactory;
+            AbstractPartitionFrameCursorFactory cursorFactory;
             RowCursorFactory rowCursorFactory;
 
             if (orderDescendingByDesignatedTimestampOnly) {
-                cursorFactory = new FullBwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
+                cursorFactory = new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 rowCursorFactory = new BwdPageFrameRowCursorFactory();
             } else {
-                cursorFactory = new FullFwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
+                cursorFactory = new FullFwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 rowCursorFactory = new PageFrameFwdRowCursorFactory();
             }
 
@@ -5396,7 +5396,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return new LatestByAllIndexedRecordCursorFactory(
                         configuration,
                         myMeta,
-                        new FullBwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
+                        new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
                         listColumnFilterA.getColumnIndexFactored(0),
                         columnIndexes,
                         columnSizeShifts,
@@ -5410,7 +5410,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return new LatestByDeferredListValuesFilteredRecordCursorFactory(
                         configuration,
                         myMeta,
-                        new FullBwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
+                        new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
                         latestByColumnIndex,
                         null,
                         columnIndexes,
@@ -5431,7 +5431,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return new LatestByAllSymbolsFilteredRecordCursorFactory(
                     configuration,
                     myMeta,
-                    new FullBwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
+                    new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
                     RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA),
                     keyTypes,
                     partitionByColumnIndexes,
@@ -5445,7 +5445,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new LatestByAllFilteredRecordCursorFactory(
                 configuration,
                 myMeta,
-                new FullBwdDataFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
+                new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta),
                 RecordSinkFactory.getInstance(asm, myMeta, listColumnFilterA),
                 keyTypes,
                 null,

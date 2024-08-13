@@ -28,7 +28,7 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.RowCursor;
 
 /**
- * Row cursor that goes through data frame backwards / from end to start / hi to lo.
+ * Row cursor that goes through page frame backwards / from end to start / hi to lo.
  */
 public class PageFrameBwdRowCursor implements RowCursor {
     private long current;

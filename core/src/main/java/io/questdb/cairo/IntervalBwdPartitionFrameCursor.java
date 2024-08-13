@@ -24,31 +24,30 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 
-public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor {
-
-    private static final Log LOG = LogFactory.getLog(IntervalBwdDataFrameCursor.class);
+public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFrameCursor {
+    private static final Log LOG = LogFactory.getLog(IntervalBwdPartitionFrameCursor.class);
 
     /**
-     * Cursor for data frames that chronologically intersect collection of intervals.
-     * Data frame low and high row will be within intervals inclusive of edges. Intervals
-     * themselves are pairs of microsecond time.
+     * Cursor for partition frames that chronologically intersect collection of intervals.
+     * Partition frame low and high row will be within intervals inclusive of edges.
+     * Intervals themselves are pairs of microsecond time.
      *
      * @param intervals      pairs of microsecond interval values, as in "low" and "high" inclusive of
      *                       edges.
      * @param timestampIndex index of timestamp column in the readr that is used by this cursor
      */
-    public IntervalBwdDataFrameCursor(RuntimeIntrinsicIntervalModel intervals, int timestampIndex) {
+    public IntervalBwdPartitionFrameCursor(RuntimeIntrinsicIntervalModel intervals, int timestampIndex) {
         super(intervals, timestampIndex);
     }
 
     @Override
-    public DataFrame next() {
+    public PartitionFrame next() {
         // order of logical operations is important
         // we are not calculating partition ranges when intervals are empty
         while (intervalsLo < intervalsHi && partitionLo < partitionHi) {
@@ -79,7 +78,7 @@ public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
                         .$(", limitHi=").$(limitHi)
                         .$(", rowCount=").$(rowCount)
                         .$(", currentInterval=").$(currentInterval)
-                        .$(']').$();
+                        .I$();
 
                 // interval is wholly above partition, skip partition
                 if (partitionTimestampLo > intervalHi) {
@@ -110,7 +109,7 @@ public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
                 }
 
                 if (lo == 0) {
-                    // interval yielded empty data frame, skip partition
+                    // interval yielded empty partition frame, skip partition
                     skipPartition(currentPartition);
                 } else {
                     // only fragment, need to skip to next interval
@@ -118,11 +117,11 @@ public class IntervalBwdDataFrameCursor extends AbstractIntervalDataFrameCursor 
                 }
 
                 if (lo < hi) {
-                    dataFrame.partitionIndex = currentPartition;
-                    dataFrame.rowLo = lo;
-                    dataFrame.rowHi = hi;
+                    partitionFrame.partitionIndex = currentPartition;
+                    partitionFrame.rowLo = lo;
+                    partitionFrame.rowHi = hi;
                     sizeSoFar += hi - lo;
-                    return dataFrame;
+                    return partitionFrame;
                 }
             } else {
                 // partition was empty, just skip to next

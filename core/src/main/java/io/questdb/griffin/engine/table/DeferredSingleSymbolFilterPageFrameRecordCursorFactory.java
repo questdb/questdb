@@ -47,7 +47,7 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
             Function symbolFunc,
             RowCursorFactory rowCursorFactory,
             RecordMetadata metadata,
-            DataFrameCursorFactory dataFrameCursorFactory,
+            PartitionFrameCursorFactory partitionFrameCursorFactory,
             boolean followsOrderByAdvice,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizes,
@@ -56,7 +56,7 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
         super(
                 configuration,
                 metadata,
-                dataFrameCursorFactory,
+                partitionFrameCursorFactory,
                 rowCursorFactory,
                 followsOrderByAdvice,
                 null,
@@ -82,7 +82,7 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
         };
     }
 
-    public SingleSymbolFilter convertToSampleByIndexDataFrameCursorFactory() {
+    public SingleSymbolFilter convertToSampleByIndexPageFrameCursorFactory() {
         convertedToFrame = true;
         return symbolFilter;
     }
@@ -95,8 +95,8 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         assert convertedToFrame;
-        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, order);
-        initFwdPageFrameCursor(dataFrameCursor, executionContext);
+        PartitionFrameCursor partitionFrameCursor = partitionFrameCursorFactory.getCursor(executionContext, order);
+        initFwdPageFrameCursor(partitionFrameCursor, executionContext);
         try {
             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
                 final CharSequence symbol = symbolFunc.getStrA(null);
@@ -114,7 +114,7 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
     }
 
     @Override
-    public void revertFromSampleByIndexDataFrameCursorFactory() {
+    public void revertFromSampleByIndexPageFrameCursorFactory() {
         convertedToFrame = false;
     }
 

@@ -1965,7 +1965,7 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIndexSampleByIndexFrameExceedsDataFrame() throws Exception {
+    public void testIndexSampleByIndexFrameExceedsPartitionFrame() throws Exception {
         assertQuery(
                 "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
@@ -2800,7 +2800,7 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNoSampleByWithDeferredSingleSymbolFilterDataFrameRecordCursorFactory() throws Exception {
+    public void testNoSampleByWithDeferredSingleSymbolFilterPageFrameRecordCursorFactory() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table xx (k timestamp, d DOUBLE, s SYMBOL)" +
                     ", index(s capacity 345) timestamp(k) partition by DAY \n");

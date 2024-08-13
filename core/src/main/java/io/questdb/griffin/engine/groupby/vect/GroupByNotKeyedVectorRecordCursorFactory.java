@@ -44,7 +44,7 @@ import io.questdb.tasks.VectorAggregateTask;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final Log LOG = LogFactory.getLog(GroupByNotKeyedVectorRecordCursorFactory.class);

@@ -27,10 +27,10 @@ import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.std.MemoryTag;
 import org.junit.Test;
 
-import static io.questdb.cairo.AbstractIntervalDataFrameCursor.*;
+import static io.questdb.cairo.AbstractIntervalPartitionFrameCursor.*;
 import static org.junit.Assert.assertEquals;
 
-public class AbstractIntervalDataFrameCursorTest extends AbstractCairoTest {
+public class AbstractIntervalPartitionFrameCursorTest extends AbstractCairoTest {
     // see implementation of Vect.binarySearch64Bit 
     static final int THRESHOLD = 65;
 

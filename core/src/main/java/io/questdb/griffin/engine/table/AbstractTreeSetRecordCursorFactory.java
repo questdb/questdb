@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
@@ -44,11 +44,11 @@ abstract class AbstractTreeSetRecordCursorFactory extends AbstractPageFrameRecor
     public AbstractTreeSetRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
         this.rows = new DirectLongList(configuration.getSqlLatestByRowCount(), MemoryTag.NATIVE_LATEST_BY_LONG_LIST);
     }
 

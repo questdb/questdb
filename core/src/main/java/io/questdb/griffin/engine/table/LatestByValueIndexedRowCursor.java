@@ -32,7 +32,7 @@ class LatestByValueIndexedRowCursor implements RowCursor {
     @Override
     public boolean hasNext() {
         if (next == -1) {
-            // it is essential and this cursor interrupts further data frame processing
+            // it is essential and this cursor interrupts further partition frame processing
             throw NoMoreFramesException.INSTANCE;
         }
         return true;

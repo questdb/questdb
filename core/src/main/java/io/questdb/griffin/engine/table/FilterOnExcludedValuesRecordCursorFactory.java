@@ -60,7 +60,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     public FilterOnExcludedValuesRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             @NotNull @Transient ObjList<Function> keyValues,
             int columnIndex,
             @Nullable Function filter,
@@ -73,7 +73,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             @NotNull IntList columnSizeShifts,
             int maxSymbolNotEqualsCount
     ) {
-        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
         this.orderDirection = orderDirection;
         this.indexDirection = indexDirection;
         this.maxSymbolNotEqualsCount = maxSymbolNotEqualsCount;
@@ -123,7 +123,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
 
     @Override
     public int getScanDirection() {
-        if (dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_ASC && heapCursorUsed) {
+        if (partitionFrameCursorFactory.getOrder() == PartitionFrameCursorFactory.ORDER_ASC && heapCursorUsed) {
             return SCAN_DIRECTION_FORWARD;
         }
         return SCAN_DIRECTION_OTHER;
@@ -191,7 +191,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
         sink.attr("symbolFilter").putBaseColumnName(columnIndex).val(" not in ").val(keyExcludedValueFunctions);
         sink.optAttr("filter", filter);
         sink.child(cursor.getRowCursorFactory());
-        sink.child(dataFrameCursorFactory);
+        sink.child(partitionFrameCursorFactory);
     }
 
     @Override

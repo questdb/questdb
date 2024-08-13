@@ -35,9 +35,9 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 
 /**
- * A factory interface for dataframe cursors
+ * A factory interface for partition frame cursors.
  */
-public interface DataFrameCursorFactory extends Sinkable, Closeable, Plannable {
+public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Plannable {
 
     // Any order means that algorithm is able to work with frames in any order.
     // In this case frame order will be driven by the optimiser.
@@ -71,12 +71,12 @@ public interface DataFrameCursorFactory extends Sinkable, Closeable, Plannable {
     @Override
     void close();
 
-    DataFrameCursor getCursor(SqlExecutionContext executionContext, int order) throws SqlException;
+    PartitionFrameCursor getCursor(SqlExecutionContext executionContext, int order) throws SqlException;
 
     RecordMetadata getMetadata();
 
     /**
-     * Order of records in the data frame in regard to timestamp.
+     * Order of records in the partition frame in regard to timestamp.
      *
      * @return 0 for ascending and 1 for descending
      */
@@ -85,14 +85,14 @@ public interface DataFrameCursorFactory extends Sinkable, Closeable, Plannable {
     TableToken getTableToken();
 
     /**
-     * @return whether the data frame applies time interval(s) to the underlying table.
+     * @return whether the partition frame applies time interval(s) to the underlying table.
      */
     boolean hasInterval();
 
     boolean supportsTableRowId(TableToken tableToken);
 
     /**
-     * @param sink to print data frame cursor to
+     * @param sink to print partition frame cursor to
      */
     default void toSink(@NotNull CharSink<?> sink) {
         throw new UnsupportedOperationException();

@@ -31,10 +31,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
 /**
- * Returns rows from current data frame in order of cursors list :
+ * Returns rows from current page frame in order of cursors list:
  * - first fetches and returns all records from first cursor
  * - then from second cursor, third, ...
- * until all cursors are exhausted .
+ * until all cursors are exhausted.
  */
 public class SequentialRowCursorFactory implements RowCursorFactory {
     private final SequentialRowCursor cursor;

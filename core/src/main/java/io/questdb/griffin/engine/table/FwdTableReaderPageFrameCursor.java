@@ -51,9 +51,9 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
     private final LongList topsRemaining = new LongList();
     private final int workerCount;
     private long currentPageFrameRowLimit;
-    private DataFrameCursor dataFrameCursor;
+    private PartitionFrameCursor partitionFrameCursor;
     private TableReader reader;
-    private boolean reenterDataFrame = false;
+    private boolean reenterPartitionFrame = false;
     private long reenterPartitionHi;
     private int reenterPartitionIndex;
     private long reenterPartitionLo;
@@ -75,12 +75,12 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
 
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
-        dataFrameCursor.calculateSize(counter);
+        partitionFrameCursor.calculateSize(counter);
     }
 
     @Override
     public void close() {
-        dataFrameCursor = Misc.free(dataFrameCursor);
+        partitionFrameCursor = Misc.free(partitionFrameCursor);
     }
 
     @Override
@@ -105,14 +105,14 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
 
     @Override
     public @Nullable PageFrame next() {
-        if (reenterDataFrame) {
+        if (reenterPartitionFrame) {
             return computeFrame(reenterPartitionLo, reenterPartitionHi);
         }
-        DataFrame dataFrame = dataFrameCursor.next();
-        if (dataFrame != null) {
-            reenterPartitionIndex = dataFrame.getPartitionIndex();
-            final long lo = dataFrame.getRowLo();
-            final long hi = dataFrame.getRowHi();
+        PartitionFrame partitionFrame = partitionFrameCursor.next();
+        if (partitionFrame != null) {
+            reenterPartitionIndex = partitionFrame.getPartitionIndex();
+            final long lo = partitionFrame.getRowLo();
+            final long hi = partitionFrame.getRowHi();
             currentPageFrameRowLimit = Math.min(
                     pageFrameMaxRows,
                     Math.max(pageFrameMinRows, (hi - lo) / workerCount)
@@ -123,26 +123,26 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
-    public PageFrameCursor of(DataFrameCursor dataFrameCursor) {
-        reader = dataFrameCursor.getTableReader();
-        this.dataFrameCursor = dataFrameCursor;
+    public PageFrameCursor of(PartitionFrameCursor partitionFrameCursor) {
+        reader = partitionFrameCursor.getTableReader();
+        this.partitionFrameCursor = partitionFrameCursor;
         toTop();
         return this;
     }
 
     @Override
     public long size() {
-        return dataFrameCursor.size();
+        return partitionFrameCursor.size();
     }
 
     @Override
     public boolean supportsSizeCalculation() {
-        return dataFrameCursor.supportsSizeCalculation();
+        return partitionFrameCursor.supportsSizeCalculation();
     }
 
     @Override
     public void toTop() {
-        dataFrameCursor.toTop();
+        partitionFrameCursor.toTop();
         pages.setAll(columnCount, 0);
         topsRemaining.setAll(columnCount, 0);
         columnPageAddress.setAll(2 * columnCount, 0);
@@ -151,13 +151,13 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
         pageSizes.setAll(2 * columnCount, -1);
         formats.setAll(formats.size(), (byte) -1);
         formats.clear();
-        reenterDataFrame = false;
+        reenterPartitionFrame = false;
     }
 
     private TableReaderPageFrame computeFrame(final long partitionLo, final long partitionHi) {
         final int base = reader.getColumnBase(reenterPartitionIndex);
 
-        // we may need to split this data frame either along "top" lines, or along
+        // we may need to split this partition frame either along "top" lines, or along
         // max page frame sizes; to do this, we calculate min top value from given position
         long adjustedHi = Math.min(partitionHi, partitionLo + currentPageFrameRowLimit);
         for (int i = 0; i < columnCount; i++) {
@@ -172,7 +172,7 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
             final int columnIndex = columnIndexes.getQuick(i);
             final int readerColIndex = TableReader.getPrimaryColumnIndex(base, columnIndex);
             final MemoryR colMem = reader.getColumn(readerColIndex);
-            // when the entire column is NULL we make it skip the whole of the data frame
+            // when the entire column is NULL we make it skip the whole of the partition frame
             final long top = colMem instanceof NullMemoryCMR ? adjustedHi : reader.getColumnTop(base, columnIndex);
             final long partitionLoAdjusted = partitionLo - top;
             final long partitionHiAdjusted = adjustedHi - top;
@@ -219,14 +219,14 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
         // TODO(puzpuzpuz): we should get the format from table reader
         formats.extendAndSet(reenterPartitionIndex, PageFrame.NATIVE_FORMAT);
 
-        // it is possible that all columns in data frame are empty, but it doesn't mean
-        // the data frame size is 0; sometimes we may want to imply nulls
+        // it is possible that all columns in partition frame are empty, but it doesn't mean
+        // the partition frame size is 0; sometimes we may want to imply nulls
         if (adjustedHi < partitionHi) {
             reenterPartitionLo = adjustedHi;
             reenterPartitionHi = partitionHi;
-            reenterDataFrame = true;
+            reenterPartitionFrame = true;
         } else {
-            reenterDataFrame = false;
+            reenterPartitionFrame = false;
         }
 
         frame.partitionLo = partitionLo;

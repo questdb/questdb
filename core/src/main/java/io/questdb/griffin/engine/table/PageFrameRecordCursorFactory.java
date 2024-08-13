@@ -36,7 +36,7 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 
 public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     private final CairoConfiguration configuration;
@@ -53,7 +53,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     public PageFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             RecordMetadata metadata,
-            DataFrameCursorFactory dataFrameCursorFactory,
+            PartitionFrameCursorFactory partitionFrameCursorFactory,
             RowCursorFactory rowCursorFactory,
             boolean followsOrderByAdvice,
             // filter included here only for lifecycle management of the latter
@@ -63,7 +63,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             @NotNull IntList columnSizeShifts,
             boolean supportsRandomAccess
     ) {
-        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         this.configuration = configuration;
         this.rowCursorFactory = rowCursorFactory;
@@ -88,24 +88,24 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         if (framingSupported) {
-            DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, order);
+            PartitionFrameCursor partitionFrameCursor = partitionFrameCursorFactory.getCursor(executionContext, order);
             if (order == ORDER_ASC || order == ORDER_ANY) {
-                return initFwdPageFrameCursor(dataFrameCursor, executionContext);
+                return initFwdPageFrameCursor(partitionFrameCursor, executionContext);
             }
-            return initBwdPageFrameCursor(dataFrameCursor, executionContext);
+            return initBwdPageFrameCursor(partitionFrameCursor, executionContext);
         }
         return null;
     }
 
     @Override
     public int getScanDirection() {
-        switch (dataFrameCursorFactory.getOrder()) {
+        switch (partitionFrameCursorFactory.getOrder()) {
             case ORDER_ASC:
                 return SCAN_DIRECTION_FORWARD;
             case ORDER_DESC:
                 return SCAN_DIRECTION_BACKWARD;
             default:
-                throw CairoException.critical(0).put("Unexpected factory order [order=").put(dataFrameCursorFactory.getOrder()).put("]");
+                throw CairoException.critical(0).put("Unexpected factory order [order=").put(partitionFrameCursorFactory.getOrder()).put("]");
         }
     }
 
@@ -137,8 +137,8 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         return framingSupported && supportsRandomAccess
                 && rowCursorFactory.isEntity() && !rowCursorFactory.isUsingIndex()
                 && getMetadata().getTimestampIndex() != -1
-                && dataFrameCursorFactory.getOrder() == ORDER_ASC
-                && !dataFrameCursorFactory.hasInterval()
+                && partitionFrameCursorFactory.getOrder() == ORDER_ASC
+                && !partitionFrameCursorFactory.hasInterval()
                 && filter == null;
     }
 
@@ -151,7 +151,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("{\"name\":\"PageFrameRecordCursorFactory\", \"cursorFactory\":");
-        dataFrameCursorFactory.toSink(sink);
+        partitionFrameCursorFactory.toSink(sink);
         sink.putAscii('}');
     }
 
@@ -169,7 +169,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     }
 
     protected PageFrameCursor initBwdPageFrameCursor(
-            DataFrameCursor dataFrameCursor,
+            PartitionFrameCursor partitionFrameCursor,
             SqlExecutionContext executionContext
     ) {
         if (bwdPageFrameCursor == null) {
@@ -181,11 +181,11 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
                     pageFrameMaxRows
             );
         }
-        return bwdPageFrameCursor.of(dataFrameCursor);
+        return bwdPageFrameCursor.of(partitionFrameCursor);
     }
 
     protected PageFrameCursor initFwdPageFrameCursor(
-            DataFrameCursor dataFrameCursor,
+            PartitionFrameCursor partitionFrameCursor,
             SqlExecutionContext executionContext
     ) {
         if (fwdPageFrameCursor == null) {
@@ -197,7 +197,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
                     pageFrameMaxRows
             );
         }
-        return fwdPageFrameCursor.of(dataFrameCursor);
+        return fwdPageFrameCursor.of(partitionFrameCursor);
     }
 
     @Override
@@ -214,6 +214,6 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
 
     protected void toPlanInner(PlanSink sink) {
         sink.child(rowCursorFactory);
-        sink.child(dataFrameCursorFactory);
+        sink.child(partitionFrameCursorFactory);
     }
 }

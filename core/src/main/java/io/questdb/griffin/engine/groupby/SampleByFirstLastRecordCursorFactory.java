@@ -36,7 +36,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.*;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final int FILTER_KEY_IS_NULL = 0;
@@ -195,14 +195,14 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         return base.usesIndex();
     }
 
-    private static long findSafeIndexFrameSize(IndexFrame indexFrame, long dataFrameHi) {
+    private static long findSafeIndexFrameSize(IndexFrame indexFrame, long partitionFrameHi) {
         long frameAddress = indexFrame.getAddress();
         if (frameAddress == 0) {
             return indexFrame.getSize();
         }
         long safeFrameSize = indexFrame.getSize();
         for (long p = frameAddress + (indexFrame.getSize() - 1) * Long.BYTES; p >= frameAddress; p -= Long.BYTES) {
-            if (Unsafe.getUnsafe().getLong(p) < dataFrameHi) {
+            if (Unsafe.getUnsafe().getLong(p) < partitionFrameHi) {
                 break;
             }
             safeFrameSize--;
@@ -344,10 +344,10 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         @Override
         public boolean hasNext() {
             // This loop never returns last found sample by row.
-            // The reason is that last row() value can be changed on next data frame pass.
-            // That's why the last row values are buffered
-            // (not only row id stored but all the values needed) in crossFrameRow.
-            // Buffering values are unavoidable since row ids of last() and first() are from different data frames
+            // The reason is that last row() value can be changed on next page frame pass.
+            // That's why the last row values are buffered (not only row id stored
+            // but all the values needed) in crossFrameRow. Buffering values are unavoidable
+            // since row ids of last() and first() are from different page frames.
             if (++currentRow < rowsFound - 1) {
                 record.of(currentRow);
                 return true;
@@ -471,7 +471,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                         frameMemory = frameMemoryPool.navigateTo(frameCount++);
                         record.switchFrame();
 
-                        // Switch to new data frame
+                        // Switch to new page frame
                         frameNextRowId = frameLo = frame.getPartitionLo();
                         frameHi = frame.getPartitionHi();
 
@@ -491,13 +491,13 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     long indexFrameAddress = indexFrame.getAddress();
                     if (indexFrame.getSize() == 0) {
                         if (indexFrameAddress != 0 || groupBySymbolKey != FILTER_KEY_IS_NULL) {
-                            // No rows in index for this dataframe left, go to next data frame
+                            // No rows in index for this page frame left, go to next page frame
                             frameNextRowId = frameHi;
-                            // Jump back to fetch next data frame
+                            // Jump back to fetch next page frame
                             return STATE_FETCH_NEXT_DATA_FRAME;
                         }
                         // Special case - searching with `where symbol = null` on the partition where this column has not been added
-                        // Effectively all rows in data frame are the match to the symbol filter
+                        // Effectively all rows in page frame are the match to the symbol filter
                         // Fall through, search code will figure that this is special case
                     }
 
@@ -555,7 +555,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     // decide what to do next
                     int newState;
                     if (frameNextRowId >= frameHi) {
-                        // Data frame exhausted. Next time start from fetching new data frame
+                        // Page frame exhausted. Next time start from fetching new page frame
                         newState = STATE_FETCH_NEXT_DATA_FRAME;
                     } else if (indexFramePosition >= iFrameSize) {
                         // Index frame exhausted. Next time start from fetching new index frame
@@ -568,7 +568,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                         // re-fill periods and search again
                         newState = STATE_SEARCH;
                     } else {
-                        // Data frame exhausted. Next time start from fetching new data frame
+                        // Page frame exhausted. Next time start from fetching new page frame
                         newState = STATE_FETCH_NEXT_DATA_FRAME;
                     }
 

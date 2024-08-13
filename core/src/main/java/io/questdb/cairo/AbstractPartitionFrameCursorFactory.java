@@ -24,19 +24,19 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.DataFrameCursorFactory;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
-public abstract class AbstractDataFrameCursorFactory implements DataFrameCursorFactory {
+public abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCursorFactory {
     private final GenericRecordMetadata metadata;
     private final long metadataVersion;
     private final TableToken tableToken;
 
-    public AbstractDataFrameCursorFactory(TableToken tableToken, long metadataVersion, GenericRecordMetadata metadata) {
+    public AbstractPartitionFrameCursorFactory(TableToken tableToken, long metadataVersion, GenericRecordMetadata metadata) {
         this.tableToken = tableToken;
         this.metadataVersion = metadataVersion;
         this.metadata = metadata;

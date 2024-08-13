@@ -24,14 +24,14 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.sql.PartitionFrame;
+import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.TestOnly;
 
-public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
-    protected final FullTableDataFrame frame = new FullTableDataFrame();
+public abstract class AbstractFullPartitionFrameCursor implements PartitionFrameCursor {
+    protected final FullTablePartitionFrame frame = new FullTablePartitionFrame();
     protected int partitionHi;
     protected int partitionIndex;
     protected TableReader reader;
@@ -56,7 +56,7 @@ public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
         return reader.newSymbolTable(columnIndex);
     }
 
-    public DataFrameCursor of(TableReader reader) {
+    public PartitionFrameCursor of(TableReader reader) {
         partitionHi = reader.getPartitionCount();
         toTop();
         this.reader = reader;
@@ -77,7 +77,7 @@ public abstract class AbstractFullDataFrameCursor implements DataFrameCursor {
         return reader.size();
     }
 
-    protected static class FullTableDataFrame implements DataFrame {
+    protected static class FullTablePartitionFrame implements PartitionFrame {
         protected int partitionIndex;
         protected long rowHi;
         protected long rowLo = 0;

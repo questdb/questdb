@@ -50,7 +50,7 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     @Nullable
     PageFrame next();
 
-    PageFrameCursor of(DataFrameCursor dataFrameCursor);
+    PageFrameCursor of(PartitionFrameCursor partitionFrameCursor);
 
     /**
      * @return number of items in all page frames

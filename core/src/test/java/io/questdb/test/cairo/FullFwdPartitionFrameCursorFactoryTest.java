@@ -25,8 +25,8 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.sql.PartitionFrame;
+import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
@@ -35,9 +35,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
-public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
+public class FullFwdPartitionFrameCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testFactory() throws Exception {
         assertMemoryLeak(() -> {
@@ -77,10 +77,10 @@ public class FullFwdDataFrameCursorFactoryTest extends AbstractCairoTest {
                 metadata = GenericRecordMetadata.copyOf(writer.getMetadata());
             }
 
-            try (FullFwdDataFrameCursorFactory factory = new FullFwdDataFrameCursorFactory(tableToken, 0, metadata)) {
+            try (FullFwdPartitionFrameCursorFactory factory = new FullFwdPartitionFrameCursorFactory(tableToken, 0, metadata)) {
                 long count = 0;
-                try (DataFrameCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine), ORDER_ASC)) {
-                    DataFrame frame;
+                try (PartitionFrameCursor cursor = factory.getCursor(new SqlExecutionContextStub(engine), ORDER_ASC)) {
+                    PartitionFrame frame;
                     while ((frame = cursor.next()) != null) {
                         count += frame.getRowHi() - frame.getRowLo();
                     }

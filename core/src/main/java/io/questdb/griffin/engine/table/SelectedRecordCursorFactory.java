@@ -245,8 +245,8 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public PageFrameCursor of(DataFrameCursor dataFrameCursor) {
-            return baseCursor.of(dataFrameCursor);
+        public PageFrameCursor of(PartitionFrameCursor partitionFrameCursor) {
+            return baseCursor.of(partitionFrameCursor);
         }
 
         @Override

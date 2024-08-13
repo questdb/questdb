@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.DataFrameCursorFactory;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.*;
@@ -37,13 +37,13 @@ public class LatestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecord
     public LatestByAllIndexedRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int columnIndex,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts,
             @NotNull LongList prefixes
     ) {
-        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         try {
             this.prefixes = new DirectLongList(Math.max(2, prefixes.size()), MemoryTag.NATIVE_LATEST_BY_LONG_LIST);
@@ -68,7 +68,7 @@ public class LatestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecord
     public void toPlan(PlanSink sink) {
         sink.type("LatestByAllIndexed");
         sink.child(cursor);
-        sink.child(dataFrameCursorFactory);
+        sink.child(partitionFrameCursorFactory);
     }
 
     @Override

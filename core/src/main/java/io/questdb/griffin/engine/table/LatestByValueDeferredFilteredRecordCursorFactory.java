@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.IntList;
@@ -39,14 +39,14 @@ public class LatestByValueDeferredFilteredRecordCursorFactory extends AbstractDe
     public LatestByValueDeferredFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int columnIndex,
             Function symbolFunc,
             @Nullable Function filter,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, dataFrameCursorFactory, columnIndex, symbolFunc, filter, columnIndexes, columnSizeShifts);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndex, symbolFunc, filter, columnIndexes, columnSizeShifts);
         this.configuration = configuration;
     }
 

@@ -732,7 +732,7 @@ public class OrderByAscRowSkippingTest extends AbstractCairoTest {
         });
     }
 
-    // tests "partitionIndex == partitionCount - 1" conditional in FullFwdDataFrameCursor.skipTo()
+    // tests "partitionIndex == partitionCount - 1" conditional in FullFwdPartitionFrameCursor.skipTo()
     @Test
     public void testSkipBeyondEndOfNonEmptyTableReturnsNoRows() throws Exception {
         assertMemoryLeak(() -> {
@@ -786,7 +786,7 @@ public class OrderByAscRowSkippingTest extends AbstractCairoTest {
         });
     }
 
-    // tests "partitionCount < 1" conditional in FullFwdDataFrameCursor.skipTo()
+    // tests "partitionCount < 1" conditional in FullFwdPartitionFrameCursor.skipTo()
     @Test
     public void testSkipOverEmptyTableWithNoPartitionsReturnsNoRows() throws Exception {
         assertMemoryLeak(() -> {
@@ -856,7 +856,7 @@ public class OrderByAscRowSkippingTest extends AbstractCairoTest {
         return new PageFrameRecordCursorFactory(
                 engine.getConfiguration(),
                 metadata,
-                new FullFwdDataFrameCursorFactory(metadata.getTableToken(), reader.getMetadataVersion(), GenericRecordMetadata.copyOf(metadata)),
+                new FullFwdPartitionFrameCursorFactory(metadata.getTableToken(), reader.getMetadataVersion(), GenericRecordMetadata.copyOf(metadata)),
                 new PageFrameFwdRowCursorFactory(),
                 false,
                 null,

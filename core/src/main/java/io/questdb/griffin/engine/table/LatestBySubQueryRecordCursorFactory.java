@@ -49,7 +49,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     public LatestBySubQueryRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int columnIndex,
             @NotNull RecordCursorFactory recordCursorFactory,
             @Nullable Function filter,
@@ -58,7 +58,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         try {
             // this instance is shared between factory and cursor
@@ -101,7 +101,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         sink.type("LatestBySubQuery");
         sink.child("Subquery", recordCursorFactory);
         sink.child(cursor);
-        sink.child(dataFrameCursorFactory);
+        sink.child(partitionFrameCursorFactory);
     }
 
     @Override

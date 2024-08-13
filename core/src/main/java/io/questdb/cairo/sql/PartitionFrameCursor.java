@@ -30,26 +30,26 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 /**
- * A cursor for navigating through data frames.
+ * A cursor for navigating through partition frames.
  */
-public interface DataFrameCursor extends QuietCloseable, SymbolTableSource {
+public interface PartitionFrameCursor extends QuietCloseable, SymbolTableSource {
 
     default void calculateSize(RecordCursor.Counter counter) {
     }
 
-    // same TableReader is available on each data frame
+    // same TableReader is available on each partition frame
     TableReader getTableReader();
 
     /**
-     * @return the next element in the data frame
+     * @return the next element in the partition frame
      * @throws io.questdb.cairo.DataUnavailableException when the queried partition is in cold storage
      */
     @Nullable
-    DataFrame next();
+    PartitionFrame next();
 
     /**
-     * Reload the data frame and return the cursor to the beginning of
-     * the data frame
+     * Reload the partition frame and return the cursor to the beginning of
+     * the partition frame
      *
      * @return true when reload data has changed, false otherwise
      */
@@ -57,7 +57,7 @@ public interface DataFrameCursor extends QuietCloseable, SymbolTableSource {
     boolean reload();
 
     /**
-     * @return number of items in all data frames.
+     * @return number of items in all partition frames.
      */
     long size();
 
@@ -70,7 +70,7 @@ public interface DataFrameCursor extends QuietCloseable, SymbolTableSource {
     }
 
     /**
-     * Return the cursor to the first data frame.
+     * Return the cursor to the first partition frame.
      */
     void toTop();
 }

@@ -191,7 +191,7 @@ class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Data frame scan");
+        sink.type("Page frame scan");
     }
 
     @Override

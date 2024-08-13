@@ -32,18 +32,18 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 
-public class PartitionFrame implements Frame {
+public class FrameImpl implements Frame {
     private final FrameColumnPool columnPool;
     private boolean canWrite = false;
     private ColumnVersionReader crv;
-    private RecycleBin<PartitionFrame> frameRecycleBin;
+    private RecycleBin<FrameImpl> frameRecycleBin;
     private RecordMetadata metadata;
     private long offset = 0;
     private Path partitionPath = new Path();
     private long partitionTimestamp;
     private long rowCount;
 
-    public PartitionFrame(FrameColumnPool columnPool) {
+    public FrameImpl(FrameColumnPool columnPool) {
         this.columnPool = columnPool;
     }
 
@@ -129,7 +129,7 @@ public class PartitionFrame implements Frame {
         partitionPath = Misc.free(partitionPath);
     }
 
-    void setRecycleBin(RecycleBin<PartitionFrame> frameRecycleBin) {
+    void setRecycleBin(RecycleBin<FrameImpl> frameRecycleBin) {
         this.frameRecycleBin = frameRecycleBin;
     }
 }

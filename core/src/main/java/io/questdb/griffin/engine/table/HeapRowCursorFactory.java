@@ -31,10 +31,10 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.ObjList;
 
 /**
- * Returns rows from current data frame in table (physical) order :
+ * Returns rows from current page frame in table (physical) order:
  * - fetches first record index/row id per cursor into priority queue
- * - then returns record with the smallest available index and adds next record from related cursor into queue
- * until all cursors are exhausted .
+ * - then returns record with the smallest available index and adds next
+ * record from related cursor into queue until all cursors are exhausted.
  */
 public class HeapRowCursorFactory implements RowCursorFactory {
     private final HeapRowCursor cursor;

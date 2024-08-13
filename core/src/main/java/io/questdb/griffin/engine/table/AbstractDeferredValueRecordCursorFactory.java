@@ -46,14 +46,14 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
     public AbstractDeferredValueRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int columnIndex,
             Function symbolFunc,
             @Nullable Function filter,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
         this.columnIndex = columnIndex;
         this.symbolFunc = symbolFunc;
         this.filter = filter;
@@ -64,7 +64,7 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
     public void toPlan(PlanSink sink) {
         sink.optAttr("filter", filter);
         sink.attr("symbolFilter").putColumnName(columnIndex).val('=').val(symbolFunc);
-        sink.child(dataFrameCursorFactory);
+        sink.child(partitionFrameCursorFactory);
     }
 
     private boolean lookupDeferredSymbol(PageFrameCursor pageFrameCursor) {

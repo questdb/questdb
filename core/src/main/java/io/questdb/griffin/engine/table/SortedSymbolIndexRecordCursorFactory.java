@@ -25,8 +25,8 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
@@ -41,14 +41,14 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecor
     public SortedSymbolIndexRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int columnIndex,
             boolean columnOrderAsc,
             int indexDirection,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         cursor = new PageFrameRecordCursorImpl(
                 configuration,
@@ -78,7 +78,7 @@ public class SortedSymbolIndexRecordCursorFactory extends AbstractPageFrameRecor
     public void toPlan(PlanSink sink) {
         sink.type("SortedSymbolIndex");
         sink.child(cursor.getRowCursorFactory());
-        sink.child(dataFrameCursorFactory);
+        sink.child(partitionFrameCursorFactory);
     }
 
     @Override

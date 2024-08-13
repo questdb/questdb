@@ -48,7 +48,7 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
     public LatestByDeferredListValuesFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int columnIndex,
             @Transient @Nullable ObjList<Function> includedSymbolFuncs,
             @Transient @Nullable ObjList<Function> excludedSymbolFuncs,
@@ -56,7 +56,7 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
         this.includedSymbolFuncs = includedSymbolFuncs != null ? new ObjList<>(includedSymbolFuncs) : null;
         this.excludedSymbolFuncs = excludedSymbolFuncs != null ? new ObjList<>(excludedSymbolFuncs) : null;
         this.filter = filter;
@@ -75,13 +75,13 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
     public LatestByDeferredListValuesFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int latestByIndex,
             Function filter,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
-        this(configuration, metadata, dataFrameCursorFactory, latestByIndex, null, null, filter, columnIndexes, columnSizeShifts);
+        this(configuration, metadata, partitionFrameCursorFactory, latestByIndex, null, null, filter, columnIndexes, columnSizeShifts);
     }
 
     @Override
@@ -95,7 +95,7 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
         sink.optAttr("filter", filter);
         sink.optAttr("includedSymbols", includedSymbolFuncs);
         sink.optAttr("excludedSymbols", excludedSymbolFuncs);
-        sink.child(dataFrameCursorFactory);
+        sink.child(partitionFrameCursorFactory);
     }
 
     private void lookupDeferredSymbols(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {

@@ -29,8 +29,8 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
-import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.IntList;
@@ -44,7 +44,7 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
     public LatestByAllSymbolsFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             @NotNull RecordSink recordSink,
             @Transient @NotNull ColumnTypes partitionByColumnTypes,
             @NotNull IntList partitionByColumnIndexes,
@@ -53,7 +53,7 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         try {
             Map map = MapFactory.createOrderedMap(configuration, partitionByColumnTypes);
@@ -83,7 +83,7 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
         sink.type("LatestByAllSymbolsFiltered");
         sink.optAttr("filter", ((LatestByAllSymbolsFilteredRecordCursor) cursor).getFilter());
         sink.child(cursor);
-        sink.child(dataFrameCursorFactory);
+        sink.child(partitionFrameCursorFactory);
     }
 
     @Override

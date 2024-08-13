@@ -5481,7 +5481,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Async JIT Filter workers: 1\n" +
                             "      limit: 1\n" +
                             "      filter: id='12345678'\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: device_data\n",
                     "timestamp\tval\tnow\n" +
@@ -5499,7 +5499,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Async JIT Filter workers: 1\n" +
                             "      limit: 3\n" +
                             "      filter: id='12345678'\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: device_data\n",
                     "timestamp\tval\tnow\n" +

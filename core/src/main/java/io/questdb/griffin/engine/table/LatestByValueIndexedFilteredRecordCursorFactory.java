@@ -40,14 +40,14 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractPag
     public LatestByValueIndexedFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int columnIndex,
             int symbolKey,
             @NotNull Function filter,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
         cursor = new LatestByValueIndexedFilteredRecordCursor(
                 configuration,
                 metadata,
@@ -68,7 +68,7 @@ public class LatestByValueIndexedFilteredRecordCursorFactory extends AbstractPag
         sink.type("Index backward scan").meta("on").putColumnName(cursor.columnIndex);
         sink.optAttr("filter", filter);
         sink.attr("symbolFilter").putColumnName(cursor.columnIndex).val('=').val(cursor.symbolKey);
-        sink.child(dataFrameCursorFactory);
+        sink.child(partitionFrameCursorFactory);
     }
 
     @Override

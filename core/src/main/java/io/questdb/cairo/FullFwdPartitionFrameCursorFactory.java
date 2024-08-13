@@ -24,34 +24,33 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
-public class FullBwdDataFrameCursorFactory extends AbstractDataFrameCursorFactory {
-    private final FullBwdDataFrameCursor cursor = new FullBwdDataFrameCursor();
+public class FullFwdPartitionFrameCursorFactory extends AbstractPartitionFrameCursorFactory {
+    private final FullFwdPartitionFrameCursor cursor = new FullFwdPartitionFrameCursor();
+    private FullBwdPartitionFrameCursor bwdCursor;
 
-    private FullFwdDataFrameCursor fwdCursor;
-
-    public FullBwdDataFrameCursorFactory(TableToken tableToken, long metadataVersion, GenericRecordMetadata metadata) {
-        super(tableToken, metadataVersion, metadata);
+    public FullFwdPartitionFrameCursorFactory(TableToken tableToken, long tableVersion, GenericRecordMetadata metadata) {
+        super(tableToken, tableVersion, metadata);
     }
 
     @Override
-    public DataFrameCursor getCursor(SqlExecutionContext executionContext, int order) {
+    public PartitionFrameCursor getCursor(SqlExecutionContext executionContext, int order) {
         final TableReader reader = getReader(executionContext);
         try {
-            if (order == ORDER_DESC || order == ORDER_ANY) {
+            if (order == ORDER_ASC || order == ORDER_ANY) {
                 return cursor.of(reader);
             }
 
-            // Create forward scanning cursor when needed. Factory requesting forward cursor must
-            // still return records in descending timestamp order.
-            if (fwdCursor == null) {
-                fwdCursor = new FullFwdDataFrameCursor();
+            // Create backward scanning cursor when needed. Factory requesting backward cursor must
+            // still return records in ascending timestamp order.
+            if (bwdCursor == null) {
+                bwdCursor = new FullBwdPartitionFrameCursor();
             }
-            return fwdCursor.of(reader);
+            return bwdCursor.of(reader);
         } catch (Throwable th) {
             Misc.free(reader);
             throw th;
@@ -60,7 +59,7 @@ public class FullBwdDataFrameCursorFactory extends AbstractDataFrameCursorFactor
 
     @Override
     public int getOrder() {
-        return ORDER_DESC;
+        return ORDER_ASC;
     }
 
     @Override
@@ -70,10 +69,10 @@ public class FullBwdDataFrameCursorFactory extends AbstractDataFrameCursorFactor
 
     @Override
     public void toPlan(PlanSink sink) {
-        if (sink.getOrder() == ORDER_ASC) {
-            sink.type("Frame forward scan");
-        } else {
+        if (sink.getOrder() == ORDER_DESC) {
             sink.type("Frame backward scan");
+        } else {
+            sink.type("Frame forward scan");
         }
         super.toPlan(sink);
     }

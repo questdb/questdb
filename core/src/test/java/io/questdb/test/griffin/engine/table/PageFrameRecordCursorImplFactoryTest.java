@@ -43,8 +43,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_DESC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
 
@@ -104,7 +104,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                         BitmapIndexReader.DIR_FORWARD,
                         null
                 );
-                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata)) {
+                try (FullFwdPartitionFrameCursorFactory frameFactory = new FullFwdPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata)) {
                     // entity index
                     final IntList columnIndexes = new IntList();
                     final IntList columnSizes = new IntList();
@@ -112,7 +112,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                     PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
                             configuration,
                             metadata,
-                            dataFrameFactory,
+                            frameFactory,
                             symbolIndexRowCursorFactory,
                             false,
                             null,
@@ -244,12 +244,12 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 final IntList columnSizes = new IntList();
                 populateColumnTypes(metadata, columnIndexes, columnSizes);
 
-                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata)) {
+                try (FullFwdPartitionFrameCursorFactory frameFactory = new FullFwdPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata)) {
                     PageFrameFwdRowCursorFactory rowCursorFactory = new PageFrameFwdRowCursorFactory(); // stub RowCursorFactory
                     PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
                             configuration,
                             metadata,
-                            dataFrameFactory,
+                            frameFactory,
                             rowCursorFactory,
                             false,
                             null,
@@ -352,12 +352,12 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 final IntList columnSizes = new IntList();
                 populateColumnTypes(metadata, columnIndexes, columnSizes);
 
-                try (FullFwdDataFrameCursorFactory dataFrameFactory = new FullFwdDataFrameCursorFactory(tt, TableUtils.ANY_TABLE_VERSION, metadata)) {
+                try (FullFwdPartitionFrameCursorFactory frameFactory = new FullFwdPartitionFrameCursorFactory(tt, TableUtils.ANY_TABLE_VERSION, metadata)) {
                     PageFrameFwdRowCursorFactory rowCursorFactory = new PageFrameFwdRowCursorFactory(); // stub RowCursorFactory
                     PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
                             configuration,
                             metadata,
-                            dataFrameFactory,
+                            frameFactory,
                             rowCursorFactory,
                             false,
                             null,

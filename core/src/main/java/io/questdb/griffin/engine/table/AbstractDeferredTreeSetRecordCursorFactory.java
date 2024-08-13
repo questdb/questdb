@@ -48,14 +48,14 @@ public abstract class AbstractDeferredTreeSetRecordCursorFactory extends Abstrac
     public AbstractDeferredTreeSetRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int columnIndex,
             @Transient ObjList<Function> keyValueFuncs,
             @Transient SymbolMapReader symbolMapReader,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         // we need two data structures, int hash set for symbol keys we can resolve here
         // and CharSequence hash set for symbols we cannot resolve

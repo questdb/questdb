@@ -25,15 +25,15 @@
 package io.questdb.cairo.sql;
 
 /**
- * Interface for retrieving information about a data frame.
+ * Interface for retrieving information about a partition frame.
  * <p>
- * Each a data frame holds a number of {@link PageFrame}s.
+ * Each partition frame holds a number of {@link PageFrame}s.
  * Think, a partition or a slice of a partition.
  * <p>
- * Data frame is an internal API and shouldn't be used for data access.
+ * Partition frame is an internal API and shouldn't be used for data access.
  * Page frames are meant to be used for data access.
  */
-public interface DataFrame {
+public interface PartitionFrame {
 
     /**
      * @return numeric index of the current partition
@@ -41,12 +41,12 @@ public interface DataFrame {
     int getPartitionIndex();
 
     /**
-     * @return upper boundary for last row of a data frame, i.e. last row + 1
+     * @return upper boundary for last row of a partition frame, i.e. last row + 1
      */
     long getRowHi();
 
     /**
-     * @return first row of a data frame
+     * @return first row of a partition frame
      */
     long getRowLo();
 }

@@ -69,7 +69,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     default void close() {
     }
 
-    default SingleSymbolFilter convertToSampleByIndexDataFrameCursorFactory() {
+    default SingleSymbolFilter convertToSampleByIndexPageFrameCursorFactory() {
         return null;
     }
 
@@ -178,7 +178,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
 
     boolean recordCursorSupportsRandomAccess();
 
-    default void revertFromSampleByIndexDataFrameCursorFactory() {
+    default void revertFromSampleByIndexPageFrameCursorFactory() {
     }
 
     default boolean supportsPageFrameCursor() {

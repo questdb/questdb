@@ -25,7 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
@@ -1323,9 +1323,9 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     private int readAllRows(String tableName) {
-        try (FullFwdDataFrameCursor cursor = new FullFwdDataFrameCursor()) {
+        try (FullFwdPartitionFrameCursor cursor = new FullFwdPartitionFrameCursor()) {
             cursor.of(getReader(tableName));
-            DataFrame frame;
+            PartitionFrame frame;
             int count = 0;
             while ((frame = cursor.next()) != null) {
                 for (long index = frame.getRowHi() - 1, lo = frame.getRowLo() - 1; index > lo; index--) {

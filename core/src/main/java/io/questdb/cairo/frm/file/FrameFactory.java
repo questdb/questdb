@@ -36,12 +36,12 @@ import io.questdb.std.str.Path;
 
 import java.io.Closeable;
 
-public class PartitionFrameFactory implements RecycleBin<PartitionFrame>, Closeable {
+public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
     private final FrameColumnPool columnPool;
-    private final ObjList<PartitionFrame> framePool = new ObjList<>();
+    private final ObjList<FrameImpl> framePool = new ObjList<>();
     private boolean closed;
 
-    public PartitionFrameFactory(CairoConfiguration configuration) {
+    public FrameFactory(CairoConfiguration configuration) {
         this.columnPool = new ContiguousFileColumnPool(configuration);
     }
 
@@ -72,7 +72,7 @@ public class PartitionFrameFactory implements RecycleBin<PartitionFrame>, Closea
             ColumnVersionReader cvr,
             long partitionRowCount
     ) {
-        PartitionFrame frame = getOrCreate();
+        FrameImpl frame = getOrCreate();
         frame.openRO(partitionPath, partitionTimestamp, metadata, cvr, partitionRowCount);
         return frame;
     }
@@ -84,24 +84,24 @@ public class PartitionFrameFactory implements RecycleBin<PartitionFrame>, Closea
             ColumnVersionWriter cvw,
             long size
     ) {
-        PartitionFrame frame = getOrCreate();
+        FrameImpl frame = getOrCreate();
         frame.openRW(partitionPath, partitionTimestamp, metadata, cvw, size);
         return frame;
     }
 
     @Override
-    public void put(PartitionFrame frame) {
+    public void put(FrameImpl frame) {
         assert !isClosed();
         framePool.add(frame);
     }
 
-    private PartitionFrame getOrCreate() {
+    private FrameImpl getOrCreate() {
         if (framePool.size() > 0) {
-            PartitionFrame frm = framePool.getLast();
+            FrameImpl frm = framePool.getLast();
             framePool.setPos(framePool.size() - 1);
             return frm;
         }
-        PartitionFrame frame = new PartitionFrame(columnPool);
+        FrameImpl frame = new FrameImpl(columnPool);
         frame.setRecycleBin(this);
         return frame;
     }

@@ -24,8 +24,8 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.DataFrameCursor;
+import io.questdb.cairo.sql.PartitionFrame;
+import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlException;
@@ -36,12 +36,11 @@ import io.questdb.std.Misc;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.TestOnly;
 
-public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor {
+public abstract class AbstractIntervalPartitionFrameCursor implements PartitionFrameCursor {
     public static final int SCAN_DOWN = 1;
     public static final int SCAN_UP = -1;
-
-    protected final IntervalDataFrame dataFrame = new IntervalDataFrame();
     protected final RuntimeIntrinsicIntervalModel intervalsModel;
+    protected final IntervalPartitionFrame partitionFrame = new IntervalPartitionFrame();
     protected final int timestampIndex;
     protected LongList intervals;
     protected int intervalsHi;
@@ -60,7 +59,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
     private int initialPartitionHi;
     private int initialPartitionLo;
 
-    public AbstractIntervalDataFrameCursor(RuntimeIntrinsicIntervalModel intervals, int timestampIndex) {
+    public AbstractIntervalPartitionFrameCursor(RuntimeIntrinsicIntervalModel intervals, int timestampIndex) {
         assert timestampIndex > -1;
         this.intervalsModel = intervals;
         this.timestampIndex = timestampIndex;
@@ -94,7 +93,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         return reader.newSymbolTable(columnIndex);
     }
 
-    public AbstractIntervalDataFrameCursor of(TableReader reader, SqlExecutionContext sqlContext) throws SqlException {
+    public AbstractIntervalPartitionFrameCursor of(TableReader reader, SqlExecutionContext sqlContext) throws SqlException {
         this.intervals = intervalsModel.calculateIntervals(sqlContext);
         calculateRanges(reader, intervals);
         this.reader = reader;
@@ -226,7 +225,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
                     }
                     continue;
                 }
-                // interval yielded empty data frame
+                // interval yielded empty partition frame
                 partitionLimit = hi;
                 intervalsLo++;
             } else {
@@ -284,7 +283,7 @@ public abstract class AbstractIntervalDataFrameCursor implements DataFrameCursor
         this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionIndexByTimestamp(intervalHi) + 1);
     }
 
-    protected static class IntervalDataFrame implements DataFrame {
+    protected static class IntervalPartitionFrame implements PartitionFrame {
 
         protected int partitionIndex;
         protected long rowHi;

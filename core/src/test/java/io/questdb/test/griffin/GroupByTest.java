@@ -1985,7 +1985,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testLiftAliasesFromInnerSelect4() throws Exception {
         // Check that if a select-choose node is elided by the factory, the WHERE condition can
-        // be retrieved from the inner DataFrame.
+        // be retrieved from the inner PartitionFrame.
         assertMemoryLeak(() -> {
             ddl("create table trades as (" +
                     "select" +

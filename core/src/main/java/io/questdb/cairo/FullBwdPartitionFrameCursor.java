@@ -24,10 +24,10 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.RecordCursor;
 
-public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
+public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCursor {
 
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
@@ -41,7 +41,7 @@ public class FullBwdDataFrameCursor extends AbstractFullDataFrameCursor {
     }
 
     @Override
-    public DataFrame next() {
+    public PartitionFrame next() {
         while (partitionIndex > -1) {
             final long hi = reader.openPartition(partitionIndex);
             if (hi < 1) {

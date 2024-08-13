@@ -105,7 +105,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
         assertOrderByInOverClause(expected, direction);
     }
 
-    @Test//triggers DeferredSingleSymbolFilterDataFrameRecordCursorFactory
+    @Test // triggers DeferredSingleSymbolFilterPageFrameRecordCursorFactory
     public void testOrderByDescSelectByIndexedSymbolColumn() throws Exception {
         runQueries(
                 "CREATE TABLE trips(l long,s symbol index capacity 10, ts TIMESTAMP) timestamp(ts) partition by month;",
@@ -131,25 +131,6 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
     @Test
     public void testOrderByDescWithCharFilter() throws Exception {
         testOrderByWithFilter("char", ORDER_DESC);
-    }
-
-    @Test
-    public void testOrderByDescWithDataFrameRecordCursorFactory() throws Exception {
-        runQueries(
-                "CREATE TABLE trips(l long,s symbol index capacity 5, ts TIMESTAMP) timestamp(ts) partition by month;",
-                "insert into trips " +
-                        "  select x, 'A' || ( x%3 )," +
-                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                        "  from long_sequence(10);"
-        );
-        //A0, A1, A2, A0, A1, A2, A0, A1, A2, A0
-        assertQuery("l\ts\tts\n" +
-                        "8\tA2\t2022-01-11T02:26:40.000000Z\n" +
-                        "5\tA2\t2022-01-07T15:06:40.000000Z\n" +
-                        "2\tA2\t2022-01-04T03:46:40.000000Z\n",
-                "select l, s, ts from trips where s = 'A2' and test_match() order by ts desc",
-                null, "ts###DESC", true, false
-        );
     }
 
     @Test
@@ -273,6 +254,25 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                         "5\tA2\t2022-01-07T15:06:40.000000Z\n" +
                         "2\tA2\t2022-01-04T03:46:40.000000Z\n",
                 "select l, s, ts from trips where s != 'A1' and s != 'A0' and test_match() order by ts desc",
+                null, "ts###DESC", true, false
+        );
+    }
+
+    @Test
+    public void testOrderByDescWithPageFrameRecordCursorFactory() throws Exception {
+        runQueries(
+                "CREATE TABLE trips(l long,s symbol index capacity 5, ts TIMESTAMP) timestamp(ts) partition by month;",
+                "insert into trips " +
+                        "  select x, 'A' || ( x%3 )," +
+                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
+                        "  from long_sequence(10);"
+        );
+        //A0, A1, A2, A0, A1, A2, A0, A1, A2, A0
+        assertQuery("l\ts\tts\n" +
+                        "8\tA2\t2022-01-11T02:26:40.000000Z\n" +
+                        "5\tA2\t2022-01-07T15:06:40.000000Z\n" +
+                        "2\tA2\t2022-01-04T03:46:40.000000Z\n",
+                "select l, s, ts from trips where s = 'A2' and test_match() order by ts desc",
                 null, "ts###DESC", true, false
         );
     }

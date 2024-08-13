@@ -41,7 +41,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     private final int columnIndex;
-    private final DataFrameRecordCursorWrapper cursor;
+    private final PageFrameRecordCursorWrapper cursor;
     private final ObjList<RowCursorFactory> cursorFactories;
     private final int[] cursorFactoriesIdx;
     private final IntObjHashMap<RowCursorFactory> factoriesA = new IntObjHashMap<>(64, 0.5, -5);
@@ -53,7 +53,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
     public FilterOnSubQueryRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             @NotNull RecordCursorFactory recordCursorFactory,
             int columnIndex,
             @Nullable Function filter,
@@ -61,21 +61,21 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         this.recordCursorFactory = recordCursorFactory;
         this.filter = filter;
         this.func = func;
         cursorFactories = new ObjList<>();
         cursorFactoriesIdx = new int[]{0};
-        final PageFrameRecordCursorImpl dataFrameRecordCursor = new PageFrameRecordCursorImpl(
+        final PageFrameRecordCursorImpl pageFrameRecordCursor = new PageFrameRecordCursorImpl(
                 configuration,
                 metadata,
                 new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx),
                 false,
                 filter
         );
-        cursor = new DataFrameRecordCursorWrapper(dataFrameRecordCursor);
+        cursor = new PageFrameRecordCursorWrapper(pageFrameRecordCursor);
         this.columnIndex = columnIndex;
     }
 
@@ -94,7 +94,7 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
         sink.type("FilterOnSubQuery");
         sink.optAttr("filter", filter);
         sink.child(recordCursorFactory);
-        sink.child(dataFrameCursorFactory);
+        sink.child(partitionFrameCursorFactory);
     }
 
     @Override
@@ -115,13 +115,13 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
         return cursor;
     }
 
-    private class DataFrameRecordCursorWrapper implements RecordCursor {
+    private class PageFrameRecordCursorWrapper implements RecordCursor {
         private final PageFrameRecordCursor delegate;
         private RecordCursor baseCursor;
         private IntObjHashMap<RowCursorFactory> factories;
         private IntObjHashMap<RowCursorFactory> targetFactories;
 
-        private DataFrameRecordCursorWrapper(PageFrameRecordCursor delegate) {
+        private PageFrameRecordCursorWrapper(PageFrameRecordCursor delegate) {
             this.delegate = delegate;
             this.factories = factoriesA;
         }

@@ -41,14 +41,14 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractPageFrameR
     public LatestByValueFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int columnIndex,
             int symbolKey,
             @Nullable Function filter,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
         if (filter == null) {
             this.cursor = new LatestByValueRecordCursor(configuration, metadata, columnIndex, symbolKey);
         } else {
@@ -66,7 +66,7 @@ public class LatestByValueFilteredRecordCursorFactory extends AbstractPageFrameR
     public void toPlan(PlanSink sink) {
         sink.type("LatestByValueFiltered");
         sink.child(cursor);
-        sink.child(dataFrameCursorFactory);
+        sink.child(partitionFrameCursorFactory);
     }
 
     @Override

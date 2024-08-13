@@ -55,7 +55,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     public FilterOnValuesRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             @NotNull @Transient ObjList<Function> keyValues,
             int columnIndex,
             @NotNull @Transient TableReader reader,
@@ -68,7 +68,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, dataFrameCursorFactory, columnIndexes, columnSizeShifts);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         final int nKeyValues = keyValues.size();
         this.columnIndex = columnIndex;
@@ -103,7 +103,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
 
     @Override
     public int getScanDirection() {
-        if (dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_ASC && heapCursorUsed) {
+        if (partitionFrameCursorFactory.getOrder() == PartitionFrameCursorFactory.ORDER_ASC && heapCursorUsed) {
             return SCAN_DIRECTION_FORWARD;
         }
         return SCAN_DIRECTION_OTHER;
@@ -121,7 +121,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
             sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING ? "asc" : "desc");
         }
         sink.child(rowCursorFactory);
-        sink.child(dataFrameCursorFactory);
+        sink.child(partitionFrameCursorFactory);
     }
 
     @Override

@@ -34,26 +34,26 @@ import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ANY;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursorFactory {
     protected final IntList columnIndexes;
     protected final IntList columnSizeShifts;
-    protected final DataFrameCursorFactory dataFrameCursorFactory;
     protected final int pageFrameMaxRows;
     protected final int pageFrameMinRows;
+    protected final PartitionFrameCursorFactory partitionFrameCursorFactory;
     protected PageFrameCursor pageFrameCursor;
 
     public AbstractPageFrameRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
         super(metadata);
-        this.dataFrameCursorFactory = dataFrameCursorFactory;
+        this.partitionFrameCursorFactory = partitionFrameCursorFactory;
         this.columnIndexes = columnIndexes;
         this.columnSizeShifts = columnSizeShifts;
         pageFrameMinRows = configuration.getSqlPageFrameMinRows();
@@ -62,7 +62,7 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     public String getBaseColumnName(int columnIndex) {
-        return dataFrameCursorFactory.getMetadata().getColumnName(columnIndexes.getQuick(columnIndex));
+        return partitionFrameCursorFactory.getMetadata().getColumnName(columnIndexes.getQuick(columnIndex));
     }
 
     @Override
@@ -78,22 +78,22 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
 
     @Override
     public TableToken getTableToken() {
-        return dataFrameCursorFactory.getTableToken();
+        return partitionFrameCursorFactory.getTableToken();
     }
 
     @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
-        return dataFrameCursorFactory.supportsTableRowId(tableToken);
+        return partitionFrameCursorFactory.supportsTableRowId(tableToken);
     }
 
     @Override
     protected void _close() {
-        Misc.free(dataFrameCursorFactory);
+        Misc.free(partitionFrameCursorFactory);
     }
 
     protected PageFrameCursor initPageFrameCursor(SqlExecutionContext executionContext) throws SqlException {
-        final int order = dataFrameCursorFactory.getOrder();
-        DataFrameCursor dataFrameCursor = dataFrameCursorFactory.getCursor(executionContext, ORDER_ANY);
+        final int order = partitionFrameCursorFactory.getOrder();
+        PartitionFrameCursor partitionFrameCursor = partitionFrameCursorFactory.getCursor(executionContext, ORDER_ANY);
         if (pageFrameCursor == null) {
             if (order == ORDER_ASC || order == ORDER_ANY) {
                 pageFrameCursor = new FwdTableReaderPageFrameCursor(
@@ -113,7 +113,7 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
                 );
             }
         }
-        return pageFrameCursor.of(dataFrameCursor);
+        return pageFrameCursor.of(partitionFrameCursor);
     }
 
     protected abstract RecordCursor initRecordCursor(

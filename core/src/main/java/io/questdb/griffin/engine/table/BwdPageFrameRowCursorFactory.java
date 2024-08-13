@@ -43,7 +43,7 @@ public class BwdPageFrameRowCursorFactory implements RowCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        if (sink.getOrder() == DataFrameCursorFactory.ORDER_ASC) {
+        if (sink.getOrder() == PartitionFrameCursorFactory.ORDER_ASC) {
             sink.type("Row forward scan");
         } else {
             sink.type("Row backward scan");

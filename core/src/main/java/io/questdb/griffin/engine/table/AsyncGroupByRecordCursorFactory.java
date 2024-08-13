@@ -47,8 +47,8 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_DESC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 import static io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory.applyCompiledFilter;
 import static io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory.applyFilter;
 

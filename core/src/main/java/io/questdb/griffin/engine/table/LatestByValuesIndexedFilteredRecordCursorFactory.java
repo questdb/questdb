@@ -26,8 +26,8 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SymbolMapReader;
-import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.IntList;
@@ -43,7 +43,7 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
     public LatestByValuesIndexedFilteredRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int columnIndex,
             @Transient ObjList<Function> keyValueFuncs,
             @Transient SymbolMapReader symbolMapReader,
@@ -51,7 +51,7 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
     ) {
-        super(configuration, metadata, dataFrameCursorFactory, columnIndex, keyValueFuncs, symbolMapReader, columnIndexes, columnSizeShifts);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndex, keyValueFuncs, symbolMapReader, columnIndexes, columnSizeShifts);
 
         try {
             if (filter != null) {
@@ -85,7 +85,7 @@ public class LatestByValuesIndexedFilteredRecordCursorFactory extends AbstractDe
             }
             sink.val(deferredSymbolFuncs);
         }
-        sink.child(dataFrameCursorFactory);
+        sink.child(partitionFrameCursorFactory);
     }
 
     @Override

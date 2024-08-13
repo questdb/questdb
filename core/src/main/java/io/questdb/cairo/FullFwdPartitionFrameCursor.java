@@ -24,11 +24,11 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.sql.DataFrame;
+import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.RecordCursor;
 import org.jetbrains.annotations.Nullable;
 
-public class FullFwdDataFrameCursor extends AbstractFullDataFrameCursor {
+public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCursor {
 
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
@@ -42,7 +42,7 @@ public class FullFwdDataFrameCursor extends AbstractFullDataFrameCursor {
     }
 
     @Override
-    public @Nullable DataFrame next() {
+    public @Nullable PartitionFrame next() {
         while (partitionIndex < partitionHi) {
             final long hi = getTableReader().openPartition(partitionIndex);
             if (hi < 1) {
