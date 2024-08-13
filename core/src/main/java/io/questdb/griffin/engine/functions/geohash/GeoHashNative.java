@@ -58,7 +58,8 @@ public class GeoHashNative {
         }
 
         // -1 must be dead case here
-        final int geoHashColumnSize = ColumnType.isGeoHash(geoHashColumnType) ? getPow2SizeOfGeoHashType(geoHashColumnType) : -1;
+        assert ColumnType.isGeoHash(geoHashColumnType) : "geohash expected";
+        final int geoHashColumnSize = getPow2SizeOfGeoHashType(geoHashColumnType);
 
         latestByAndFilterPrefix(
                 keysMemory,

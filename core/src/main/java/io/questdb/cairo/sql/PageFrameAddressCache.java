@@ -173,5 +173,6 @@ public class PageFrameAddressCache implements Mutable {
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             columnTypes.add(metadata.getColumnType(columnIndex));
         }
+        clear();
     }
 }
