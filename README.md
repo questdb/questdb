@@ -182,7 +182,7 @@ Interact with QuestDB and your data via the following interfaces:
 - [InfluxDB Line Protocol](https://questdb.io/docs/reference/api/ilp/overview/)
   for streaming ingestion on port `9000`
 - [PostgreSQL Wire Protocol](https://questdb.io/docs/reference/api/postgres/)
-  for programmatic queries and transactional inserts on port `8812`
+  for programmatic queries on port `8812`
 - [REST API](https://questdb.io/docs/reference/api/rest/) for CSV import and
   cURL on port `9000`
 
@@ -195,6 +195,8 @@ Popular tools that integrate with QuestDB include:
 - [Superset](https://questdb.io/docs/third-party-tools/superset/)
 - [Telegraf](https://questdb.io/docs/third-party-tools/telegraf/)
 - [Apache Flink](https://questdb.io/docs/third-party-tools/flink/)
+- [qStudio](https://questdb.io/docs/third-party-tools/qstudio/)
+- [MindsDB](https://questdb.io/docs/third-party-tools/mindsdb/)
 
 ### End-to-end code scaffolds
 
@@ -219,6 +221,7 @@ Additional features include:
 - cold storage integration
 - role-based access control
 - TLS encryption
+- native querying of Parquet files via object storage
 - support SLAs, enhanced monitoring and more
 
 Visit the [Enterprise page](https://questdb.io/enterprise/) for further details
