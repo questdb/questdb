@@ -57,9 +57,8 @@ public class GeoHashNative {
             geoHashColumnAddress = frameMemory.getPageAddress(geoHashColumnIndex);
         }
 
-        // -1 must be dead case here
-        assert ColumnType.isGeoHash(geoHashColumnType) : "geohash expected";
-        final int geoHashColumnSize = getPow2SizeOfGeoHashType(geoHashColumnType);
+        final int geoHashColumnSize = ColumnType.isGeoHash(geoHashColumnType) ? getPow2SizeOfGeoHashType(geoHashColumnType) : -1;
+        assert geoHashColumnIndex == -1 || geoHashColumnSize != -1 : "no within filter or within on geohash column expected";
 
         latestByAndFilterPrefix(
                 keysMemory,
