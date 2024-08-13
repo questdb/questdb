@@ -103,8 +103,8 @@ QuestDB release and sample datasets:
 
 Use example queries or write your own!
 
-_The public demo is running on `c5.metal` instance and using 24 cores out
-of 96._
+_The public demo queries over 1.6BN rows and uses 24 cores out
+of 96 cores on a `c5.metal` instance._
 
 | Query                                                                         | Execution time                                                                                                                                                                                      |
 | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
