@@ -51,7 +51,7 @@ correlate data from multiple sources using relational and time-series joins.
   <a href="https://demo.questdb.io/">
     <img alt="QuestDB Web Console showing a SQL statement and query result" src="https://raw.githubusercontent.com/questdb/questdb/master/.github/console.png" width="900" />
   </a>
-  <p><em>QuestDB Web Console</em></p>
+  <p><em>QuestDB Web Console - click to launch demo</em></p>
 </div>
 
 <p>&nbsp;</p>
