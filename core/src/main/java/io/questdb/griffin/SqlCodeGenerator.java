@@ -5564,7 +5564,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return;
         }
 
-        if (curr.getFillValues().size() == 1 && Chars.equals(curr.getFillValues().getQuick(0).token, "none")) {
+        if (curr.getFillValues().size() == 1 && SqlKeywords.isNoneKeyword(curr.getFillValues().getQuick(0).token)) {
             return;
         }
 
