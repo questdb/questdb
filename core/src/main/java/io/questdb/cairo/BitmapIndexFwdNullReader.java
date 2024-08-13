@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.str.Path;
 
 public class BitmapIndexFwdNullReader implements BitmapIndexReader {
-
     private final NullCursor cursor = new NullCursor();
 
     @Override

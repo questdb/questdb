@@ -60,7 +60,7 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
             final NullCursor nullCursor = getNullCursor(cachedInstance);
             nullCursor.nullPos = minValue;
             nullCursor.nullCount = Math.min(unindexedNullCount, maxValue + 1);
-            nullCursor.of(key, 0, maxValue, keyCount);
+            nullCursor.of(key, minValue, maxValue, keyCount);
             return nullCursor;
         }
 
@@ -213,8 +213,8 @@ public class BitmapIndexFwdReader extends AbstractIndexReader {
                     seekValue(valueCount, valueBlockOffset);
                 }
 
-                this.maxValue = maxValue;
                 this.minValue = minValue;
+                this.maxValue = maxValue;
             }
         }
     }

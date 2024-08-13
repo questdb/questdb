@@ -175,6 +175,7 @@ public class BitmapIndexBwdReader extends AbstractIndexReader {
                 } else {
                     seekValue(valueCount, valueBlockOffset);
                 }
+
                 this.minValue = minValue;
             }
         }
