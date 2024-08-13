@@ -278,7 +278,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
         // 3 days
         int N = 36;
 
-        // single interval spanning all of the table
+        // single interval spanning all the table
         intervals.clear();
         intervals.add(TimestampFormatUtils.parseTimestamp("1980-01-02T01:00:00.000Z"));
         intervals.add(TimestampFormatUtils.parseTimestamp("1980-01-02T16:00:00.000Z"));
@@ -541,7 +541,7 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
             int keyCount = indexReader.getKeyCount();
             for (int i = 0; i < keyCount; i++) {
                 RowCursor ic = indexReader.getCursor(true, i, low, limit - 1);
-                CharSequence expected = symbolTable.valueOf(i - 1);
+                CharSequence expected = symbolTable.valueOf((int) (i - low - 1));
                 while (ic.hasNext()) {
                     long row = ic.next();
                     record.setRecordIndex(row);
