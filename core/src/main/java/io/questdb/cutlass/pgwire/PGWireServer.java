@@ -28,7 +28,7 @@ import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cutlass.auth.Authenticator;
+import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -177,7 +177,7 @@ public class PGWireServer implements Closeable {
                                 typesAndSelectCache
                         );
                         FactoryProvider factoryProvider = configuration.getFactoryProvider();
-                        Authenticator authenticator = factoryProvider.getPgWireAuthenticatorFactory().getPgWireAuthenticator(
+                        SocketAuthenticator authenticator = factoryProvider.getPgWireAuthenticatorFactory().getPgWireAuthenticator(
                                 configuration,
                                 circuitBreaker,
                                 registry,
