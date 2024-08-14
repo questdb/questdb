@@ -681,7 +681,7 @@ public final class TestUtils {
     }
 
     public static void assertMemoryLeak(LeakProneCode runnable) throws Exception {
-        try (LeakCheck _check = new LeakCheck()) {
+        try (LeakCheck ignore = new LeakCheck()) {
             runnable.run();
         }
     }
@@ -1445,8 +1445,8 @@ public final class TestUtils {
             path.slash();
             Assert.assertTrue("Test dir cleanup error: " + ff.errno(), !ff.exists(path.$()) || ff.rmdir(path.slash()));
 
-            path.parent().concat(RESTORE_SNAPSHOT_TRIGGER_FILE_NAME);
-            Assert.assertTrue("Snapshot trigger cleanup error: " + ff.errno(), !ff.exists(path.$()) || ff.removeQuiet(path.$()));
+            path.parent().concat(RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
+            Assert.assertTrue("Checkpoint trigger cleanup error: " + ff.errno(), !ff.exists(path.$()) || ff.removeQuiet(path.$()));
         }
     }
 

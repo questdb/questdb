@@ -111,6 +111,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // Publisher source is identified by a long value
     private final AlterOperation alterOp = new AlterOperation();
     private final LongConsumer appendTimestampSetter;
+    private final DatabaseCheckpointStatus checkpointStatus;
     private final ColumnVersionWriter columnVersionWriter;
     private final MPSequence commandPubSeq;
     private final RingQueue<TableWriterTask> commandQueue;
@@ -164,7 +165,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final TxReader slaveTxReader;
-    private final DatabaseSnapshotAgent snapshotAgent;
     private final ObjList<MapWriter> symbolMapWriters;
     private final IntList symbolRewriteMap = new IntList();
     private final MemoryMARW todoMem = Vm.getMARWInstance();
@@ -256,13 +256,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LifecycleManager lifecycleManager,
             CharSequence root,
             DdlListener ddlListener,
-            DatabaseSnapshotAgent snapshotAgent,
+            DatabaseCheckpointStatus checkpointStatus,
             Metrics metrics
     ) {
         LOG.info().$("open '").utf8(tableToken.getTableName()).$('\'').$();
         this.configuration = configuration;
         this.ddlListener = ddlListener;
-        this.snapshotAgent = snapshotAgent;
+        this.checkpointStatus = checkpointStatus;
         this.partitionFrameFactory = new PartitionFrameFactory(configuration);
         this.mixedIOFlag = configuration.isWriterMixedIOEnabled();
         this.metrics = metrics;
@@ -954,8 +954,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
-        if (snapshotAgent.isInProgress()) {
-            // No deletion must happen while a snapshot is in-flight.
+        if (checkpointStatus.isInProgress()) {
+            // do not alter scoreboard while checkpoint is in progress
             return true;
         }
         long lastCommittedTxn = txWriter.getTxn();
@@ -7524,9 +7524,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force) {
-        if (snapshotAgent.isInProgress()) {
-            LOG.info().$("cannot squash partition [table=").$(tableToken.getTableName()).$("], snapshot in progress").$();
-            // No overwrite can happen while a snapshot is in-flight.
+        if (checkpointStatus.isInProgress()) {
+            LOG.info().$("cannot squash partition [table=").$(tableToken.getTableName()).$("], checkpoint in progress").$();
             return;
         }
 

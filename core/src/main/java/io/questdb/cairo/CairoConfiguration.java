@@ -345,7 +345,7 @@ public interface CairoConfiguration {
 
     /**
      * Returns database instance id. The instance id is used by the snapshot recovery mechanism:
-     * on database start the id is compared with the id stored in a snapshot, if any. If the ids
+     * on database start the id is compared with the id stored in the checkpoint, if any. If the ids
      * are different, snapshot recovery is being triggered.
      *
      * @return instance id.
@@ -354,7 +354,9 @@ public interface CairoConfiguration {
     CharSequence getSnapshotInstanceId();
 
     @NotNull
-    CharSequence getSnapshotRoot(); // same as root/../snapshot
+    CharSequence getCheckpointRoot(); // same as root/../.checkpoint
+
+    CharSequence getLegacyCheckpointRoot(); // same as root/../snapshot
 
     long getSpinLockTimeout();
 
@@ -583,11 +585,11 @@ public interface CairoConfiguration {
     boolean isReadOnlyInstance();
 
     /**
-     * A flag to enable/disable snapshot recovery mechanism. Defaults to {@code true}.
+     * A flag to enable/disable checkpoint recovery mechanism. Defaults to {@code true}.
      *
-     * @return enable/disable snapshot recovery flag
+     * @return enable/disable flag for recovering from the checkpoint
      */
-    boolean isSnapshotRecoveryEnabled();
+    boolean isCheckpointRecoveryEnabled();
 
     boolean isSqlJitDebugEnabled();
 

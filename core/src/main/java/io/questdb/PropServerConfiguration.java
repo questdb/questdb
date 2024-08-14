@@ -72,7 +72,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
-    public static final String SNAPSHOT_DIRECTORY = "snapshot";
     public static final String TMP_DIRECTORY = "tmp";
     private static final String RELEASE_TYPE = "release.type";
     private static final String RELEASE_VERSION = "release.version";
@@ -265,8 +264,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sharedWorkerSleepTimeout;
     private final long sharedWorkerYieldThreshold;
     private final String snapshotInstanceId;
-    private final boolean snapshotRecoveryEnabled;
-    private final String snapshotRoot;
+    private final boolean checkpointRecoveryEnabled;
+    private final String checkpointRoot;
+    private final String legacyCheckpointRoot;
     private final long spinLockTimeout;
     private final int sqlAsOfJoinLookahead;
     private final int sqlBindVariablePoolSize;
@@ -640,12 +640,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         if (new File(this.dbDirectory).isAbsolute()) {
             this.root = this.dbDirectory;
             this.confRoot = rootSubdir(this.root, CONFIG_DIRECTORY); // ../conf
-            this.snapshotRoot = rootSubdir(this.root, SNAPSHOT_DIRECTORY); // ../snapshot
+            this.checkpointRoot = rootSubdir(this.root, TableUtils.CHECKPOINT_DIRECTORY); // ../.checkpoint
+            this.legacyCheckpointRoot = rootSubdir(this.root, TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
             tmpRoot = rootSubdir(this.root, TMP_DIRECTORY); // ../tmp
         } else {
             this.root = new File(root, this.dbDirectory).getAbsolutePath();
             this.confRoot = new File(root, CONFIG_DIRECTORY).getAbsolutePath();
-            this.snapshotRoot = new File(root, SNAPSHOT_DIRECTORY).getAbsolutePath();
+            this.checkpointRoot = new File(root, TableUtils.CHECKPOINT_DIRECTORY).getAbsolutePath();
+            this.legacyCheckpointRoot = new File(root, TableUtils.LEGACY_CHECKPOINT_DIRECTORY).getAbsolutePath();
             tmpRoot = new File(root, TMP_DIRECTORY).getAbsolutePath();
         }
 
@@ -653,7 +655,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.cairoAttachPartitionCopy = getBoolean(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_COPY, false);
 
         this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
-        this.snapshotRecoveryEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED, true);
+        this.checkpointRecoveryEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED, true);
         this.devModeEnabled = getBoolean(properties, env, PropertyKey.DEV_MODE_ENABLED, false);
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
@@ -1077,7 +1079,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (pathEquals(root, this.cairoSqlCopyWorkRoot)
                     || pathEquals(this.root, this.cairoSqlCopyWorkRoot)
                     || pathEquals(this.confRoot, this.cairoSqlCopyWorkRoot)
-                    || pathEquals(this.snapshotRoot, this.cairoSqlCopyWorkRoot)) {
+                    || pathEquals(this.checkpointRoot, this.cairoSqlCopyWorkRoot)) {
                 throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + " can't point to root, data, conf or snapshot dirs. ");
             }
 
@@ -1580,7 +1582,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     protected int getIntPercentage(
-            Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int defaultValue
+            Properties properties,
+            @Nullable Map<String, String> env,
+            ConfigPropertyKey key,
+            int defaultValue
     ) throws ServerConfigurationException {
         int percentage = getInt(properties, env, key, defaultValue);
         if (percentage < 0 || percentage > 100) {
@@ -1980,6 +1985,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean attachPartitionCopy() {
             return cairoAttachPartitionCopy;
+        }
+
+        @Override
+        public CharSequence getLegacyCheckpointRoot() {
+            return legacyCheckpointRoot;
         }
 
         @Override
@@ -2501,8 +2511,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public @NotNull CharSequence getSnapshotRoot() {
-            return snapshotRoot;
+        public @NotNull CharSequence getCheckpointRoot() {
+            return checkpointRoot;
         }
 
         @Override
@@ -2875,6 +2885,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public double getWalLagRowsMultiplier() {
+            return walSquashUncommittedRowsMultiplier;
+        }
+
+        @Override
         public long getWalMaxLagSize() {
             return walMaxLagSize;
         }
@@ -2912,11 +2927,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalSegmentRolloverSize() {
             return walSegmentRolloverSize;
-        }
-
-        @Override
-        public double getWalLagRowsMultiplier() {
-            return walSquashUncommittedRowsMultiplier;
         }
 
         @Override
@@ -3010,8 +3020,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isSnapshotRecoveryEnabled() {
-            return snapshotRecoveryEnabled;
+        public boolean isCheckpointRecoveryEnabled() {
+            return checkpointRecoveryEnabled;
         }
 
         @Override
