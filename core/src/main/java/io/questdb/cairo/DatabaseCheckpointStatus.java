@@ -24,12 +24,16 @@
 
 package io.questdb.cairo;
 
+import io.questdb.std.Numbers;
+
 public interface DatabaseCheckpointStatus {
 
     /**
-     * Returns when database is in "checkpoint" mode. Checkpoint mode is
-     * entered when CHECKPOINT CREATE SQL is called and exited after
-     * CHECKPOINT RELEASE is called.
+     * Returns a non-negative number when database is in "checkpoint" mode.
+     * Checkpoint mode is entered when CHECKPOINT CREATE SQL is called
+     * and exited after CHECKPOINT RELEASE is called.
+     * The value is an epoch timestamp in micros for the time when CHECKPOINT CREATE was run.
+     * If there is no checkpoint mode, returns {@link Numbers#LONG_NULL}.
      */
-    boolean isInProgress();
+    long startedAtTimestamp();
 }

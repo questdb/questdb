@@ -44,21 +44,22 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.StationaryMicrosClock;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
 import static io.questdb.PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED;
 
 public class CheckpointTest extends AbstractCairoTest {
-
     private static final TestFilesFacade testFilesFacade = new TestFilesFacade();
     private static Path path;
-    private static Path triggerFilePath;
     private static Rnd rnd;
+    private static Path triggerFilePath;
     private int rootLen;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
+        testMicrosClock = StationaryMicrosClock.INSTANCE;
         path = new Path();
         triggerFilePath = new Path();
         ff = testFilesFacade;
@@ -116,354 +117,6 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFailFastWhenCannotCopyRegistryFile() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = "t";
-            ddl(
-                    "create table " + tableName + " as " +
-                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
-            );
-
-            ddl("checkpoint create");
-
-            engine.clear();
-            createTriggerFile();
-            testFilesFacade.errorOnRegistryFileCopy = true;
-            try {
-                engine.checkpointRecover();
-                Assert.fail("Exception expected");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "Could not copy registry file");
-            } finally {
-                testFilesFacade.errorOnRegistryFileCopy = false;
-            }
-        });
-    }
-
-    @Test
-    public void testFailFastWhenCannotRemoveRegistryFile() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = "t";
-            ddl(
-                    "create table " + tableName + " as " +
-                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
-            );
-
-            ddl("checkpoint create");
-
-            engine.clear();
-            createTriggerFile();
-            testFilesFacade.errorOnRegistryFileRemoval = true;
-            try {
-                engine.checkpointRecover();
-                Assert.fail("Exception expected");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "could not remove registry file");
-            } finally {
-                testFilesFacade.errorOnRegistryFileRemoval = false;
-            }
-        });
-    }
-
-    @Test
-    public void testFailFastWhenCannotRemoveTriggerFile() throws Exception {
-        assertMemoryLeak(() -> {
-            testFilesFacade.errorOnTriggerFileRemoval = true;
-
-            final String tableName = "t";
-            ddl(
-                    "create table " + tableName + " as " +
-                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
-            );
-
-            ddl("checkpoint create");
-
-            engine.clear();
-            createTriggerFile();
-            try {
-                engine.checkpointRecover();
-                Assert.fail("Exception expected");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "could not remove restore trigger file");
-            }
-        });
-    }
-
-    @Test
-    public void testFailFastWhenTriggerFailExistsButThereIsNoCheckpointDirectory() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = "t";
-            ddl(
-                    "create table " + tableName + " as " +
-                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
-            );
-
-            engine.clear();
-            createTriggerFile();
-            try {
-                engine.checkpointRecover();
-                Assert.fail("Exception expected");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "checkpoint directory does not exist");
-            }
-        });
-    }
-
-    @Test
-    public void testFailFastWhenTriggerFailExistsButThereIsNoCheckpointMetadataFile() throws Exception {
-        assertMemoryLeak(() -> {
-            final String tableName = "t";
-            ddl(
-                    "create table " + tableName + " as " +
-                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
-            );
-
-            ddl("checkpoint create");
-
-            path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
-            FilesFacade ff = configuration.getFilesFacade();
-            ff.removeQuiet(path.concat(TableUtils.CHECKPOINT_META_FILE_NAME).$());
-
-            engine.clear();
-            createTriggerFile();
-            try {
-                engine.checkpointRecover();
-                Assert.fail("Exception expected");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getMessage(), "checkpoint metadata file does not exist");
-            }
-        });
-    }
-
-    @Test
-    public void testRecoverCheckpointForDefaultInstanceIds() throws Exception {
-        testRecoverCheckpoint("", "", false, false);
-    }
-
-    @Test
-    public void testRecoverCheckpointForDefaultInstanceIdsAndTriggerFile() throws Exception {
-        testRecoverCheckpoint("", "", true, true);
-    }
-
-    @Test
-    public void testRecoverCheckpointForDefaultRestartedId() throws Exception {
-        testRecoverCheckpoint("id1", "", false, false);
-    }
-
-    @Test
-    public void testRecoverCheckpointForDefaultRestartedIdAndTriggerFile() throws Exception {
-        testRecoverCheckpoint("id1", "", true, true);
-    }
-
-    @Test
-    public void testRecoverCheckpointForDefaultCheckpointId() throws Exception {
-        testRecoverCheckpoint("", "id1", false, false);
-    }
-
-    @Test
-    public void testRecoverCheckpointForDefaultCheckpointIdAndTriggerFile() throws Exception {
-        testRecoverCheckpoint("", "id1", true, true);
-    }
-
-    @Test
-    public void testRecoverCheckpointForDifferentInstanceIds() throws Exception {
-        testRecoverCheckpoint("id1", "id2", false, true);
-    }
-
-    @Test
-    public void testRecoverCheckpointForDifferentInstanceIdsAndTriggerFile() throws Exception {
-        testRecoverCheckpoint("id1", "id2", true, true);
-    }
-
-    @Test
-    public void testRecoverCheckpointForDifferentInstanceIdsAndTriggerFileWhenRecoveryIsDisabled() throws Exception {
-        node1.setProperty(CAIRO_SNAPSHOT_RECOVERY_ENABLED, "false");
-        testRecoverCheckpoint("id1", "id2", true, false);
-    }
-
-    @Test
-    public void testRecoverCheckpointForDifferentInstanceIdsWhenRecoveryIsDisabled() throws Exception {
-        node1.setProperty(CAIRO_SNAPSHOT_RECOVERY_ENABLED, "false");
-        testRecoverCheckpoint("id1", "id2", false, false);
-    }
-
-    @Test
-    public void testRecoverCheckpointForEqualInstanceIds() throws Exception {
-        testRecoverCheckpoint("id1", "id1", false, false);
-    }
-
-    @Test
-    public void testRecoverCheckpointForEqualInstanceIdsAndTriggerFile() throws Exception {
-        testRecoverCheckpoint("id1", "id1", true, true);
-    }
-
-    @Test
-    public void testRecoverCheckpointLargePartitionCount() throws Exception {
-        final int partitionCount = 2000;
-        final String snapshotId = "id1";
-        final String restartedId = "id2";
-        assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
-            final String tableName = "t";
-            ddl(
-                    "create table " + tableName + " as " +
-                            "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(" + partitionCount + ")) timestamp(ts) partition by day"
-            );
-
-            ddl("checkpoint create");
-
-            insert(
-                    "insert into " + tableName +
-                            " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)"
-            );
-
-            // Release all readers and writers, but keep the snapshot dir around.
-            engine.clear();
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
-            engine.checkpointRecover();
-
-            // Data inserted after PREPARE SNAPSHOT should be discarded.
-            assertSql(
-                    "count\n" +
-                            partitionCount + "\n",
-                    "select count() from " + tableName
-            );
-        });
-    }
-
-    @Test
-    public void testRecoverCheckpointRestoresDroppedColumns() throws Exception {
-        final String snapshotId = "00000000-0000-0000-0000-000000000000";
-        final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
-        assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
-
-            final String tableName = "t";
-            ddl(
-                    "create table " + tableName + " as " +
-                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
-            );
-
-            ddl("checkpoint create");
-
-            final String expectedAllColumns = "a\tb\tc\n" +
-                    "JW\tC\t1\n" +
-                    "WH\tB\t2\n" +
-                    "PE\tB\t3\n";
-            assertSql(expectedAllColumns, "select * from " + tableName);
-
-            ddl("alter table " + tableName + " drop column b");
-            assertSql(
-                    "a\tc\n" +
-                            "JW\t1\n" +
-                            "WH\t2\n" +
-                            "PE\t3\n",
-                    "select * from " + tableName
-            );
-
-            // Release all readers and writers, but keep the snapshot dir around.
-            engine.clear();
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
-            engine.checkpointRecover();
-
-            // Dropped column should be there.
-            assertSql(expectedAllColumns, "select * from " + tableName);
-        });
-    }
-
-    @Test
-    public void testRecoverCheckpointSupportsCheckpointTxtFile() throws Exception {
-        final int partitionCount = 10;
-        final String snapshotId = "id1";
-        final String restartedId = "id2";
-        assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
-            final String tableName = "t";
-            ddl(
-                    "create table " + tableName + " as " +
-                            "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(" + partitionCount + ")) timestamp(ts) partition by day"
-            );
-
-            ddl("checkpoint create");
-
-            insert(
-                    "insert into " + tableName +
-                            " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)"
-            );
-
-            // Release all readers and writers, but keep the snapshot dir around.
-            engine.clear();
-
-            // create snapshot.txt file
-            FilesFacade ff = configuration.getFilesFacade();
-            path.trimTo(rootLen).concat(TableUtils.CHECKPOINT_META_FILE_NAME_TXT);
-            int fd = ff.openRW(path.$(), configuration.getWriterFileOpenOpts());
-            Assert.assertTrue(fd > 0);
-
-            try {
-                try (DirectUtf8Sink utf8 = new DirectUtf8Sink(3)) {
-                    utf8.put(snapshotId);
-                    ff.write(fd, utf8.ptr(), utf8.size(), 0);
-                    ff.truncate(fd, utf8.size());
-                }
-            } finally {
-                ff.close(fd);
-            }
-            Assert.assertEquals(ff.length(path.$()), restartedId.length());
-
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
-            engine.checkpointRecover();
-
-            // Data inserted after PREPARE SNAPSHOT should be discarded.
-            assertSql(
-                    "count\n" +
-                            partitionCount + "\n",
-                    "select count() from " + tableName
-            );
-        });
-    }
-
-    @Test
-    public void testRunWalPurgeJobLockTimeout() throws Exception {
-        configureCircuitBreakerTimeoutOnFirstCheck(); // trigger timeout on first check
-        assertMemoryLeak(() -> {
-            ddl("create table test (ts timestamp, name symbol, val int)");
-            SimpleWaitingLock lock = new SimpleWaitingLock();
-            SOCountDownLatch latch1 = new SOCountDownLatch(1);
-            SOCountDownLatch latch2 = new SOCountDownLatch(1);
-
-            engine.setWalPurgeJobRunLock(lock);
-
-            Thread t = new Thread(() -> {
-                lock.lock(); //emulate WalPurgeJob running with lock
-                latch2.countDown();
-                try {
-                    latch1.await();
-                } finally {
-                    lock.unlock();
-                }
-            });
-
-            try {
-                t.start();
-                latch2.await();
-                configureCircuitBreakerTimeoutOnFirstCheck();
-                assertExceptionNoLeakCheck("checkpoint create");
-            } catch (CairoException ex) {
-                latch1.countDown();
-                t.join();
-                Assert.assertFalse(lock.isLocked());
-                Assert.assertTrue(ex.getMessage().startsWith("[-1] timeout, query aborted [fd=-1]"));
-            } finally {
-                ddl("checkpoint release");
-                Assert.assertFalse(lock.isLocked());
-                circuitBreakerConfiguration = null;
-                engine.setWalPurgeJobRunLock(null);
-            }
-        });
-    }
-
-    @Test
     public void testCheckpointCompleteDeletesCheckpointDir() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
@@ -485,14 +138,10 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCheckpointDbWithWalTable() throws Exception {
+    public void testCheckpointCreate() throws Exception {
         assertMemoryLeak(() -> {
-            for (char i = 'a'; i < 'd'; i++) {
+            for (char i = 'a'; i < 'f'; i++) {
                 ddl("create table " + i + " (ts timestamp, name symbol, val int)");
-            }
-
-            for (char i = 'd'; i < 'f'; i++) {
-                ddl("create table " + i + " (ts timestamp, name symbol, val int) timestamp(ts) partition by DAY WAL");
             }
 
             ddl("checkpoint create");
@@ -501,10 +150,14 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCheckpointCreate() throws Exception {
+    public void testCheckpointDbWithWalTable() throws Exception {
         assertMemoryLeak(() -> {
-            for (char i = 'a'; i < 'f'; i++) {
+            for (char i = 'a'; i < 'd'; i++) {
                 ddl("create table " + i + " (ts timestamp, name symbol, val int)");
+            }
+
+            for (char i = 'd'; i < 'f'; i++) {
+                ddl("create table " + i + " (ts timestamp, name symbol, val int) timestamp(ts) partition by DAY WAL");
             }
 
             ddl("checkpoint create");
@@ -957,6 +610,33 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointStatus() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql(
+                    "in_progress\tstarted_at\n" +
+                            "false\t\n",
+                    "select * from checkpoint_status();"
+            );
+
+            ddl("checkpoint create");
+
+            assertSql(
+                    "in_progress\tstarted_at\n" +
+                            "true\t1970-01-01T00:00:00.000000Z\n",
+                    "select * from checkpoint_status();"
+            );
+
+            ddl("checkpoint release");
+
+            assertSql(
+                    "in_progress\tstarted_at\n" +
+                            "false\t\n",
+                    "select * from checkpoint_status();"
+            );
+        });
+    }
+
+    @Test
     public void testCheckpointUnknownSubOptionFails() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
@@ -965,6 +645,354 @@ public class CheckpointTest extends AbstractCairoTest {
                     11,
                     "'create' or 'release' expected"
             );
+        });
+    }
+
+    @Test
+    public void testFailFastWhenCannotCopyRegistryFile() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "t";
+            ddl(
+                    "create table " + tableName + " as " +
+                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
+            );
+
+            ddl("checkpoint create");
+
+            engine.clear();
+            createTriggerFile();
+            testFilesFacade.errorOnRegistryFileCopy = true;
+            try {
+                engine.checkpointRecover();
+                Assert.fail("Exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getMessage(), "Could not copy registry file");
+            } finally {
+                testFilesFacade.errorOnRegistryFileCopy = false;
+            }
+        });
+    }
+
+    @Test
+    public void testFailFastWhenCannotRemoveRegistryFile() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "t";
+            ddl(
+                    "create table " + tableName + " as " +
+                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
+            );
+
+            ddl("checkpoint create");
+
+            engine.clear();
+            createTriggerFile();
+            testFilesFacade.errorOnRegistryFileRemoval = true;
+            try {
+                engine.checkpointRecover();
+                Assert.fail("Exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getMessage(), "could not remove registry file");
+            } finally {
+                testFilesFacade.errorOnRegistryFileRemoval = false;
+            }
+        });
+    }
+
+    @Test
+    public void testFailFastWhenCannotRemoveTriggerFile() throws Exception {
+        assertMemoryLeak(() -> {
+            testFilesFacade.errorOnTriggerFileRemoval = true;
+
+            final String tableName = "t";
+            ddl(
+                    "create table " + tableName + " as " +
+                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
+            );
+
+            ddl("checkpoint create");
+
+            engine.clear();
+            createTriggerFile();
+            try {
+                engine.checkpointRecover();
+                Assert.fail("Exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getMessage(), "could not remove restore trigger file");
+            }
+        });
+    }
+
+    @Test
+    public void testFailFastWhenTriggerFailExistsButThereIsNoCheckpointDirectory() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "t";
+            ddl(
+                    "create table " + tableName + " as " +
+                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
+            );
+
+            engine.clear();
+            createTriggerFile();
+            try {
+                engine.checkpointRecover();
+                Assert.fail("Exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getMessage(), "checkpoint directory does not exist");
+            }
+        });
+    }
+
+    @Test
+    public void testFailFastWhenTriggerFailExistsButThereIsNoCheckpointMetadataFile() throws Exception {
+        assertMemoryLeak(() -> {
+            final String tableName = "t";
+            ddl(
+                    "create table " + tableName + " as " +
+                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
+            );
+
+            ddl("checkpoint create");
+
+            path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
+            FilesFacade ff = configuration.getFilesFacade();
+            ff.removeQuiet(path.concat(TableUtils.CHECKPOINT_META_FILE_NAME).$());
+
+            engine.clear();
+            createTriggerFile();
+            try {
+                engine.checkpointRecover();
+                Assert.fail("Exception expected");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getMessage(), "checkpoint metadata file does not exist");
+            }
+        });
+    }
+
+    @Test
+    public void testRecoverCheckpointForDefaultCheckpointId() throws Exception {
+        testRecoverCheckpoint("", "id1", false, false);
+    }
+
+    @Test
+    public void testRecoverCheckpointForDefaultCheckpointIdAndTriggerFile() throws Exception {
+        testRecoverCheckpoint("", "id1", true, true);
+    }
+
+    @Test
+    public void testRecoverCheckpointForDefaultInstanceIds() throws Exception {
+        testRecoverCheckpoint("", "", false, false);
+    }
+
+    @Test
+    public void testRecoverCheckpointForDefaultInstanceIdsAndTriggerFile() throws Exception {
+        testRecoverCheckpoint("", "", true, true);
+    }
+
+    @Test
+    public void testRecoverCheckpointForDefaultRestartedId() throws Exception {
+        testRecoverCheckpoint("id1", "", false, false);
+    }
+
+    @Test
+    public void testRecoverCheckpointForDefaultRestartedIdAndTriggerFile() throws Exception {
+        testRecoverCheckpoint("id1", "", true, true);
+    }
+
+    @Test
+    public void testRecoverCheckpointForDifferentInstanceIds() throws Exception {
+        testRecoverCheckpoint("id1", "id2", false, true);
+    }
+
+    @Test
+    public void testRecoverCheckpointForDifferentInstanceIdsAndTriggerFile() throws Exception {
+        testRecoverCheckpoint("id1", "id2", true, true);
+    }
+
+    @Test
+    public void testRecoverCheckpointForDifferentInstanceIdsAndTriggerFileWhenRecoveryIsDisabled() throws Exception {
+        node1.setProperty(CAIRO_SNAPSHOT_RECOVERY_ENABLED, "false");
+        testRecoverCheckpoint("id1", "id2", true, false);
+    }
+
+    @Test
+    public void testRecoverCheckpointForDifferentInstanceIdsWhenRecoveryIsDisabled() throws Exception {
+        node1.setProperty(CAIRO_SNAPSHOT_RECOVERY_ENABLED, "false");
+        testRecoverCheckpoint("id1", "id2", false, false);
+    }
+
+    @Test
+    public void testRecoverCheckpointForEqualInstanceIds() throws Exception {
+        testRecoverCheckpoint("id1", "id1", false, false);
+    }
+
+    @Test
+    public void testRecoverCheckpointForEqualInstanceIdsAndTriggerFile() throws Exception {
+        testRecoverCheckpoint("id1", "id1", true, true);
+    }
+
+    @Test
+    public void testRecoverCheckpointLargePartitionCount() throws Exception {
+        final int partitionCount = 2000;
+        final String snapshotId = "id1";
+        final String restartedId = "id2";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
+            final String tableName = "t";
+            ddl(
+                    "create table " + tableName + " as " +
+                            "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(" + partitionCount + ")) timestamp(ts) partition by day"
+            );
+
+            ddl("checkpoint create");
+
+            insert(
+                    "insert into " + tableName +
+                            " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)"
+            );
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+
+            // Data inserted after CHECKPOINT CREATE should be discarded.
+            assertSql(
+                    "count\n" +
+                            partitionCount + "\n",
+                    "select count() from " + tableName
+            );
+        });
+    }
+
+    @Test
+    public void testRecoverCheckpointRestoresDroppedColumns() throws Exception {
+        final String snapshotId = "00000000-0000-0000-0000-000000000000";
+        final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            final String tableName = "t";
+            ddl(
+                    "create table " + tableName + " as " +
+                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
+            );
+
+            ddl("checkpoint create");
+
+            final String expectedAllColumns = "a\tb\tc\n" +
+                    "JW\tC\t1\n" +
+                    "WH\tB\t2\n" +
+                    "PE\tB\t3\n";
+            assertSql(expectedAllColumns, "select * from " + tableName);
+
+            ddl("alter table " + tableName + " drop column b");
+            assertSql(
+                    "a\tc\n" +
+                            "JW\t1\n" +
+                            "WH\t2\n" +
+                            "PE\t3\n",
+                    "select * from " + tableName
+            );
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+
+            // Dropped column should be there.
+            assertSql(expectedAllColumns, "select * from " + tableName);
+        });
+    }
+
+    @Test
+    public void testRecoverCheckpointSupportsCheckpointTxtFile() throws Exception {
+        final int partitionCount = 10;
+        final String snapshotId = "id1";
+        final String restartedId = "id2";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
+            final String tableName = "t";
+            ddl(
+                    "create table " + tableName + " as " +
+                            "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(" + partitionCount + ")) timestamp(ts) partition by day"
+            );
+
+            ddl("checkpoint create");
+
+            insert(
+                    "insert into " + tableName +
+                            " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)"
+            );
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            engine.clear();
+
+            // create snapshot.txt file
+            FilesFacade ff = configuration.getFilesFacade();
+            path.trimTo(rootLen).concat(TableUtils.CHECKPOINT_META_FILE_NAME_TXT);
+            int fd = ff.openRW(path.$(), configuration.getWriterFileOpenOpts());
+            Assert.assertTrue(fd > 0);
+
+            try {
+                try (DirectUtf8Sink utf8 = new DirectUtf8Sink(3)) {
+                    utf8.put(snapshotId);
+                    ff.write(fd, utf8.ptr(), utf8.size(), 0);
+                    ff.truncate(fd, utf8.size());
+                }
+            } finally {
+                ff.close(fd);
+            }
+            Assert.assertEquals(ff.length(path.$()), restartedId.length());
+
+            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+
+            // Data inserted after CHECKPOINT CREATE should be discarded.
+            assertSql(
+                    "count\n" +
+                            partitionCount + "\n",
+                    "select count() from " + tableName
+            );
+        });
+    }
+
+    @Test
+    public void testRunWalPurgeJobLockTimeout() throws Exception {
+        configureCircuitBreakerTimeoutOnFirstCheck(); // trigger timeout on first check
+        assertMemoryLeak(() -> {
+            ddl("create table test (ts timestamp, name symbol, val int)");
+            SimpleWaitingLock lock = new SimpleWaitingLock();
+            SOCountDownLatch latch1 = new SOCountDownLatch(1);
+            SOCountDownLatch latch2 = new SOCountDownLatch(1);
+
+            engine.setWalPurgeJobRunLock(lock);
+
+            Thread t = new Thread(() -> {
+                lock.lock(); //emulate WalPurgeJob running with lock
+                latch2.countDown();
+                try {
+                    latch1.await();
+                } finally {
+                    lock.unlock();
+                }
+            });
+
+            try {
+                t.start();
+                latch2.await();
+                configureCircuitBreakerTimeoutOnFirstCheck();
+                assertExceptionNoLeakCheck("checkpoint create");
+            } catch (CairoException ex) {
+                latch1.countDown();
+                t.join();
+                Assert.assertFalse(lock.isLocked());
+                Assert.assertTrue(ex.getMessage().startsWith("[-1] timeout, query aborted [fd=-1]"));
+            } finally {
+                ddl("checkpoint release");
+                Assert.assertFalse(lock.isLocked());
+                circuitBreakerConfiguration = null;
+                engine.setWalPurgeJobRunLock(null);
+            }
         });
     }
 
@@ -1195,94 +1223,6 @@ public class CheckpointTest extends AbstractCairoTest {
         Files.touch(triggerFilePath.$());
     }
 
-    private void testRecoverCheckpoint(
-            String snapshotId,
-            String restartedId,
-            boolean createTriggerFile,
-            boolean expectRecovery
-    ) throws Exception {
-        assertMemoryLeak(() -> {
-            node1.setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
-            Assert.assertEquals(engine.getConfiguration().getSnapshotInstanceId(), snapshotId);
-
-            final String nonPartitionedTable = "npt";
-            ddl(
-                    "create table " + nonPartitionedTable + " as " +
-                            "(select rnd_str(5,10,2) a, x b from long_sequence(20))",
-                    sqlExecutionContext
-            );
-            final String partitionedTable = "pt";
-            ddl(
-                    "create table " + partitionedTable + " as " +
-                            "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by hour"
-            );
-
-            if (rnd.nextBoolean()) {
-                ddl("checkpoint create");
-            } else {
-                ddl("snapshot prepare");
-                // also rename ".checkpoint" dir to the legacy "snapshot"
-                try (
-                        Path p1 = new Path();
-                        Path p2 = new Path()
-                ) {
-                    p1.of(configuration.getRoot()).concat(TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
-                    p2.of(configuration.getRoot()).concat(TableUtils.CHECKPOINT_DIRECTORY);
-                    Assert.assertEquals(0, ff.rename(p2.$(), p1.$()));
-                    path.of(p1).concat(configuration.getDbDirectory());
-                    rootLen = path.size();
-                }
-            }
-
-            path.trimTo(rootLen).slash$();
-            Assert.assertTrue(Utf8s.toString(path), configuration.getFilesFacade().exists(path.$()));
-
-            insert(
-                    "insert into " + nonPartitionedTable +
-                            " select rnd_str(3,6,2) a, x+20 b from long_sequence(20)"
-            );
-            insert(
-                    "insert into " + partitionedTable +
-                            " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(20)"
-            );
-
-            // Release all readers and writers, but keep the snapshot dir around.
-            engine.clear();
-            node1.setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
-            Assert.assertEquals(engine.getConfiguration().getSnapshotInstanceId(), restartedId);
-
-            if (createTriggerFile) {
-                createTriggerFile();
-            }
-
-            engine.checkpointRecover();
-
-            // In case of recovery, data inserted after PREPARE SNAPSHOT should be discarded.
-            int expectedCount = expectRecovery ? 20 : 40;
-            assertSql(
-                    "count\n" +
-                            expectedCount + "\n",
-                    "select count() from " + nonPartitionedTable
-            );
-
-            assertSql(
-                    "count\n" +
-                            expectedCount + "\n",
-                    "select count() from " + partitionedTable
-            );
-
-            // Recovery should delete the snapshot dir. Otherwise, the dir should be kept as is.
-            path.trimTo(rootLen).slash$();
-            if (expectRecovery == configuration.getFilesFacade().exists(path.$())) {
-                if (expectRecovery) {
-                    Assert.fail("Recovery should happen but the snapshot path still exists:" + Utf8s.toString(path));
-                } else {
-                    Assert.fail("Recovery shouldn't happen but the snapshot path does not exist:" + Utf8s.toString(path));
-                }
-            }
-        });
-    }
-
     private void testCheckpointPrepareCheckMetadataFile(String snapshotId) throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
@@ -1439,6 +1379,94 @@ public class CheckpointTest extends AbstractCairoTest {
 
             ddl("checkpoint release");
         }
+    }
+
+    private void testRecoverCheckpoint(
+            String snapshotId,
+            String restartedId,
+            boolean createTriggerFile,
+            boolean expectRecovery
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
+            Assert.assertEquals(engine.getConfiguration().getSnapshotInstanceId(), snapshotId);
+
+            final String nonPartitionedTable = "npt";
+            ddl(
+                    "create table " + nonPartitionedTable + " as " +
+                            "(select rnd_str(5,10,2) a, x b from long_sequence(20))",
+                    sqlExecutionContext
+            );
+            final String partitionedTable = "pt";
+            ddl(
+                    "create table " + partitionedTable + " as " +
+                            "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(20)) timestamp(ts) partition by hour"
+            );
+
+            if (rnd.nextBoolean()) {
+                ddl("checkpoint create");
+            } else {
+                ddl("snapshot prepare");
+                // also rename ".checkpoint" dir to the legacy "snapshot"
+                try (
+                        Path p1 = new Path();
+                        Path p2 = new Path()
+                ) {
+                    p1.of(configuration.getRoot()).concat(TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
+                    p2.of(configuration.getRoot()).concat(TableUtils.CHECKPOINT_DIRECTORY);
+                    Assert.assertEquals(0, ff.rename(p2.$(), p1.$()));
+                    path.of(p1).concat(configuration.getDbDirectory());
+                    rootLen = path.size();
+                }
+            }
+
+            path.trimTo(rootLen).slash$();
+            Assert.assertTrue(Utf8s.toString(path), configuration.getFilesFacade().exists(path.$()));
+
+            insert(
+                    "insert into " + nonPartitionedTable +
+                            " select rnd_str(3,6,2) a, x+20 b from long_sequence(20)"
+            );
+            insert(
+                    "insert into " + partitionedTable +
+                            " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(20)"
+            );
+
+            // Release all readers and writers, but keep the snapshot dir around.
+            engine.clear();
+            node1.setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
+            Assert.assertEquals(engine.getConfiguration().getSnapshotInstanceId(), restartedId);
+
+            if (createTriggerFile) {
+                createTriggerFile();
+            }
+
+            engine.checkpointRecover();
+
+            // In case of recovery, data inserted after CHECKPOINT CREATE should be discarded.
+            int expectedCount = expectRecovery ? 20 : 40;
+            assertSql(
+                    "count\n" +
+                            expectedCount + "\n",
+                    "select count() from " + nonPartitionedTable
+            );
+
+            assertSql(
+                    "count\n" +
+                            expectedCount + "\n",
+                    "select count() from " + partitionedTable
+            );
+
+            // Recovery should delete the snapshot dir. Otherwise, the dir should be kept as is.
+            path.trimTo(rootLen).slash$();
+            if (expectRecovery == configuration.getFilesFacade().exists(path.$())) {
+                if (expectRecovery) {
+                    Assert.fail("Recovery should happen but the snapshot path still exists:" + Utf8s.toString(path));
+                } else {
+                    Assert.fail("Recovery shouldn't happen but the snapshot path does not exist:" + Utf8s.toString(path));
+                }
+            }
+        });
     }
 
     private static class TestFilesFacade extends TestFilesFacadeImpl {

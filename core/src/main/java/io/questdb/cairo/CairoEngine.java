@@ -818,7 +818,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public String lockAll(TableToken tableToken, String lockReason, boolean ignoreInProgressCheckpoint) {
         assert null != lockReason;
-        if (!ignoreInProgressCheckpoint && checkpointAgent.isInProgress()) {
+        if (!ignoreInProgressCheckpoint && checkpointAgent.startedAtTimestamp() != Numbers.LONG_NULL) {
             // prevent reader locking before checkpoint is released
             return REASON_CHECKPOINT_IN_PROGRESS;
         }
@@ -855,7 +855,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public boolean lockReadersAndMetadata(TableToken tableToken) {
-        if (checkpointAgent.isInProgress()) {
+        if (checkpointAgent.startedAtTimestamp() != Numbers.LONG_NULL) {
             // prevent reader locking before checkpoint is released
             return false;
         }
@@ -870,7 +870,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public boolean lockReadersByTableToken(TableToken tableToken) {
-        if (checkpointAgent.isInProgress()) {
+        if (checkpointAgent.startedAtTimestamp() != Numbers.LONG_NULL) {
             // prevent reader locking before checkpoint is released
             return false;
         }
