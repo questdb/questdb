@@ -660,17 +660,17 @@ public class PropServerConfiguration implements ServerConfiguration {
         int cpuUsed = 0;
         int cpuSpare = 0;
         int cpuIoWorkers = 0;
-        int cpuWalApplyWorkers = 2;
+        int cpuWalApplyWorkers = 1;
 
         if (cpuAvailable > 8) {
-            cpuWalApplyWorkers = 3;
+            cpuWalApplyWorkers = 2;
         } else if (cpuAvailable > 16) {
-            cpuWalApplyWorkers = 4;
+            cpuWalApplyWorkers = 2;
             cpuSpare = 1;
             // tested on 4/32/48 core servers
             cpuIoWorkers = cpuAvailable / 2;
         } else if (cpuAvailable > 32) {
-            cpuWalApplyWorkers = 4;
+            cpuWalApplyWorkers = 3;
             cpuSpare = 2;
             // tested on 4/32/48 core servers
             cpuIoWorkers = cpuAvailable / 2;
@@ -2875,6 +2875,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public double getWalLagRowsMultiplier() {
+            return walSquashUncommittedRowsMultiplier;
+        }
+
+        @Override
         public long getWalMaxLagSize() {
             return walMaxLagSize;
         }
@@ -2912,11 +2917,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalSegmentRolloverSize() {
             return walSegmentRolloverSize;
-        }
-
-        @Override
-        public double getWalLagRowsMultiplier() {
-            return walSquashUncommittedRowsMultiplier;
         }
 
         @Override
