@@ -53,7 +53,7 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     PageFrameCursor of(PartitionFrameCursor partitionFrameCursor);
 
     /**
-     * @return number of items in all page frames
+     * @return number of rows in all page frames
      */
     long size();
 

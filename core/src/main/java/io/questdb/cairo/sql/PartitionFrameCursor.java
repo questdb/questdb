@@ -57,7 +57,7 @@ public interface PartitionFrameCursor extends QuietCloseable, SymbolTableSource 
     boolean reload();
 
     /**
-     * @return number of items in all partition frames.
+     * @return number of rows in all partition frames.
      */
     long size();
 

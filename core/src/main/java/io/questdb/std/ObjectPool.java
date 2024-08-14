@@ -52,13 +52,6 @@ public class ObjectPool<T extends Mutable> implements Mutable {
         pos = 0;
     }
 
-    public void closeAndClear() {
-        for (int i = 0; i < pos; i++) {
-            Misc.freeIfCloseable(list.getQuick(i));
-        }
-        pos = 0;
-    }
-
     public T next() {
         if (pos == size) {
             expand();
