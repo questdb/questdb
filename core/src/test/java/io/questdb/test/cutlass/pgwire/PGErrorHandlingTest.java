@@ -25,7 +25,7 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.*;
-import io.questdb.cutlass.auth.Authenticator;
+import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.pgwire.PgWireAuthenticatorFactory;
 import io.questdb.network.Socket;
 import io.questdb.std.FilesFacadeImpl;
@@ -115,7 +115,12 @@ public class PGErrorHandlingTest extends BootstrapTest {
                                 (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration) {
                                     @Override
                                     public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
-                                        return (pgWireConfiguration, circuitBreaker, registry, optionsListener) -> new Authenticator() {
+                                        return (pgWireConfiguration, circuitBreaker, registry, optionsListener) -> new SocketAuthenticator() {
+                                            @Override
+                                            public void close() {
+                                                Misc.free(circuitBreaker);
+                                            }
+
                                             @Override
                                             public CharSequence getPrincipal() {
                                                 return null;
@@ -143,11 +148,6 @@ public class PGErrorHandlingTest extends BootstrapTest {
                                             @Override
                                             public boolean isAuthenticated() {
                                                 throw new RuntimeException("Test error");
-                                            }
-
-                                            @Override
-                                            public void close() {
-                                                Misc.free(circuitBreaker);
                                             }
                                         };
                                     }

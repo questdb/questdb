@@ -24,11 +24,9 @@
 
 package io.questdb.cutlass.http;
 
-import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
-import org.jetbrains.annotations.Nullable;
 
 public final class StaticHttpAuthenticator implements HttpAuthenticator {
     private final Utf8Sequence expectedHeader;
@@ -46,11 +44,6 @@ public final class StaticHttpAuthenticator implements HttpAuthenticator {
             return false;
         }
         return Utf8s.equals(expectedHeader, header);
-    }
-
-    @Override
-    public @Nullable ObjList<CharSequence> getGroups() {
-        return null;
     }
 
     @Override

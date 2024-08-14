@@ -22,26 +22,34 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.cutlass.auth;
 
-import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cutlass.auth.Authenticator;
+import io.questdb.network.Socket;
+import org.jetbrains.annotations.NotNull;
 
-public class UsernamePasswordPgWireAuthenticatorFactory implements PgWireAuthenticatorFactory {
+public interface SocketAuthenticator extends Authenticator {
 
-    private final UsernamePasswordMatcher matcher;
+    int NEEDS_DISCONNECT = 3;
+    int NEEDS_READ = 0;
+    int NEEDS_WRITE = 1;
+    int OK = -1;
+    int QUEUE_FULL = 2;
 
-    public UsernamePasswordPgWireAuthenticatorFactory(UsernamePasswordMatcher matcher) {
-        this.matcher = matcher;
+    default int denyAccess(CharSequence message) throws AuthenticatorException {
+        throw new UnsupportedOperationException();
     }
 
-    @Override
-    public Authenticator getPgWireAuthenticator(
-            PGWireConfiguration configuration,
-            NetworkSqlExecutionCircuitBreaker circuitBreaker,
-            CircuitBreakerRegistry registry,
-            OptionsListener optionsListener
-    ) {
-        return new CleartextPasswordPgWireAuthenticator(configuration, circuitBreaker, registry, optionsListener, matcher, false);
+    long getRecvBufPos();
+
+    long getRecvBufPseudoStart();
+
+    int handleIO() throws AuthenticatorException;
+
+    void init(@NotNull Socket socket, long recvBuffer, long recvBufferLimit, long sendBuffer, long sendBufferLimit);
+
+    boolean isAuthenticated();
+
+    default int loginOK() throws AuthenticatorException {
+        throw new UnsupportedOperationException();
     }
 }
