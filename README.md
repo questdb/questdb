@@ -103,7 +103,7 @@ QuestDB release and sample datasets:
 
 Use example queries or write your own!
 
-_The public demo queries over 1.6BN rows and uses 48 cores out
+_The public demo queries over 1.6BN rows and uses a `r6a.12xlarge` 48 vCPU and 348GB RAM instance._
 of 96 cores on a `r6a.12xlarge` 348GB instance._
 
 | Query                                                                         | Execution time                                                                                                                                                                                      |
