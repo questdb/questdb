@@ -33,13 +33,12 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 
-public class ShowServerVersionCursorFactory extends AbstractRecordCursorFactory {
-    public static final String SERVER_VERSION = Constants.PG_COMPATIBLE_VERSION + " (questdb)";
+public class ShowServerVersionNumCursorFactory extends AbstractRecordCursorFactory {
     private static final GenericRecordMetadata METADATA = new GenericRecordMetadata();
     private static final int SIZE = 1;
-    private final ShowServerVersionRecordCursor cursor = new ShowServerVersionRecordCursor();
+    private final ShowServerVersionNumRecordCursor cursor = new ShowServerVersionNumRecordCursor();
 
-    public ShowServerVersionCursorFactory() {
+    public ShowServerVersionNumCursorFactory() {
         super(METADATA);
     }
 
@@ -55,14 +54,14 @@ public class ShowServerVersionCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("show_server_version");
+        sink.type("show_server_version_num");
     }
 
-    private static class ShowServerVersionRecordCursor implements RecordCursor {
+    private static class ShowServerVersionNumRecordCursor implements RecordCursor {
         private final Record record = new Record() {
             @Override
             public CharSequence getStrA(int col) {
-                return col == 0 ? SERVER_VERSION : null;
+                return col == 0 ? Constants.PG_COMPATIBLE_VERSION_NUM : null;
             }
 
             @Override
@@ -115,6 +114,6 @@ public class ShowServerVersionCursorFactory extends AbstractRecordCursorFactory 
     }
 
     static {
-        METADATA.add(new TableColumnMetadata("server_version", ColumnType.STRING));
+        METADATA.add(new TableColumnMetadata("server_version_num", ColumnType.STRING));
     }
 }
