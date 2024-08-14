@@ -4936,6 +4936,59 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByWithCTEsAndConstantKey() throws Exception {
+        assertQuery(
+                "period_start_time\tnas_timestamp\tfeed_table\tdevice_name\tapplication_name\tapplication_group\tmin_response_time_usec\tmax_response_time_usec\ttotal_response_time_usec\tcount_response_time\tevents\n" +
+                        "1970-01-02T23:45:00.000000Z\t1970-01-03T00:00:00.000000Z\tSIP\tTJW\tHNRX\tIBBT\t754\t754\t754\t1\t1\n" +
+                        "1970-01-03T00:15:00.000000Z\t1970-01-03T01:00:00.000000Z\tSIP\tTJW\tRXP\tIBBT\t145\t145\t145\t1\t1\n" +
+                        "1970-01-03T00:45:00.000000Z\t1970-01-03T02:00:00.000000Z\tSIP\tTJW\tRXP\tZSXU\t447\t447\t447\t1\t1\n" +
+                        "1970-01-03T01:15:00.000000Z\t1970-01-03T03:00:00.000000Z\tSIP\tTJW\tRXP\tIBBT\t653\t653\t653\t1\t1\n" +
+                        "1970-01-03T01:45:00.000000Z\t1970-01-03T04:00:00.000000Z\tSIP\tTJW\tRXP\tZSXU\t991\t991\t991\t1\t1\n" +
+                        "1970-01-03T02:15:00.000000Z\t1970-01-03T05:00:00.000000Z\tSIP\tTJW\tHNRX\tZSXU\t897\t897\t897\t1\t1\n" +
+                        "1970-01-03T02:45:00.000000Z\t1970-01-03T06:00:00.000000Z\tSIP\tPSWH\tHNRX\tIBBT\t912\t912\t912\t1\t1\n" +
+                        "1970-01-03T03:15:00.000000Z\t1970-01-03T07:00:00.000000Z\tSIP\tPSWH\tHNRX\tZSXU\t769\t769\t769\t1\t1\n" +
+                        "1970-01-03T03:45:00.000000Z\t1970-01-03T08:00:00.000000Z\tSIP\tTJW\tRXP\tZSXU\t384\t384\t384\t1\t1\n" +
+                        "1970-01-03T04:15:00.000000Z\t1970-01-03T09:00:00.000000Z\tSIP\tTJW\tHNRX\tZSXU\t757\t757\t757\t1\t1\n",
+                "with srctbl as (\n" +
+                        "  select\n" +
+                        "      period_start_time,\n" +
+                        "      cal_timestamp_time nas_timestamp,\n" +
+                        "      'SIP' as feed_table,\n" +
+                        "      device_name,\n" +
+                        "      application_name,\n" +
+                        "      application_group,\n" +
+                        "      min(controlplane_response_time_usec) min_response_time_usec,\n" +
+                        "      max(controlplane_response_time_usec) max_response_time_usec,\n" +
+                        "      sum(controlplane_response_time_usec) total_response_time_usec,\n" +
+                        "      count(controlplane_response_time_usec) count_response_time,\n" +
+                        "      count() events\n" +
+                        "  from (\n" +
+                        "    select * from (\n" +
+                        "    select controlplane_transaction_start_time as period_start_time, *\n" +
+                        "    from nAS_ControlPlane_SIP\n" +
+                        "    where not controlplane_transaction_start_time is null\n" +
+                        "    order by 1 asc\n" +
+                        "    ) timestamp(period_start_time)\n" +
+                        "  ) sample by 5m align to calendar\n" +
+                        ")\n" +
+                        "select * from srctbl limit 10;",
+                "create table 'nAS_ControlPlane_SIP' as " +
+                        "(" +
+                        "select" +
+                        " timestamp_sequence(172800000000, 3600000000) cal_timestamp_time," +
+                        " timestamp_sequence(172000000000, 1800000000) controlplane_transaction_start_time," +
+                        " rnd_symbol(2,3,4,0) device_name," +
+                        " rnd_symbol(2,3,4,0) application_name," +
+                        " rnd_symbol(2,3,4,0) application_group," +
+                        " rnd_long(100,1000,0) controlplane_response_time_usec" +
+                        " from long_sequence(100)" +
+                        ") timestamp(cal_timestamp_time) partition by hour",
+                "period_start_time",
+                false
+        );
+    }
+
+    @Test
     public void testSampleByWithEmptyCursor() throws Exception {
         assertQuery("to_timezone\ts\tlat\tlon\n",
                 "select to_timezone(k, 'Europe/London'), s, lat, lon from (select k, s, first(lat) lat, last(k) lon " +

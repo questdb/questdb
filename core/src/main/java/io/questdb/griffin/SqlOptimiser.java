@@ -2764,10 +2764,15 @@ public class SqlOptimiser implements Mutable {
         return nextLiteral(token, 0);
     }
 
-    private boolean nonAggregateFunctionDependsOn(ExpressionNode node, CharSequence argument) {
+    private boolean nonAggregateFunctionDependsOn(ExpressionNode node, ExpressionNode timestampNode) {
+        if (timestampNode == null) {
+            return false;
+        }
+
+        final CharSequence timestamp = timestampNode.token;
         sqlNodeStack.clear();
         while (node != null) {
-            if (node.type == LITERAL && Chars.equalsIgnoreCase(node.token, argument)) {
+            if (node.type == LITERAL && Chars.equalsIgnoreCase(node.token, timestamp)) {
                 return true;
             }
 
@@ -4649,7 +4654,7 @@ public class SqlOptimiser implements Mutable {
                 for (int i = 0, k = 0, n = model.getBottomUpColumns().size(); i < n; k++) {
                     QueryColumn qc = model.getBottomUpColumns().getQuick(i);
                     boolean isAFunctionUsingTimestampColumn = (qc.getAst().type == FUNCTION || qc.getAst().type == OPERATION)
-                            && nonAggregateFunctionDependsOn(qc.getAst(), nested.getTimestamp().token);
+                            && nonAggregateFunctionDependsOn(qc.getAst(), nested.getTimestamp());
 
                     if (
                             isAFunctionUsingTimestampColumn ||
@@ -5374,7 +5379,7 @@ public class SqlOptimiser implements Mutable {
                 // this is not a direct call to aggregation function, in which case
                 // we emit aggregation function into group-by model and leave the rest in outer model
                 final int beforeSplit = groupByModel.getBottomUpColumns().size();
-                if (checkForAggregates(qc.getAst()) || (sampleBy != null && nonAggregateFunctionDependsOn(qc.getAst(), baseModel.getTimestamp().token))) {
+                if (checkForAggregates(qc.getAst()) || (sampleBy != null && nonAggregateFunctionDependsOn(qc.getAst(), baseModel.getTimestamp()))) {
                     // push aggregates and literals outside aggregate functions
                     emitAggregatesAndLiterals(qc.getAst(), groupByModel, translatingModel, innerVirtualModel, baseModel, groupByNodes, groupByAliases);
                     emitCursors(qc.getAst(), cursorModel, innerVirtualModel, translatingModel, baseModel, sqlExecutionContext, sqlParserCallback);
