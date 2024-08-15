@@ -943,6 +943,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // effectively removes that column from being a dedup flag.
                     dedupColumnCommitAddresses.setDedupColumnCount(dedupColumnCommitAddresses.getColumnCount() - 1);
                 }
+
+                CairoMetadata.INSTANCE.addColumn(tableToken, columnName, newType, existingColIndex, symbolCapacity,
+                        symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, newColumnDedupKey, getMetadataVersion());
+
             } finally {
                 // clear temp resources
                 convertOperator.finishColumnConversion();

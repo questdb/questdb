@@ -50,6 +50,25 @@ public class CairoMetadataTest extends AbstractCairoTest {
         });
     }
 
+
+    @Test
+    public void testAlterColumnType() throws Exception {
+        assertMemoryLeak(() -> {
+            CairoMetadata.INSTANCE.clear();
+            createY();
+
+            ddl("ALTER TABLE y ADD COLUMN foo VARCHAR");
+            ddl("ALTER TABLE y ALTER COLUMN foo TYPE SYMBOL");
+            drainWalQueue();
+
+            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+                            "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, lastMetadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
+                            "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, denseSymbolIndex=-1, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
+                            "\t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=false, symbolCached=true, symbolCapacity=128, denseSymbolIndex=0, isIndexed=false, indexBlockCapacity=256, stableIndex=0, writerIndex=0]\n",
+                    CairoMetadata.INSTANCE.toString0());
+        });
+    }
+
     @Test
     public void testBasicMetadataForATable() throws Exception {
         assertMemoryLeak(() -> {
@@ -106,5 +125,5 @@ public class CairoMetadataTest extends AbstractCairoTest {
     private void createY() throws SqlException {
         ddl("create table y ( ts timestamp ) timestamp(ts) partition by day wal;");
     }
-    
+
 }
