@@ -579,7 +579,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlListener.onColumnAdded(securityContext, tableToken, columnName);
         }
 
-        CairoMetadata.INSTANCE.addColumn(tableToken, columnName, columnType, columnIndex, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, getMetadataVersion());
+        CairoMetadata.INSTANCE.upsertColumn(tableToken, columnName, columnType, columnIndex, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, metadata.getWriterIndex(columnIndex), /* todo: */ -1, getMetadataVersion());
     }
 
     @Override
@@ -622,7 +622,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnMetadata.setIndexed(true);
         columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
-        CairoMetadata.INSTANCE.addColumn(tableToken, columnName, columnMetadata.getType(), columnIndex, getSymbolCapacity(metaMem, columnIndex), isSymbolCached(metaMem, columnIndex), true, indexValueBlockSize, isSequential(metaMem, columnIndex), isColumnDedupKey(metaMem, columnIndex), getMetadataVersion());
+        CairoMetadata.INSTANCE.upsertColumn(tableToken, columnName, columnMetadata.getType(), columnIndex, getSymbolCapacity(metaMem, columnIndex),
+                isSymbolCached(metaMem, columnIndex), true, indexValueBlockSize, isSequential(metaMem, columnIndex),
+                isColumnDedupKey(metaMem, columnIndex), columnMetadata.getWriterIndex(), /* todo: */ -1, getMetadataVersion());
 
         LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$substr(pathRootSize, path).$();
     }
@@ -946,8 +948,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     dedupColumnCommitAddresses.setDedupColumnCount(dedupColumnCommitAddresses.getColumnCount() - 1);
                 }
 
-                CairoMetadata.INSTANCE.addColumn(tableToken, columnName, newType, existingColIndex, symbolCapacity,
-                        symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, newColumnDedupKey, getMetadataVersion());
+                CairoMetadata.INSTANCE.upsertColumn(tableToken, columnName, newType, existingColIndex, symbolCapacity,
+                        symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, newColumnDedupKey, metadata.getWriterIndex(columnIndex), /* todo: */ -1, getMetadataVersion());
 
             } finally {
                 // clear temp resources
@@ -1534,8 +1536,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // purge old column versions
             finishColumnPurge();
 
-            CairoMetadata.INSTANCE.addColumn(tableToken, columnName, getColumnType(metaMem, columnIndex), columnIndex, getSymbolCapacity(metaMem, columnIndex),
-                    isSymbolCached(metaMem, columnIndex), isColumnIndexed(metaMem, columnIndex), defaultIndexValueBlockSize, isSequential(metaMem, columnIndex), isColumnDedupKey(metaMem, columnIndex), getMetadataVersion());
+
+            CairoMetadata.INSTANCE.upsertColumn(tableToken, columnName, getColumnType(metaMem, columnIndex), columnIndex, getSymbolCapacity(metaMem, columnIndex),
+                    isSymbolCached(metaMem, columnIndex), isColumnIndexed(metaMem, columnIndex), defaultIndexValueBlockSize, isSequential(metaMem, columnIndex), isColumnDedupKey(metaMem, columnIndex), columnMetadata.getWriterIndex(), /* todo: */ -1, getMetadataVersion());
 
 
             LOG.info().$("END DROP INDEX [txn=").$(txWriter.getTxn())

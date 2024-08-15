@@ -76,10 +76,6 @@ public class CairoColumn implements Sinkable {
         return isDedupKey;
     }
 
-    public boolean getIsDesignated() {
-        return isDesignated;
-    }
-
     public boolean getIsDesignatedUnsafe() {
         return isDesignated;
     }
