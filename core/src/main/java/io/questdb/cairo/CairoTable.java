@@ -119,18 +119,18 @@ public class CairoTable implements Sinkable {
         return names;
     }
 
-    public CairoColumn getColumnQuick(@NotNull CharSequence columnName) {
+    public @NotNull CairoColumn getColumnQuick(@NotNull CharSequence columnName) {
         final CairoColumn col = getColumnQuiet(columnName);
         if (col == null) {
-            throw CairoException.tableDoesNotExist(columnName);
+            throw CairoException.columnDoesNotExist(columnName);
         }
         return col;
     }
 
-    public CairoColumn getColumnQuickUnsafe(@NotNull CharSequence columnName) {
+    public @NotNull CairoColumn getColumnQuickUnsafe(@NotNull CharSequence columnName) {
         final CairoColumn col = getColumnQuietUnsafe(columnName);
         if (col == null) {
-            throw CairoException.tableDoesNotExist(columnName);
+            throw CairoException.columnDoesNotExist(columnName);
         }
         return col;
     }
@@ -335,7 +335,7 @@ public class CairoTable implements Sinkable {
         sink.put("timestampIndex=").put(getTimestampIndexUnsafe()).put(", ");
         sink.put("timestampName=").put(getTimestampNameUnsafe()).put(", ");
         sink.put("walEnabled=").put(getWalEnabledUnsafe()).put(", ");
-        sink.put("columnCount=").put(getColumnCount()).put("]");
+        sink.put("columnCount=").put(getColumnCountUnsafe()).put("]");
         sink.put('\n');
         for (int i = 0, n = columns.size(); i < n; i++) {
             sink.put("\t\t");

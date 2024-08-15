@@ -245,7 +245,7 @@ public class CairoMetadata implements Sinkable {
         }
     }
 
-    public CairoTable getTableQuick(@NotNull CharSequence tableName) {
+    public @NotNull CairoTable getTableQuick(@NotNull CharSequence tableName) {
         final CairoTable table = getTableQuiet(tableName);
         if (table == null) {
             throw CairoException.tableDoesNotExist(tableName);
@@ -253,7 +253,7 @@ public class CairoMetadata implements Sinkable {
         return table;
     }
 
-    public CairoTable getTableQuickUnsafe(@NotNull CharSequence tableName) {
+    public @NotNull CairoTable getTableQuickUnsafe(@NotNull CharSequence tableName) {
         final CairoTable table = getTableQuietUnsafe(tableName);
         if (table == null) {
             throw CairoException.tableDoesNotExist(tableName);
@@ -274,6 +274,28 @@ public class CairoMetadata implements Sinkable {
 
     public int getTablesCountUnsafe() {
         return tables.size();
+    }
+
+    public void renameColumn(@NotNull TableToken token, @NotNull CharSequence currentName, @NotNull CharSequence newName, long metadataVersion) {
+        lock.writeLock().lock();
+        try {
+            final CairoTable table = getTableQuickUnsafe(token.getTableName());
+            table.lock.writeLock().lock();
+            try {
+                final CairoColumn column = table.getColumnQuickUnsafe(currentName);
+                final int columnIndex = table.columnNameIndexMap.get(column.getNameUnsafe());
+                table.columnNameIndexMap.remove(column.getNameUnsafe());
+                column.setNameUnsafe(newName.toString()); // todo: remove copy, intern names
+                table.columnNameIndexMap.put(newName, columnIndex);
+                table.setLastMetadataVersionUnsafe(metadataVersion);
+
+                // assume that we look up the designated timestamp name from the index, so don't need to set the name
+            } finally {
+                table.lock.writeLock().unlock();
+            }
+        } finally {
+            lock.writeLock().unlock();
+        }
     }
 
     @Override

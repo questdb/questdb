@@ -2424,7 +2424,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlListener.onColumnRenamed(securityContext, tableToken, currentName, newName);
         }
 
+        CairoMetadata.INSTANCE.renameColumn(tableToken, currentName, newName, getMetadataVersion());
+
         LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$substr(pathRootSize, path).$();
+
     }
 
     @Override
