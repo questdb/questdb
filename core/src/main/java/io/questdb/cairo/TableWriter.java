@@ -1484,6 +1484,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         checkDistressed();
         LOG.info().$("disabling row deduplication [table=").utf8(tableToken.getTableName()).I$();
         updateMetadataWithDeduplicationUpsertKeys(false, null);
+        CairoMetadata.INSTANCE.disableDedup(tableToken);
     }
 
     @Override

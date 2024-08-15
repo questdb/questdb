@@ -149,6 +149,10 @@ public class CairoMetadata implements Sinkable {
                 column.setIsDesignatedUnsafe(writerIndex == table.getTimestampIndexUnsafe());
                 column.setIsSequentialUnsafe(TableUtils.isSequential(metaMem, writerIndex));
 
+                if (column.getIsDedupKeyUnsafe()) {
+                    table.setIsDedupUnsafe(true);
+                }
+
                 if (ColumnType.isSymbol(columnType)) {
 
                     logger.debugW().$("hydrating symbol metadata [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
@@ -215,8 +219,42 @@ public class CairoMetadata implements Sinkable {
         lock.writeLock().unlock();
     }
 
+    public void disableDedup(@NotNull TableToken token) {
+        lock.writeLock().lock();
+        try {
+
+            final CairoTable table = getTableQuietUnsafe(token.getTableName());
+
+            if (table == null) {
+                throw CairoException.tableDoesNotExist(token.getTableName());
+            }
+
+            table.lock.writeLock().lock();
+            table.setIsDedupUnsafe(false);
+
+            for (int i = 0, n = table.columns.size(); i < n; i++) {
+                final CairoColumn column = table.columns.getQuick(i);
+                if (column.getIsDedupKeyUnsafe()) {
+                    column.setIsDedupKeyUnsafe(false);
+                }
+            }
+
+            table.lock.writeLock().unlock();
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
     public CairoTable getTableQuick(@NotNull CharSequence tableName) {
         final CairoTable table = getTableQuiet(tableName);
+        if (table == null) {
+            throw CairoException.tableDoesNotExist(tableName);
+        }
+        return table;
+    }
+
+    public CairoTable getTableQuickUnsafe(@NotNull CharSequence tableName) {
+        final CairoTable table = getTableQuietUnsafe(tableName);
         if (table == null) {
             throw CairoException.tableDoesNotExist(tableName);
         }
