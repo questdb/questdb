@@ -86,7 +86,7 @@ public class IODispatcherHeartbeatTest {
 
                 int[] fds = new int[connections];
                 for (int i = 0; i < fds.length; i++) {
-                    int fd = Net.socketTcp(true);
+                    long fd = Net.socketTcp(true);
                     Net.configureNonBlocking(fd);
                     fds[i] = fd;
                 }
@@ -164,7 +164,7 @@ public class IODispatcherHeartbeatTest {
 
                 int[] fds = new int[connections];
                 for (int i = 0; i < fds.length; i++) {
-                    int fd = Net.socketTcp(true);
+                    long fd = Net.socketTcp(true);
                     Net.configureNonBlocking(fd);
                     fds[i] = fd;
                 }
@@ -238,7 +238,7 @@ public class IODispatcherHeartbeatTest {
                 IORequestProcessor<TestContext> processor = new SuspendingTestProcessor(clock, suspendEvent);
                 long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
 
-                int fd = Net.socketTcp(true);
+                long fd = Net.socketTcp(true);
                 Net.configureNonBlocking(fd);
 
                 long sockAddr = Net.sockaddr("127.0.0.1", 9001);
@@ -307,7 +307,7 @@ public class IODispatcherHeartbeatTest {
                 IORequestProcessor<TestContext> processor = new SuspendingTestProcessor(clock, suspendEvent);
                 long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
 
-                int fd = Net.socketTcp(true);
+                long fd = Net.socketTcp(true);
                 Net.configureNonBlocking(fd);
 
                 long sockAddr = Net.sockaddr("127.0.0.1", 9001);

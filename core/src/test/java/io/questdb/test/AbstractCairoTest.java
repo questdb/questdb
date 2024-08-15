@@ -1227,7 +1227,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static boolean couldObtainLock(Path path) {
-        final int lockFd = TableUtils.lock(TestFilesFacadeImpl.INSTANCE, path.$(), false);
+        final long lockFd = TableUtils.lock(TestFilesFacadeImpl.INSTANCE, path.$(), false);
         if (lockFd != -1L) {
             TestFilesFacadeImpl.INSTANCE.close(lockFd);
             return true;  // Could lock/unlock.

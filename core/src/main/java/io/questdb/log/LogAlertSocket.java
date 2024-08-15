@@ -63,7 +63,7 @@ public class LogAlertSocket implements Closeable {
     private String alertTargets; // host[:port](,host[:port])*
     private long inBufferPtr;
     private long outBufferPtr;
-    private int socketFd = -1;
+    private long socketFd = -1;
 
     public LogAlertSocket(NetworkFacade nf, String alertTargets, Log log) {
         this(

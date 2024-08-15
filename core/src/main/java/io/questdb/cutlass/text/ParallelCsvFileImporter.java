@@ -437,7 +437,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         );
     }
 
-    public void parseStructure(int fd, SecurityContext securityContext) throws TextImportException {
+    public void parseStructure(long fd, SecurityContext securityContext) throws TextImportException {
         phasePrologue(CopyTask.PHASE_ANALYZE_FILE_STRUCTURE);
         final CairoConfiguration configuration = cairoEngine.getConfiguration();
 
@@ -596,7 +596,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     public void process(SecurityContext securityContext) throws TextImportException {
         final long startMs = getCurrentTimeMs();
 
-        int fd = -1;
+        long fd = -1;
         try {
             try {
                 updateImportStatus(CopyTask.STATUS_STARTED, Numbers.LONG_NULL, Numbers.LONG_NULL, 0);

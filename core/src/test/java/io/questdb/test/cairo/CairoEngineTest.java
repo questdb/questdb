@@ -139,7 +139,7 @@ public class CairoEngineTest extends AbstractCairoTest {
 
                     @Override
                     public int openRW(LPSZ name, long opts) {
-                        int fd = super.openRW(name, opts);
+                        long fd = super.openRW(name, opts);
                         if (Utf8s.endsWithAscii(name, TableUtils.TAB_INDEX_FILE_NAME)) {
                             this.fd = fd;
                         }

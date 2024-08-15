@@ -72,7 +72,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         Misc.free(indexReader);
         Misc.free(charMem);
         this.cache.clear();
-        int fd = this.offsetMem.getFd();
+        long fd = this.offsetMem.getFd();
         Misc.free(offsetMem);
         Misc.free(path);
         LOG.debug().$("closed [fd=").$(fd).$(']').$();

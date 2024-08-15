@@ -54,7 +54,7 @@ public class MemoryFCRImpl extends AbstractMemoryCR implements MemoryFR, MemoryC
     }
 
     @Override
-    public int getFd() {
+    public long getFd() {
         return -1;
     }
 

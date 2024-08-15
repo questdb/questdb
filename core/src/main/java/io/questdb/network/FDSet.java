@@ -40,7 +40,7 @@ public class FDSet implements QuietCloseable, Mutable {
         this.lim = address + l;
     }
 
-    public void add(int fd) {
+    public void add(long fd) {
         if (_wptr == lim) {
             resize();
         }

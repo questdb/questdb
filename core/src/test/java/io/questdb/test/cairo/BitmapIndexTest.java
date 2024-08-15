@@ -1026,7 +1026,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             FilesFacade ff = configuration.getFilesFacade();
 
             // Make x.k dirty, write random data
-            int fd = ff.openRW(path.concat("x.k").$(), configuration.getWriterFileOpenOpts());
+            long fd = ff.openRW(path.concat("x.k").$(), configuration.getWriterFileOpenOpts());
             long len = ff.length(fd);
             Assert.assertTrue(len > 0);
             long address = TableUtils.mapRW(ff, fd, len, MemoryTag.MMAP_DEFAULT);
@@ -1457,7 +1457,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             try (Path path = new Path()) {
                 path.of(configuration.getRoot()).concat("x").put(".k");
-                int fd = TableUtils.openFileRWOrFail(ff, path.$(), configuration.getWriterFileOpenOpts());
+                long fd = TableUtils.openFileRWOrFail(ff, path.$(), configuration.getWriterFileOpenOpts());
                 try {
                     ff.truncate(fd, 64);
                 } finally {

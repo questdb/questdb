@@ -29,7 +29,7 @@ import io.questdb.log.Log;
 public class PlainSocket implements Socket {
     private final Log log;
     private final NetworkFacade nf;
-    private int fd = -1;
+    private long fd = -1;
 
     public PlainSocket(NetworkFacade nf, Log log) {
         this.nf = nf;
@@ -45,7 +45,7 @@ public class PlainSocket implements Socket {
     }
 
     @Override
-    public int getFd() {
+    public long getFd() {
         return fd;
     }
 
@@ -65,7 +65,7 @@ public class PlainSocket implements Socket {
     }
 
     @Override
-    public void of(int fd) {
+    public void of(long fd) {
         assert this.fd == -1;
         this.fd = fd;
     }

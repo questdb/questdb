@@ -43,7 +43,7 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
     private final static Log LOG = LogFactory.getLog(TestFilesFacadeImpl.class);
     private final static HashMap<Long, Utf8String> openFilesFds = new HashMap<>();
     private final static Utf8SequenceIntHashMap openPaths = new Utf8SequenceIntHashMap();
-    protected int fd = -1;
+    protected long fd = -1;
 
     public static synchronized void resetTracking() {
     }
@@ -59,28 +59,28 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
 
     @Override
     public int openAppend(LPSZ name) {
-        int fd = super.openAppend(name);
+        long fd = super.openAppend(name);
         track(name, fd);
         return fd;
     }
 
     @Override
     public int openCleanRW(LPSZ name, long size) {
-        int fd = super.openCleanRW(name, size);
+        long fd = super.openCleanRW(name, size);
         track(name, fd);
         return fd;
     }
 
     @Override
     public int openRO(LPSZ name) {
-        int fd = super.openRO(name);
+        long fd = super.openRO(name);
         track(name, fd);
         return fd;
     }
 
     @Override
     public int openRW(LPSZ name, long opts) {
-        int fd = super.openRW(name, opts);
+        long fd = super.openRW(name, opts);
         track(name, fd);
         return fd;
     }

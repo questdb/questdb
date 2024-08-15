@@ -251,7 +251,7 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
         } else {
             System.out.println("Created file " + path.$());
         }
-        int fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+        long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
         Assert.assertTrue(fd > 0);
 
         try (

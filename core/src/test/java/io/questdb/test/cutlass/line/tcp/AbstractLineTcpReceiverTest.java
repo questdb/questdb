@@ -394,7 +394,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     }
 
     protected class Socket implements AutoCloseable {
-        private final int fd;
+        private final long fd2;
         private final long sockaddr;
 
         private Socket(long sockaddr, int fd) {

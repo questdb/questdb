@@ -57,7 +57,7 @@ public class PipeSuspendEvent extends SuspendEvent {
     }
 
     @Override
-    public int getFd() {
+    public long getFd() {
         return readEndFd;
     }
 

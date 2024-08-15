@@ -339,7 +339,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         try (Path path = new Path().of(root).concat("tmp1")) {
             ff.touch(path.$());
-            final int fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
+            final long fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
             try (MemoryMARW mem = Vm.getMARWInstance()) {
                 mem.of(ff, fd, null, -1, MemoryTag.MMAP_DEFAULT);
 

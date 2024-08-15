@@ -105,7 +105,7 @@ public final class TestUtils {
         }
     }
 
-    public static void assertConnect(int fd, long sockAddr) {
+    public static void assertConnect(long fd, long sockAddr) {
         long rc = connect(fd, sockAddr);
         if (rc != 0) {
             Assert.fail("could not connect, errno=" + Os.errno());
@@ -119,7 +119,7 @@ public final class TestUtils {
         }
     }
 
-    public static void assertConnectAddrInfo(int fd, long sockAddrInfo) {
+    public static void assertConnectAddrInfo(long fd, long sockAddrInfo) {
         long rc = connectAddrInfo(fd, sockAddrInfo);
         if (rc != 0) {
             Assert.fail("could not connect, errno=" + Os.errno());
@@ -817,12 +817,12 @@ public final class TestUtils {
         }
     }
 
-    public static long connect(int fd, long sockAddr) {
+    public static int connect(long fd, long sockAddr) {
         Assert.assertTrue(fd > -1);
         return Net.connect(fd, sockAddr);
     }
 
-    public static long connectAddrInfo(int fd, long sockAddrInfo) {
+    public static long connectAddrInfo(long fd, long sockAddrInfo) {
         Assert.assertTrue(fd > -1);
         return Net.connectAddrInfo(fd, sockAddrInfo);
     }

@@ -1053,7 +1053,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
             }
 
             @Override
-            public int readNonNegativeInt(int fd, long offset) {
+            public int readNonNegativeInt(long fd, long offset) {
                 if (fd == this.fd) {
                     return -1;
                 }

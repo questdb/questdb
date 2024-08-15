@@ -135,7 +135,7 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
-            public int getFd() {
+            public long getFd() {
                 return -1;
             }
 

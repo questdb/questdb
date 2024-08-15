@@ -220,7 +220,7 @@ public class CairoMemoryTest extends AbstractTest {
                     mem.putLong(i);
                 }
                 Assert.assertEquals(8L * N, mem.getAppendOffset());
-                int fd = mem.getFd();
+                long fd = mem.getFd();
                 mem.detachFdClose();
 
                 MemoryCMORImpl memR = new MemoryCMORImpl();
@@ -245,7 +245,7 @@ public class CairoMemoryTest extends AbstractTest {
                 for (int i = 0; i < N; i++) {
                     mem.putLong(i);
                 }
-                int fd = mem.getFd();
+                long fd = mem.getFd();
                 mem.detachFdClose();
 
                 MemoryCMORImpl memR = new MemoryCMORImpl();

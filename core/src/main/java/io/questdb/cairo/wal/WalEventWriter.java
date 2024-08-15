@@ -45,7 +45,7 @@ class WalEventWriter implements Closeable {
     private final MemoryMARW eventMem = Vm.getMARWInstance();
     private final FilesFacade ff;
     private final StringSink sink = new StringSink();
-    private int indexFd;
+    private long indexFd;
     private AtomicIntList initialSymbolCounts;
     private long longBuffer;
     private long startOffset = 0;

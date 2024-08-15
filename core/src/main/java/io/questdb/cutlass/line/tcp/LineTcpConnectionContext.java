@@ -211,7 +211,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     @Override
-    public LineTcpConnectionContext of(int fd, @NotNull IODispatcher<LineTcpConnectionContext> dispatcher) {
+    public LineTcpConnectionContext of(long fd, @NotNull IODispatcher<LineTcpConnectionContext> dispatcher) {
         super.of(fd, dispatcher);
         if (recvBufStart == 0) {
             recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);

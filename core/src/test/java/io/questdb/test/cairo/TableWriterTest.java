@@ -1456,7 +1456,7 @@ public class TableWriterTest extends AbstractCairoTest {
         int N = 100000;
         create(FF, PartitionBy.NONE, N);
         testTruncateOnClose(new TestFilesFacade() {
-            int fd = -1;
+            long fd = -1;
             boolean ran = false;
 
             @Override

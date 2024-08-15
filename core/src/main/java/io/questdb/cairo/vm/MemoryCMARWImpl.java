@@ -44,7 +44,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     private long appendAddress = 0;
     private boolean closeFdOnClose = true;
     private long extendSegmentMsb;
-    private int fd = -1;
+    private long fd = -1;
     private int madviseOpts = -1;
     private int memoryTag = MemoryTag.MMAP_DEFAULT;
     private long minMappedMemorySize = -1;
@@ -134,9 +134,9 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public int detachFdClose() {
+    public long detachFdClose() {
         try {
-            int fd = this.fd;
+            long fd = this.fd;
             this.closeFdOnClose = false;
             close();
             assert this.fd == -1;
@@ -174,7 +174,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public int getFd() {
+    public long getFd() {
         return fd;
     }
 
@@ -210,7 +210,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void of(FilesFacade ff, int fd, @Nullable LPSZ fileName, long size, int memoryTag) {
+    public void of(FilesFacade ff, long fd, @Nullable LPSZ fileName, long size, int memoryTag) {
         close();
         assert fd > 0;
         this.ff = ff;
@@ -221,7 +221,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void of(FilesFacade ff, int fd, @Nullable LPSZ fileName, long extendSegmentSize, long size, int memoryTag) {
+    public void of(FilesFacade ff, long fd, @Nullable LPSZ fileName, long extendSegmentSize, long size, int memoryTag) {
         of(ff, fd, null, size, memoryTag);
         this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
     }
@@ -243,7 +243,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
-    public void switchTo(FilesFacade ff, int fd, long extendSegmentSize, long offset, boolean truncate, byte truncateMode) {
+    public void switchTo(FilesFacade ff, long fd, long extendSegmentSize, long offset, boolean truncate, byte truncateMode) {
         this.ff = ff;
         this.extendSegmentMsb = Numbers.msb(extendSegmentSize);
         close(truncate, truncateMode);

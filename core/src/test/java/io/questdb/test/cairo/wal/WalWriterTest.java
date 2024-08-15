@@ -3082,7 +3082,7 @@ public class WalWriterTest extends AbstractCairoTest {
 
             @Override
             public int openRO(LPSZ path) {
-                int fd = super.openRO(path);
+                long fd = super.openRO(path);
                 if (Utf8s.endsWithAscii(path, EVENT_FILE_NAME)) {
                     this.fd = fd;
                 }

@@ -93,7 +93,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_copy
     return len == 0 ? 0 : -1;
 }
 
-size_t copyData0(int srcFd, int dstFd, off_t srcOffset, off_t dstOffset, int64_t length) {
+size_t copyData0(int srcFd, long dstFd, off_t srcOffset, off_t dstOffset, int64_t length) {
     lseek64(dstFd, dstOffset, SEEK_SET);
 
     size_t len = length > 0 ? length : SIZE_MAX;

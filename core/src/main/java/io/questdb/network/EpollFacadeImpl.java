@@ -35,12 +35,12 @@ public class EpollFacadeImpl implements EpollFacade {
     }
 
     @Override
-    public int epollCtl(int epFd, int op, int fd, long eventPtr) {
-        return EpollAccessor.epollCtl(epFd, op, fd, eventPtr);
+    public int epollCtl(long epFd, int op, long fd, long eventPtr) {
+        return EpollAccessor.epollCtl(Net.toOsFd(epFd), op, Net.toOsFd(fd), eventPtr);
     }
 
     @Override
-    public int epollWait(int epfd, long eventPtr, int eventCount, int timeout) {
+    public int epollWait(long epfd, long eventPtr, int eventCount, int timeout) {
         return EpollAccessor.epollWait(epfd, eventPtr, eventCount, timeout);
     }
 
@@ -60,12 +60,12 @@ public class EpollFacadeImpl implements EpollFacade {
     }
 
     @Override
-    public long readEventFd(int fd) {
+    public long readEventFd(long fd) {
         return EpollAccessor.readEventFd(fd);
     }
 
     @Override
-    public int writeEventFd(int fd) {
+    public int writeEventFd(long fd) {
         return EpollAccessor.writeEventFd(fd);
     }
 }

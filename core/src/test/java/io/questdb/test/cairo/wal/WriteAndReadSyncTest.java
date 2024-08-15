@@ -86,7 +86,7 @@ public class WriteAndReadSyncTest extends AbstractCairoTest {
                     th.start();
                     barrier.await();
 
-                    int fd2 = TableUtils.openRO(ff, path.$(), LOG);
+                    long fd2 = TableUtils.openRO(ff, path.$(), LOG);
                     try {
                         readLatch.await();
                         long mem = TableUtils.mapRO(ff, fd2, longCount * 8, MemoryTag.NATIVE_DEFAULT);

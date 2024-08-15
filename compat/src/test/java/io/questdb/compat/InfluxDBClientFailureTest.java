@@ -134,7 +134,7 @@ public class InfluxDBClientFailureTest extends AbstractTest {
         final FilesFacade filesFacade = new FilesFacadeImpl() {
             private final AtomicInteger counter = new AtomicInteger(2);
 
-            private int fd;
+            private long fd2;
 
             @Override
             public long append(int fd, long buf, int len) {

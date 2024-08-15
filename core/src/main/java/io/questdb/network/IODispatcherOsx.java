@@ -26,6 +26,7 @@ package io.questdb.network;
 
 import io.questdb.KqueueAccessor;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.LongMatrix;
 import io.questdb.std.Misc;
 
@@ -34,7 +35,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
     private static final int EVM_ID = 0;
     private static final int EVM_OPERATION_ID = 2;
     protected final LongMatrix pendingEvents = new LongMatrix(3);
-    private final IntHashSet alreadyHandledFds = new IntHashSet();
+    private final LongHashSet alreadyHandledFds = new LongHashSet();
     private final int capacity;
     private final KeventWriter keventWriter = new KeventWriter();
     private final Kqueue kqueue;
@@ -203,7 +204,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             final C context = pending.get(i);
 
             // De-register pending operation from kqueue. We'll register it later when we get a heartbeat pong.
-            int fd = context.getFd();
+            long fd = context.getFd();
             final long opId = pending.get(i, OPM_ID);
             long op = context.getSuspendEvent() != null ? IOOperation.READ : pending.get(i, OPM_OPERATION);
             keventWriter.prepare().tolerateErrors();
@@ -271,7 +272,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
 
             useful = true;
             long opId = nextOpId();
-            final int fd = context.getFd();
+            final long fd = context.getFd();
 
             int operation = requestedOperation;
             final SuspendEvent suspendEvent = context.getSuspendEvent();
@@ -425,7 +426,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             for (int i = 0; i < n; i++) {
                 kqueue.setReadOffset(offset);
                 offset += KqueueAccessor.SIZEOF_KEVENT;
-                final int fd = kqueue.getFd();
+                final long fd = kqueue.getFd();
                 final long id = kqueue.getData();
                 // this is server socket, accept if there aren't too many already
                 if (fd == serverFd) {
@@ -502,7 +503,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             return lastError;
         }
 
-        public KeventWriter readFD(int fd, long id) {
+        public KeventWriter readFD(long fd, long id) {
             kqueue.setWriteOffset(offset);
             kqueue.readFD(fd, id);
             offset += KqueueAccessor.SIZEOF_KEVENT;
@@ -513,7 +514,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             return this;
         }
 
-        public KeventWriter removeReadFD(int fd) {
+        public KeventWriter removeReadFD(long fd) {
             kqueue.setWriteOffset(offset);
             kqueue.removeReadFD(fd);
             offset += KqueueAccessor.SIZEOF_KEVENT;
@@ -524,7 +525,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             return this;
         }
 
-        public KeventWriter removeWriteFD(int fd) {
+        public KeventWriter removeWriteFD(long fd) {
             kqueue.setWriteOffset(offset);
             kqueue.removeWriteFD(fd);
             offset += KqueueAccessor.SIZEOF_KEVENT;
@@ -540,7 +541,7 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
             return this;
         }
 
-        public KeventWriter writeFD(int fd, long id) {
+        public KeventWriter writeFD(long fd, long id) {
             kqueue.setWriteOffset(offset);
             kqueue.writeFD(fd, id);
             offset += KqueueAccessor.SIZEOF_KEVENT;

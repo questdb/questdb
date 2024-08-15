@@ -35,12 +35,12 @@ import io.questdb.std.str.Utf8Sequence;
 
 public class KqueueFileWatcher extends FileWatcher {
     private final int bufferSize;
-    private final int dirFd;
+    private final long dirFd;
     private final long eventList;
     private final long evtDir;
     private final long evtFile;
     private final long evtPipe;
-    private final int fileFd;
+    private final long fileFd;
     private final int kq;
     private final int readEndFd;
     private final int writeEndFd;

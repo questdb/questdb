@@ -42,7 +42,7 @@ public interface Socket extends QuietCloseable {
     /**
      * @return file descriptor associated with the socket.
      */
-    int getFd();
+    long getFd();
 
     boolean isClosed();
 
@@ -67,7 +67,7 @@ public interface Socket extends QuietCloseable {
      *
      * @param fd file descriptor
      */
-    void of(int fd);
+    void of(long fd);
 
     /**
      * Receives plain data into the given buffer from the socket. On encrypted
