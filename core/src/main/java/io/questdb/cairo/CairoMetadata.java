@@ -196,6 +196,25 @@ public class CairoMetadata implements Sinkable {
         metaMem.close();
     }
 
+    public void addIndex(@NotNull TableToken token, @NotNull CharSequence columnName, int indexValueBlockSize, long metadataVersion) {
+        lock.writeLock().lock();
+        try {
+            final CairoTable table = getTableQuickUnsafe(token.getTableName());
+            table.lock.writeLock().lock();
+            try {
+                final CairoColumn column = table.getColumnQuickUnsafe(columnName);
+                column.setIsIndexedUnsafe(true);
+                column.setIndexBlockCapacityUnsafe(indexValueBlockSize);
+                table.setLastMetadataVersionUnsafe(metadataVersion);
+                // assume that we look up the designated timestamp name from the index, so don't need to set the name
+            } finally {
+                table.lock.writeLock().unlock();
+            }
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
     // fails if table already exists
     // assume newtable is locked already
     public void addTable(@NotNull CairoTable newTable) {
@@ -277,6 +296,25 @@ public class CairoMetadata implements Sinkable {
 
                 table.setLastMetadataVersionUnsafe(metadataVersion);
 
+            } finally {
+                table.lock.writeLock().unlock();
+            }
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    public void dropIndex(@NotNull TableToken token, @NotNull CharSequence columnName, int defaultIndexValueBlockSize, long metadataVersion) {
+        lock.writeLock().lock();
+        try {
+            final CairoTable table = getTableQuickUnsafe(token.getTableName());
+            table.lock.writeLock().lock();
+            try {
+                final CairoColumn column = table.getColumnQuickUnsafe(columnName);
+                column.setIsIndexedUnsafe(false);
+                column.setIndexBlockCapacityUnsafe(defaultIndexValueBlockSize);
+                table.setLastMetadataVersionUnsafe(metadataVersion);
+                // assume that we look up the designated timestamp name from the index, so don't need to set the name
             } finally {
                 table.lock.writeLock().unlock();
             }

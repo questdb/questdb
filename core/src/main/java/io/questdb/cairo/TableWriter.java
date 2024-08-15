@@ -622,10 +622,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnMetadata.setIndexed(true);
         columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
-        CairoMetadata.INSTANCE.upsertColumn(tableToken, columnName, columnMetadata.getType(), columnIndex, getSymbolCapacity(metaMem, columnIndex),
-                isSymbolCached(metaMem, columnIndex), true, indexValueBlockSize, isSequential(metaMem, columnIndex),
-                isColumnDedupKey(metaMem, columnIndex), columnMetadata.getWriterIndex(), /* todo: */ -1, getMetadataVersion());
-
+        CairoMetadata.INSTANCE.addIndex(tableToken, columnName, indexValueBlockSize, getMetadataVersion());
         LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$substr(pathRootSize, path).$();
     }
 
@@ -947,7 +944,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // effectively removes that column from being a dedup flag.
                     dedupColumnCommitAddresses.setDedupColumnCount(dedupColumnCommitAddresses.getColumnCount() - 1);
                 }
-
+                
                 CairoMetadata.INSTANCE.upsertColumn(tableToken, columnName, newType, existingColIndex, symbolCapacity,
                         symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, newColumnDedupKey, metadata.getWriterIndex(columnIndex), /* todo: */ -1, getMetadataVersion());
 
@@ -1538,9 +1535,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             finishColumnPurge();
 
 
-            CairoMetadata.INSTANCE.upsertColumn(tableToken, columnName, getColumnType(metaMem, columnIndex), columnIndex, getSymbolCapacity(metaMem, columnIndex),
-                    isSymbolCached(metaMem, columnIndex), isColumnIndexed(metaMem, columnIndex), defaultIndexValueBlockSize, isSequential(metaMem, columnIndex), isColumnDedupKey(metaMem, columnIndex), columnMetadata.getWriterIndex(), /* todo: */ -1, getMetadataVersion());
-
+            CairoMetadata.INSTANCE.dropIndex(tableToken, columnName, defaultIndexValueBlockSize, getMetadataVersion());
 
             LOG.info().$("END DROP INDEX [txn=").$(txWriter.getTxn())
                     .$(", table=").utf8(tableToken.getTableName())
