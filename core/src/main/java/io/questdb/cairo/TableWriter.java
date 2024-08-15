@@ -1533,6 +1533,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             // purge old column versions
             finishColumnPurge();
+
+            CairoMetadata.INSTANCE.addColumn(tableToken, columnName, getColumnType(metaMem, columnIndex), columnIndex, getSymbolCapacity(metaMem, columnIndex),
+                    isSymbolCached(metaMem, columnIndex), isColumnIndexed(metaMem, columnIndex), defaultIndexValueBlockSize, isSequential(metaMem, columnIndex), isColumnDedupKey(metaMem, columnIndex), getMetadataVersion());
+
+
             LOG.info().$("END DROP INDEX [txn=").$(txWriter.getTxn())
                     .$(", table=").utf8(tableToken.getTableName())
                     .$(", column=").utf8(columnName)
