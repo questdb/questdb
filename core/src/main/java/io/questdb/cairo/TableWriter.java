@@ -2337,6 +2337,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         finishColumnPurge();
+
+        CairoMetadata.INSTANCE.dropColumn(tableToken, name, getMetadataVersion());
         LOG.info().$("REMOVED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' from ").$substr(pathRootSize, path).$();
     }
 

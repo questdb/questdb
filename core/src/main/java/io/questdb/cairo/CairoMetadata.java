@@ -222,11 +222,7 @@ public class CairoMetadata implements Sinkable {
     public void dedupDisable(@NotNull TableToken token, long metadataVersion) {
         lock.writeLock().lock();
         try {
-            final CairoTable table = getTableQuietUnsafe(token.getTableName());
-
-            if (table == null) {
-                throw CairoException.tableDoesNotExist(token.getTableName());
-            }
+            final CairoTable table = getTableQuickUnsafe(token.getTableName());
 
             table.lock.writeLock().lock();
             table.setIsDedupUnsafe(false);
@@ -249,11 +245,7 @@ public class CairoMetadata implements Sinkable {
     public void dedupEnable(@NotNull TableToken token, LongList columnIndexes, long metadataVersion) {
         lock.writeLock().lock();
         try {
-            final CairoTable table = getTableQuietUnsafe(token.getTableName());
-
-            if (table == null) {
-                throw CairoException.tableDoesNotExist(token.getTableName());
-            }
+            final CairoTable table = getTableQuickUnsafe(token.getTableName());
 
             table.lock.writeLock().lock();
             table.setIsDedupUnsafe(true);
@@ -266,6 +258,28 @@ public class CairoMetadata implements Sinkable {
             table.setLastMetadataVersionUnsafe(metadataVersion);
 
             table.lock.writeLock().unlock();
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    public void dropColumn(@NotNull TableToken token, @NotNull CharSequence name, long metadataVersion) {
+        lock.writeLock().lock();
+        try {
+            final CairoTable table = getTableQuickUnsafe(token.getTableName());
+            table.lock.writeLock().lock();
+            try {
+                final CairoColumn column = table.getColumnQuickUnsafe(name);
+                // todo: clear column
+                table.columns.remove(column);
+                table.columnNameIndexMap.remove(name);
+                // todo: what to do with column order map?
+
+                table.setLastMetadataVersionUnsafe(metadataVersion);
+
+            } finally {
+                table.lock.writeLock().unlock();
+            }
         } finally {
             lock.writeLock().unlock();
         }

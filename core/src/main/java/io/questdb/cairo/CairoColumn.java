@@ -28,6 +28,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
+// todo: do we need to add column version?
 public class CairoColumn implements Sinkable {
     private int denseSymbolIndex;
     private int indexBlockCapacity;
