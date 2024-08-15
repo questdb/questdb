@@ -1484,7 +1484,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         checkDistressed();
         LOG.info().$("disabling row deduplication [table=").utf8(tableToken.getTableName()).I$();
         updateMetadataWithDeduplicationUpsertKeys(false, null);
-        CairoMetadata.INSTANCE.disableDedup(tableToken);
+        CairoMetadata.INSTANCE.dedupDisable(tableToken, getMetadataVersion());
     }
 
     @Override
@@ -1589,6 +1589,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             logRec.I$();
         }
         updateMetadataWithDeduplicationUpsertKeys(true, columnsIndexes);
+        CairoMetadata.INSTANCE.dedupEnable(tableToken, columnsIndexes, getMetadataVersion());
     }
 
     public long getAppliedSeqTxn() {
@@ -2441,7 +2442,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         // Record column structure version bump in txn file for WAL sequencer structure version to match writer structure version.
         bumpColumnStructureVersion();
-        
+
         // todo: refactor this garbage
         CairoMetadata.INSTANCE.dropTable(tableToken);
         Path path = new Path();

@@ -219,10 +219,9 @@ public class CairoMetadata implements Sinkable {
         lock.writeLock().unlock();
     }
 
-    public void disableDedup(@NotNull TableToken token) {
+    public void dedupDisable(@NotNull TableToken token, long metadataVersion) {
         lock.writeLock().lock();
         try {
-
             final CairoTable table = getTableQuietUnsafe(token.getTableName());
 
             if (table == null) {
@@ -238,6 +237,33 @@ public class CairoMetadata implements Sinkable {
                     column.setIsDedupKeyUnsafe(false);
                 }
             }
+
+            table.setLastMetadataVersionUnsafe(metadataVersion);
+
+            table.lock.writeLock().unlock();
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    public void dedupEnable(@NotNull TableToken token, LongList columnIndexes, long metadataVersion) {
+        lock.writeLock().lock();
+        try {
+            final CairoTable table = getTableQuietUnsafe(token.getTableName());
+
+            if (table == null) {
+                throw CairoException.tableDoesNotExist(token.getTableName());
+            }
+
+            table.lock.writeLock().lock();
+            table.setIsDedupUnsafe(true);
+
+            for (int i = 0, n = columnIndexes.size(); i < n; i++) {
+                final CairoColumn column = table.columns.getQuick((int) columnIndexes.get(i));
+                column.setIsDedupKeyUnsafe(true);
+            }
+
+            table.setLastMetadataVersionUnsafe(metadataVersion);
 
             table.lock.writeLock().unlock();
         } finally {
