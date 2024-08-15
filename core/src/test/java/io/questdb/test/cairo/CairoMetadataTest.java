@@ -203,6 +203,7 @@ public class CairoMetadataTest extends AbstractCairoTest {
             CairoMetadata.INSTANCE.clear();
 
             ddl("CREATE TABLE y ( ts TIMESTAMP, x INT ) timestamp(ts) partition by day wal;");
+            drainWalQueue();
 
             TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, lastMetadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
@@ -218,8 +219,6 @@ public class CairoMetadataTest extends AbstractCairoTest {
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, denseSymbolIndex=-1, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=x2, position=0, type=INT, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, denseSymbolIndex=-1, isIndexed=false, indexBlockCapacity=0, stableIndex=1, writerIndex=1]\n",
                     CairoMetadata.INSTANCE.toString0());
-
-
         });
     }
 
@@ -233,6 +232,26 @@ public class CairoMetadataTest extends AbstractCairoTest {
                     CairoMetadata.INSTANCE.toString0());
 
 
+        });
+    }
+
+    @Test
+    public void testRenameTable() throws Exception {
+        assertMemoryLeak(() -> {
+            CairoMetadata.INSTANCE.clear();
+            createY();
+
+            TestUtils.assertEquals(yMetaString,
+                    CairoMetadata.INSTANCE.toString0());
+
+            ddl("RENAME TABLE y TO y2");
+            drainWalQueue();
+
+            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+                            "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, lastMetadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=1]\n" +
+                            "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, denseSymbolIndex=-1, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n",
+                    CairoMetadata.INSTANCE.toString0());
+            
         });
     }
 

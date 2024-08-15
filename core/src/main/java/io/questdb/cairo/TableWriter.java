@@ -2427,11 +2427,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         CairoMetadata.INSTANCE.renameColumn(tableToken, currentName, newName, getMetadataVersion());
 
         LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$substr(pathRootSize, path).$();
-
     }
 
     @Override
-    public void renameTable(@NotNull CharSequence fromNameTable, @NotNull CharSequence toTableName) {
+    public void renameTable(@NotNull CharSequence fromTableName, @NotNull CharSequence toTableName) {
         // table writer is not involved in concurrent table rename, the `fromTableName` must
         // always match tableWriter's table name
         LOG.debug().$("renaming table [path=").$substr(pathRootSize, path).$(", seqTxn=").$(txWriter.getSeqTxn()).I$();
@@ -2442,6 +2441,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         // Record column structure version bump in txn file for WAL sequencer structure version to match writer structure version.
         bumpColumnStructureVersion();
+        
+        // todo: refactor this garbage
+        CairoMetadata.INSTANCE.dropTable(tableToken);
+        Path path = new Path();
+        ColumnVersionReader reader = new ColumnVersionReader();
+        CairoMetadata.hydrateTable(tableToken, configuration, path, LOG, reader);
+        path.close();
+        reader.close();
     }
 
     @Override
