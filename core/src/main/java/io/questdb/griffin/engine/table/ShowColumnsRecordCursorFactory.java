@@ -147,7 +147,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
                     return cairoColumn.getSymbolCachedUnsafe();
                 }
                 if (col == N_DESIGNATED_COL) {
-                    return cairoColumn.getDesignatedUnsafe();
+                    return cairoColumn.getIsDesignatedUnsafe();
                 }
                 if (col == N_UPSERT_KEY_COL) {
                     return cairoColumn.getIsDedupKeyUnsafe();

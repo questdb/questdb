@@ -68,20 +68,20 @@ public class CairoColumn implements Sinkable {
         return denseSymbolIndex;
     }
 
-    public boolean getDesignated() {
-        return isDesignated;
-    }
-
-    public boolean getDesignatedUnsafe() {
-        return isDesignated;
-    }
-
     public int getIndexBlockCapacityUnsafe() {
         return indexBlockCapacity;
     }
 
     public boolean getIsDedupKeyUnsafe() {
         return isDedupKey;
+    }
+
+    public boolean getIsDesignated() {
+        return isDesignated;
+    }
+
+    public boolean getIsDesignatedUnsafe() {
+        return isDesignated;
     }
 
     public boolean getIsIndexedUnsafe() {
@@ -104,7 +104,7 @@ public class CairoColumn implements Sinkable {
         return position;
     }
 
-    public int getStableIndex() {
+    public int getStableIndexUnsafe() {
         return stableIndex;
     }
 
@@ -181,16 +181,27 @@ public class CairoColumn implements Sinkable {
         this.type = type;
     }
 
-    public void setUpsertKeyUnsafe(boolean upsertKey) {
-        this.isDedupKey = upsertKey;
-    }
-
     public void setWriterIndexUnsafe(int writerIndex) {
         this.writerIndex = writerIndex;
     }
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-
+        sink.put("CairoColumn [");
+        sink.put("name=").put(getNameUnsafe()).put(", ");
+        sink.put("position=").put(getPositionUnsafe()).put(", ");
+        sink.put("type=").put(ColumnType.nameOf(getTypeUnsafe())).put(", ");
+        sink.put("isDedupKey=").put(getIsDedupKeyUnsafe()).put(", ");
+        sink.put("isDesignated=").put(getIsDesignatedUnsafe()).put(", ");
+        sink.put("isSequential=").put(getIsSequentialUnsafe()).put(", ");
+        sink.put("isSymbolTableStatic=").put(getIsSymbolTableStaticUnsafe()).put(", ");
+        sink.put("symbolCached=").put(getSymbolCachedUnsafe()).put(", ");
+        sink.put("symbolCapacity=").put(getSymbolCapacityUnsafe()).put(", ");
+        sink.put("denseSymbolIndex=").put(getDenseSymbolIndexUnsafe()).put(", ");
+        sink.put("isIndexed=").put(getIsIndexedUnsafe()).put(", ");
+        sink.put("indexBlockCapacity=").put(getIndexBlockCapacityUnsafe()).put(", ");
+        sink.put("stableIndex=").put(getStableIndexUnsafe()).put(", ");
+        sink.put("writerIndex=").put(getWriterIndexUnsafe()).put("]");
     }
+
 }

@@ -100,6 +100,10 @@ public class CairoTable implements Sinkable {
         return columnCount;
     }
 
+    public long getColumnCountUnsafe() {
+        return this.columns.size();
+    }
+
     public ObjList<CharSequence> getColumnNames() {
         lock.readLock().lock();
         final ObjList<CharSequence> names = this.columnNameIndexMap.keys();
@@ -310,40 +314,28 @@ public class CairoTable implements Sinkable {
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        sink.put("CairoTable").put('\n');
-        sink.put("\t\t").put("id: ").put(getIdUnsafe()).put('\n');
-        sink.put("\t\t").put("directoryName: ").put(getDirectoryNameUnsafe()).put('\n');
-        sink.put("\t\t").put("isDedup: ").put(getIsDedupUnsafe()).put('\n');
-        sink.put("\t\t").put("isSoftLink: ").put(getIsSoftLinkUnsafe()).put('\n');
-        sink.put("\t\t").put("lastMetadataVersion: ").put(getLastMetadataVersionUnsafe()).put('\n');
-        sink.put("\t\t").put("maxUncommittedRows: ").put(getMaxUncommittedRowsUnsafe()).put('\n');
-        sink.put("\t\t").put("o3MaxLag: ").put(getO3MaxLagUnsafe()).put('\n');
-        sink.put("\t\t").put("partitionBy: ").put(getPartitionByUnsafe()).put('\n');
-        sink.put("\t\t").put("timestampIndex: ").put(getTimestampIndexUnsafe()).put('\n');
-        sink.put("\t\t").put("timestampName: ").put(getTimestampNameUnsafe()).put('\n');
-        sink.put("\t\t").put("walEnabled: ").put(getWalEnabledUnsafe()).put('\n');
-        sink.put("\t\t").put("columnCount: ").put(getColumnCount()).put('\n');
+        sink.put("CairoTable [");
+        sink.put("name=").put(getNameUnsafe()).put(", ");
+        sink.put("id=").put(getIdUnsafe()).put(", ");
+        sink.put("directoryName=").put(getDirectoryNameUnsafe()).put(", ");
+        sink.put("isDedup=").put(getIsDedupUnsafe()).put(", ");
+        sink.put("isSoftLink=").put(getIsSoftLinkUnsafe()).put(", ");
+        sink.put("lastMetadataVersion=").put(getLastMetadataVersionUnsafe()).put(", ");
+        sink.put("maxUncommittedRows=").put(getMaxUncommittedRowsUnsafe()).put(", ");
+        sink.put("o3MaxLag=").put(getO3MaxLagUnsafe()).put(", ");
+        sink.put("partitionBy=").put(getPartitionByUnsafe()).put(", ");
+        sink.put("timestampIndex=").put(getTimestampIndexUnsafe()).put(", ");
+        sink.put("timestampName=").put(getTimestampNameUnsafe()).put(", ");
+        sink.put("walEnabled=").put(getWalEnabledUnsafe()).put(", ");
+        sink.put("columnCount=").put(getColumnCount()).put("]");
+        sink.put('\n');
         for (int i = 0, n = columns.size(); i < n; i++) {
             sink.put("\t\t");
             columns.getQuick(i).toSink(sink);
-            sink.put('\n');
+            if (i != columns.size() - 1) {
+                sink.put('\n');
+            }
         }
-
-
-//        // consider a versioned lock. consider more granular locking
-//        public final SimpleReadWriteLock lock;
-//        public LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
-//        public IntList columnOrderMap = new IntList();
-//        public ObjList<CairoColumn> columns = new ObjList<>();
-//        public TableToken token;
-//        // todo: intern, its a column name
-//        private boolean isDedup;
-//        private boolean isSoftLink;
-//        private long lastMetadataVersion = -1;
-//        private int maxUncommittedRows;
-//        private long o3MaxLag;
-//        private String partitionBy;
-//        private int timestampIndex;
     }
 
     public void updateColumnUnsafe(@NotNull CairoColumn newColumn, long metadataVersion) {

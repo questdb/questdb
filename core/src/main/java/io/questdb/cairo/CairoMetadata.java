@@ -137,6 +137,7 @@ public class CairoMetadata implements Sinkable {
 
                 // set basic values
                 column.setNameUnsafe(columnName);
+                column.setPositionUnsafe((int) (table.getColumnCountUnsafe() - 1));
                 column.setTypeUnsafe(columnType);
                 column.setIsIndexedUnsafe(TableUtils.isColumnIndexed(metaMem, writerIndex));
                 column.setIndexBlockCapacityUnsafe(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
@@ -194,6 +195,7 @@ public class CairoMetadata implements Sinkable {
     public void addColumn(@NotNull TableToken token,
                           CharSequence columnName,
                           int columnType,
+                          int position,
                           int symbolCapacity,
                           boolean symbolCacheFlag,
                           boolean isIndexed,
@@ -227,6 +229,7 @@ public class CairoMetadata implements Sinkable {
 
             newColumn.setNameUnsafe(columnName.toString());
             newColumn.setTypeUnsafe(columnType);
+            newColumn.setPositionUnsafe(position);
             newColumn.setSymbolCapacityUnsafe(symbolCapacity);
             newColumn.setSymbolCachedUnsafe(symbolCacheFlag);
             newColumn.setIsIndexedUnsafe(isIndexed);
@@ -282,7 +285,8 @@ public class CairoMetadata implements Sinkable {
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        sink.put("CairoMetadata");
+        sink.put("CairoMetadata [");
+        sink.put("tableCount=").put(getTablesCountUnsafe()).put("]");
         sink.put('\n');
         for (int i = 0, n = tables.size(); i < n; i++) {
             sink.put('\t');
