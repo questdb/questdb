@@ -997,7 +997,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public int getRequestFd() {
+        public long getRequestFd() {
             return sqlExecutionContext.getRequestFd();
         }
 

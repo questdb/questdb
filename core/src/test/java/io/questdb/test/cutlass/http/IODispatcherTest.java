@@ -281,10 +281,10 @@ public class IODispatcherTest extends AbstractTest {
         assertMemoryLeak(() -> {
             final HttpServerConfiguration serverConfiguration = new DefaultHttpServerConfiguration();
             final NetworkFacade nf = new NetworkFacadeImpl() {
-                int theFd;
+                long theFd;
 
                 @Override
-                public int accept(int serverFd) {
+                public long accept(long serverFd) {
                     long fd = super.accept(serverFd);
                     theFd = fd;
                     return fd;
@@ -5589,7 +5589,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
                     }).start();
 
-                    IntList openFds = new IntList();
+                    LongList openFds = new LongList();
 
                     final long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     final long buf = Unsafe.malloc(4096, MemoryTag.NATIVE_DEFAULT);
@@ -9108,7 +9108,7 @@ public class IODispatcherTest extends AbstractTest {
     private void testMaxConnections0(
             IODispatcher<HttpConnectionContext> dispatcher,
             long sockAddr,
-            IntList openFds,
+            LongList openFds,
             long buf
     ) {
         // Connect sockets that would be consumed by dispatcher plus
@@ -9187,10 +9187,10 @@ public class IODispatcherTest extends AbstractTest {
             final long queuedConnectionTimeoutInMs = 250;
 
             class TestIOContext extends IOContext<TestIOContext> {
-                private final IntHashSet serverConnectedFds;
+                private final LongHashSet serverConnectedFds;
                 private long heartbeatId;
 
-                public TestIOContext(long fd, IntHashSet serverConnectedFds) {
+                public TestIOContext(long fd, LongHashSet serverConnectedFds) {
                     super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG, NullLongGauge.INSTANCE);
                     socket.of(fd);
                     this.serverConnectedFds = serverConnectedFds;
@@ -9240,8 +9240,8 @@ public class IODispatcherTest extends AbstractTest {
             final int listenBackLog = configuration.getListenBacklog();
 
             final AtomicInteger nConnected = new AtomicInteger();
-            final IntHashSet serverConnectedFds = new IntHashSet();
-            final IntHashSet clientActiveFds = new IntHashSet();
+            final LongHashSet serverConnectedFds = new LongHashSet();
+            final LongHashSet clientActiveFds = new LongHashSet();
             IOContextFactory<TestIOContext> contextFactory = (fd, dispatcher) -> {
                 LOG.info().$(fd).$(" connected").$();
                 serverConnectedFds.add(fd);

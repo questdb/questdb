@@ -196,7 +196,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -228,7 +228,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -261,7 +261,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -294,7 +294,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -329,7 +329,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -362,7 +362,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -405,7 +405,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -596,7 +596,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan any partition, searched symbol values don't exist in symbol table
                     if (Utf8s.containsAscii(name, "1970-01-01") || Utf8s.containsAscii(name, "1970-01-02")) {
                         return -1;
@@ -640,7 +640,7 @@ public class LatestByTest extends AbstractCairoTest {
 
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in other partitions
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -680,7 +680,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -716,7 +716,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -1206,7 +1206,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -1242,7 +1242,7 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestWithFilterByDoesNotNeedFullScanValueNotInSymbolTable() throws Exception {
         ff = new TestFilesFacadeImpl() {
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 // Query should not scan the first partition
                 // all the latest values are in the second, third partition
                 if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -1293,7 +1293,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {
@@ -1328,7 +1328,7 @@ public class LatestByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     // Query should not scan the first partition
                     // all the latest values are in the second, third partition
                     if (Utf8s.containsAscii(name, "1970-01-01")) {

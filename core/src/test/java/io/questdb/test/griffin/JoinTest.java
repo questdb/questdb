@@ -5660,7 +5660,7 @@ public class JoinTest extends AbstractCairoTest {
             AtomicInteger counter = new AtomicInteger();
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "ts.d") && counter.incrementAndGet() == 1) {
                         return -1;
                     }

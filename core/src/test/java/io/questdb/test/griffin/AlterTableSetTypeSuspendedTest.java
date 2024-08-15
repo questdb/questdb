@@ -65,7 +65,7 @@ public class AlterTableSetTypeSuspendedTest extends AbstractAlterTableSetTypeRes
                 private final AtomicInteger attempt = new AtomicInteger();
 
                 @Override
-                public int openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, long opts) {
                     if (Utf8s.containsAscii(name, "x.d.1") && attempt.getAndIncrement() == 0) {
                         return -1;
                     }

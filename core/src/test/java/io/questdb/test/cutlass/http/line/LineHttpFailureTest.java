@@ -184,7 +184,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
             SOCountDownLatch pong = new SOCountDownLatch(1);
             final FilesFacade filesFacade = new TestFilesFacadeImpl() {
                 @Override
-                public int openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, long opts) {
                     if (Utf8s.endsWithAscii(name, "field1.d") && Utf8s.containsAscii(name, "wal")) {
                         ping.await();
                         httpClientRef.get().disconnect();
@@ -244,7 +244,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
             final FilesFacade filesFacade = new TestFilesFacadeImpl() {
 
                 @Override
-                public long append(int fd, long buf, int len) {
+                public long append(long fd, long buf, int len) {
                     if (fd == this.fd && counter.decrementAndGet() == 0) {
                         ping.await();
                         httpClientRef.get().disconnect();
@@ -257,8 +257,8 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
                 }
 
                 @Override
-                public int openRW(LPSZ name, long opts) {
-                    int fd = super.openRW(name, opts);
+                public long openRW(LPSZ name, long opts) {
+                    long fd = super.openRW(name, opts);
                     if (Utf8s.endsWithAscii(name, Files.SEPARATOR + EVENT_INDEX_FILE_NAME)
                             && Utf8s.containsAscii(name, "second_table")) {
                         this.fd = fd;

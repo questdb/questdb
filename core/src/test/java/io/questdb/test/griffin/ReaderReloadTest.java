@@ -46,7 +46,7 @@ public class ReaderReloadTest extends AbstractCairoTest {
         AtomicBoolean failToOpen = new AtomicBoolean(false);
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, "new_col.d.1") && failToOpen.get()) {
                     return -1;
                 }

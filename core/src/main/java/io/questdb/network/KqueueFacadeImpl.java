@@ -50,12 +50,12 @@ public class KqueueFacadeImpl implements KqueueFacade {
     }
 
     @Override
-    public int readPipe(int fd) {
+    public int readPipe(long fd) {
         return KqueueAccessor.readPipe(fd);
     }
 
     @Override
-    public int writePipe(int fd) {
+    public int writePipe(long fd) {
         return KqueueAccessor.writePipe(fd);
     }
 }

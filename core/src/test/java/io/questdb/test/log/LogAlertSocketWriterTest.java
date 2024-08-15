@@ -447,7 +447,7 @@ public class LogAlertSocketWriterTest {
     private static void withLogAlertSocketWriter(Consumer<LogAlertSocketWriter> consumer) throws Exception {
         final NetworkFacade nf = new NetworkFacadeImpl() {
             @Override
-            public int connect(int fd, long pSockaddr) {
+            public int connect(long fd, long pSockaddr) {
                 return -1;
             }
         };

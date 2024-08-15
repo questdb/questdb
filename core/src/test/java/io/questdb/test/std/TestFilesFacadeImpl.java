@@ -49,7 +49,7 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
     }
 
     @Override
-    public boolean close(int fd) {
+    public boolean close(long fd) {
         if (fd > -1 && fd == this.fd) {
             this.fd = -1;
         }
@@ -58,28 +58,28 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
     }
 
     @Override
-    public int openAppend(LPSZ name) {
+    public long openAppend(LPSZ name) {
         long fd = super.openAppend(name);
         track(name, fd);
         return fd;
     }
 
     @Override
-    public int openCleanRW(LPSZ name, long size) {
+    public long openCleanRW(LPSZ name, long size) {
         long fd = super.openCleanRW(name, size);
         track(name, fd);
         return fd;
     }
 
     @Override
-    public int openRO(LPSZ name) {
+    public long openRO(LPSZ name) {
         long fd = super.openRO(name);
         track(name, fd);
         return fd;
     }
 
     @Override
-    public int openRW(LPSZ name, long opts) {
+    public long openRW(LPSZ name, long opts) {
         long fd = super.openRW(name, opts);
         track(name, fd);
         return fd;

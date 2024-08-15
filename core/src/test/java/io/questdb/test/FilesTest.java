@@ -617,7 +617,7 @@ public class FilesTest {
             fd = Files.openRW(dstPath.$());
             mmapMem = TableUtils.mapRW(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
 
-            final int finalFd = fd;
+            final long finalFd = fd;
             long finalMmapMem = mmapMem;
             Thread th1 = new Thread(() -> {
                 for (long offset = 0; offset < fileSize; offset += 2 * Long.BYTES) {
@@ -769,7 +769,7 @@ public class FilesTest {
             File temp = temporaryFolder.newFile();
 
             try (Path path = new Path().of(temp.getAbsolutePath())) {
-                int fd1 = Files.openRW(path.$());
+                long fd1 = Files.openRW(path.$());
                 long fileSize = 4096;
                 long mem = Unsafe.malloc(fileSize, MemoryTag.NATIVE_DEFAULT);
 
@@ -802,7 +802,7 @@ public class FilesTest {
             File temp = temporaryFolder.newFile();
 
             try (Path path = new Path().of(temp.getAbsolutePath())) {
-                int fd1 = Files.openRW(path.$());
+                long fd1 = Files.openRW(path.$());
                 long size2Gb = (2L << 30) + 4096;
                 long mem = Unsafe.malloc(size2Gb, MemoryTag.NATIVE_DEFAULT);
 
@@ -873,7 +873,7 @@ public class FilesTest {
                     Path path1 = new Path().of(temp.getAbsolutePath());
                     Path path2 = new Path().of(temp.getAbsolutePath())
             ) {
-                int fd1 = Files.openRW(path1.$());
+                long fd1 = Files.openRW(path1.$());
                 path2.put(".2");
                 long fd2 = 0;
 
@@ -928,7 +928,7 @@ public class FilesTest {
                     Path path1 = new Path().of(temp.getAbsolutePath());
                     Path path2 = new Path().of(temp.getAbsolutePath())
             ) {
-                int fd1 = Files.openRW(path1.$());
+                long fd1 = Files.openRW(path1.$());
                 path2.put(".2");
                 long fd2 = Files.openRW(path2.$());
 
@@ -1192,7 +1192,7 @@ public class FilesTest {
             File temp = temporaryFolder.newFile();
 
             try (Path path = new Path().of(temp.getAbsolutePath())) {
-                int fd1 = Files.openRW(path.$());
+                long fd1 = Files.openRW(path.$());
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
 
                 long testValue = 0x1234567890ABCDEFL;
@@ -1224,7 +1224,7 @@ public class FilesTest {
             File temp = temporaryFolder.newFile();
 
             try (Path path = new Path().of(temp.getAbsolutePath())) {
-                int fd1 = Files.openRW(path.$());
+                long fd1 = Files.openRW(path.$());
                 long fd2 = Files.openRW(path.put(".2").$());
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
                 long mmap = 0;

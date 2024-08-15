@@ -2032,7 +2032,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             Path src = Path.PATH.get().of(configuration.getRoot()).concat(tableToken).concat(timestampDay).put(configuration.getAttachPartitionSuffix()).slash();
             FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             dFile(src, "ts", -1);
-            int fd = TableUtils.openRW(ff, src.$(), LOG, configuration.getWriterFileOpenOpts());
+            long fd = TableUtils.openRW(ff, src.$(), LOG, configuration.getWriterFileOpenOpts());
             try {
                 ff.truncate(fd, 8);
             } finally {

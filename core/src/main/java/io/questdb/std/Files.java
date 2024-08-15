@@ -635,15 +635,8 @@ public final class Files {
 
     private native static long append(int fd, long address, long len);
 
-    private static synchronized long auditOpen(int fd) {
-        if (openFds == null) {
-            openFds = new LongHashSet();
-        }
-        if (fd < 0) {
-            throw new IllegalStateException("Invalid fd " + fd);
-        }
-        int index = fdCounter.getAndIncrement();
-        return Numbers.encodeLowHighInts(index, fd);
+    public static int toOsFd(long fd) {
+        return Numbers.decodeHighInt(fd);
     }
 
     private native static int close0(int fd);
@@ -725,8 +718,17 @@ public final class Files {
 
     private native static boolean setLastModified(long lpszName, long millis);
 
-    private static int toOsFd(long fd) {
-        return Numbers.decodeHighInt(fd);
+    private static synchronized long auditOpen(int fd) {
+        if (openFds == null) {
+            openFds = new LongHashSet();
+        }
+        if (fd < 0) {
+            throw new IllegalStateException("Invalid fd " + fd);
+        }
+        int index = fdCounter.getAndIncrement();
+        long uniqueFd = Numbers.encodeLowHighInts(index, fd);
+        openFds.add(uniqueFd);
+        return uniqueFd;
     }
 
     private native static boolean truncate(int fd, long size);

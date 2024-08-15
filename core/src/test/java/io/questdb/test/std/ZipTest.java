@@ -60,9 +60,9 @@ public class ZipTest {
 
                     long pIn = 0;
                     long pOut = 0;
-                    int fdIn = Files.openRO(path.of(expected.getAbsolutePath()).$());
+                    long fdIn = Files.openRO(path.of(expected.getAbsolutePath()).$());
                     try {
-                        int fdOut = Files.openRW(path.of(outFile.getAbsolutePath()).$());
+                        long fdOut = Files.openRW(path.of(outFile.getAbsolutePath()).$());
                         try {
                             // header
                             Files.write(fdOut, Zip.gzipHeader, Zip.gzipHeaderLen, pOut);

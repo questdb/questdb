@@ -33,7 +33,7 @@ public interface KqueueFacade {
 
     long pipe();
 
-    int readPipe(int fd);
+    int readPipe(long fd);
 
-    int writePipe(int fd);
+    int writePipe(long fd);
 }

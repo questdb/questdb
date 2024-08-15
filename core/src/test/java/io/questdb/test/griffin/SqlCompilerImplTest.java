@@ -2808,7 +2808,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             }
 
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (mapCount++ == 6) {
                     return -1;
                 }
@@ -2834,7 +2834,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             private long txnFd;
 
             @Override
-            public boolean close(int fd) {
+            public boolean close(long fd) {
                 if (fd == metaFd) {
                     metaFd = -1;
                 }
@@ -2850,7 +2850,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             }
 
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 // this is very specific failure
                 // it fails to open table writer metadata
                 // and then fails to close txMem
@@ -2865,8 +2865,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             }
 
             @Override
-            public int openRO(LPSZ name) {
-                int fd = super.openRO(name);
+            public long openRO(LPSZ name) {
+                long fd = super.openRO(name);
                 if (Utf8s.endsWithAscii(name, Files.SEPARATOR + TableUtils.META_FILE_NAME)) {
                     metaFd = fd;
                 }
@@ -2874,8 +2874,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
-                int fd = super.openRW(name, opts);
+            public long openRW(LPSZ name, long opts) {
+                long fd = super.openRW(name, opts);
                 if (Utf8s.endsWithAscii(name, Files.SEPARATOR + TableUtils.TXN_FILE_NAME)) {
                     txnFd = fd;
                 }
@@ -3358,7 +3358,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             // number of rows we are appending
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (count-- != 0) {
                     return super.mmap(fd, len, offset, flags, memoryTag);
                 }
@@ -4492,7 +4492,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             }
 
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (inError.get() && pageCount++ > 12) {
                     return -1;
                 }
@@ -4597,7 +4597,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             }
 
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (inError.get() && pageCount++ == 14) {
                     return -1;
                 }

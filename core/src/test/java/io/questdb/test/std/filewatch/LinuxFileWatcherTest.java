@@ -150,7 +150,7 @@ public class LinuxFileWatcherTest extends AbstractTest {
         }
 
         @Override
-        public int epollCtl(int epfd, int op, int fd, long eventPtr) {
+        public int epollCtl(long epfd, int op, long fd, long eventPtr) {
             if (epollCtlCounter++ == epollCtlFaultAt) {
                 return -1;
             }
@@ -158,7 +158,7 @@ public class LinuxFileWatcherTest extends AbstractTest {
         }
 
         @Override
-        public int epollWait(int epfd, long eventPtr, int eventCount, int timeout) {
+        public int epollWait(long epfd, long eventPtr, int eventCount, int timeout) {
             if (epollWaitCounter++ == epollWaitFaultAt) {
                 return -1;
             }
@@ -189,12 +189,12 @@ public class LinuxFileWatcherTest extends AbstractTest {
         }
 
         @Override
-        public long readEventFd(int fd) {
+        public long readEventFd(long fd) {
             return delegate.readEventFd(fd);
         }
 
         @Override
-        public int writeEventFd(int fd) {
+        public int writeEventFd(long fd) {
             return delegate.writeEventFd(fd);
         }
     }

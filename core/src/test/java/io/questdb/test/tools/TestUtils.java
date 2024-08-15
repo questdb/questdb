@@ -112,7 +112,7 @@ public final class TestUtils {
         }
     }
 
-    public static void assertConnect(NetworkFacade nf, int fd, long pSockAddr) {
+    public static void assertConnect(NetworkFacade nf, long fd, long pSockAddr) {
         long rc = nf.connect(fd, pSockAddr);
         if (rc != 0) {
             Assert.fail("could not connect, errno=" + nf.errno());
@@ -240,12 +240,12 @@ public final class TestUtils {
     public static void assertEquals(File a, File b) {
         try (Path path = new Path()) {
             path.of(a.getAbsolutePath());
-            int fda = TestFilesFacadeImpl.INSTANCE.openRO(path.$());
+            long fda = TestFilesFacadeImpl.INSTANCE.openRO(path.$());
             Assert.assertNotEquals(-1, fda);
 
             try {
                 path.of(b.getAbsolutePath());
-                int fdb = TestFilesFacadeImpl.INSTANCE.openRO(path.$());
+                long fdb = TestFilesFacadeImpl.INSTANCE.openRO(path.$());
                 Assert.assertNotEquals(-1, fdb);
                 try {
 
@@ -288,7 +288,7 @@ public final class TestUtils {
     public static void assertEquals(File a, CharSequence actual) {
         try (Path path = new Path()) {
             path.of(a.getAbsolutePath());
-            int fda = TestFilesFacadeImpl.INSTANCE.openRO(path.$());
+            long fda = TestFilesFacadeImpl.INSTANCE.openRO(path.$());
             Assert.assertNotEquals(-1, fda);
 
             try {
@@ -1141,7 +1141,7 @@ public final class TestUtils {
             final AtomicInteger totalSent = new AtomicInteger();
 
             @Override
-            public int sendRaw(int fd, long buffer, int bufferLen) {
+            public int sendRaw(long fd, long buffer, int bufferLen) {
                 if (startDelayDelayAfter == 0) {
                     return super.sendRaw(fd, buffer, bufferLen);
                 }

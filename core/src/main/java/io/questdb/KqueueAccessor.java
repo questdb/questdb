@@ -24,6 +24,8 @@
 
 package io.questdb;
 
+import static io.questdb.std.Files.toOsFd;
+
 public class KqueueAccessor {
     public static final short DATA_OFFSET;
     public static final short EVFILT_READ;
@@ -45,7 +47,9 @@ public class KqueueAccessor {
     public static final short NOTE_WRITE;
     public static final short SIZEOF_KEVENT;
 
-    public static native long evtAlloc(long ident, int filter, int flags, int fflags, long data);
+    public static long evtAlloc(long ident, int filter, int flags, int fflags, long data) {
+        return evtAlloc(toOsFd(ident), filter, flags, fflags, data);
+    }
 
     public static native long evtFree(long event);
 
@@ -87,19 +91,41 @@ public class KqueueAccessor {
 
     public static native short getSizeofKevent();
 
-    public static native int kevent(int kq, long changeList, int nChanges, long eventList, int nEvents, int timeout);
+    public static int kevent(long kq, long changeList, int nChanges, long eventList, int nEvents, int timeout) {
+        return kevent(toOsFd(kq), changeList, nChanges, eventList, nEvents, timeout);
+    }
 
-    public static native int keventGetBlocking(int kq, long eventList, int nEvents);
+    public static int keventGetBlocking(long kq, long eventList, int nEvents) {
+        return keventGetBlocking(toOsFd(kq), eventList, nEvents);
+    }
 
-    public static native int keventRegister(int kq, long changeList, int nChanges);
+    public static int keventRegister(long kq, long changeList, int nChanges) {
+        return keventRegister(toOsFd(kq), changeList, nChanges);
+    }
 
     public static native int kqueue();
 
     public static native long pipe();
 
-    public static native int readPipe(int fd);
+    public static int readPipe(long fd) {
+        return readPipe(toOsFd(fd));
+    }
 
-    public static native int writePipe(int fd);
+    public static int writePipe(long fd) {
+        return writePipe(toOsFd(fd));
+    }
+
+    private static native long evtAlloc(int ident, int filter, int flags, int fflags, long data);
+
+    private static native int kevent(int kq, long changeList, int nChanges, long eventList, int nEvents, int timeout);
+
+    private static native int keventGetBlocking(int kq, long eventList, int nEvents);
+
+    private static native int keventRegister(int kq, long changeList, int nChanges);
+
+    private static native int readPipe(int fd);
+
+    private static native int writePipe(int fd);
 
     static {
         EVFILT_READ = getEvfiltRead();
