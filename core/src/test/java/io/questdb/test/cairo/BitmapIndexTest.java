@@ -1085,8 +1085,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             LongList tmp = new LongList();
             try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, nullsN)) {
-                assertBackwardCursorLimit(reader, 0, 260, tmp, nullsN, true);
-                assertBackwardCursorLimit(reader, 0, 260, tmp, nullsN, false);
+                assertBackwardCursorLimit(reader, 1, 260, tmp, nullsN - 1, true);
+                assertBackwardCursorLimit(reader, 1, 260, tmp, nullsN - 1, false);
             }
         });
     }
@@ -1483,8 +1483,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
         }
 
         int len = tmp.size() - nExpectedNulls;
-        for (int i = min; i < max; i++) {
-            if (i % 3 == 0) {
+        for (int i = 0, n = max - min; i < n; i++) {
+            if ((i + min) % 3 == 0) {
                 continue;
             }
 
@@ -1494,7 +1494,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
         }
 
         for (int i = 0; i < nExpectedNulls; i++) {
-            Assert.assertEquals(min + i, tmp.getQuick(tmp.size() - i - 1));
+            Assert.assertEquals(i, tmp.getQuick(tmp.size() - i - 1));
         }
     }
 
@@ -1524,12 +1524,12 @@ public class BitmapIndexTest extends AbstractCairoTest {
         Assert.assertEquals(nExpectedResults, tmp.size());
 
         for (int i = 0; i < nExpectedNulls; i++) {
-            Assert.assertEquals(min + i, tmp.getQuick(i));
+            Assert.assertEquals(i, tmp.getQuick(i));
         }
 
         int len = nExpectedNulls;
-        for (int i = min; i < Math.min(N, min + nExpectedNulls); i++) {
-            if (i % 3 == 0) {
+        for (int i = 0, n = Math.min(N - min, nExpectedNulls); i < n; i++) {
+            if ((i + min) % 3 == 0) {
                 continue;
             }
 

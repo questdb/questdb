@@ -82,7 +82,7 @@ public class ConcurrentBitmapIndexFwdReader extends AbstractIndexReader {
             if (cursor == null) {
                 cursor = new Cursor();
             }
-            cursor.of(key, 0, maxValue, keyCount, minValue, unindexedNullCount);
+            cursor.of(key, minValue, maxValue, keyCount, minValue, unindexedNullCount);
             return cursor;
         }
 
