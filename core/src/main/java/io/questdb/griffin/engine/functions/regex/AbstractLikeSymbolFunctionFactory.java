@@ -157,6 +157,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         private final Function pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
+        private boolean initialized;
         private String lastPattern = null;
         private Matcher matcher;
 
@@ -168,6 +169,10 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public boolean getBool(Record rec) {
+            if (!initialized) {
+                extractSymbolKeys(value, symbolKeys, matcher);
+                initialized = true;
+            }
             return symbolMatches(value, rec, symbolKeys);
         }
 
@@ -201,7 +206,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
                 lastPattern = null;
                 matcher = null;
             }
-            extractSymbolKeys(value, symbolKeys, matcher);
+            initialized = false;
         }
 
         @Override
@@ -225,6 +230,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         private final String pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
+        private boolean initialized;
 
         public ConstContainsStaticSymbolTableFunction(SymbolFunction value, String pattern) {
             this.value = value;
@@ -238,20 +244,24 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public boolean getBool(Record rec) {
+            if (!initialized) {
+                final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
+                assert symbolTable != null;
+                symbolKeys.clear();
+                for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+                    if (Chars.contains(symbolTable.valueOf(i), pattern)) {
+                        symbolKeys.add(i);
+                    }
+                }
+                initialized = true;
+            }
             return symbolMatches(value, rec, symbolKeys);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
-            assert symbolTable != null;
-            symbolKeys.clear();
-            for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
-                if (Chars.contains(symbolTable.valueOf(i), pattern)) {
-                    symbolKeys.add(i);
-                }
-            }
+            initialized = false;
         }
 
         @Override
@@ -268,6 +278,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         private final String pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
+        private boolean initialized;
 
         public ConstEndsWithStaticSymbolTableFunction(SymbolFunction value, String pattern) {
             this.value = value;
@@ -281,20 +292,24 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public boolean getBool(Record rec) {
+            if (!initialized) {
+                final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
+                assert symbolTable != null;
+                symbolKeys.clear();
+                for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+                    if (Chars.endsWith(symbolTable.valueOf(i), pattern)) {
+                        symbolKeys.add(i);
+                    }
+                }
+                initialized = true;
+            }
             return symbolMatches(value, rec, symbolKeys);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
-            assert symbolTable != null;
-            symbolKeys.clear();
-            for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
-                if (Chars.endsWith(symbolTable.valueOf(i), pattern)) {
-                    symbolKeys.add(i);
-                }
-            }
+            initialized = false;
         }
 
         @Override
@@ -310,6 +325,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         private final String pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
+        private boolean initialized;
 
         public ConstIContainsStaticSymbolTableFunction(SymbolFunction value, String pattern) {
             this.value = value;
@@ -323,20 +339,24 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public boolean getBool(Record rec) {
+            if (!initialized) {
+                final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
+                assert symbolTable != null;
+                symbolKeys.clear();
+                for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+                    if (Chars.containsLowerCase(symbolTable.valueOf(i), pattern)) {
+                        symbolKeys.add(i);
+                    }
+                }
+                initialized = true;
+            }
             return symbolMatches(value, rec, symbolKeys);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
-            assert symbolTable != null;
-            symbolKeys.clear();
-            for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
-                if (Chars.containsLowerCase(symbolTable.valueOf(i), pattern)) {
-                    symbolKeys.add(i);
-                }
-            }
+            initialized = false;
         }
 
         @Override
@@ -353,6 +373,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         private final String pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
+        private boolean initialized;
 
         public ConstIEndsWithStaticSymbolTableFunction(SymbolFunction value, String pattern) {
             this.value = value;
@@ -366,20 +387,24 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public boolean getBool(Record rec) {
+            if (!initialized) {
+                final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
+                assert symbolTable != null;
+                symbolKeys.clear();
+                for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+                    if (Chars.endsWithLowerCase(symbolTable.valueOf(i), pattern)) {
+                        symbolKeys.add(i);
+                    }
+                }
+                initialized = true;
+            }
             return symbolMatches(value, rec, symbolKeys);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
-            assert symbolTable != null;
-            symbolKeys.clear();
-            for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
-                if (Chars.endsWithLowerCase(symbolTable.valueOf(i), pattern)) {
-                    symbolKeys.add(i);
-                }
-            }
+            initialized = false;
         }
 
         @Override
@@ -395,6 +420,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         private final String pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
+        private boolean initialized;
 
         public ConstIStartsWithStaticSymbolTableFunction(SymbolFunction value, String pattern) {
             this.value = value;
@@ -408,20 +434,24 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public boolean getBool(Record rec) {
+            if (!initialized) {
+                final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
+                assert symbolTable != null;
+                symbolKeys.clear();
+                for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+                    if (Chars.startsWithLowerCase(symbolTable.valueOf(i), pattern)) {
+                        symbolKeys.add(i);
+                    }
+                }
+                initialized = true;
+            }
             return symbolMatches(value, rec, symbolKeys);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
-            assert symbolTable != null;
-            symbolKeys.clear();
-            for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
-                if (Chars.startsWithLowerCase(symbolTable.valueOf(i), pattern)) {
-                    symbolKeys.add(i);
-                }
-            }
+            initialized = false;
         }
 
         @Override
@@ -437,6 +467,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         private final Matcher matcher;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
+        private boolean initialized;
 
         public ConstLikeStaticSymbolTableFunction(SymbolFunction value, Matcher matcher) {
             this.value = value;
@@ -450,13 +481,17 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public boolean getBool(Record rec) {
+            if (!initialized) {
+                extractSymbolKeys(value, symbolKeys, matcher);
+                initialized = true;
+            }
             return symbolMatches(value, rec, symbolKeys);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            extractSymbolKeys(value, symbolKeys, matcher);
+            initialized = false;
         }
 
         @Override
@@ -480,6 +515,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         private final String pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
+        private boolean initialized;
 
         public ConstStartsWithStaticSymbolTableFunction(SymbolFunction value, String pattern) {
             this.value = value;
@@ -493,20 +529,24 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public boolean getBool(Record rec) {
+            if (!initialized) {
+                final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
+                assert symbolTable != null;
+                symbolKeys.clear();
+                for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+                    if (Chars.startsWith(symbolTable.valueOf(i), pattern)) {
+                        symbolKeys.add(i);
+                    }
+                }
+                initialized = true;
+            }
             return symbolMatches(value, rec, symbolKeys);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
-            assert symbolTable != null;
-            symbolKeys.clear();
-            for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
-                if (Chars.startsWith(symbolTable.valueOf(i), pattern)) {
-                    symbolKeys.add(i);
-                }
-            }
+            initialized = false;
         }
 
         @Override
