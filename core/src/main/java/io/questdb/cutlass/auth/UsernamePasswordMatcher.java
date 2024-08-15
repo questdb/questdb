@@ -22,9 +22,14 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.cutlass.auth;
+
+import io.questdb.cairo.SecurityContext;
 
 public interface UsernamePasswordMatcher {
+    default byte getAuthType() {
+        return SecurityContext.AUTH_TYPE_CREDENTIALS;
+    }
 
     /**
      * Verify password for a user.
