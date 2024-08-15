@@ -570,8 +570,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         bumpMetadataAndColumnStructureVersion();
 
         metadata.addColumn(columnName, columnType, isIndexed, indexValueBlockCapacity, columnIndex, isSequential, symbolCapacity, isDedupKey);
-        CairoMetadata.INSTANCE.addColumn(tableToken, columnName, columnType, columnIndex, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, metadata.getMetadataVersion());
-
 
         if (!Os.isWindows()) {
             ff.fsyncAndClose(TableUtils.openRO(ff, path.$(), LOG));
@@ -580,6 +578,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (securityContext != null) {
             ddlListener.onColumnAdded(securityContext, tableToken, columnName);
         }
+
+        CairoMetadata.INSTANCE.addColumn(tableToken, columnName, columnType, columnIndex, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, getMetadataVersion());
     }
 
     @Override
@@ -621,6 +621,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
         columnMetadata.setIndexed(true);
         columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
+
+        CairoMetadata.INSTANCE.addColumn(tableToken, columnName, columnMetadata.getType(), columnIndex, getSymbolCapacity(metaMem, columnIndex), isSymbolCached(metaMem, columnIndex), true, indexValueBlockSize, isSequential(metaMem, columnIndex), isColumnDedupKey(metaMem, columnIndex), getMetadataVersion());
 
         LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$substr(pathRootSize, path).$();
     }

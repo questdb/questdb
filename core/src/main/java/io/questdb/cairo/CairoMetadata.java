@@ -243,6 +243,7 @@ public class CairoMetadata implements Sinkable {
 
             table.token = token;
         } finally {
+            table.setLastMetadataVersionUnsafe(metadataVersion);
             table.lock.writeLock().unlock();
         }
     }
