@@ -34,13 +34,31 @@ public class CairoMetadataTest extends AbstractCairoTest {
 
 
     @Test
+    public void testAddColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            CairoMetadata.INSTANCE.clear();
+            createY();
+
+            ddl("ALTER TABLE y ADD COLUMN foo VARCHAR");
+            drainWalQueue();
+
+            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+                            "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, lastMetadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
+                            "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, denseSymbolIndex=-1, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
+                            "\t\tCairoColumn [name=foo, position=1, type=VARCHAR, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=false, symbolCached=true, symbolCapacity=128, denseSymbolIndex=0, isIndexed=false, indexBlockCapacity=256, stableIndex=0, writerIndex=0]\n",
+                    CairoMetadata.INSTANCE.toString0());
+        });
+    }
+
+    @Test
     public void testBasicMetadataForATable() throws Exception {
         assertMemoryLeak(() -> {
+            CairoMetadata.INSTANCE.clear();
             createX();
 
             TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
                             "\tCairoTable [name=x, id=1, directoryName=x~, isDedup=false, isSoftLink=false, lastMetadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=NONE, timestampIndex=3, timestampName=timestamp, walEnabled=false, columnCount=16]\n" +
-                            "\t\tCairoColumn [name=i, position=-1, type=INT, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, denseSymbolIndex=-1, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
+                            "\t\tCairoColumn [name=i, position=0, type=INT, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, denseSymbolIndex=-1, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=sym, position=0, type=SYMBOL, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, denseSymbolIndex=0, isIndexed=false, indexBlockCapacity=0, stableIndex=1, writerIndex=1]\n" +
                             "\t\tCairoColumn [name=amt, position=1, type=DOUBLE, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, denseSymbolIndex=-1, isIndexed=false, indexBlockCapacity=0, stableIndex=2, writerIndex=2]\n" +
                             "\t\tCairoColumn [name=timestamp, position=2, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, denseSymbolIndex=-1, isIndexed=false, indexBlockCapacity=0, stableIndex=3, writerIndex=3]\n" +
@@ -57,10 +75,8 @@ public class CairoMetadataTest extends AbstractCairoTest {
                             "\t\tCairoColumn [name=m, position=13, type=BINARY, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, denseSymbolIndex=-1, isIndexed=false, indexBlockCapacity=0, stableIndex=14, writerIndex=14]\n" +
                             "\t\tCairoColumn [name=n, position=14, type=STRING, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, denseSymbolIndex=-1, isIndexed=false, indexBlockCapacity=0, stableIndex=15, writerIndex=15]\n",
                     CairoMetadata.INSTANCE.toString0());
-
         });
     }
-
 
     private void createX() throws SqlException {
         ddl(
@@ -86,4 +102,9 @@ public class CairoMetadataTest extends AbstractCairoTest {
                         ") timestamp (timestamp);"
         );
     }
+
+    private void createY() throws SqlException {
+        ddl("create table y ( ts timestamp ) timestamp(ts) partition by day wal;");
+    }
+    
 }

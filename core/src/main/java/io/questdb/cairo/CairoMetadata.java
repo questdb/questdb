@@ -137,7 +137,7 @@ public class CairoMetadata implements Sinkable {
 
                 // set basic values
                 column.setNameUnsafe(columnName);
-                column.setPositionUnsafe((int) (table.getColumnCountUnsafe() - 1));
+                column.setPositionUnsafe((int) (table.getColumnCountUnsafe() - 1 < 0 ? 0 : table.getColumnCountUnsafe() - 1));
                 column.setTypeUnsafe(columnType);
                 column.setIsIndexedUnsafe(TableUtils.isColumnIndexed(metaMem, writerIndex));
                 column.setIndexBlockCapacityUnsafe(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
@@ -257,6 +257,16 @@ public class CairoMetadata implements Sinkable {
         }
         lock.writeLock().lock();
         tables.put(tableName, newTable);
+        lock.writeLock().unlock();
+    }
+
+    public void clear() {
+        lock.writeLock().lock();
+        for (int i = 0, n = tables.size(); i < n; i++) {
+            final CairoTable table = tables.get(tables.keys().getQuick(i));
+            table.clear();
+        }
+        tables.clear();
         lock.writeLock().unlock();
     }
 

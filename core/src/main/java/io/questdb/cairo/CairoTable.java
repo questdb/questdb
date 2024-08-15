@@ -73,6 +73,14 @@ public class CairoTable implements Sinkable {
         columnNameIndexMap.put(columnName, denseIndex);
     }
 
+    public void clear() {
+        lock.writeLock().lock();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            columns.remove(i);
+        }
+        lock.writeLock().unlock();
+    }
+
     public void copyTo(@NotNull CairoTable target) {
         lock.readLock().lock();
         target.lock.writeLock().lock();
