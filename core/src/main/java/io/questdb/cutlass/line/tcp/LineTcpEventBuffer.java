@@ -365,7 +365,7 @@ public class LineTcpEventBuffer {
         return utf8Sequence.of(address + Integer.BYTES, address + Integer.BYTES + size, ascii);
     }
 
-    private long addString(long address, DirectUtf8Sequence value,  byte entityTypeString) {
+    private long addString(long address, DirectUtf8Sequence value, byte entityTypeString) {
         int maxLen = 2 * value.size();
         checkCapacity(address, Byte.BYTES + Integer.BYTES + maxLen);
         long strPos = address + Byte.BYTES + Integer.BYTES; // skip field type and string length

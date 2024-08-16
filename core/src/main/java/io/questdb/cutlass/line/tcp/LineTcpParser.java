@@ -481,7 +481,7 @@ public class LineTcpParser {
                 final long entityHi = bufAt - nEscapedChars;
                 if (entityLo < entityHi) {
                     charSeq.of(entityLo, entityHi, !hasNonAscii);
-                    hasNonAscii=  false;
+                    hasNonAscii = false;
                     final int charSeqLen = charSeq.size();
                     final byte last = charSeq.byteAt(charSeqLen - 1);
                     switch (last) {
