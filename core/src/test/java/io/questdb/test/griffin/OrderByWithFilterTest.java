@@ -105,7 +105,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
         assertOrderByInOverClause(expected, direction);
     }
 
-    @Test//triggers DeferredSingleSymbolFilterDataFrameRecordCursorFactory
+    @Test // triggers DeferredSingleSymbolFilterPageFrameRecordCursorFactory
     public void testOrderByDescSelectByIndexedSymbolColumn() throws Exception {
         runQueries(
                 "CREATE TABLE trips(l long,s symbol index capacity 10, ts TIMESTAMP) timestamp(ts) partition by month;",
@@ -131,25 +131,6 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
     @Test
     public void testOrderByDescWithCharFilter() throws Exception {
         testOrderByWithFilter("char", ORDER_DESC);
-    }
-
-    @Test
-    public void testOrderByDescWithDataFrameRecordCursorFactory() throws Exception {
-        runQueries(
-                "CREATE TABLE trips(l long,s symbol index capacity 5, ts TIMESTAMP) timestamp(ts) partition by month;",
-                "insert into trips " +
-                        "  select x, 'A' || ( x%3 )," +
-                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
-                        "  from long_sequence(10);"
-        );
-        //A0, A1, A2, A0, A1, A2, A0, A1, A2, A0
-        assertQuery("l\ts\tts\n" +
-                        "8\tA2\t2022-01-11T02:26:40.000000Z\n" +
-                        "5\tA2\t2022-01-07T15:06:40.000000Z\n" +
-                        "2\tA2\t2022-01-04T03:46:40.000000Z\n",
-                "select l, s, ts from trips where s = 'A2' and test_match() order by ts desc",
-                null, "ts###DESC", true, false
-        );
     }
 
     @Test
@@ -278,6 +259,25 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByDescWithPageFrameRecordCursorFactory() throws Exception {
+        runQueries(
+                "CREATE TABLE trips(l long,s symbol index capacity 5, ts TIMESTAMP) timestamp(ts) partition by month;",
+                "insert into trips " +
+                        "  select x, 'A' || ( x%3 )," +
+                        "  timestamp_sequence(to_timestamp('2022-01-03T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 100000000000) " +
+                        "  from long_sequence(10);"
+        );
+        //A0, A1, A2, A0, A1, A2, A0, A1, A2, A0
+        assertQuery("l\ts\tts\n" +
+                        "8\tA2\t2022-01-11T02:26:40.000000Z\n" +
+                        "5\tA2\t2022-01-07T15:06:40.000000Z\n" +
+                        "2\tA2\t2022-01-04T03:46:40.000000Z\n",
+                "select l, s, ts from trips where s = 'A2' and test_match() order by ts desc",
+                null, "ts###DESC", true, false
+        );
+    }
+
+    @Test
     public void testOrderByDescWithShortFilter() throws Exception {
         testOrderByWithFilter("short", ORDER_DESC);
     }
@@ -327,7 +327,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "            SelectedRecord\n" +
                     "                Async JIT Filter workers: 1\n" +
                     "                  filter: (workspace='a' and method_id='d')\n" +
-                    "                    DataFrame\n" +
+                    "                    PageFrame\n" +
                     "                        Row forward scan\n" +
                     "                        Frame forward scan on: tab\n");
 
@@ -367,7 +367,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "          functions: [timestamp_floor('minute',ts),concat([address,workspace]),ts,method_id]\n" +
                     "            Async JIT Filter workers: 1\n" +
                     "              filter: (workspace='a' and method_id='d')\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: tab\n");
 
@@ -411,13 +411,13 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "                  condition: t2.method_id=t1.method_id and t2.workspace=t1.workspace\n" +
                     "                    Async JIT Filter workers: 1\n" +
                     "                      filter: (workspace='a' and method_id='d')\n" +
-                    "                        DataFrame\n" +
+                    "                        PageFrame\n" +
                     "                            Row forward scan\n" +
                     "                            Frame forward scan on: tab\n" +
                     "                    Hash\n" +
                     "                        Async JIT Filter workers: 1\n" +
                     "                          filter: (method_id='d' and workspace='a')\n" +
-                    "                            DataFrame\n" +
+                    "                            PageFrame\n" +
                     "                                Row forward scan\n" +
                     "                                Frame forward scan on: tab\n");
 
@@ -465,7 +465,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "        SelectedRecord\n" +
                     "            Async JIT Filter workers: 1\n" +
                     "              filter: vendor_id in [A1,A2]\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: trips\n" +
                     "                      intervals: [(\"2019-06-30T00:00:00.000000Z\",\"MAX\")]\n");
@@ -509,14 +509,14 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                     "        SelectedRecord\n" +
                     "            Hash Join Light\n" +
                     "              condition: b.vendor_id=a.vendor_id\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: t1\n" +
                     "                      intervals: [(\"2019-06-30T00:00:00.000000Z\",\"MAX\")]\n" +
                     "                Hash\n" +
                     "                    Async JIT Filter workers: 1\n" +
                     "                      filter: vendor_id in [A1,A2]\n" +
-                    "                        DataFrame\n" +
+                    "                        PageFrame\n" +
                     "                            Row forward scan\n" +
                     "                            Frame forward scan on: t2\n");
 
@@ -552,7 +552,7 @@ public class OrderByWithFilterTest extends AbstractCairoTest {
                             "      keys: [ts, key]\n" +
                             "        Async JIT Filter workers: 1\n" +
                             "          filter: key is not null\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tab\n");
         });

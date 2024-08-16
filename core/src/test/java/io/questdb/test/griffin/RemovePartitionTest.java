@@ -27,9 +27,9 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -43,10 +43,10 @@ public class RemovePartitionTest extends AbstractCairoTest {
 
             try (
                     TableReader reader = getReader("tst");
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader);
                     TableWriter writer = getWriter("tst")
             ) {
                 // utilise reader fully
-                RecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();
 
                 double superSum = 0;
