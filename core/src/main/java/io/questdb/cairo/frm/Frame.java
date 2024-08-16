@@ -26,7 +26,11 @@ package io.questdb.cairo.frm;
 
 import java.io.Closeable;
 
+/**
+ * Used for partition squashing in {@link io.questdb.cairo.TableWriter}.
+ */
 public interface Frame extends Closeable {
+
     void close();
 
     int columnCount();

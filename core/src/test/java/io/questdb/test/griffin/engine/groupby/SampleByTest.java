@@ -1965,7 +1965,7 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIndexSampleByIndexFrameExceedsDataFrame() throws Exception {
+    public void testIndexSampleByIndexFrameExceedsPartitionFrame() throws Exception {
         assertQuery(
                 "k\ts\tlat\tlon\n",
                 "select k, s, first(lat) lat, first(lon) lon " +
@@ -2800,7 +2800,7 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNoSampleByWithDeferredSingleSymbolFilterDataFrameRecordCursorFactory() throws Exception {
+    public void testNoSampleByWithDeferredSingleSymbolFilterPageFrameRecordCursorFactory() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table xx (k timestamp, d DOUBLE, s SYMBOL)" +
                     ", index(s capacity 345) timestamp(k) partition by DAY \n");
@@ -3150,7 +3150,7 @@ public class SampleByTest extends AbstractCairoTest {
                 "          keys: [tstmp,sym]\n" +
                 "          values: [first(val),avg(val),last(val),max(val)]\n" +
                 "          filter: sym='B'\n" +
-                "            DataFrame\n" +
+                "            PageFrame\n" +
                 "                Row forward scan\n" +
                 "                Frame forward scan on: #TABLE#\n";
 
@@ -3175,7 +3175,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "          keys: [tstmp,sym,ts1]\n" +
                             "          values: [first(val),avg(val),last(val),max(val)]\n" +
                             "          filter: (ts2>=1669852800000000 and sym='B' and 0<length(sym)*ts2::long)\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: x\n"
             );
@@ -3319,7 +3319,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "      keys: [tstmp,sym]\n" +
                     "      values: [first(val),avg(val),last(val),max(val)]\n" +
                     "        SelectedRecord\n" +
-                    "            DataFrame\n" +
+                    "            PageFrame\n" +
                     "                Row forward scan\n" +
                     "                Frame forward scan on: #TABLE#\n";
 
@@ -3336,7 +3336,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "      keys: [tstmp,sym]\n" +
                     "      values: [first(val),avg(val),last(val),max(val)]\n" +
                     "        SelectedRecord\n" +
-                    "            DataFrame\n" +
+                    "            PageFrame\n" +
                     "                Row forward scan\n" +
                     "                Frame forward scan on: #TABLE#\n";
 
@@ -3356,7 +3356,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "      keys: [tstmp,sym]\n" +
                     "      values: [first(val),avg(val),last(val),max(val)]\n" +
                     "        SelectedRecord\n" +
-                    "            DataFrame\n" +
+                    "            PageFrame\n" +
                     "                Row forward scan\n" +
                     "                Frame forward scan on: #TABLE#\n";
 
@@ -3393,7 +3393,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "          fill: prev\n" +
                             "          keys: [s,ts]\n" +
                             "          values: [first(v)]\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tab\n"
             );
@@ -3422,7 +3422,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "    Sample By\n" +
                             "      fill: prev\n" +
                             "      values: [first(v)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
             );
@@ -3505,7 +3505,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "    GroupBy vectorized: false\n" +
                             "      keys: [time]\n" +
                             "      values: [last(lat),last(lon)]\n" +
-                            "        DeferredSingleSymbolFilterDataFrame\n" +
+                            "        DeferredSingleSymbolFilterPageFrame\n" +
                             "            Index forward scan on: id deferred: true\n" +
                             "              filter: id='A'\n" +
                             "            Frame forward scan on: pos\n"
@@ -3535,7 +3535,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "    GroupBy vectorized: false\n" +
                             "      keys: [id,time,ts]\n" +
                             "      values: [last(lat),last(lon)]\n" +
-                            "        DeferredSingleSymbolFilterDataFrame\n" +
+                            "        DeferredSingleSymbolFilterPageFrame\n" +
                             "            Index forward scan on: id deferred: true\n" +
                             "              filter: id='A'\n" +
                             "            Frame forward scan on: pos\n"
@@ -3565,7 +3565,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "    GroupBy vectorized: false\n" +
                             "      keys: [time,type]\n" +
                             "      values: [last(lat),last(lon)]\n" +
-                            "        DeferredSingleSymbolFilterDataFrame\n" +
+                            "        DeferredSingleSymbolFilterPageFrame\n" +
                             "            Index forward scan on: id deferred: true\n" +
                             "              filter: id='A'\n" +
                             "            Frame forward scan on: pos\n"
@@ -3580,7 +3580,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "    GroupBy vectorized: false\n" +
                             "      keys: [id,time,type]\n" +
                             "      values: [last(lat),last(lon)]\n" +
-                            "        DeferredSingleSymbolFilterDataFrame\n" +
+                            "        DeferredSingleSymbolFilterPageFrame\n" +
                             "            Index forward scan on: id deferred: true\n" +
                             "              filter: id='A'\n" +
                             "            Frame forward scan on: pos\n"
@@ -3609,7 +3609,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "    GroupBy vectorized: false\n" +
                             "      keys: [id,time,geo6]\n" +
                             "      values: [last(lat),last(lon)]\n" +
-                            "        DeferredSingleSymbolFilterDataFrame\n" +
+                            "        DeferredSingleSymbolFilterPageFrame\n" +
                             "            Index forward scan on: id deferred: true\n" +
                             "              filter: id='A'\n" +
                             "            Frame forward scan on: pos\n"
@@ -3624,7 +3624,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "    GroupBy vectorized: false\n" +
                             "      keys: [id,time,lat]\n" +
                             "      values: [last(lat),last(lon)]\n" +
-                            "        DeferredSingleSymbolFilterDataFrame\n" +
+                            "        DeferredSingleSymbolFilterPageFrame\n" +
                             "            Index forward scan on: id deferred: true\n" +
                             "              filter: id='A'\n" +
                             "            Frame forward scan on: pos\n"
@@ -3670,6 +3670,7 @@ public class SampleByTest extends AbstractCairoTest {
             columns.add(col);
 
             new SampleByFirstLastRecordCursorFactory(
+                    configuration,
                     null,
                     new MicroTimestampSampler(100L),
                     groupByMeta,
@@ -3710,6 +3711,7 @@ public class SampleByTest extends AbstractCairoTest {
             columns.add(col);
 
             new SampleByFirstLastRecordCursorFactory(
+                    configuration,
                     null,
                     new MicroTimestampSampler(100L),
                     groupByMeta,
@@ -3909,7 +3911,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "  fill: none\n" +
                             "  range: ('2018-01-01','2019-01-01')\n" +
                             "  values: [avg(price)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Interval forward scan on: tbl\n" +
                             "          intervals: [(\"2018-01-01T00:00:00.000000Z\",\"2018-12-31T23:59:59.999999Z\")]\n"
@@ -3920,7 +3922,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "  fill: none\n" +
                             "  range: ('2018-01-01',null)\n" +
                             "  values: [avg(price)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Interval forward scan on: tbl\n" +
                             "          intervals: [(\"2018-01-01T00:00:00.000000Z\",\"MAX\")]\n"
@@ -3931,7 +3933,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "  fill: none\n" +
                             "  range: (null,'2019-01-01')\n" +
                             "  values: [avg(price)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Interval forward scan on: tbl\n" +
                             "          intervals: [(\"MIN\",\"2018-12-31T23:59:59.999999Z\")]\n"
@@ -3941,7 +3943,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "Sample By\n" +
                             "  fill: none\n" +
                             "  values: [avg(price)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tbl\n"
             );
@@ -4595,7 +4597,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "                  keys: [sym,ts1]\n" +
                             "                  values: [first(val),avg(val),last(val),max(val)]\n" +
                             "                  filter: null\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: x\n" +
                             "        Hash\n" +
@@ -4606,7 +4608,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "                      keys: [sym,ts1]\n" +
                             "                      values: [first(val),avg(val),last(val),max(val)]\n" +
                             "                      filter: null\n" +
-                            "                        DataFrame\n" +
+                            "                        PageFrame\n" +
                             "                            Row forward scan\n" +
                             "                            Frame forward scan on: x\n"
             );
@@ -4634,7 +4636,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "              keys: [ts1,sym]\n" +
                             "              values: [first(val),avg(val),last(val),max(val)]\n" +
                             "              filter: null\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: x\n" +
                             "        Sort light\n" +
@@ -4643,7 +4645,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "              keys: [ts1,sym]\n" +
                             "              values: [first(val),avg(val),last(val),max(val)]\n" +
                             "              filter: null\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: x\n"
             );
@@ -4703,7 +4705,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "          keys: [b,sym]\n" +
                             "          values: [first(val),avg(val),last(val),max(val)]\n" +
                             "          filter: null\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: x\n"
             );
@@ -4725,7 +4727,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "          keys: [b]\n" +
                             "          values: [first(val),avg(val),last(val),max(val)]\n" +
                             "          filter: null\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: x\n"
             );
@@ -4747,7 +4749,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "          keys: [d,sym]\n" +
                             "          values: [first(val),avg(val),last(val),max(val)]\n" +
                             "          filter: null\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: x\n"
             );
@@ -4768,7 +4770,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "      keys: [ts1,sym]\n" +
                             "      values: [min(val),avg(val),max(val)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n"
             );
@@ -4795,7 +4797,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "              keys: [sym,ts1]\n" +
                             "              values: [first(val),avg(val),last(val),max(val)]\n" +
                             "              filter: null\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: x\n" +
                             "    SelectedRecord\n" +
@@ -4805,7 +4807,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "              keys: [sym,ts1]\n" +
                             "              values: [first(val),avg(val),last(val),max(val)]\n" +
                             "              filter: null\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: x\n"
             );
@@ -4831,14 +4833,14 @@ public class SampleByTest extends AbstractCairoTest {
                             "          keys: [tstmp,sym]\n" +
                             "          values: [first(val),avg(val),last(val),max(val)]\n" +
                             "          filter: null\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: x\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [tstmp,sym]\n" +
                             "      values: [first(val),avg(val),last(val),max(val)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n"
             );
@@ -4860,7 +4862,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "          keys: [d,sym]\n" +
                             "          values: [first(val),avg(val),last(val),max(val)]\n" +
                             "          filter: null\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: x\n"
             );
@@ -5071,7 +5073,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "  values: [first(v)]\n" +
                             "    Async Filter workers: 1\n" +
                             "      filter: s='B'\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Interval forward scan on: tab\n" +
                             "              intervals: [(\"2022-12-01T00:00:00.000001Z\",\"MAX\")]\n"
@@ -8321,7 +8323,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "              keys: [k]\n" +
                             "              values: [last(z)]\n" +
                             "              filter: null\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: x\n"
             );

@@ -2269,7 +2269,7 @@ public class IPv4Test extends AbstractCairoTest {
                 "QUERY PLAN\n" +
                         "Sort light\n" +
                         "  keys: [ip desc]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: test\n",
                 "explain select * from test order by ip desc",

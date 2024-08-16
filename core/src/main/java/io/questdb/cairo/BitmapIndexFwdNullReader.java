@@ -30,15 +30,14 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.str.Path;
 
 public class BitmapIndexFwdNullReader implements BitmapIndexReader {
-
     private final NullCursor cursor = new NullCursor();
 
     @Override
     public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
         final NullCursor cursor = getCursor(cachedInstance);
         // Cursor only returns records when key is for the NULL value
-        cursor.max = key == 0 ? maxValue + 1 : 0;
-        cursor.value = minValue;
+        cursor.maxValue = key == 0 ? maxValue - minValue + 1 : 0;
+        cursor.value = 0;
         return cursor;
     }
 
@@ -96,12 +95,12 @@ public class BitmapIndexFwdNullReader implements BitmapIndexReader {
     }
 
     private static class NullCursor implements RowCursor {
-        private long max;
+        private long maxValue;
         private long value;
 
         @Override
         public boolean hasNext() {
-            return value < max;
+            return value < maxValue;
         }
 
         @Override

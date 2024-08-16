@@ -81,8 +81,6 @@ public interface PlanSink {
 
     PlanSink putBaseColumnName(int columnIdx);
 
-    PlanSink putBaseColumnNameNoRemap(int columnIdx);
-
     PlanSink putColumnName(int columnIdx);
 
     PlanSink type(CharSequence type);

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
@@ -38,12 +39,11 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Comparator;
 
-public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
+public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     private static final Comparator<FunctionBasedRowCursorFactory> COMPARATOR = FilterOnValuesRecordCursorFactory::compareStrFunctions;
     private static final Comparator<FunctionBasedRowCursorFactory> COMPARATOR_DESC = FilterOnValuesRecordCursorFactory::compareStrFunctionsDesc;
     private final int columnIndex;
-    private final IntList columnIndexes;
-    private final DataFrameRecordCursorImpl cursor;
+    private final PageFrameRecordCursorImpl cursor;
     private final ObjList<FunctionBasedRowCursorFactory> cursorFactories;
     private final int[] cursorFactoriesIdx;
     private final Function filter;
@@ -53,8 +53,9 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     private final RowCursorFactory rowCursorFactory;
 
     public FilterOnValuesRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             @NotNull @Transient ObjList<Function> keyValues,
             int columnIndex,
             @NotNull @Transient TableReader reader,
@@ -64,17 +65,18 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
             boolean orderByTimestamp,
             int orderDirection,
             int indexDirection,
-            @NotNull IntList columnIndexes
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
     ) {
-        super(metadata, dataFrameCursorFactory);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
+
         final int nKeyValues = keyValues.size();
         this.columnIndex = columnIndex;
         this.filter = filter;
-        this.columnIndexes = columnIndexes;
         this.orderDirection = orderDirection;
         cursorFactories = new ObjList<>(nKeyValues);
         cursorFactoriesIdx = new int[]{0};
-        final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndex);
+        final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(columnIndex));
         for (int i = 0; i < nKeyValues; i++) {
             final Function symbol = keyValues.get(i);
             if (symbol.isConstant()) {
@@ -90,7 +92,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
             heapCursorUsed = true;
             rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
         }
-        cursor = new DataFrameRecordCursorImpl(rowCursorFactory, false, filter, columnIndexes);
+        cursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter);
         this.followedOrderByAdvice = orderByKeyColumn || orderByTimestamp;
     }
 
@@ -101,7 +103,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
 
     @Override
     public int getScanDirection() {
-        if (dataFrameCursorFactory.getOrder() == DataFrameCursorFactory.ORDER_ASC && heapCursorUsed) {
+        if (partitionFrameCursorFactory.getOrder() == PartitionFrameCursorFactory.ORDER_ASC && heapCursorUsed) {
             return SCAN_DIRECTION_FORWARD;
         }
         return SCAN_DIRECTION_OTHER;
@@ -119,7 +121,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
             sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING ? "asc" : "desc");
         }
         sink.child(rowCursorFactory);
-        sink.child(dataFrameCursorFactory);
+        sink.child(partitionFrameCursorFactory);
     }
 
     @Override
@@ -147,9 +149,20 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
         final FunctionBasedRowCursorFactory rowCursorFactory;
         if (filter == null) {
             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                rowCursorFactory = new DeferredSymbolIndexRowCursorFactory(columnIndex, symbolFunction, cursorFactories.size() == 0, indexDirection);
+                rowCursorFactory = new DeferredSymbolIndexRowCursorFactory(
+                        columnIndex,
+                        symbolFunction,
+                        cursorFactories.size() == 0,
+                        indexDirection
+                );
             } else {
-                rowCursorFactory = new SymbolIndexRowCursorFactory(columnIndex, symbolKey, cursorFactories.size() == 0, indexDirection, symbolFunction);
+                rowCursorFactory = new SymbolIndexRowCursorFactory(
+                        columnIndex,
+                        symbolKey,
+                        cursorFactories.size() == 0,
+                        indexDirection,
+                        symbolFunction
+                );
             }
         } else {
             if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
@@ -158,8 +171,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
                         symbolFunction,
                         filter,
                         cursorFactories.size() == 0,
-                        indexDirection,
-                        columnIndexes
+                        indexDirection
                 );
             } else {
                 rowCursorFactory = new SymbolIndexFilteredRowCursorFactory(
@@ -168,7 +180,6 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
                         filter,
                         cursorFactories.size() == 0,
                         indexDirection,
-                        columnIndexes,
                         symbolFunction
                 );
             }
@@ -213,15 +224,15 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
     }
 
     @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
+    protected RecordCursor initRecordCursor(
+            PageFrameCursor pageFrameCursor,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         for (int i = 0, n = cursorFactories.size(); i < n; i++) {
-            cursorFactories.getQuick(i).getFunction().init(dataFrameCursor, sqlExecutionContext);
+            cursorFactories.getQuick(i).getFunction().init(pageFrameCursor, sqlExecutionContext);
         }
 
-        // sort values to facilitate duplicate removal (even for heap row cursor)  
+        // sort values to facilitate duplicate removal (even for heap row cursor)
         // sorting here can produce order of cursorFactories different from one shown by explain command       
         if (followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING) {
             cursorFactories.sort(COMPARATOR);
@@ -231,7 +242,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractDataFrameRecordCu
 
         findDuplicates();
 
-        cursor.of(dataFrameCursor, sqlExecutionContext);
+        cursor.of(pageFrameCursor, sqlExecutionContext);
         if (filter != null) {
             filter.init(cursor, sqlExecutionContext);
         }

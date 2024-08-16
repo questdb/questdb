@@ -47,7 +47,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                             "        CachedWindow\n" +
                             "          orderedFunctions: [[b desc] => [row_number() over (partition by [a1])]]\n" +
                             "            SelectedRecord\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: y\n");
 

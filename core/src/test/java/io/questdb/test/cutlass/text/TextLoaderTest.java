@@ -40,6 +40,7 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TestFilesFacade;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.*;
@@ -3619,11 +3620,15 @@ public class TextLoaderTest extends AbstractCairoTest {
                     }
             );
             Assert.assertEquals(expectedPartitionNames.size(), rmdirCallCount.get());
-            try (TableReader reader = getReader("test")) {
+            try (
+                    TableReader reader = getReader("test");
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
+            ) {
+                cursor.of(reader);
                 Assert.assertEquals(maxUncommittedRows, reader.getMaxUncommittedRows());
                 Assert.assertEquals(expectedO3MaxLag, reader.getO3MaxLag());
                 Assert.assertEquals(6, reader.size());
-                TestUtils.assertCursor("2021-01-01T00:01:00.000000Z	1\n2021-01-01T00:01:30.000000Z	2\n2021-01-01T00:04:00.000000Z	3\n2021-01-01T00:05:00.000000Z	4\n2021-01-02T00:00:30.000000Z	5\n2021-01-02T00:05:31.000000Z	6\n", reader.getCursor(), reader.getMetadata(), false, sink);
+                TestUtils.assertCursor("2021-01-01T00:01:00.000000Z	1\n2021-01-01T00:01:30.000000Z	2\n2021-01-01T00:04:00.000000Z	3\n2021-01-01T00:05:00.000000Z	4\n2021-01-02T00:00:30.000000Z	5\n2021-01-02T00:05:31.000000Z	6\n", cursor, reader.getMetadata(), false, sink);
             }
         }
     }

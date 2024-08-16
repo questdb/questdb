@@ -26,14 +26,10 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DataUnavailableException;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
-import io.questdb.cairo.sql.DataFrame;
-import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
@@ -44,29 +40,31 @@ import io.questdb.std.*;
 import io.questdb.tasks.LatestByTask;
 import org.jetbrains.annotations.NotNull;
 
-class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
-    protected final long indexShift = 0;
-    protected final DirectLongList prefixes;
-    protected final DirectLongList rows;
+class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private final int columnIndex;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
+    private final long indexShift = 0;
+    private final DirectLongList prefixes;
+    private final DirectLongList rows;
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
-    protected long aIndex;
-    protected long aLimit;
-    protected SqlExecutionCircuitBreaker circuitBreaker;
+    private long aIndex;
+    private long aLimit;
     private long argumentsAddress;
     private MessageBus bus;
+    private SqlExecutionCircuitBreaker circuitBreaker;
+    private boolean isFrameCacheBuilt;
     private boolean isTreeMapBuilt;
     private int keyCount;
     private int workerCount;
 
     public LatestByAllIndexedRecordCursor(
+            @NotNull CairoConfiguration configuration,
+            @NotNull @Transient RecordMetadata metadata,
             int columnIndex,
             @NotNull DirectLongList rows,
-            @NotNull IntList columnIndexes,
             @NotNull DirectLongList prefixes
     ) {
-        super(columnIndexes);
+        super(configuration, metadata);
         this.rows = rows;
         this.columnIndex = columnIndex;
         this.prefixes = prefixes;
@@ -79,25 +77,32 @@ class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
             isTreeMapBuilt = true;
         }
         if (aIndex < aLimit) {
-            long row = rows.get(aIndex++) - 1; // we added 1 on cpp side
-            recordA.jumpTo(Rows.toPartitionIndex(row), Rows.toLocalRowID(row));
+            // We added 1 on cpp side.
+            final long rowId = rows.get(aIndex++) - 1;
+            // We inverted frame indexes when posting tasks.
+            final int frameIndex = Rows.MAX_SAFE_PARTITION_INDEX - Rows.toPartitionIndex(rowId);
+            frameMemoryPool.navigateTo(frameIndex, recordA);
+            recordA.setRowIndex(Rows.toLocalRowID(rowId));
             return true;
         }
         return false;
     }
 
     @Override
-    public void of(DataFrameCursor dataFrameCursor, SqlExecutionContext executionContext) {
-        this.dataFrameCursor = dataFrameCursor;
-        recordA.of(dataFrameCursor.getTableReader());
-        recordB.of(dataFrameCursor.getTableReader());
+    public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) {
+        this.frameCursor = pageFrameCursor;
+        recordA.of(pageFrameCursor);
+        recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
         bus = executionContext.getMessageBus();
         workerCount = executionContext.getSharedWorkerCount();
         rows.clear();
         keyCount = -1;
         argumentsAddress = 0;
+        isFrameCacheBuilt = false;
         isTreeMapBuilt = false;
+        // prepare for page frame iteration
+        super.init();
     }
 
     @Override
@@ -107,18 +112,16 @@ class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Index backward scan").meta("on").putColumnName(columnIndex);
-        sink.meta("parallel").val(true);
+        sink.type("Async index backward scan").meta("on").putColumnName(columnIndex);
+        sink.meta("workers").val(workerCount);
 
         if (prefixes.size() > 2) {
-            int hashColumnIndex = (int) prefixes.get(0);
-            int hashColumnType = (int) prefixes.get(1);
-            int geoHashBits = ColumnType.getGeoHashBits(hashColumnType);
+            int geoHashColumnIndex = (int) prefixes.get(0);
+            int geoHashColumnType = (int) prefixes.get(1);
+            int geoHashBits = ColumnType.getGeoHashBits(geoHashColumnType);
 
-            if (hashColumnIndex > -1 && ColumnType.isGeoHash(hashColumnType)) {
-                sink.attr("filter")
-                        .putColumnName(hashColumnIndex).val(" within(");
-
+            if (geoHashColumnIndex > -1 && ColumnType.isGeoHash(geoHashColumnType)) {
+                sink.attr("filter").putColumnName(geoHashColumnIndex).val(" within(");
                 for (long i = 2, n = prefixes.size(); i < n; i += 2) {
                     if (i > 2) {
                         sink.val(',');
@@ -139,10 +142,6 @@ class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
         return (keyCount + workerCount - 1) / workerCount;
     }
 
-    private static int getPow2SizeOfGeoHashType(int type) {
-        return 1 << ColumnType.pow2SizeOfBits(ColumnType.getGeoHashBits(type));
-    }
-
     private static int getTaskCount(int keyCount, long chunkSize) {
         return (int) ((keyCount + chunkSize - 1) / chunkSize);
     }
@@ -158,13 +157,13 @@ class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
 
             argumentsAddress = LatestByArguments.allocateMemoryArray(taskCount);
             for (long i = 0; i < taskCount; ++i) {
-                final long klo = i * chunkSize;
-                final long khi = Long.min(klo + chunkSize, keyCount);
+                final long keyLo = i * chunkSize;
+                final long keyHi = Long.min(keyLo + chunkSize, keyCount);
                 final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
                 LatestByArguments.setRowsAddress(argsAddress, rows.getAddress());
                 LatestByArguments.setRowsCapacity(argsAddress, rows.getCapacity());
-                LatestByArguments.setKeyLo(argsAddress, klo);
-                LatestByArguments.setKeyHi(argsAddress, khi);
+                LatestByArguments.setKeyLo(argsAddress, keyLo);
+                LatestByArguments.setKeyHi(argsAddress, keyHi);
                 LatestByArguments.setRowsSize(argsAddress, 0);
             }
 
@@ -174,37 +173,44 @@ class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
             taskCount = getTaskCount(keyCount, chunkSize);
         }
 
-        int hashColumnIndex = -1;
-        int hashColumnType = ColumnType.UNDEFINED;
+        int geoHashColumnIndex = -1;
+        int geoHashColumnType = ColumnType.UNDEFINED;
         long prefixesAddress = 0;
         long prefixesCount = 0;
 
         if (prefixes.size() > 2) {
-            hashColumnIndex = (int) prefixes.get(0);
-            hashColumnType = (int) prefixes.get(1);
+            // Looks like we have WITHIN clause in the filter.
+            geoHashColumnIndex = (int) prefixes.get(0);
+            geoHashColumnType = (int) prefixes.get(1);
             prefixesAddress = prefixes.getAddress() + 2 * Long.BYTES;
             prefixesCount = prefixes.size() - 2;
         }
 
-        // frame metadata is based on TableReader, which is "full" metadata
-        // this cursor works with subset of columns, which warrants column index remap
-        int frameColumnIndex = columnIndexes.getQuick(columnIndex);
-
         final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
         final Sequence pubSeq = bus.getLatestByPubSeq();
         final Sequence subSeq = bus.getLatestBySubSeq();
-        final TableReader reader = dataFrameCursor.getTableReader();
 
-        DataFrame frame;
-        long foundRowCount = 0;
+
         int queuedCount = 0;
+        long foundRowCount = 0;
         try {
-            while ((frame = dataFrameCursor.next()) != null && foundRowCount < keyCount) {
-                doneLatch.reset();
-                final BitmapIndexReader indexReader = frame.getBitmapIndexReader(frameColumnIndex, BitmapIndexReader.DIR_BACKWARD);
+            // First, build address cache as we'll be publishing it to other threads.
+            PageFrame frame;
+            if (!isFrameCacheBuilt) {
+                while ((frame = frameCursor.next()) != null) {
+                    frameAddressCache.add(frameCount++, frame);
+                }
+                isFrameCacheBuilt = true;
+            }
 
-                final long rowLo = frame.getRowLo();
-                final long rowHi = frame.getRowHi() - 1;
+            int frameIndex = 0;
+            frameCursor.toTop();
+            while ((frame = frameCursor.next()) != null && foundRowCount < keyCount) {
+                doneLatch.reset();
+
+                final BitmapIndexReader indexReader = frame.getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD);
+                final long partitionLo = frame.getPartitionLo();
+                final long partitionHi = frame.getPartitionHi() - 1;
 
                 final long keyBaseAddress = indexReader.getKeyBaseAddress();
                 final long keysMemorySize = indexReader.getKeyMemorySize();
@@ -212,23 +218,9 @@ class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
                 final long valuesMemorySize = indexReader.getValueMemorySize();
                 final int valueBlockCapacity = indexReader.getValueBlockCapacity();
                 final long unIndexedNullCount = indexReader.getUnIndexedNullCount();
-                final int partitionIndex = frame.getPartitionIndex();
-
-                long hashColumnAddress = 0;
-
-                // hashColumnIndex can be -1 for latest by part only (no prefixes to match)
-                if (hashColumnIndex > -1) {
-                    final int columnBase = reader.getColumnBase(partitionIndex);
-                    final int primaryColumnIndex = TableReader.getPrimaryColumnIndex(columnBase, hashColumnIndex);
-                    final MemoryR column = reader.getColumn(primaryColumnIndex);
-                    hashColumnAddress = column.getPageAddress(0);
-                }
-
-                // -1 must be dead case here
-                final int hashesColumnSize = ColumnType.isGeoHash(hashColumnType) ? getPow2SizeOfGeoHashType(hashColumnType) : -1;
 
                 queuedCount = 0;
-                for (long i = 0; i < taskCount; ++i) {
+                for (long i = 0; i < taskCount; i++) {
                     final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
                     final long found = LatestByArguments.getRowsSize(argsAddress);
                     final long keyHi = LatestByArguments.getKeyHi(argsAddress);
@@ -238,42 +230,42 @@ class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
                     if (found >= keyHi - keyLo) {
                         continue;
                     }
-                    // Update hash column address with current frame value
-                    LatestByArguments.setHashesAddress(argsAddress, hashColumnAddress);
 
                     final long seq = pubSeq.next();
                     if (seq < 0) {
                         circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
                         GeoHashNative.latestByAndFilterPrefix(
+                                frameMemoryPool,
                                 keyBaseAddress,
                                 keysMemorySize,
                                 valueBaseAddress,
                                 valuesMemorySize,
                                 argsAddress,
                                 unIndexedNullCount,
-                                rowHi,
-                                rowLo,
-                                partitionIndex,
+                                partitionHi,
+                                partitionLo,
+                                frameIndex,
                                 valueBlockCapacity,
-                                hashColumnAddress,
-                                hashesColumnSize,
+                                geoHashColumnIndex,
+                                geoHashColumnType,
                                 prefixesAddress,
                                 prefixesCount
                         );
                     } else {
                         queue.get(seq).of(
+                                frameAddressCache,
                                 keyBaseAddress,
                                 keysMemorySize,
                                 valueBaseAddress,
                                 valuesMemorySize,
                                 argsAddress,
                                 unIndexedNullCount,
-                                rowHi,
-                                rowLo,
-                                partitionIndex,
+                                partitionHi,
+                                partitionLo,
+                                frameIndex,
                                 valueBlockCapacity,
-                                hashColumnAddress,
-                                hashesColumnSize,
+                                geoHashColumnIndex,
+                                geoHashColumnType,
                                 prefixesAddress,
                                 prefixesCount,
                                 doneLatch,
@@ -302,6 +294,8 @@ class LatestByAllIndexedRecordCursor extends AbstractDataFrameRecordCursor {
                     final long address = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
                     foundRowCount += LatestByArguments.getRowsSize(address);
                 }
+
+                frameIndex++;
             }
         } catch (DataUnavailableException e) {
             // We're not yet done, so no need to cancel the circuit breaker. 
