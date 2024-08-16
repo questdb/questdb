@@ -62,9 +62,10 @@ public final class Files {
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
     private static final AtomicInteger OPEN_FILE_COUNT = new AtomicInteger();
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
-    public static boolean VIRTIO_FS_DETECTED = false;
     private static final AtomicInteger fdCounter = new AtomicInteger();
-    static LongHashSet openFds;
+    private static final LongHashSet openFds = new LongHashSet();
+    public static boolean PARANOIA_FD_MODE = false;
+    public static boolean VIRTIO_FS_DETECTED = false;
 
     private Files() {
         // Prevent construction.
@@ -91,7 +92,6 @@ public final class Files {
 
     public static long bumpFileCount(int fd) {
         if (fd != -1) {
-            //noinspection AssertWithSideEffects
             long uniqueFd = auditOpen(fd);
             OPEN_FILE_COUNT.incrementAndGet();
             return uniqueFd;
@@ -250,10 +250,7 @@ public final class Files {
     public native static long getMapCountLimit();
 
     public static String getOpenFdDebugInfo() {
-        if (openFds != null) {
-            return openFds.toString();
-        }
-        return null;
+        return openFds.toString();
     }
 
     public static long getOpenFileCount() {
@@ -269,14 +266,11 @@ public final class Files {
         return file;
     }
 
-    public static long getStdOutFdInternal() {
-        return Numbers.encodeLowHighInts(0, getStdOutFd());
-    }
-
-    public static int toOsFd(long fd) {
-        int osFd = Numbers.decodeHighInt(fd);
-        assert osFd > 0;
-        return osFd;
+    public synchronized static long getStdOutFdInternal() {
+        int fd = getStdOutFd();
+        long uniqueFd = Numbers.encodeLowHighInts(0, fd);
+        openFds.add(uniqueFd);
+        return uniqueFd;
     }
 
     public static native int hardLink(long lpszSrc, long lpszHardLink);
@@ -565,6 +559,15 @@ public final class Files {
 
     public static native int sync();
 
+    public static int toOsFd(long fd) {
+        if (PARANOIA_FD_MODE && fd != -1) {
+            checkOsFd(fd);
+        }
+        int osFd = Numbers.decodeHighInt(fd);
+        assert fd == -1 || osFd > 0;
+        return osFd;
+    }
+
     public static boolean touch(LPSZ lpsz) {
         long fd = openRW(lpsz);
         boolean result = fd > 0;
@@ -643,7 +646,21 @@ public final class Files {
 
     private native static long append(int fd, long address, long len);
 
-    private native static int getStdOutFd();
+    private static synchronized long auditOpen(int fd) {
+        if (fd < 0) {
+            throw new IllegalStateException("Invalid fd " + fd);
+        }
+        int index = fdCounter.getAndIncrement();
+        long uniqueFd = Numbers.encodeLowHighInts(index, fd);
+        openFds.add(uniqueFd);
+        return uniqueFd;
+    }
+
+    private static synchronized void checkOsFd(long fd) {
+        if (!openFds.contains(fd)) {
+            throw new IllegalStateException("fd " + fd + " is not open!");
+        }
+    }
 
     private native static int close0(int fd);
 
@@ -677,6 +694,8 @@ public final class Files {
     private native static int getPosixMadvRandom();
 
     private native static int getPosixMadvSequential();
+
+    private native static int getStdOutFd();
 
     private native static boolean isDir(long pUtf8PathZ);
 
@@ -723,19 +742,6 @@ public final class Files {
     private native static boolean rmdir(long lpsz);
 
     private native static boolean setLastModified(long lpszName, long millis);
-
-    private static synchronized long auditOpen(int fd) {
-        if (openFds == null) {
-            openFds = new LongHashSet();
-        }
-        if (fd < 0) {
-            throw new IllegalStateException("Invalid fd " + fd);
-        }
-        int index = fdCounter.getAndIncrement();
-        long uniqueFd = Numbers.encodeLowHighInts(index, fd);
-        openFds.add(uniqueFd);
-        return uniqueFd;
-    }
 
     private native static boolean truncate(int fd, long size);
 
