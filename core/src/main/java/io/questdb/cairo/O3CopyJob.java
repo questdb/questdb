@@ -870,6 +870,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 .$(", columnsRemaining=").$(columnsRemaining)
                 .I$();
         if (columnsRemaining == 0) {
+
             closeColumnIdleQuick(
                     timestampMergeIndexAddr,
                     timestampMergeIndexSize,

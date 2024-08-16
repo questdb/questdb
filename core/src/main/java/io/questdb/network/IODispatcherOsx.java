@@ -41,7 +41,8 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
     private final Kqueue kqueue;
     // the final ids are shifted by 1 bit which is reserved to distinguish
     // socket operations (0) and suspend events (1)
-    private int idSeq = 1;
+    // Start from near Integer top range to test that int overflow is handled correctly
+    private int idSeq = Integer.MAX_VALUE - 1;
 
     public IODispatcherOsx(
             IODispatcherConfiguration configuration,
