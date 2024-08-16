@@ -187,7 +187,7 @@ public class ConvertOperatorImpl implements Closeable {
 
                                 long srcFixFd = -1, srcVarFd = -1, dstFixFd = -1, dstVarFd = -1;
                                 try {
-                                    openColumnsRO(columnName, partitionTimestamp, columnIndex, newType, pathTrimToLen);
+                                    openColumnsRO(columnName, partitionTimestamp, existingColIndex, existingType, pathTrimToLen);
                                     srcFixFd = this.fixedFd;
                                     srcVarFd = this.varFd;
 
@@ -251,8 +251,8 @@ public class ConvertOperatorImpl implements Closeable {
 
                 SymbolTable symbolTable = ColumnType.isSymbol(existingType) ? symbolMapReader.newSymbolTableView() : null;
                 boolean ok = ColumnTypeConverter.convertColumn(0, rowCount,
-                        existingType, srcFixFd, (int) srcVarFd, symbolTable,
-                        newType, (int) dstFixFd, (int) dstVarFd, symbolMapper,
+                        existingType, srcFixFd, srcVarFd, symbolTable,
+                        newType, dstFixFd, dstVarFd, symbolMapper,
                         ff, appendPageSize, noopConversionOffsetSink);
 
                 if (!ok) {
@@ -276,7 +276,7 @@ public class ConvertOperatorImpl implements Closeable {
             }
             log.$(", ex=").$(th).I$();
         } finally {
-            closeFds(srcFixFd, (int) srcVarFd, (int) dstFixFd, (int) dstVarFd);
+            closeFds(srcFixFd, srcVarFd, dstFixFd, dstVarFd);
         }
     }
 
@@ -306,32 +306,32 @@ public class ConvertOperatorImpl implements Closeable {
     private void openColumnsRO(CharSequence name, long partitionTimestamp, int columnIndex, int columnType, int pathTrimToLen) {
         long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
         if (isVarSize(columnType)) {
-            this.fixedFd = TableUtils.openRO(ff, iFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG);
+            fixedFd = TableUtils.openRO(ff, iFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG);
             try {
-                this.varFd = TableUtils.openRO(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG);
+                varFd = TableUtils.openRO(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG);
             } catch (Throwable e) {
                 ff.close(fixedFd);
                 throw e;
             }
         } else {
-            this.fixedFd = TableUtils.openRO(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG);
-            this.varFd = -1;
+            fixedFd = TableUtils.openRO(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG);
+            varFd = -1;
         }
     }
 
     private void openColumnsRW(CharSequence name, long partitionTimestamp, int columnIndex, int columnType, int pathTrimToLen) {
         long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
         if (isVarSize(columnType)) {
-            this.fixedFd = TableUtils.openRW(ff, iFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
+            fixedFd = TableUtils.openRW(ff, iFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
             try {
-                long varFd = TableUtils.openRW(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
+                varFd = TableUtils.openRW(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
             } catch (Throwable e) {
                 ff.close(fixedFd);
                 throw e;
             }
         } else {
-            this.fixedFd = TableUtils.openRW(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
-            this.varFd = -1;
+            fixedFd = TableUtils.openRW(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
+            varFd = -1;
         }
     }
 

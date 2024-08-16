@@ -53,44 +53,6 @@ public class KqueueAccessor {
 
     public static native long evtFree(long event);
 
-    public static native short getDataOffset();
-
-    public static native short getEvAdd();
-
-    public static native short getEvClear();
-
-    public static native short getEvDelete();
-
-    public static native short getEvOneshot();
-
-    public static native short getEvfiltRead();
-
-    public static native short getEvfiltVnode();
-
-    public static native short getEvfiltWrite();
-
-    public static native short getFdOffset();
-
-    public static native short getFilterOffset();
-
-    public static native short getFlagsOffset();
-
-    public static native short getNoteAttrib();
-
-    public static native short getNoteDelete();
-
-    public static native short getNoteExtend();
-
-    public static native short getNoteLink();
-
-    public static native short getNoteRename();
-
-    public static native short getNoteRevoke();
-
-    public static native short getNoteWrite();
-
-    public static native short getSizeofKevent();
-
     public static int kevent(long kq, long changeList, int nChanges, long eventList, int nEvents, int timeout) {
         return kevent(toOsFd(kq), changeList, nChanges, eventList, nEvents, timeout);
     }
@@ -116,6 +78,44 @@ public class KqueueAccessor {
     }
 
     private static native long evtAlloc(int ident, int filter, int flags, int fflags, long data);
+
+    private static native short getDataOffset();
+
+    private static native short getEvAdd();
+
+    private static native short getEvClear();
+
+    private static native short getEvDelete();
+
+    private static native short getEvOneshot();
+
+    private static native short getEvfiltRead();
+
+    private static native short getEvfiltVnode();
+
+    private static native short getEvfiltWrite();
+
+    private static native short getFdOffset();
+
+    private static native short getFilterOffset();
+
+    private static native short getFlagsOffset();
+
+    private static native short getNoteAttrib();
+
+    private static native short getNoteDelete();
+
+    private static native short getNoteExtend();
+
+    private static native short getNoteLink();
+
+    private static native short getNoteRename();
+
+    private static native short getNoteRevoke();
+
+    private static native short getNoteWrite();
+
+    private static native short getSizeofKevent();
 
     private static native int kevent(int kq, long changeList, int nChanges, long eventList, int nEvents, int timeout);
 

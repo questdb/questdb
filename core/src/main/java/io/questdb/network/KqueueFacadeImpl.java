@@ -35,7 +35,7 @@ public class KqueueFacadeImpl implements KqueueFacade {
     }
 
     @Override
-    public int kevent(int kq, long changeList, int nChanges, long eventList, int nEvents, int timeout) {
+    public int kevent(long kq, long changeList, int nChanges, long eventList, int nEvents, int timeout) {
         return KqueueAccessor.kevent(kq, changeList, nChanges, eventList, nEvents, timeout);
     }
 

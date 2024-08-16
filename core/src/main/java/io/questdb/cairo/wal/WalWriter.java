@@ -1611,11 +1611,11 @@ public class WalWriter implements TableWriterAPI {
         }
 
         long newSize = rollSink.getDestPrimarySize(srcColumnIndex);
-        int newPrimaryFd = rollSink.getDestPrimaryFd(srcColumnIndex);
+        long newPrimaryFd = rollSink.getDestPrimaryFd(srcColumnIndex);
         MemoryMA destPrimeCol = getDataColumn(destColumnIndex);
         destPrimeCol.switchTo(ff, newPrimaryFd, getDataAppendPageSize(), newSize, isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
 
-        int newSecondaryFd = rollSink.getDestAuxFd(srcColumnIndex);
+        long newSecondaryFd = rollSink.getDestAuxFd(srcColumnIndex);
         if (newSecondaryFd > -1) {
             long secondarySize = rollSink.getDestAuxSize(srcColumnIndex);
             MemoryMA destAuxColumn = getAuxColumn(destColumnIndex);

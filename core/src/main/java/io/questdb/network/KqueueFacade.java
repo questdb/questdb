@@ -27,7 +27,7 @@ package io.questdb.network;
 public interface KqueueFacade {
     NetworkFacade getNetworkFacade();
 
-    int kevent(int kq, long changeList, int nChanges, long eventList, int nEvents, int timeout);
+    int kevent(long kq, long changeList, int nChanges, long eventList, int nEvents, int timeout);
 
     int kqueue();
 

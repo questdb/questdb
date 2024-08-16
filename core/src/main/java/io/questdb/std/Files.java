@@ -269,7 +269,15 @@ public final class Files {
         return file;
     }
 
-    public native static int getStdOutFd();
+    public static long getStdOutFdInternal() {
+        return Numbers.encodeLowHighInts(0, getStdOutFd());
+    }
+
+    public static int toOsFd(long fd) {
+        int osFd = Numbers.decodeHighInt(fd);
+        assert osFd > 0;
+        return osFd;
+    }
 
     public static native int hardLink(long lpszSrc, long lpszHardLink);
 
@@ -635,9 +643,7 @@ public final class Files {
 
     private native static long append(int fd, long address, long len);
 
-    public static int toOsFd(long fd) {
-        return Numbers.decodeHighInt(fd);
-    }
+    private native static int getStdOutFd();
 
     private native static int close0(int fd);
 
