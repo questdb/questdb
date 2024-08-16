@@ -138,6 +138,16 @@ public class NullMemoryCMR implements MemoryCMR {
     }
 
     @Override
+    public void getLong256(long offset, Long256Acceptor sink) {
+        sink.setAll(
+                Long256Impl.NULL_LONG256.getLong0(),
+                Long256Impl.NULL_LONG256.getLong1(),
+                Long256Impl.NULL_LONG256.getLong2(),
+                Long256Impl.NULL_LONG256.getLong3()
+        );
+    }
+
+    @Override
     public void getLong256(long offset, CharSink<?> sink) {
     }
 

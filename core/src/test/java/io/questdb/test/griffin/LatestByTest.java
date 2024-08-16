@@ -91,11 +91,11 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByAllIndexedIndexReaderGetsReloaded() throws Exception {
         final int iterations = 100;
         assertMemoryLeak(() -> {
-            compile("CREATE TABLE e ( \n" +
+            ddl("CREATE TABLE e ( \n" +
                     "  ts TIMESTAMP, \n" +
                     "  sym SYMBOL CAPACITY 32768 INDEX CAPACITY 4 \n" +
                     ") TIMESTAMP(ts) PARTITION BY DAY");
-            compile("CREATE TABLE p ( \n" +
+            ddl("CREATE TABLE p ( \n" +
                     "  ts TIMESTAMP, \n" +
                     "  sym SYMBOL CAPACITY 32768 CACHE INDEX CAPACITY 4, \n" +
                     "  lon FLOAT, \n" +
@@ -173,13 +173,13 @@ public class LatestByTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     "LatestByAllIndexed\n" +
-                            "    Index backward scan on: device_id parallel: true\n" +
+                            "    Async index backward scan on: device_id workers: 1\n" +
                             "      filter: g8c within(\"0010000110110001110001111100010000100000\")\n" +
                             "    Interval backward scan on: pos_test\n" +
                             "      intervals: [(\"2021-09-02T00:00:00.000000Z\",\"2021-09-02T23:59:59.999999Z\")]\n"
             );
 
-            //prefix filter is applied AFTER latest on
+            // prefix filter is applied AFTER latest on
             assertQuery(
                     "ts\tdevice_id\tg8c\n" +
                             "2021-09-02T00:00:00.000001Z\tdevice_2\t46swgj10\n",

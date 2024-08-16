@@ -31,7 +31,7 @@ public class NullIndexFrameCursor implements IndexFrameCursor {
     public static final NullIndexFrameCursor INSTANCE = new NullIndexFrameCursor();
 
     @Override
-    public IndexFrame getNext() {
+    public IndexFrame nextIndexFrame() {
         return IndexFrame.NULL_INSTANCE;
     }
 }

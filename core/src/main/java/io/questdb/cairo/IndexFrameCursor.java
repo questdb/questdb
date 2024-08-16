@@ -25,5 +25,5 @@
 package io.questdb.cairo;
 
 public interface IndexFrameCursor {
-    IndexFrame getNext();
+    IndexFrame nextIndexFrame();
 }

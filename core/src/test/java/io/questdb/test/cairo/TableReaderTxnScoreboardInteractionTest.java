@@ -120,17 +120,17 @@ public class TableReaderTxnScoreboardInteractionTest extends AbstractCairoTest {
                 Assert.assertEquals(0, reader.getTxn());
             }
 
-            try (TableWriter w = newOffPoolWriter(configuration, "x", metrics)) {
-                addRow(w);
+            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
+                addRow(writer);
 
-                final TxnScoreboard txnScoreboard = w.getTxnScoreboard();
+                final TxnScoreboard txnScoreboard = writer.getTxnScoreboard();
 
                 try (TableReader reader = newOffPoolReader(configuration, "x")) {
                     Assert.assertEquals(1, reader.getTxn());
                     Assert.assertEquals(1, txnScoreboard.getMin());
                     Assert.assertEquals(1, txnScoreboard.getActiveReaderCount(1));
 
-                    addRow(w);
+                    addRow(writer);
 
                     Assert.assertEquals(1, reader.getTxn());
                     Assert.assertEquals(1, txnScoreboard.getMin());

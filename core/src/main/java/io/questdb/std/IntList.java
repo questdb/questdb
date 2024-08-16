@@ -196,9 +196,6 @@ public class IntList implements Mutable, Sinkable {
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
     public void removeIndex(int index) {
         if (pos < 1 || index >= pos) {
             return;

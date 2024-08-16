@@ -1205,7 +1205,7 @@ public class WalWriter implements TableWriterAPI {
         }
 
         if (walLockFd == -1) {
-            throw CairoException.critical(ff.errno()).put("Cannot lock table: ").put(path.$());
+            throw CairoException.critical(ff.errno()).put("cannot lock table: ").put(path.$());
         }
     }
 
