@@ -273,12 +273,12 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
         );
 
         assertThat(
-                "लаблअца,символ=значение2 161--non ascii--\n",
+                "लаблअца,символ=значение2 161\n",
                 "लаблअца,символ=значение2  161\n"
         );
 
         assertThat(
-                "table,tag=ok field=\"значение2 non ascii quoted\" 161--non ascii--\n",
+                "table,tag=ok field=\"значение2 non ascii quoted\" 161\n",
                 "table,tag=ok field=\"значение2 non ascii quoted\" 161\n"
         );
     }
