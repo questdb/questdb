@@ -38,6 +38,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -892,14 +893,16 @@ public class TableReader implements Closeable, SymbolTableSource {
             LOG.error().$("open partition failed, partition does not exist on the disk [path=").$(path).I$();
 
             if (PartitionBy.isPartitioned(getPartitionedBy())) {
-                CairoException exception = CairoException.critical(0).put("Partition '");
-                formatErrorPartitionDirName(partitionIndex, exception.message);
-                exception.put("' does not exist in table '")
+                StringSink message = new StringSink();
+                message.put("Partition '");
+                formatErrorPartitionDirName(partitionIndex, message);
+                message.put("' does not exist in table '")
                         .put(tableToken.getTableName())
                         .put("' directory. Run [ALTER TABLE ").put(tableToken.getTableName()).put(" DROP PARTITION LIST '");
-                formatErrorPartitionDirName(partitionIndex, exception.message);
-                exception.put("'] to repair the table or restore the partition directory.");
-                throw exception;
+                formatErrorPartitionDirName(partitionIndex, message);
+                message.put("'] to repair the table or restore the partition directory.");
+                LOG.critical().$(message).I$();
+                return 0;
             } else {
                 throw CairoException.critical(0).put("Table '").put(tableToken.getTableName())
                         .put("' data directory does not exist on the disk at ")
