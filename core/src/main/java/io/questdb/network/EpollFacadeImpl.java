@@ -26,6 +26,8 @@ package io.questdb.network;
 
 import io.questdb.std.Os;
 
+import static io.questdb.std.Files.toOsFd;
+
 public class EpollFacadeImpl implements EpollFacade {
     public static final EpollFacadeImpl INSTANCE = new EpollFacadeImpl();
 
@@ -36,7 +38,7 @@ public class EpollFacadeImpl implements EpollFacade {
 
     @Override
     public int epollCtl(long epFd, int op, long fd, long eventPtr) {
-        return EpollAccessor.epollCtl(Net.toOsFd(epFd), op, Net.toOsFd(fd), eventPtr);
+        return EpollAccessor.epollCtl(toOsFd(epFd), op, toOsFd(fd), eventPtr);
     }
 
     @Override

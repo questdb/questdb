@@ -32,7 +32,7 @@ public final class LinuxAccessorFacadeImpl implements LinuxAccessorFacade {
     }
 
     @Override
-    public int inotifyAddWatch(int fd, long pathPtr, int flags) {
+    public int inotifyAddWatch(long fd, long pathPtr, int flags) {
         return LinuxAccessor.inotifyAddWatch(fd, pathPtr, flags);
     }
 
@@ -42,7 +42,7 @@ public final class LinuxAccessorFacadeImpl implements LinuxAccessorFacade {
     }
 
     @Override
-    public short inotifyRmWatch(int fd, int wd) {
+    public short inotifyRmWatch(long fd, int wd) {
         return LinuxAccessor.inotifyRmWatch(fd, wd);
     }
 
@@ -52,17 +52,17 @@ public final class LinuxAccessorFacadeImpl implements LinuxAccessorFacade {
     }
 
     @Override
-    public int readEvent(int fd, long buf, int bufSize) {
+    public int readEvent(long fd, long buf, int bufSize) {
         return LinuxAccessor.readEvent(fd, buf, bufSize);
     }
 
     @Override
-    public int readPipe(int fd) {
+    public int readPipe(long fd) {
         return LinuxAccessor.readPipe(fd);
     }
 
     @Override
-    public int writePipe(int fd) {
+    public int writePipe(long fd) {
         return LinuxAccessor.writePipe(fd);
     }
 }

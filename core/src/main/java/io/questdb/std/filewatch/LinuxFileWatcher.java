@@ -48,21 +48,21 @@ public final class LinuxFileWatcher extends FileWatcher {
     private final Path dirPath = new Path();
     private final Epoll epoll;
     private final DirectUtf8Sink fileName = new DirectUtf8Sink(0);
-    private final int inotifyFd;
-    private final int readEndFd;
+    private final long inotifyFd;
+    private final long readEndFd;
     private final int wd;
-    private final int writeEndFd;
+    private final long writeEndFd;
 
     public LinuxFileWatcher(LinuxAccessorFacade accessorFacade, EpollFacade epollFacade, Utf8Sequence filePath, FileEventCallback callback) {
         super(callback);
         this.accessorFacade = accessorFacade;
         this.epoll = new Epoll(epollFacade, 2);
         try {
-            this.inotifyFd = accessorFacade.inotifyInit();
-            if (this.inotifyFd < 0) {
+            int inotifyFd2 = accessorFacade.inotifyInit();
+            if (inotifyFd2 < 0) {
                 throw CairoException.critical(Os.errno()).put("inotify_init error");
             }
-            Files.bumpFileCount(this.inotifyFd);
+            this.inotifyFd = Files.bumpFileCount(inotifyFd2);
 
             this.dirPath.of(filePath).parent();
             this.fileName.put(Paths.get(filePath.toString()).getFileName().toString());
@@ -92,10 +92,8 @@ public final class LinuxFileWatcher extends FileWatcher {
                 throw CairoException.critical(Os.errno()).put("create a pipe error");
             }
 
-            this.readEndFd = (int) (fds >>> 32);
-            this.writeEndFd = (int) fds;
-            Files.bumpFileCount(this.readEndFd);
-            Files.bumpFileCount(this.writeEndFd);
+            this.readEndFd = Files.bumpFileCount((int) (fds >>> 32));
+            this.writeEndFd = Files.bumpFileCount((int) fds);
 
             if (epoll.control(readEndFd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLIN) < 0) {
                 throw CairoException.critical(Os.errno()).put("epoll_ctl error");

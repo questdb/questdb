@@ -80,7 +80,7 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
         for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += EpollAccessor.SIZEOF_EVENT) {
             final C context = pending.get(i);
             final long id = pending.get(i, OPM_ID);
-            final long fd = (int) pending.get(i, OPM_FD);
+            final long fd = pending.get(i, OPM_FD);
             final int operation = initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE;
             pending.set(i, OPM_OPERATION, operation);
             if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_ADD, epollOp(operation, context)) < 0) {

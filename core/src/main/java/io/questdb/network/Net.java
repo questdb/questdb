@@ -34,6 +34,8 @@ import io.questdb.std.str.StdoutSink;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static io.questdb.std.Files.toOsFd;
+
 public final class Net {
 
     @SuppressWarnings("unused")
@@ -437,10 +439,6 @@ public final class Net {
     private native static int socketTcp0(boolean blocking);
 
     private native static int socketUdp0();
-
-    static int toOsFd(long fd) {
-        return Numbers.decodeHighInt(fd);
-    }
 
     static {
         Os.init();

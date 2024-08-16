@@ -27,6 +27,7 @@ package io.questdb.std;
 import io.questdb.cairo.CairoException;
 import org.jetbrains.annotations.TestOnly;
 
+import static io.questdb.std.Files.toOsFd;
 import static io.questdb.std.IOUringAccessor.*;
 
 public class IOURingImpl implements IOURing {
@@ -39,7 +40,7 @@ public class IOURingImpl implements IOURing {
     private final long cqesAddr;
     private final IOURingFacade facade;
     private final long ringAddr;
-    private final int ringFd;
+    private final long ringFd;
     private final long sqKheadAddr;
     private final int sqKringEntries;
     private final int sqKringMask;
@@ -60,7 +61,7 @@ public class IOURingImpl implements IOURing {
         }
         this.ringAddr = res;
 
-        this.ringFd = Unsafe.getUnsafe().getInt(ringAddr + RING_FD_OFFSET);
+        int ringFd = Unsafe.getUnsafe().getInt(ringAddr + RING_FD_OFFSET);
 
         this.sqesAddr = Unsafe.getUnsafe().getLong(ringAddr + SQ_SQES_OFFSET);
         this.sqKheadAddr = Unsafe.getUnsafe().getLong(ringAddr + SQ_KHEAD_OFFSET);
@@ -78,7 +79,7 @@ public class IOURingImpl implements IOURing {
         int cqKringEntries = Unsafe.getUnsafe().getInt(cqEntriesAddr);
         cachedCqes = new long[2 * cqKringEntries];
 
-        Files.bumpFileCount(ringFd);
+        this.ringFd = Files.bumpFileCount(ringFd);
     }
 
     @Override
@@ -150,10 +151,6 @@ public class IOURingImpl implements IOURing {
     @Override
     public int submitAndWait() {
         return facade.submitAndWait(ringAddr, 1);
-    }
-
-    private static int toOsFd(long fd) {
-        return Numbers.decodeHighInt(fd);
     }
 
     /**
