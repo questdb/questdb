@@ -30,7 +30,6 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
@@ -38,6 +37,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -80,17 +80,17 @@ public class PerformanceTest extends AbstractCairoTest {
                     .col("ex", ColumnType.SYMBOL).symbolCapacity(2);
             AbstractCairoTest.create(model);
 
-            try (TableWriter w = newOffPoolWriter(configuration, "quote", Metrics.disabled())) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "quote", Metrics.disabled())) {
                 for (int i = -count; i < count; i++) {
                     if (i == 0) {
                         t = System.nanoTime();
                     }
-                    w.truncate();
+                    writer.truncate();
                     long timestamp = DateFormatUtils.parseUTCDate("2013-10-05T10:00:00.000Z");
                     Rnd r = new Rnd();
                     int n = symbols.length - 1;
                     for (int i1 = 0; i1 < TEST_DATA_SIZE; i1++) {
-                        TableWriter.Row row = w.newRow(timestamp);
+                        TableWriter.Row row = writer.newRow(timestamp);
                         row.putSym(1, symbols[Math.abs(r.nextInt() % n)]);
                         row.putDouble(2, Math.abs(r.nextDouble()));
                         row.putDouble(3, Math.abs(r.nextDouble()));
@@ -101,19 +101,21 @@ public class PerformanceTest extends AbstractCairoTest {
                         row.append();
                         timestamp += 1000;
                     }
-                    w.commit();
+                    writer.commit();
                 }
                 result = System.nanoTime() - t;
             }
             long appendDuration = result / count;
 
-            try (TableReader reader = newOffPoolReader(configuration, "quote")) {
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "quote");
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
                 for (int i = -count; i < count; i++) {
                     if (i == 0) {
                         t = System.nanoTime();
                     }
 
-                    RecordCursor cursor = reader.getCursor();
                     Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
                         record.getDate(0);
@@ -167,8 +169,10 @@ public class PerformanceTest extends AbstractCairoTest {
 
         SOCountDownLatch stopLatch = new SOCountDownLatch(2);
         SOCountDownLatch startLatch = new SOCountDownLatch(2);
-        try (TableWriter w = newOffPoolWriter(configuration, "quote", Metrics.disabled());
-             TableReader reader = newOffPoolReader(configuration, "quote")) {
+        try (
+                TableWriter writer = newOffPoolWriter(configuration, "quote", Metrics.disabled());
+                TableReader reader = newOffPoolReader(configuration, "quote")
+        ) {
             // Writing
             new Thread(() -> {
                 try {
@@ -180,7 +184,7 @@ public class PerformanceTest extends AbstractCairoTest {
                     startLatch.await();
                     for (int i = 0; i < txCount; i++) {
                         for (int i1 = 0; i1 < txSize; i1++) {
-                            TableWriter.Row row = w.newRow(timestamp);
+                            TableWriter.Row row = writer.newRow(timestamp);
                             row.putSym(1, symbols[Math.abs(r.nextInt() % n)]);
                             row.putDouble(2, Math.abs(r.nextDouble()));
                             row.putDouble(3, Math.abs(r.nextDouble()));
@@ -191,7 +195,7 @@ public class PerformanceTest extends AbstractCairoTest {
                             row.append();
                             timestamp += 1000;
                         }
-                        w.commit();
+                        writer.commit();
                     }
                 } catch (NumericException e) {
                     e.printStackTrace();

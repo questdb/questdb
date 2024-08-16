@@ -54,7 +54,7 @@ public interface BitmapIndexReader extends Closeable {
      * @param key            index key
      * @param minValue       inclusive minimum value
      * @param maxValue       inclusive maximum value
-     * @return index value cursor
+     * @return index value cursor, relative to the minValue
      */
     RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue);
 

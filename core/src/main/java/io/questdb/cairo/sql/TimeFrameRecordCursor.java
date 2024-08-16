@@ -67,10 +67,10 @@ public interface TimeFrameRecordCursor extends QuietCloseable, SymbolTableSource
      * Positions record at given row id. The row id must be in the [rowIdLo, rowIdHi] range
      * for any of the previously open time frames.
      *
-     * @param record  to position
-     * @param atRowId rowid of the desired record
+     * @param record to position
+     * @param rowId  row id of the desired record
      */
-    void recordAt(Record record, long atRowId);
+    void recordAt(Record record, long rowId);
 
     /**
      * Return the cursor to the beginning of the page frame.
