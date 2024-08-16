@@ -34,6 +34,7 @@ import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -876,7 +877,10 @@ public class OrderedMapTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
                 EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
@@ -910,7 +914,6 @@ public class OrderedMapTest extends AbstractCairoTest {
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
 
-                    RecordCursor cursor = reader.getCursor();
                     populateMap(map, rnd2, cursor, sink);
 
                     try (RecordCursor mapCursor = map.getCursor()) {
@@ -1562,7 +1565,10 @@ public class OrderedMapTest extends AbstractCairoTest {
 
             BytecodeAssembler asm = new BytecodeAssembler();
 
-            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
                 EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
@@ -1599,7 +1605,6 @@ public class OrderedMapTest extends AbstractCairoTest {
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
 
-                    RecordCursor cursor = reader.getCursor();
                     populateMap(map, rnd2, cursor, sink);
 
                     try (RecordCursor mapCursor = map.getCursor()) {
@@ -1663,7 +1668,10 @@ public class OrderedMapTest extends AbstractCairoTest {
 
             BytecodeAssembler asm = new BytecodeAssembler();
 
-            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
                 EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
@@ -1701,7 +1709,6 @@ public class OrderedMapTest extends AbstractCairoTest {
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
 
-                    RecordCursor cursor = reader.getCursor();
                     Record record = cursor.getRecord();
                     populateMapGeo(map, rnd2, cursor, sink);
 
@@ -1743,7 +1750,10 @@ public class OrderedMapTest extends AbstractCairoTest {
 
             BytecodeAssembler asm = new BytecodeAssembler();
 
-            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
                 ListColumnFilter listColumnFilter = new ListColumnFilter();
                 for (int i = 0, n = reader.getMetadata().getColumnCount(); i < n; i++) {
                     listColumnFilter.add(i + 1);
@@ -1771,7 +1781,6 @@ public class OrderedMapTest extends AbstractCairoTest {
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
 
-                    RecordCursor cursor = reader.getCursor();
                     final Record record = cursor.getRecord();
                     long counter = 0;
                     while (cursor.hasNext()) {

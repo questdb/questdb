@@ -35,7 +35,7 @@ public class EllipticCurveAuthenticatorFactory implements LineAuthenticatorFacto
     }
 
     @Override
-    public Authenticator getLineTCPAuthenticator() {
+    public SocketAuthenticator getLineTCPAuthenticator() {
         return new EllipticCurveAuthenticator(
                 matcherFactory.newInstance()
         );
