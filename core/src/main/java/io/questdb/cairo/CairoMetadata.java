@@ -460,7 +460,7 @@ public class CairoMetadata implements Sinkable {
             CairoColumn newColumn;
 
             if (existingColumn != null) {
-                assert Chars.equals(existingColumn.getNameUnsafe(), columnName);
+                assert Chars.equalsIgnoreCase(existingColumn.getNameUnsafe(), columnName);
                 LOG.debugW().$("column already present, updating instead [table=").$(table.getNameUnsafe()).$(", column=").$(columnName).I$();
                 newColumn = existingColumn;
             } else {
