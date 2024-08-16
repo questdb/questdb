@@ -23,13 +23,11 @@
  ******************************************************************************/
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.table.TableStorageFunctionFactory;
 
 open module io.questdb {
     requires transitive jdk.unsupported;
     requires static org.jetbrains.annotations;
     requires static java.management;
-    requires jdk.unsupported.desktop;
     requires jdk.management;
 
     uses io.questdb.griffin.FunctionFactory;

@@ -26,15 +26,22 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.time.temporal.ChronoUnit;
 
 public class LineTcpBootstrapTest extends AbstractBootstrapTest {
     @Before
@@ -66,4 +73,69 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
             }
         });
     }
+
+    @Test
+    public void testAsciiFlagCorrectlySetForVarcharColumns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                serverMain.start();
+                CairoEngine engine = serverMain.getEngine();
+                try (SqlCompiler sqlCompiler = engine.getSqlCompiler();
+                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                    sqlCompiler.compile("CREATE TABLE 'betfairRunners' (\n" +
+                            "  id INT,\n" +
+                            "  runner VARCHAR,\n" +
+                            "  age BYTE,\n" +
+                            "  remarks SYMBOL CAPACITY 2048 CACHE INDEX CAPACITY 256,\n" +
+                            "  timestamp TIMESTAMP\n" +
+                            ") timestamp (timestamp) PARTITION BY MONTH WAL\n" +
+                            "DEDUP UPSERT KEYS(timestamp, id);", sqlExecutionContext);
+
+                    try (Sender sender = Sender.fromConfig("http::addr=localhost:" + serverMain.getHttpServerPort() + ";")) {
+                        for (int i = 0; i < 1; i++) {
+                            sender.table("betfairRunners").symbol("remarks", "SAw,CkdRnUp&2").
+                                    stringColumn("runner", "BallyMac Fifra")
+                                    .longColumn("id", 548738)
+                                    .longColumn("age", 58)
+                                    .at(TimestampFormatUtils.parseTimestamp("2024-06-30T00:00:00Z"), ChronoUnit.MICROS);
+                            sender.table("betfairRunners").symbol("remarks", "Fcd-Ck1").
+                                    stringColumn("runner", "BallyMac Fifra")
+                                    .longColumn("id", 548738)
+                                    .longColumn("age", 58)
+                                    .at(TimestampFormatUtils.parseTimestamp("2024-06-24T00:00:00Z"), ChronoUnit.MICROS);
+                            sender.table("betfairRunners").symbol("remarks", "(R8) LdRnIn військові").
+                                    stringColumn("runner", "BallyMac Fifra")
+                                    .longColumn("id", 548738)
+                                    .longColumn("age", 58)
+                                    .at(TimestampFormatUtils.parseTimestamp("2024-06-17T00:00:00Z"), ChronoUnit.MICROS);
+                            sender.flush();
+                        }
+                    }
+
+                    drainWalQueue(engine);
+
+                    CompiledQuery result = sqlCompiler.compile("select distinct runner from betfairRunners", sqlExecutionContext);
+
+                    try (
+                            RecordCursorFactory factory = result.getRecordCursorFactory();
+                            RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                    ) {
+                        cursor.hasNext();
+                        if (cursor.hasNext()) {
+                            // more than 1 distinct result..
+                            // i.e
+                            // runner
+                            // varchar
+                            // BallyMac Fifra
+                            // BallyMac Fifra
+                            // both are ascii but one of the above has isAscii set to false
+                            // this messes up the hash calculation in OrderedMap when Distinct is executed
+                            throw SqlException.$(0, "More than one result in record cursor. Should be one row after distinct query.");
+                        }
+                    }
+                }
+            }
+        });
+    }
+
 }

@@ -147,10 +147,6 @@ public class LineTcpParser {
         return timestampUnit;
     }
 
-    public boolean hasNonAsciiChars() {
-        return hasNonAscii;
-    }
-
     public boolean hasTimestamp() {
         return timestamp != NULL_TIMESTAMP;
     }
@@ -466,6 +462,7 @@ public class LineTcpParser {
         if (endOfEntityByte == (byte) ',' || tagsComplete) {
             long hi = bufAt - nEscapedChars;
             measurementName.of(entityLo, hi, !hasNonAscii);
+            hasNonAscii = false;
             entityHandler = ENTITY_HANDLER_NAME;
             return true;
         }
@@ -484,6 +481,7 @@ public class LineTcpParser {
                 final long entityHi = bufAt - nEscapedChars;
                 if (entityLo < entityHi) {
                     charSeq.of(entityLo, entityHi, !hasNonAscii);
+                    hasNonAscii=  false;
                     final int charSeqLen = charSeq.size();
                     final byte last = charSeq.byteAt(charSeqLen - 1);
                     switch (last) {
@@ -720,6 +718,7 @@ public class LineTcpParser {
                         }
                     } else {
                         charSeq.of(value.lo(), value.hi(), !hasNonAscii);
+                        hasNonAscii = false;
                         if (SqlKeywords.isTrueKeyword(charSeq)) {
                             booleanValue = true;
                             type = ENTITY_TYPE_BOOLEAN;
@@ -771,10 +770,12 @@ public class LineTcpParser {
 
         private void setName() {
             name.of(entityLo, bufAt - nEscapedChars, !hasNonAscii);
+            hasNonAscii = false;
         }
 
         private void setName(long hi) {
             name.of(entityLo, hi - nEscapedChars, !hasNonAscii);
+            hasNonAscii = false;
         }
 
         private boolean setValueAndUnit() {
@@ -782,6 +783,7 @@ public class LineTcpParser {
             long bufHi = bufAt - nEscapedChars;
             int valueLen = (int) (bufHi - entityLo);
             value.of(entityLo, bufHi, !hasNonAscii);
+            hasNonAscii = false;
             if (tagsComplete) {
                 if (valueLen > 0) {
                     byte lastByte = value.byteAt(valueLen - 1);
