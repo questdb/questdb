@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.EmptyRowCursor;
-import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 
@@ -45,15 +44,15 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
     }
 
     @Override
-    public RowCursor getCursor(DataFrame dataFrame) {
+    public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-            RowCursor cursor = dataFrame
+            RowCursor indexReaderCursor = pageFrame
                     .getBitmapIndexReader(columnIndex, BitmapIndexReader.DIR_BACKWARD)
-                    .getCursor(cachedIndexReaderCursor, symbolKey, dataFrame.getRowLo(), dataFrame.getRowHi() - 1);
+                    .getCursor(cachedIndexReaderCursor, symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1);
 
-            if (cursor.hasNext()) {
-                this.cursor.of(cursor.next());
-                return this.cursor;
+            if (indexReaderCursor.hasNext()) {
+                cursor.of(indexReaderCursor.next());
+                return cursor;
             }
         }
         return EmptyRowCursor.INSTANCE;
@@ -70,9 +69,9 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
     }
 
     @Override
-    public void prepareCursor(TableReader tableReader) {
+    public void prepareCursor(PageFrameCursor pageFrameCursor) {
         final CharSequence symbol = symbolFunc.getStrA(null);
-        symbolKey = tableReader.getSymbolMapReader(columnIndex).keyOf(symbol);
+        symbolKey = pageFrameCursor.getSymbolTable(columnIndex).keyOf(symbol);
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
             symbolKey++;
         }
@@ -80,7 +79,7 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Index ").type(BitmapIndexReader.NAME_BACKWARD).type(" scan").meta("on").putBaseColumnNameNoRemap(columnIndex).meta("deferred").val(true);
-        sink.attr("filter").putBaseColumnNameNoRemap(columnIndex).val('=').val(symbolFunc);
+        sink.type("Index ").type(BitmapIndexReader.NAME_BACKWARD).type(" scan").meta("on").putBaseColumnName(columnIndex).meta("deferred").val(true);
+        sink.attr("filter").putBaseColumnName(columnIndex).val('=').val(symbolFunc);
     }
 }

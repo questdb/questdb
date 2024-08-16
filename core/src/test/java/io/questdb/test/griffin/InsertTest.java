@@ -41,6 +41,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -150,8 +151,10 @@ public class InsertTest extends AbstractCairoTest {
             }
 
             rnd.reset();
-            try (TableReader reader = getReader("allgeo")) {
-                final TableReaderRecordCursor cursor = reader.getCursor();
+            try (
+                    TableReader reader = getReader("allgeo");
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
                 final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
                     Assert.assertEquals(rnd.nextGeoHashByte(6), record.getGeoByte(0));
@@ -1319,8 +1322,10 @@ public class InsertTest extends AbstractCairoTest {
             }
 
             rnd.reset();
-            try (TableReader reader = getReader("all2")) {
-                final TableReaderRecordCursor cursor = reader.getCursor();
+            try (
+                    TableReader reader = getReader("all2");
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
                 final Record record = cursor.getRecord();
                 while (cursor.hasNext()) {
                     Assert.assertEquals(rnd.nextInt(), record.getInt(0));

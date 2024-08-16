@@ -45,7 +45,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     protected MillisecondClock clock;
     protected int keyCount;
     protected long spinLockTimeoutMs;
-    protected long unIndexedNullCount;
+    protected long unindexedNullCount;
     private int keyCountIncludingNulls;
 
     @Override
@@ -70,7 +70,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
     }
 
     public long getUnIndexedNullCount() {
-        return unIndexedNullCount;
+        return unindexedNullCount;
     }
 
     public long getValueBaseAddress() {
@@ -92,7 +92,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
     @Override
     public void of(CairoConfiguration configuration, Path path, CharSequence name, long columnNameTxn, long unIndexedNullCount) {
-        this.unIndexedNullCount = unIndexedNullCount;
+        this.unindexedNullCount = unIndexedNullCount;
         final int plen = path.size();
         this.spinLockTimeoutMs = configuration.getSpinLockTimeout();
 
@@ -184,7 +184,7 @@ public abstract class AbstractIndexReader implements BitmapIndexReader {
 
         if (keyCount > this.keyCount) {
             this.keyCount = keyCount;
-            this.keyCountIncludingNulls = unIndexedNullCount > 0 ? keyCount + 1 : keyCount;
+            this.keyCountIncludingNulls = unindexedNullCount > 0 ? keyCount + 1 : keyCount;
         }
     }
 }

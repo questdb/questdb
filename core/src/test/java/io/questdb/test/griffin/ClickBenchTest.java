@@ -147,7 +147,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                     "Q0",
                     "SELECT COUNT(*) FROM hits;",
                     "Count\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: hits\n"
             ),
@@ -157,7 +157,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                     "Count\n" +
                             "    Async JIT Filter workers: 1\n" +
                             "      filter: AdvEngineID!=0\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -166,7 +166,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                     "SELECT SUM(AdvEngineID), COUNT(*), AVG(ResolutionWidth) FROM hits;",
                     "GroupBy vectorized: true workers: 1\n" +
                             "  values: [sum(AdvEngineID),count(*),avg(ResolutionWidth)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: hits\n"
             ),
@@ -175,7 +175,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                     "SELECT AVG(UserID) FROM hits;",
                     "GroupBy vectorized: true workers: 1\n" +
                             "  values: [avg(UserID)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: hits\n"
             ),
@@ -186,7 +186,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [UserID]\n" +
                             "      filter: UserID!=null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -197,7 +197,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [SearchPhrase]\n" +
                             "      filter: SearchPhrase is not null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -206,7 +206,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                     "SELECT MIN(EventDate), MAX(EventDate) FROM hits;",
                     "GroupBy vectorized: true workers: 1\n" +
                             "  values: [min(EventDate),max(EventDate)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: hits\n"
             ),
@@ -219,7 +219,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [AdvEngineID]\n" +
                             "      values: [count(*)]\n" +
                             "      filter: AdvEngineID!=0\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -232,7 +232,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [RegionID]\n" +
                             "      values: [count_distinct(UserID)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -245,7 +245,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [RegionID]\n" +
                             "      values: [sum(AdvEngineID),count(*),avg(ResolutionWidth),count_distinct(UserID)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -258,7 +258,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [MobilePhoneModel]\n" +
                             "      values: [count_distinct(UserID)]\n" +
                             "      filter: MobilePhoneModel is not null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -271,7 +271,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [MobilePhone,MobilePhoneModel]\n" +
                             "      values: [count_distinct(UserID)]\n" +
                             "      filter: MobilePhoneModel is not null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -284,7 +284,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [SearchPhrase]\n" +
                             "      values: [count(*)]\n" +
                             "      filter: SearchPhrase is not null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -297,7 +297,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [SearchPhrase]\n" +
                             "      values: [count_distinct(UserID)]\n" +
                             "      filter: SearchPhrase is not null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -310,7 +310,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [SearchEngineID,SearchPhrase]\n" +
                             "      values: [count(*)]\n" +
                             "      filter: SearchPhrase is not null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -323,7 +323,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [UserID]\n" +
                             "      values: [count(*)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -337,7 +337,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [UserID,SearchPhrase]\n" +
                             "      values: [count(*)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -349,7 +349,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [UserID,SearchPhrase]\n" +
                             "      values: [count(*)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -365,7 +365,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "          keys: [UserID,m,SearchPhrase]\n" +
                             "          values: [count(*)]\n" +
                             "          filter: null\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: hits\n"
             ),
@@ -374,7 +374,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                     "SELECT UserID FROM hits WHERE UserID = 435090932899640449;",
                     "Async JIT Filter workers: 1\n" +
                             "  filter: UserID=435090932899640449L\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: hits\n"
             ),
@@ -384,7 +384,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                     "Count\n" +
                             "    Async Filter workers: 1\n" +
                             "      filter: URL like %google%\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -397,7 +397,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [SearchPhrase]\n" +
                             "      values: [min(URL),count(*)]\n" +
                             "      filter: (URL like %google% and SearchPhrase is not null)\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -410,7 +410,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [SearchPhrase]\n" +
                             "      values: [min(URL),min(Title),count(*),count_distinct(UserID)]\n" +
                             "      filter: (Title like %Google% and not (URL like %.google.%) and SearchPhrase is not null)\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -420,7 +420,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                     "Async Filter workers: 1\n" +
                             "  limit: 10\n" +
                             "  filter: URL like %google%\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: hits\n"
             ),
@@ -431,7 +431,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "    Async JIT Filter workers: 1\n" +
                             "      limit: 10\n" +
                             "      filter: SearchPhrase is not null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -443,7 +443,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "  keys: [SearchPhrase]\n" +
                             "    Async JIT Filter workers: 1\n" +
                             "      filter: SearchPhrase is not null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -455,7 +455,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [EventTime, SearchPhrase]\n" +
                             "        Async JIT Filter workers: 1\n" +
                             "          filter: SearchPhrase is not null\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: hits\n"
             ),
@@ -469,7 +469,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "          keys: [CounterID]\n" +
                             "          values: [avg(length(URL)),count(*)]\n" +
                             "          filter: URL is not null\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: hits\n"
             ),
@@ -485,7 +485,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "              keys: [k]\n" +
                             "              values: [avg(length(Referer)),count(*),min(Referer)]\n" +
                             "              filter: Referer is not null\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: hits\n"
             ),
@@ -496,7 +496,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "  functions: [SUM,SUM+COUNT*1,SUM+COUNT*2,SUM+COUNT*3,SUM+COUNT*4,SUM+COUNT*5,SUM+COUNT*6,SUM+COUNT*7,SUM+COUNT*8,SUM+COUNT*9,SUM+COUNT*10,SUM+COUNT*11,SUM+COUNT*12,SUM+COUNT*13,SUM+COUNT*14,SUM+COUNT*15,SUM+COUNT*16,SUM+COUNT*17,SUM+COUNT*18,SUM+COUNT*19,SUM+COUNT*20,SUM+COUNT*21,SUM+COUNT*22,SUM+COUNT*23,SUM+COUNT*24,SUM+COUNT*25,SUM+COUNT*26,SUM+COUNT*27,SUM+COUNT*28,SUM+COUNT*29,SUM+COUNT*30,SUM+COUNT*31,SUM+COUNT*32,SUM+COUNT*33,SUM+COUNT*34,SUM+COUNT*35,SUM+COUNT*36,SUM+COUNT*37,SUM+COUNT*38,SUM+COUNT*39,SUM+COUNT*40,SUM+COUNT*41,SUM+COUNT*42,SUM+COUNT*43,SUM+COUNT*44,SUM+COUNT*45,SUM+COUNT*46,SUM+COUNT*47,SUM+COUNT*48,SUM+COUNT*49,SUM+COUNT*50,SUM+COUNT*51,SUM+COUNT*52,SUM+COUNT*53,SUM+COUNT*54,SUM+COUNT*55,SUM+COUNT*56,SUM+COUNT*57,SUM+COUNT*58,SUM+COUNT*59,SUM+COUNT*60,SUM+COUNT*61,SUM+COUNT*62,SUM+COUNT*63,SUM+COUNT*64,SUM+COUNT*65,SUM+COUNT*66,SUM+COUNT*67,SUM+COUNT*68,SUM+COUNT*69,SUM+COUNT*70,SUM+COUNT*71,SUM+COUNT*72,SUM+COUNT*73,SUM+COUNT*74,SUM+COUNT*75,SUM+COUNT*76,SUM+COUNT*77,SUM+COUNT*78,SUM+COUNT*79,SUM+COUNT*80,SUM+COUNT*81,SUM+COUNT*82,SUM+COUNT*83,SUM+COUNT*84,SUM+COUNT*85,SUM+COUNT*86,SUM+COUNT*87,SUM+COUNT*88,SUM+COUNT*89]\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(ResolutionWidth),count(*)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -509,7 +509,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [SearchEngineID,ClientIP]\n" +
                             "      values: [count(*),sum(IsRefresh),avg(ResolutionWidth)]\n" +
                             "      filter: SearchPhrase is not null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -523,7 +523,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [WatchID,ClientIP]\n" +
                             "      values: [count(*),sum(IsRefresh),avg(ResolutionWidth)]\n" +
                             "      filter: SearchPhrase is not null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -537,7 +537,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [WatchID,ClientIP]\n" +
                             "      values: [count(*),sum(IsRefresh),avg(ResolutionWidth)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -550,7 +550,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [URL]\n" +
                             "      values: [count(*)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             ),
@@ -566,7 +566,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "          keys: [URL]\n" +
                             "          values: [count(*)]\n" +
                             "          filter: null\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: hits\n"
             ),
@@ -582,7 +582,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "          keys: [ClientIP,column,column1,column2]\n" +
                             "          values: [count(*)]\n" +
                             "          filter: null\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: hits\n"
             ),
@@ -595,7 +595,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [URL]\n" +
                             "      values: [count(*)]\n" +
                             "      filter: (CounterID=62 and DontCountHits=0 and IsRefresh=0 and URL is not null)\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Interval forward scan on: hits\n" +
                             "              intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n"
@@ -609,7 +609,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [Title]\n" +
                             "      values: [count(*)]\n" +
                             "      filter: (CounterID=62 and DontCountHits=0 and IsRefresh=0 and Title is not null)\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Interval forward scan on: hits\n" +
                             "              intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n"
@@ -623,7 +623,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [URL]\n" +
                             "      values: [count(*)]\n" +
                             "      filter: (CounterID=62 and IsRefresh=0 and IsLink!=0 and IsDownload=0)\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Interval forward scan on: hits\n" +
                             "              intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n"
@@ -639,7 +639,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "          keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst]\n" +
                             "          values: [count(*)]\n" +
                             "          filter: (CounterID=62 and IsRefresh=0)\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Interval forward scan on: hits\n" +
                             "                  intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n"
@@ -653,7 +653,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [URLHash,EventDate]\n" +
                             "      values: [count(*)]\n" +
                             "      filter: (CounterID=62 and IsRefresh=0 and TraficSourceID in [-1,6] and RefererHash=3594120000172545465L)\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Interval forward scan on: hits\n" +
                             "              intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n"
@@ -667,7 +667,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [WindowClientWidth,WindowClientHeight]\n" +
                             "      values: [count(*)]\n" +
                             "      filter: (CounterID=62 and IsRefresh=0 and DontCountHits=0 and URLHash=2868770270353813622L)\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Interval forward scan on: hits\n" +
                             "              intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n"
@@ -681,7 +681,7 @@ public class ClickBenchTest extends AbstractCairoTest {
                             "      keys: [M]\n" +
                             "      values: [count(*)]\n" +
                             "      filter: (CounterID=62 and IsRefresh=0 and DontCountHits=0)\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Interval forward scan on: hits\n" +
                             "              intervals: [(\"2013-07-14T00:00:00.000000Z\",\"2013-07-15T23:59:59.000000Z\")]\n"
