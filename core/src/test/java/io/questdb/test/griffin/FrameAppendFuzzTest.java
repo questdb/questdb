@@ -37,7 +37,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class FrameAppendFuzzTest extends AbstractFuzzTest {
-
     private int partitionCount;
 
     @Test
@@ -162,7 +161,7 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
             copyTableDir(src, merged);
             mergeAllPartitions(merged);
 
-            String limit = "";
+            String limit = ""; // For debugging
             TestUtils.assertSqlCursors(
                     engine,
                     sqlExecutionContext,

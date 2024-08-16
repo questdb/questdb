@@ -37,15 +37,6 @@ public class DirectUtf8String implements DirectUtf8Sequence, Mutable {
     private boolean ascii;
     private long hi;
     private long lo;
-    private boolean stable;
-
-    public DirectUtf8String() {
-        this(false);
-    }
-
-    public DirectUtf8String(boolean stableDefault) {
-        this.stable = stableDefault;
-    }
 
     @Override
     public @NotNull CharSequence asAsciiCharSequence() {
@@ -68,11 +59,6 @@ public class DirectUtf8String implements DirectUtf8Sequence, Mutable {
         return ascii;
     }
 
-    @Override
-    public boolean isStable() {
-        return stable;
-    }
-
     public DirectUtf8String of(long lo, long hi) {
         return of(lo, hi, false);
     }
@@ -81,14 +67,6 @@ public class DirectUtf8String implements DirectUtf8Sequence, Mutable {
         this.lo = lo;
         this.hi = hi;
         this.ascii = ascii;
-        return this;
-    }
-
-    public DirectUtf8String of(long lo, long hi, boolean ascii, boolean stable) {
-        this.lo = lo;
-        this.hi = hi;
-        this.ascii = ascii;
-        this.stable = stable;
         return this;
     }
 

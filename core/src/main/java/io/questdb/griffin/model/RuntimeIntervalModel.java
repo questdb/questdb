@@ -162,7 +162,7 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                     }
 
                     if (dynamicValue == Numbers.LONG_NULL || dynamicValue2 == Numbers.LONG_NULL) {
-                        // functions evaluated to null.
+                        // functions evaluated to null
                         if (!negated) {
                             // return empty set if it's not negated
                             outIntervals.clear();
@@ -188,17 +188,17 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                         IntervalUtils.invert(outIntervals, divider);
                     }
                 } else {
-                    // This is subtract or intersect with a string interval (not a single timestamp)
+                    // This is subtraction or intersection with a string interval (not a single timestamp)
                     CharSequence strValue = dynamicFunction.getStrA(null);
                     if (operation == IntervalOperation.INTERSECT_INTERVALS) {
-                        // This is intersect
+                        // This is intersection
                         if (parseIntervalFails(outIntervals, strValue)) {
                             // return empty set
                             outIntervals.clear();
                             return;
                         }
                     } else {
-                        // This is subtract
+                        // This is subtraction
                         if (parseIntervalFails(outIntervals, strValue)) {
                             // full set
                             negatedNothing(outIntervals, divider);
@@ -209,8 +209,8 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                 }
             }
 
-            // Do not apply operation (intersect, subtract)
-            // if this is first element and no pre-calculated static intervals exist
+            // Do not apply operation (intersection, subtraction).
+            // If this is first element and no pre-calculated static intervals exist.
             if (firstFuncApplied || divider > 0) {
                 switch (operation) {
                     case IntervalOperation.INTERSECT:

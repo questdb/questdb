@@ -24,6 +24,9 @@
 
 package io.questdb.cairo.frm;
 
+/**
+ * Used for partition squashing in {@link io.questdb.cairo.TableWriter}.
+ */
 public class FrameAlgebra {
 
     public static void append(Frame target, Frame source, int commitMode) {

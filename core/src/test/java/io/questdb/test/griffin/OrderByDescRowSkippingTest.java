@@ -28,8 +28,8 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.engine.table.BwdDataFrameRowCursorFactory;
-import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
+import io.questdb.griffin.engine.table.BwdPageFrameRowCursorFactory;
+import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -870,7 +870,7 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
         });
     }
 
-    // tests "partitionIndex == partitionCount - 1" conditional in FullBwdDataFrameCursor.skipTo()
+    // tests "partitionIndex == partitionCount - 1" conditional in FullBwdPartitionFrameCursor.skipTo()
     @Test
     public void testSkipBeyondEndOfNonemptyTableReturnsNoRows() throws Exception {
         assertMemoryLeak(() -> {
@@ -923,7 +923,7 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
         });
     }
 
-    // tests "partitionCount < 1" conditional in FullBwdDataFrameCursor.skipTo()
+    // tests "partitionCount < 1" conditional in FullBwdPartitionFrameCursor.skipTo()
     @Test
     public void testSkipOverEmptyTableWithNoPartitionsReturnsNoRows() throws Exception {
         assertMemoryLeak(() -> {
@@ -990,11 +990,11 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
         columnSizes.add(3);
         columnSizes.add(3);
 
-        return new DataFrameRecordCursorFactory(
+        return new PageFrameRecordCursorFactory(
                 engine.getConfiguration(),
                 metadata,
-                new FullBwdDataFrameCursorFactory(reader.getTableToken(), reader.getMetadataVersion(), GenericRecordMetadata.deepCopyOf(metadata)),
-                new BwdDataFrameRowCursorFactory(),
+                new FullBwdPartitionFrameCursorFactory(reader.getTableToken(), reader.getMetadataVersion(), GenericRecordMetadata.deepCopyOf(metadata)),
+                new BwdPageFrameRowCursorFactory(),
                 false,
                 null,
                 true,

@@ -1821,7 +1821,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return rowCount;
     }
 
-    //returns number of copied rows
+    // returns number of copied rows
     private long copyOrderedBatched0(
             TableWriterAPI writer,
             RecordCursor cursor,
@@ -1844,7 +1844,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 deadline = rowCount + batchSize;
             }
         }
-
         return rowCount;
     }
 
@@ -1900,9 +1899,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return rowCount;
     }
 
-    /*
-     * Returns number of copied rows.
-     */
+    // returns number of copied rows
     private long copyTableData(
             RecordCursor cursor,
             RecordMetadata metadata,
@@ -3396,12 +3393,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             Misc.free(dstPath);
         }
 
-        private void backupTable(@NotNull TableToken tableToken) {
+        private void backupTable(@NotNull TableToken tableToken, SqlExecutionContext executionContext) throws SqlException {
             LOG.info().$("starting backup of ").$(tableToken).$();
 
             // the table is copied to a TMP folder and then this folder is moved to the final destination (dstPath)
-            if (null == cachedBackupTmpRoot) {
-                if (null == configuration.getBackupRoot()) {
+            if (cachedBackupTmpRoot == null) {
+                if (configuration.getBackupRoot() == null) {
                     throw CairoException.nonCritical()
                             .put("backup is disabled, server.conf property 'cairo.sql.backup.root' is not set");
                 }
@@ -3526,9 +3523,25 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             );
                             tableBackupRowCopiedCache.put(srcPath, recordToRowCopier);
                         }
-                        RecordCursor cursor = reader.getCursor();
-                        //statement/query timeout value  is most likely too small for backup operation
-                        copyTableData(cursor, reader.getMetadata(), backupWriter, writerMetadata, recordToRowCopier, configuration.getCreateTableModelBatchSize(), configuration.getO3MaxLag(), SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+
+                        sink.clear();
+                        sink.put('\'').put(tableName).put('\'');
+                        try (
+                                RecordCursorFactory factory = engine.select(sink, executionContext);
+                                RecordCursor cursor = factory.getCursor(executionContext)
+                        ) {
+                            // statement/query timeout value is most likely too small for backup operation
+                            copyTableData(
+                                    cursor,
+                                    factory.getMetadata(),
+                                    backupWriter,
+                                    writerMetadata,
+                                    recordToRowCopier,
+                                    configuration.getCreateTableModelBatchSize(),
+                                    configuration.getO3MaxLag(),
+                                    SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER
+                            );
+                        }
                         backupWriter.commit();
                     }
                 } // release reader lock
@@ -3604,7 +3617,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.position(lexer.lastTokenPosition()).put("expected 'table' or 'database'");
         }
 
-        private void sqlDatabaseBackup(SqlExecutionContext executionContext) {
+        private void sqlDatabaseBackup(SqlExecutionContext executionContext) throws SqlException {
             mkBackupDstRoot();
             mkBackupDstDir(configuration.getDbDirectory(), "could not create backup [db dir=");
 
@@ -3612,7 +3625,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             engine.getTableTokens(tableTokenBucket, false);
             executionContext.getSecurityContext().authorizeTableBackup(tableTokens);
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
-                backupTable(tableTokenBucket.get(i));
+                backupTable(tableTokenBucket.get(i), executionContext);
             }
 
             srcPath.of(configuration.getRoot()).$();
@@ -3674,7 +3687,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executionContext.getSecurityContext().authorizeTableBackup(tableTokens);
 
                 for (int i = 0, n = tableTokens.size(); i < n; i++) {
-                    backupTable(tableTokens.get(i));
+                    backupTable(tableTokens.get(i), executionContext);
                 }
                 compiledQuery.ofBackupTable();
             } finally {
