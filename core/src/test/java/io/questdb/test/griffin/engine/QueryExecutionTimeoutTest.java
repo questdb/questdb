@@ -72,6 +72,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
             protected boolean testConnection(long fd) {
                 return false;
             }
+
             {
                 setTimeout(-1000); // fail on first check
             }

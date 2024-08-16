@@ -59,7 +59,6 @@ import static io.questdb.cairo.wal.WalUtils.*;
  * Header and record is described in @link TableTransactionLogFile
  * <p>
  * Transaction record: 60 bytes
- * <p>
  */
 public class TableTransactionLogV2 implements TableTransactionLogFile {
     public static final long MIN_TIMESTAMP_OFFSET = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;

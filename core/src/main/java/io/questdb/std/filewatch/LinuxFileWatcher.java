@@ -149,7 +149,7 @@ public final class LinuxFileWatcher extends FileWatcher {
         Misc.free(this.dirPath);
         Misc.free(this.fileName);
 
-        if (accessorFacade.inotifyRmWatch(this.inotifyFd, this.wd) < 0) {
+        if (this.inotifyFd > 0 && accessorFacade.inotifyRmWatch(this.inotifyFd, this.wd) < 0) {
             System.out.println(this.inotifyFd);
             // todo: handle error, but continue execution
         }

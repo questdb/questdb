@@ -95,7 +95,7 @@ public class IOURingImpl implements IOURing {
     @Override
     @TestOnly
     public long enqueueNop() {
-        return enqueueSqe(IORING_OP_NOP, 0, 0, 0, 0);
+        return enqueueSqe(IORING_OP_NOP, -1, 0, 0, 0);
     }
 
     @Override

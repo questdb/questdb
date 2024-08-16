@@ -32,7 +32,7 @@ import org.jetbrains.annotations.Nullable;
  * to accumulate messages, so they require extra calls to convert encrypted data to raw data.
  * <p>
  * {@link #close()} implementations must be idempotent. Also, supports object reuse after
- * {@link #close()}: see {@link #of(int)}.
+ * {@link #close()}: see {@link #of(long)}.
  */
 public interface Socket extends QuietCloseable {
     int HAS_MORE_PLAINTEXT_FLAG = 1 << 2;

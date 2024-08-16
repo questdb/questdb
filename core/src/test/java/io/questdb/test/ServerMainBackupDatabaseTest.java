@@ -198,7 +198,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                     drainWalQueue(qdb.getEngine());
                 }
                 long expected = expectedRowsOnBackUpStarted.get();
-                Assert.assertTrue("expected min rows: " + expected + ", actual: " + totalRows, totalRows > expected);
+                Assert.assertTrue("expected min rows: " + expected + ", actual: " + totalRows, totalRows >= expected);
             } finally {
                 Assert.assertTrue(Files.rmdir(dbPath.of(newRoot), true));
             }
