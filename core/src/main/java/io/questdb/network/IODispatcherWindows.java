@@ -201,7 +201,7 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                 }
             }
 
-            final long fd = (int) pending.get(i, OPM_FD);
+            final long fd = pending.get(i, OPM_FD);
             final int newOp = fds.get(fd);
             assert fd != serverFd;
 
