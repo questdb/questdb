@@ -47,7 +47,8 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
-import static io.questdb.PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED;
+import static io.questdb.PropertyKey.CAIRO_CHECKPOINT_RECOVERY_ENABLED;
+import static io.questdb.PropertyKey.CAIRO_LEGACY_SNAPSHOT_RECOVERY_ENABLED;
 
 public class CheckpointTest extends AbstractCairoTest {
 
@@ -277,13 +278,25 @@ public class CheckpointTest extends AbstractCairoTest {
 
     @Test
     public void testRecoverCheckpointForDifferentInstanceIdsAndTriggerFileWhenRecoveryIsDisabled() throws Exception {
-        node1.setProperty(CAIRO_SNAPSHOT_RECOVERY_ENABLED, "false");
+        node1.setProperty(CAIRO_CHECKPOINT_RECOVERY_ENABLED, "false");
+        testRecoverCheckpoint("id1", "id2", true, false);
+    }
+
+    @Test
+    public void testRecoverCheckpointForDifferentInstanceIdsAndTriggerFileWhenRecoveryIsDisabledViaLegacy() throws Exception {
+        node1.setProperty(CAIRO_LEGACY_SNAPSHOT_RECOVERY_ENABLED, "false");
         testRecoverCheckpoint("id1", "id2", true, false);
     }
 
     @Test
     public void testRecoverCheckpointForDifferentInstanceIdsWhenRecoveryIsDisabled() throws Exception {
-        node1.setProperty(CAIRO_SNAPSHOT_RECOVERY_ENABLED, "false");
+        node1.setProperty(CAIRO_CHECKPOINT_RECOVERY_ENABLED, "false");
+        testRecoverCheckpoint("id1", "id2", false, false);
+    }
+
+    @Test
+    public void testRecoverCheckpointForDifferentInstanceIdsWhenRecoveryIsDisabledViaLegacy() throws Exception {
+        node1.setProperty(CAIRO_LEGACY_SNAPSHOT_RECOVERY_ENABLED, "false");
         testRecoverCheckpoint("id1", "id2", false, false);
     }
 

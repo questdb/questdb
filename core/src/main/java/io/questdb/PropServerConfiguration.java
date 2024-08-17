@@ -658,7 +658,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.checkpointRecoveryEnabled = getBoolean(
                 properties,
                 env,
-                PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED,
+                PropertyKey.CAIRO_LEGACY_SNAPSHOT_RECOVERY_ENABLED,
                 getBoolean(
                         properties,
                         env,

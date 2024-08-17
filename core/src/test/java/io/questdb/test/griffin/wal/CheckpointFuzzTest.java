@@ -142,10 +142,14 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         Files.touch(triggerFilePath.$());
     }
 
-    private void checkpointCreate() throws SqlException {
+    private void checkpointCreate(boolean legacy) throws SqlException {
         LOG.info().$("creating checkpoint").$();
 
-        ddl("checkpoint create");
+        if (legacy) {
+            ddl("snapshot prepare");
+        } else {
+            ddl("checkpoint create");
+        }
         CairoConfiguration conf = engine.getConfiguration();
 
         FilesFacade ff = conf.getFilesFacade();
@@ -157,7 +161,11 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         LOG.info().$("copying data to the checkpoint [from=").$(rootPath).$(", to=").$(snapshotPath).$();
         copyRecursiveIgnoreErrors(ff, rootPath, snapshotPath, conf.getMkDirMode());
 
-        ddl("checkpoint release");
+        if (legacy) {
+            ddl("snapshot complete");
+        } else {
+            ddl("checkpoint release");
+        }
     }
 
     private void checkpointRecover() {
@@ -290,7 +298,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
 
             Os.sleep(rnd.nextLong(snapshotIndex * 50L));
             // Make snapshot here
-            checkpointCreate();
+            checkpointCreate((rnd.nextInt() >> 30) == 1);
 
             asyncWalApply.join();
 
