@@ -1159,7 +1159,11 @@ public final class TableUtils {
             log.debug().$("open [file=").$(path).$(", fd=").$(fd).I$();
             return fd;
         }
-        throw CairoException.critical(ff.errno()).put("could not open read-only [file=").put(path).put(']');
+        int errno = ff.errno();
+        if (CairoException.errnoReadPathDoesNotExist(errno)) {
+            throw CairoException.critical(errno).put("could not open, file does not exist: ").put(path).put(']');
+        }
+        throw CairoException.critical(errno).put("could not open read-only [file=").put(path).put(']');
     }
 
     public static int openRW(FilesFacade ff, LPSZ path, Log log, long opts) {

@@ -47,6 +47,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
@@ -69,7 +70,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected boolean disconnected;
     protected short floatDefaultColumnType;
     protected short integerDefaultColumnType;
-    protected boolean useLegacyString;
     protected LineTcpReceiverConfiguration lineTcpConfiguration;
     protected long microSecondTicks;
     protected int nWriterThreads;
@@ -78,6 +78,7 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected LineTcpMeasurementScheduler scheduler;
     protected boolean stringToCharCastAllowed;
     protected boolean symbolAsFieldSupported;
+    protected boolean useLegacyString;
     protected WorkerPool workerPool;
 
     @Before
@@ -119,8 +120,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     }
 
     protected void assertTable(CharSequence expected, String tableName) {
-        try (TableReader reader = newOffPoolReader(configuration, tableName)) {
-            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
+        try (
+                TableReader reader = newOffPoolReader(configuration, tableName);
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
+            assertCursorTwoPass(expected, cursor, reader.getMetadata());
         }
     }
 
@@ -177,11 +181,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean isUseLegacyStringDefault() {
-                return useLegacyString;
-            }
-
-            @Override
             public boolean getDisconnectOnError() {
                 return disconnectOnError;
             }
@@ -227,6 +226,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             @Override
             public boolean isStringToCharCastAllowed() {
                 return stringToCharCastAllowed;
+            }
+
+            @Override
+            public boolean isUseLegacyStringDefault() {
+                return useLegacyString;
             }
         };
     }

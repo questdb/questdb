@@ -96,24 +96,6 @@ public class IntervalUtilsTest {
     }
 
     @Test
-    public void testParseFloorPartialTimestamp_truncateNanos() throws NumericException {
-        long expected = IntervalUtils.parseFloorPartialTimestamp("2019-01-01T00:00:00.123456Z");
-        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.123456789Z");
-        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.12345678Z");
-        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.1234567Z");
-
-        // with offset
-        expected = IntervalUtils.parseFloorPartialTimestamp("2019-01-01T00:00:00.123456+01:00");
-        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.123456789+01:00");
-        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.12345678+01:00");
-        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.1234567+01:00");
-    }
-
-    private static void assertParseFloorPartialTimestampEquals(long expectedTimestamp, CharSequence actual) throws NumericException {
-        Assert.assertEquals(expectedTimestamp, IntervalUtils.parseFloorPartialTimestamp(actual));
-    }
-
-    @Test
     public void testIntersectEmpty() {
         LongList intervals = new LongList();
         // A
@@ -334,6 +316,20 @@ public class IntervalUtilsTest {
     }
 
     @Test
+    public void testParseFloorPartialTimestamp_truncateNanos() throws NumericException {
+        long expected = IntervalUtils.parseFloorPartialTimestamp("2019-01-01T00:00:00.123456Z");
+        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.123456789Z");
+        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.12345678Z");
+        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.1234567Z");
+
+        // with offset
+        expected = IntervalUtils.parseFloorPartialTimestamp("2019-01-01T00:00:00.123456+01:00");
+        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.123456789+01:00");
+        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.12345678+01:00");
+        assertParseFloorPartialTimestampEquals(expected, "2019-01-01T00:00:00.1234567+01:00");
+    }
+
+    @Test
     public void testUnionAllAfterB() {
         LongList intervals = new LongList();
         // A
@@ -393,6 +389,10 @@ public class IntervalUtilsTest {
         add(intervals, 6, 7);
 
         runTestUnionInplace(intervals, 4, "[-1,4], [6,7]");
+    }
+
+    private static void assertParseFloorPartialTimestampEquals(long expectedTimestamp, CharSequence actual) throws NumericException {
+        Assert.assertEquals(expectedTimestamp, IntervalUtils.parseFloorPartialTimestamp(actual));
     }
 
     private void add(LongList intervals, long lo, long hi) {

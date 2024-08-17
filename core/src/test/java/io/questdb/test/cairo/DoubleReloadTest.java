@@ -44,20 +44,20 @@ public class DoubleReloadTest extends AbstractCairoTest {
 
         try (
                 TableReader reader = newOffPoolReader(configuration, "int_test");
-                TableWriter w = newOffPoolWriter(configuration, "int_test", metrics)
+                TableWriter writer = newOffPoolWriter(configuration, "int_test", metrics)
         ) {
             reader.reload();
 
-            TableWriter.Row r = w.newRow();
+            TableWriter.Row r = writer.newRow();
             r.putInt(0, 10);
             r.append();
-            w.commit();
+            writer.commit();
             reader.reload();
 
-            r = w.newRow();
+            r = writer.newRow();
             r.putInt(0, 10);
             r.append();
-            w.commit();
+            writer.commit();
 
             reader.reload();
             Assert.assertEquals(2, reader.size());

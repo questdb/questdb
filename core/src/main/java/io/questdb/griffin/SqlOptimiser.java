@@ -225,6 +225,12 @@ public class SqlOptimiser implements Mutable {
         return model != null && flexColumnModelTypes.contains(model.getSelectModelType());
     }
 
+    private static void pushDownLimitAdvice(QueryModel model, QueryModel nestedModel, boolean useDistinctModel) {
+        if ((nestedModel.getOrderBy().size() == 0 || isOrderedByDesignatedTimestamp(nestedModel)) && !useDistinctModel) {
+            nestedModel.setLimitAdvice(model.getLimitLo(), model.getLimitHi());
+        }
+    }
+
     /**
      * Recurse down expression node tree looking for an alias.
      */
@@ -2758,10 +2764,15 @@ public class SqlOptimiser implements Mutable {
         return nextLiteral(token, 0);
     }
 
-    private boolean nonAggregateFunctionDependsOn(ExpressionNode node, CharSequence argument) {
+    private boolean nonAggregateFunctionDependsOn(ExpressionNode node, ExpressionNode timestampNode) {
+        if (timestampNode == null) {
+            return false;
+        }
+
+        final CharSequence timestamp = timestampNode.token;
         sqlNodeStack.clear();
         while (node != null) {
-            if (node.type == LITERAL && Chars.equalsIgnoreCase(node.token, argument)) {
+            if (node.type == LITERAL && Chars.equalsIgnoreCase(node.token, timestamp)) {
                 return true;
             }
 
@@ -4643,7 +4654,7 @@ public class SqlOptimiser implements Mutable {
                 for (int i = 0, k = 0, n = model.getBottomUpColumns().size(); i < n; k++) {
                     QueryColumn qc = model.getBottomUpColumns().getQuick(i);
                     boolean isAFunctionUsingTimestampColumn = (qc.getAst().type == FUNCTION || qc.getAst().type == OPERATION)
-                            && nonAggregateFunctionDependsOn(qc.getAst(), nested.getTimestamp().token);
+                            && nonAggregateFunctionDependsOn(qc.getAst(), nested.getTimestamp());
 
                     if (
                             isAFunctionUsingTimestampColumn ||
@@ -5368,7 +5379,7 @@ public class SqlOptimiser implements Mutable {
                 // this is not a direct call to aggregation function, in which case
                 // we emit aggregation function into group-by model and leave the rest in outer model
                 final int beforeSplit = groupByModel.getBottomUpColumns().size();
-                if (checkForAggregates(qc.getAst()) || (sampleBy != null && nonAggregateFunctionDependsOn(qc.getAst(), baseModel.getTimestamp().token))) {
+                if (checkForAggregates(qc.getAst()) || (sampleBy != null && nonAggregateFunctionDependsOn(qc.getAst(), baseModel.getTimestamp()))) {
                     // push aggregates and literals outside aggregate functions
                     emitAggregatesAndLiterals(qc.getAst(), groupByModel, translatingModel, innerVirtualModel, baseModel, groupByNodes, groupByAliases);
                     emitCursors(qc.getAst(), cursorModel, innerVirtualModel, translatingModel, baseModel, sqlExecutionContext, sqlParserCallback);
@@ -5554,14 +5565,13 @@ public class SqlOptimiser implements Mutable {
             limitSource = translatingModel;
             translatingModel.setNestedModel(baseModel);
 
-            // translating model has limits to ensure clean factory separation
+            // Translating model has limits to ensure clean factory separation
             // during code generation. However, in some cases limit could also
             // be implemented by nested model. Nested model must not implement limit
             // when parent model is order by or join.
-            // Only exception is when order by is by designated timestamp because it'll be implemented as forward or backward scan (no sorting required) .
-            if ((baseModel.getOrderBy().size() == 0 || isOrderedByDesignatedTimestamp(baseModel)) && !useDistinctModel) {
-                baseModel.setLimitAdvice(model.getLimitLo(), model.getLimitHi());
-            }
+            // The only exception is when order by is by designated timestamp because
+            // it'll be implemented as forward or backward scan (no sorting required).
+            pushDownLimitAdvice(model, baseModel, useDistinctModel);
 
             translatingModel.moveLimitFrom(model);
             translatingModel.moveJoinAliasFrom(model);
@@ -5572,6 +5582,10 @@ public class SqlOptimiser implements Mutable {
             innerVirtualModel.setNestedModel(root);
             innerVirtualModel.moveLimitFrom(limitSource);
             innerVirtualModel.moveJoinAliasFrom(limitSource);
+
+            // Set limit hint if applicable.
+            pushDownLimitAdvice(innerVirtualModel, root, useDistinctModel);
+
             root = innerVirtualModel;
             limitSource = innerVirtualModel;
         }

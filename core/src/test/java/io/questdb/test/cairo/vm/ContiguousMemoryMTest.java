@@ -759,7 +759,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
 
                 // we expect memory to zero out the file, which failed to truncate
 
-                try (MemoryMR roMem = new MemoryCMRImpl(ff, path.$(), fileLen, MemoryTag.MMAP_DEFAULT, false)) {
+                try (MemoryMR roMem = new MemoryCMRImpl(ff, path.$(), fileLen, MemoryTag.MMAP_DEFAULT)) {
                     Assert.assertEquals(fileLen, roMem.size());
 
                     for (int i = 0; i < fileLen; i++) {
@@ -982,13 +982,12 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
                             MemoryTag.MMAP_DEFAULT,
                             configuration.getWriterFileOpenOpts()
                     );
-
                     MemoryCMR roMem = new MemoryCMRImpl(
                             TestFilesFacadeImpl.INSTANCE,
                             path.$(),
                             sz,
-                            MemoryTag.MMAP_DEFAULT,
-                            false)
+                            MemoryTag.MMAP_DEFAULT
+                    )
             ) {
                 code.run(rwMem, roMem);
             } finally {

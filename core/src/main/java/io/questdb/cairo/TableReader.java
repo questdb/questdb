@@ -65,7 +65,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final LongList openPartitionInfo;
     private final int partitionBy;
     private final Path path;
-    private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor();
     private final int rootLen;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final MemoryMR todoMem = Vm.getCMRInstance();
@@ -149,7 +148,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
             columnTops = new LongList(capacity / 2);
             columnTops.setPos(capacity / 2);
-            recordCursor.of(this);
         } catch (Throwable e) {
             close();
             throw e;
@@ -242,11 +240,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return columnVersionReader;
     }
 
-    public TableReaderRecordCursor getCursor() {
-        recordCursor.toTop();
-        return recordCursor;
-    }
-
     public long getDataVersion() {
         return this.txFile.getDataVersion();
     }
@@ -281,6 +274,11 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public int getPartitionCount() {
         return partitionCount;
+    }
+
+    @TestOnly
+    public int getPartitionIndex(int columnBase) {
+        return columnBase >>> columnCountShl;
     }
 
     public int getPartitionIndexByTimestamp(long timestamp) {
@@ -844,7 +842,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (mem != null && mem != NullMemoryCMR.INSTANCE) {
             mem.of(ff, path.$(), columnSize, columnSize, MemoryTag.MMAP_TABLE_READER);
         } else {
-            mem = Vm.getCMRInstance(ff, path.$(), columnSize, MemoryTag.MMAP_TABLE_READER, true);
+            mem = Vm.getCMRInstance(ff, path.$(), columnSize, MemoryTag.MMAP_TABLE_READER);
             columns.setQuick(primaryIndex, mem);
         }
         return mem;
@@ -1066,8 +1064,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
             int writerIndex = metadata.getWriterIndex(columnIndex);
             final int versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, writerIndex);
-            final long columnTop = versionRecordIndex > -1L ? columnVersionReader.getColumnTopByIndex(versionRecordIndex) : 0L;
-            long columnTxn = versionRecordIndex > -1L ? columnVersionReader.getColumnNameTxnByIndex(versionRecordIndex) : -1L;
+            final long columnTop = versionRecordIndex > -1 ? columnVersionReader.getColumnTopByIndex(versionRecordIndex) : 0L;
+            long columnTxn = versionRecordIndex > -1 ? columnVersionReader.getColumnNameTxnByIndex(versionRecordIndex) : -1L;
             if (columnTxn == -1L) {
                 // When column is added, column version will have txn number for the partition
                 // where it's added. It will also have the txn number in the [default] partition
@@ -1079,7 +1077,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // created in the current partition. Older partitions would simply have no
             // column file. This makes it necessary to check the partition timestamp in Column Version file
             // of when the column was added.
-            if (columnRowCount > 0 && (versionRecordIndex > -1L || columnVersionReader.getColumnTopPartitionTimestamp(writerIndex) <= partitionTimestamp)) {
+            if (columnRowCount > 0 && (versionRecordIndex > -1 || columnVersionReader.getColumnTopPartitionTimestamp(writerIndex) <= partitionTimestamp)) {
                 final int columnType = metadata.getColumnType(columnIndex);
 
                 final MemoryCMR dataMem = columns.getQuick(primaryIndex);
@@ -1142,51 +1140,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return columnVersionReader.getVersion() == columnVersion;
     }
 
-    private boolean reloadMetadata(int txnMetadataVersion, long deadline, boolean reshuffleColumns) {
-        // create transition index, which will help us reuse already open resources
-        if (txnMetadataVersion == metadata.getMetadataVersion()) {
-            return true;
-        }
-
-        while (true) {
-            try {
-                if (!metadata.prepareTransition(txnMetadataVersion)) {
-                    if (clock.getTicks() < deadline) {
-                        return false;
-                    }
-                    LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms, table=").$(tableToken.getTableName()).I$();
-                    throw CairoException.critical(0).put("Metadata read timeout [table=").put(tableToken.getTableName()).put(']');
-                }
-            } catch (CairoException ex) {
-                // This is temporary solution until we can get multiple version of metadata not overwriting each other
-                TableUtils.handleMetadataLoadException(tableToken.getTableName(), deadline, ex, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
-                continue;
-            }
-
-            assert !reshuffleColumns || metadata.getColumnCount() == this.columnCount;
-            TableReaderMetadataTransitionIndex transitionIndex = metadata.applyTransition();
-            if (reshuffleColumns) {
-                final int columnCount = metadata.getColumnCount();
-
-                int columnCountShl = getColumnBits(columnCount);
-                // when a column is added we cannot easily reshuffle columns in-place
-                // the reason is that we'd have to create gaps in columns list between
-                // partitions. It is possible in theory, but this could be an algo for
-                // another day.
-                if (columnCountShl > this.columnCountShl) {
-                    createNewColumnList(columnCount, transitionIndex, columnCountShl);
-                } else {
-                    reshuffleColumns(columnCount, transitionIndex);
-                }
-                // rearrange symbol map reader list
-                reshuffleSymbolMapReaders(transitionIndex, columnCount);
-                this.columnCount = columnCount;
-                reloadSymbolMapCounts();
-            }
-            return true;
-        }
-    }
-
     /**
      * Updates boundaries of all columns in partition.
      *
@@ -1229,6 +1182,51 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
         } finally {
             path.trimTo(rootLen);
+        }
+    }
+
+    private boolean reloadMetadata(int txnMetadataVersion, long deadline, boolean reshuffleColumns) {
+        // create transition index, which will help us reuse already open resources
+        if (txnMetadataVersion == metadata.getMetadataVersion()) {
+            return true;
+        }
+
+        while (true) {
+            try {
+                if (!metadata.prepareTransition(txnMetadataVersion)) {
+                    if (clock.getTicks() < deadline) {
+                        return false;
+                    }
+                    LOG.error().$("metadata read timeout [timeout=").$(configuration.getSpinLockTimeout()).utf8("ms, table=").$(tableToken.getTableName()).I$();
+                    throw CairoException.critical(0).put("Metadata read timeout [table=").put(tableToken.getTableName()).put(']');
+                }
+            } catch (CairoException ex) {
+                // This is temporary solution until we can get multiple version of metadata not overwriting each other
+                TableUtils.handleMetadataLoadException(tableToken.getTableName(), deadline, ex, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+                continue;
+            }
+
+            assert !reshuffleColumns || metadata.getColumnCount() == this.columnCount;
+            TableReaderMetadataTransitionIndex transitionIndex = metadata.applyTransition();
+            if (reshuffleColumns) {
+                final int columnCount = metadata.getColumnCount();
+
+                int columnCountShl = getColumnBits(columnCount);
+                // when a column is added we cannot easily reshuffle columns in-place
+                // the reason is that we'd have to create gaps in columns list between
+                // partitions. It is possible in theory, but this could be an algo for
+                // another day.
+                if (columnCountShl > this.columnCountShl) {
+                    createNewColumnList(columnCount, transitionIndex, columnCountShl);
+                } else {
+                    reshuffleColumns(columnCount, transitionIndex);
+                }
+                // rearrange symbol map reader list
+                reshuffleSymbolMapReaders(transitionIndex, columnCount);
+                this.columnCount = columnCount;
+                reloadSymbolMapCounts();
+            }
+            return true;
         }
     }
 
@@ -1370,9 +1368,5 @@ public class TableReader implements Closeable, SymbolTableSource {
                 renewSymbolMapReader(null, i);
             }
         }
-    }
-
-    int getPartitionIndex(int columnBase) {
-        return columnBase >>> columnCountShl;
     }
 }

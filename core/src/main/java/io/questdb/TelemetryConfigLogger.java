@@ -36,6 +36,7 @@ import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.NanosecondClock;
@@ -121,7 +122,7 @@ public class TelemetryConfigLogger implements Closeable {
 
                     // if the configuration changed to enable or disable telemetry
                     // we need to update the table to reflect that
-                    if (enabled != _enabled || !questDBVersion.equals(_questDBVersion)) {
+                    if (enabled != _enabled || !Chars.equalsNc(questDBVersion, _questDBVersion)) {
                         appendConfigRow(engine, configWriter, l256, enabled);
                         LOG.advisory()
                                 .$("instance config changes [id=").$256(l256.getLong0(), l256.getLong1(), 0, 0)
