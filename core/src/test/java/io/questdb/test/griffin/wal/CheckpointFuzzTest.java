@@ -149,7 +149,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         CairoConfiguration conf = engine.getConfiguration();
 
         FilesFacade ff = conf.getFilesFacade();
-        Path snapshotPath = Path.getThreadLocal(conf.getRoot()).put("_snapshot");
+        Path snapshotPath = Path.getThreadLocal(conf.getRoot()).put(TableUtils.CHECKPOINT_META_FILE_NAME);
         Path rootPath = Path.getThreadLocal2(conf.getRoot());
 
         ff.mkdirs(snapshotPath, conf.getMkDirMode());
@@ -166,7 +166,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
 
         CairoConfiguration conf = engine.getConfiguration();
         FilesFacade ff = conf.getFilesFacade();
-        Path snapshotPath = Path.getThreadLocal(conf.getRoot()).put("_snapshot").slash();
+        Path snapshotPath = Path.getThreadLocal(conf.getRoot()).put(TableUtils.CHECKPOINT_META_FILE_NAME).slash();
         Path rootPath = Path.getThreadLocal2(conf.getRoot()).slash();
 
         ff.rmdir(rootPath);
