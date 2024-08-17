@@ -929,7 +929,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
             // create snapshot.txt file
             FilesFacade ff = configuration.getFilesFacade();
-            path.trimTo(rootLen).concat(TableUtils.CHECKPOINT_META_FILE_NAME_TXT);
+            path.trimTo(rootLen).concat(TableUtils.CHECKPOINT_LEGACY_META_FILE_NAME_TXT);
             int fd = ff.openRW(path.$(), configuration.getWriterFileOpenOpts());
             Assert.assertTrue(fd > 0);
 

@@ -490,7 +490,14 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             }
 
             // Check if the checkpoint metadata file exists.
-            srcPath.trimTo(checkpointRootLen).concat(TableUtils.CHECKPOINT_META_FILE_NAME);
+            // legacy file first:
+            srcPath.trimTo(checkpointRootLen).concat(TableUtils.CHECKPOINT_LEGACY_META_FILE_NAME);
+
+            if (!ff.exists(srcPath.$())) {
+                // now current metadata file
+                srcPath.trimTo(checkpointRootLen).concat(TableUtils.CHECKPOINT_META_FILE_NAME);
+            }
+
             if (!ff.exists(srcPath.$())) {
                 if (triggerExists) {
                     throw CairoException.nonCritical().put("checkpoint trigger file found, but the checkpoint metadata file does not exist [file=").put(srcPath).put(", trigger=").put(dstPath).put(']');
@@ -505,15 +512,19 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             CharSequence snapshotInstanceId = memFile.getStrA(0);
             if (Chars.empty(snapshotInstanceId)) {
                 // Check _snapshot.txt file too reading it as a text file.
-                srcPath.trimTo(checkpointRootLen).concat(TableUtils.CHECKPOINT_META_FILE_NAME_TXT);
+                srcPath.trimTo(checkpointRootLen).concat(TableUtils.CHECKPOINT_LEGACY_META_FILE_NAME_TXT);
                 String snapshotInstanceIdRaw = TableUtils.readText(ff, srcPath.$());
                 if (snapshotInstanceIdRaw != null) {
                     snapshotInstanceId = snapshotInstanceIdRaw.trim();
                 }
             }
 
-            if (!triggerExists &&
-                    (Chars.empty(currentInstanceId) || Chars.empty(snapshotInstanceId) || Chars.equals(currentInstanceId, snapshotInstanceId))
+            if (!triggerExists
+                    && (
+                    Chars.empty(currentInstanceId)
+                            || Chars.empty(snapshotInstanceId)
+                            || Chars.equals(currentInstanceId, snapshotInstanceId)
+            )
             ) {
                 LOG.info()
                         .$("skipping recovery from checkpoint [currentId=").$(currentInstanceId)
