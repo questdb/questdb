@@ -581,7 +581,7 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public CharSequence getLegacyCheckpointRoot() {
+    public @NotNull CharSequence getLegacyCheckpointRoot() {
         return getDelegate().getLegacyCheckpointRoot();
     }
 

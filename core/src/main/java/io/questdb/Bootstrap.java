@@ -538,7 +538,7 @@ public class Bootstrap {
             verifyFileSystem(path, cairoConfig.getRoot(), "db", true);
             verifyFileSystem(path, cairoConfig.getBackupRoot(), "backup", true);
             verifyFileSystem(path, cairoConfig.getCheckpointRoot(), TableUtils.CHECKPOINT_DIRECTORY, true);
-            verifyFileSystem(path, cairoConfig.getCheckpointRoot(), TableUtils.LEGACY_CHECKPOINT_DIRECTORY, true);
+            verifyFileSystem(path, cairoConfig.getLegacyCheckpointRoot(), TableUtils.LEGACY_CHECKPOINT_DIRECTORY, true);
             verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input", false);
             verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker", true);
             verifyFileOpts(path, cairoConfig);

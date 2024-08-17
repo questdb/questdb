@@ -298,128 +298,103 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRecoverCheckpointLargePartitionCount() throws Exception {
-        final int partitionCount = 2000;
+    public void testCheckpointRestoresDroppedWalTable() throws Exception {
         final String snapshotId = "id1";
         final String restartedId = "id2";
         assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
-            final String tableName = "t";
-            ddl(
-                    "create table " + tableName + " as " +
-                            "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(" + partitionCount + ")) timestamp(ts) partition by day"
-            );
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
-            ddl("checkpoint create");
+            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
+            drainWalQueue();
 
-            insert(
-                    "insert into " + tableName +
-                            " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)"
-            );
+            ddl("checkpoint create;");
 
-            // Release all readers and writers, but keep the snapshot dir around.
+            drop("drop table test;");
+            drainWalQueue();
+
+            assertSql("count\n0\n", "select count() from tables() where table_name = 'test';");
+
+            // Release readers, writers and table name registry files, but keep the snapshot dir around.
             engine.clear();
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.closeNameRegistry();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
             engine.checkpointRecover();
+            engine.reloadTableNames();
 
-            // Data inserted after PREPARE SNAPSHOT should be discarded.
+            drainWalQueue();
+
+            // Dropped table should be there.
+            assertSql("count\n1\n", "select count() from tables() where table_name = 'test';");
             assertSql(
-                    "count\n" +
-                            partitionCount + "\n",
-                    "select count() from " + tableName
+                    "ts\tname\tval\n" +
+                            "2023-09-20T12:39:01.933062Z\tfoobar\t42\n",
+                    "test;"
             );
         });
     }
 
     @Test
-    public void testRecoverCheckpointRestoresDroppedColumns() throws Exception {
-        final String snapshotId = "00000000-0000-0000-0000-000000000000";
-        final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
+    public void testCheckpointRestoresRenamedWalTableName() throws Exception {
+        final String snapshotId = "id1";
+        final String restartedId = "id2";
         assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
-            final String tableName = "t";
-            ddl(
-                    "create table " + tableName + " as " +
-                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
-            );
+            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
+            drainWalQueue();
 
-            ddl("checkpoint create");
+            ddl("checkpoint create;");
 
-            final String expectedAllColumns = "a\tb\tc\n" +
-                    "JW\tC\t1\n" +
-                    "WH\tB\t2\n" +
-                    "PE\tB\t3\n";
-            assertSql(expectedAllColumns, "select * from " + tableName);
+            ddl("rename table test to test2;");
+            drainWalQueue();
 
-            ddl("alter table " + tableName + " drop column b");
-            assertSql(
-                    "a\tc\n" +
-                            "JW\t1\n" +
-                            "WH\t2\n" +
-                            "PE\t3\n",
-                    "select * from " + tableName
-            );
+            assertSql("count\n0\n", "select count() from tables() where table_name = 'test';");
+            assertSql("count\n1\n", "select count() from tables() where table_name = 'test2';");
 
-            // Release all readers and writers, but keep the snapshot dir around.
+            // Release readers, writers and table name registry files, but keep the snapshot dir around.
             engine.clear();
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.closeNameRegistry();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
             engine.checkpointRecover();
+            engine.reloadTableNames();
 
-            // Dropped column should be there.
-            assertSql(expectedAllColumns, "select * from " + tableName);
+            drainWalQueue();
+
+            // Renamed table should be there under the original name.
+            assertSql("count\n1\n", "select count() from tables() where table_name = 'test';");
+            assertSql("count\n0\n", "select count() from tables() where table_name = 'test2';");
         });
     }
 
     @Test
-    public void testRecoverCheckpointSupportsCheckpointTxtFile() throws Exception {
-        final int partitionCount = 10;
+    public void testCheckpointRestoresTruncatedWalTable() throws Exception {
         final String snapshotId = "id1";
         final String restartedId = "id2";
         assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
-            final String tableName = "t";
-            ddl(
-                    "create table " + tableName + " as " +
-                            "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(" + partitionCount + ")) timestamp(ts) partition by day"
-            );
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
-            ddl("checkpoint create");
+            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            insert("insert into test values (now(), 'foobar', 42);");
+            drainWalQueue();
 
-            insert(
-                    "insert into " + tableName +
-                            " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)"
-            );
+            ddl("checkpoint create;");
+
+            ddl("truncate table test;");
+            drainWalQueue();
+
+            assertSql("count\n0\n", "select count() from test;");
 
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
-
-            // create snapshot.txt file
-            FilesFacade ff = configuration.getFilesFacade();
-            path.trimTo(rootLen).concat(TableUtils.CHECKPOINT_META_FILE_NAME_TXT);
-            int fd = ff.openRW(path.$(), configuration.getWriterFileOpenOpts());
-            Assert.assertTrue(fd > 0);
-
-            try {
-                try (DirectUtf8Sink utf8 = new DirectUtf8Sink(3)) {
-                    utf8.put(snapshotId);
-                    ff.write(fd, utf8.ptr(), utf8.size(), 0);
-                    ff.truncate(fd, utf8.size());
-                }
-            } finally {
-                ff.close(fd);
-            }
-            Assert.assertEquals(ff.length(path.$()), restartedId.length());
-
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
             engine.checkpointRecover();
 
-            // Data inserted after PREPARE SNAPSHOT should be discarded.
-            assertSql(
-                    "count\n" +
-                            partitionCount + "\n",
-                    "select count() from " + tableName
-            );
+            drainWalQueue();
+
+            // Dropped rows should be there.
+            assertSql("count\n1\n", "select count() from test;");
         });
     }
 
@@ -856,103 +831,128 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCheckpointRestoresDroppedWalTable() throws Exception {
+    public void testRecoverCheckpointLargePartitionCount() throws Exception {
+        final int partitionCount = 2000;
         final String snapshotId = "id1";
         final String restartedId = "id2";
         assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+            final String tableName = "t";
+            ddl(
+                    "create table " + tableName + " as " +
+                            "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(" + partitionCount + ")) timestamp(ts) partition by day"
+            );
 
-            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
-            insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
-            drainWalQueue();
+            ddl("checkpoint create");
 
-            ddl("checkpoint create;");
+            insert(
+                    "insert into " + tableName +
+                            " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)"
+            );
 
-            drop("drop table test;");
-            drainWalQueue();
-
-            assertSql("count\n0\n", "select count() from tables() where table_name = 'test';");
-
-            // Release readers, writers and table name registry files, but keep the snapshot dir around.
+            // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
-            engine.closeNameRegistry();
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
             engine.checkpointRecover();
-            engine.reloadTableNames();
 
-            drainWalQueue();
-
-            // Dropped table should be there.
-            assertSql("count\n1\n", "select count() from tables() where table_name = 'test';");
+            // Data inserted after PREPARE SNAPSHOT should be discarded.
             assertSql(
-                    "ts\tname\tval\n" +
-                            "2023-09-20T12:39:01.933062Z\tfoobar\t42\n",
-                    "test;"
+                    "count\n" +
+                            partitionCount + "\n",
+                    "select count() from " + tableName
             );
         });
     }
 
     @Test
-    public void testCheckpointRestoresRenamedWalTableName() throws Exception {
-        final String snapshotId = "id1";
-        final String restartedId = "id2";
+    public void testRecoverCheckpointRestoresDroppedColumns() throws Exception {
+        final String snapshotId = "00000000-0000-0000-0000-000000000000";
+        final String restartedId = "123e4567-e89b-12d3-a456-426614174000";
         assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
-            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
-            insert("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
-            drainWalQueue();
+            final String tableName = "t";
+            ddl(
+                    "create table " + tableName + " as " +
+                            "(select rnd_str(2,3,0) a, rnd_symbol('A','B','C') b, x c from long_sequence(3))"
+            );
 
-            ddl("checkpoint create;");
+            ddl("checkpoint create");
 
-            ddl("rename table test to test2;");
-            drainWalQueue();
+            final String expectedAllColumns = "a\tb\tc\n" +
+                    "JW\tC\t1\n" +
+                    "WH\tB\t2\n" +
+                    "PE\tB\t3\n";
+            assertSql(expectedAllColumns, "select * from " + tableName);
 
-            assertSql("count\n0\n", "select count() from tables() where table_name = 'test';");
-            assertSql("count\n1\n", "select count() from tables() where table_name = 'test2';");
+            ddl("alter table " + tableName + " drop column b");
+            assertSql(
+                    "a\tc\n" +
+                            "JW\t1\n" +
+                            "WH\t2\n" +
+                            "PE\t3\n",
+                    "select * from " + tableName
+            );
 
-            // Release readers, writers and table name registry files, but keep the snapshot dir around.
+            // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
-            engine.closeNameRegistry();
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
             engine.checkpointRecover();
-            engine.reloadTableNames();
 
-            drainWalQueue();
-
-            // Renamed table should be there under the original name.
-            assertSql("count\n1\n", "select count() from tables() where table_name = 'test';");
-            assertSql("count\n0\n", "select count() from tables() where table_name = 'test2';");
+            // Dropped column should be there.
+            assertSql(expectedAllColumns, "select * from " + tableName);
         });
     }
 
     @Test
-    public void testCheckpointRestoresTruncatedWalTable() throws Exception {
+    public void testRecoverCheckpointSupportsCheckpointTxtFile() throws Exception {
+        final int partitionCount = 10;
         final String snapshotId = "id1";
         final String restartedId = "id2";
         assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "");
+            final String tableName = "t";
+            ddl(
+                    "create table " + tableName + " as " +
+                            "(select x, timestamp_sequence(0, 100000000000) ts from long_sequence(" + partitionCount + ")) timestamp(ts) partition by day"
+            );
 
-            ddl("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
-            insert("insert into test values (now(), 'foobar', 42);");
-            drainWalQueue();
+            ddl("checkpoint create");
 
-            ddl("checkpoint create;");
-
-            ddl("truncate table test;");
-            drainWalQueue();
-
-            assertSql("count\n0\n", "select count() from test;");
+            insert(
+                    "insert into " + tableName +
+                            " select x+20 x, timestamp_sequence(100000000000, 100000000000) ts from long_sequence(3)"
+            );
 
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
+
+            // create snapshot.txt file
+            FilesFacade ff = configuration.getFilesFacade();
+            path.trimTo(rootLen).concat(TableUtils.CHECKPOINT_META_FILE_NAME_TXT);
+            int fd = ff.openRW(path.$(), configuration.getWriterFileOpenOpts());
+            Assert.assertTrue(fd > 0);
+
+            try {
+                try (DirectUtf8Sink utf8 = new DirectUtf8Sink(3)) {
+                    utf8.put(snapshotId);
+                    ff.write(fd, utf8.ptr(), utf8.size(), 0);
+                    ff.truncate(fd, utf8.size());
+                }
+            } finally {
+                ff.close(fd);
+            }
+            Assert.assertEquals(ff.length(path.$()), restartedId.length());
+
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
             engine.checkpointRecover();
 
-            drainWalQueue();
-
-            // Dropped rows should be there.
-            assertSql("count\n1\n", "select count() from test;");
+            // Data inserted after PREPARE SNAPSHOT should be discarded.
+            assertSql(
+                    "count\n" +
+                            partitionCount + "\n",
+                    "select count() from " + tableName
+            );
         });
     }
 
@@ -1040,7 +1040,7 @@ public class CheckpointTest extends AbstractCairoTest {
         final String snapshotId = "id1";
         final String restartedId = "id2";
         assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
             String tableName = testName.getMethodName() + "_abc";
             ddl(
                     "create table " + tableName + " as (" +
@@ -1088,7 +1088,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
             engine.checkpointRecover();
 
             // apply updates from WAL
@@ -1195,6 +1195,29 @@ public class CheckpointTest extends AbstractCairoTest {
         Files.touch(triggerFilePath.$());
     }
 
+    private void testCheckpointPrepareCheckMetadataFile(String snapshotId) throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+
+            try (Path path = new Path()) {
+                ddl("create table x as (select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))");
+                ddl("checkpoint create");
+
+                path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
+                FilesFacade ff = configuration.getFilesFacade();
+                try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+                    mem.smallFile(ff, path.concat(TableUtils.CHECKPOINT_META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
+
+                    CharSequence expectedId = configuration.getSnapshotInstanceId();
+                    CharSequence actualId = mem.getStrA(0);
+                    Assert.assertTrue(Chars.equals(actualId, expectedId));
+                }
+
+                ddl("checkpoint release");
+            }
+        });
+    }
+
     private void testRecoverCheckpoint(
             String snapshotId,
             String restartedId,
@@ -1202,7 +1225,7 @@ public class CheckpointTest extends AbstractCairoTest {
             boolean expectRecovery
     ) throws Exception {
         assertMemoryLeak(() -> {
-            node1.setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
+            node1.setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
             Assert.assertEquals(engine.getConfiguration().getSnapshotInstanceId(), snapshotId);
 
             final String nonPartitionedTable = "npt";
@@ -1248,7 +1271,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
             // Release all readers and writers, but keep the snapshot dir around.
             engine.clear();
-            node1.setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, restartedId);
+            node1.setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
             Assert.assertEquals(engine.getConfiguration().getSnapshotInstanceId(), restartedId);
 
             if (createTriggerFile) {
@@ -1279,29 +1302,6 @@ public class CheckpointTest extends AbstractCairoTest {
                 } else {
                     Assert.fail("Recovery shouldn't happen but the snapshot path does not exist:" + Utf8s.toString(path));
                 }
-            }
-        });
-    }
-
-    private void testCheckpointPrepareCheckMetadataFile(String snapshotId) throws Exception {
-        assertMemoryLeak(() -> {
-            setProperty(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, snapshotId);
-
-            try (Path path = new Path()) {
-                ddl("create table x as (select * from (select rnd_str(5,10,2) a, x b from long_sequence(20)))");
-                ddl("checkpoint create");
-
-                path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
-                FilesFacade ff = configuration.getFilesFacade();
-                try (MemoryCMARW mem = Vm.getCMARWInstance()) {
-                    mem.smallFile(ff, path.concat(TableUtils.CHECKPOINT_META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-
-                    CharSequence expectedId = configuration.getSnapshotInstanceId();
-                    CharSequence actualId = mem.getStrA(0);
-                    Assert.assertTrue(Chars.equals(actualId, expectedId));
-                }
-
-                ddl("checkpoint release");
             }
         });
     }

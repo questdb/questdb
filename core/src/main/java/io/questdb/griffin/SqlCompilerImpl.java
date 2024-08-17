@@ -1649,7 +1649,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.withContext(executionContext);
     }
 
-    private void compileLegacySnapshot(SqlExecutionContext executionContext) throws SqlException {
+    private void compileLegacyCheckpoint(SqlExecutionContext executionContext) throws SqlException {
         executionContext.getSecurityContext().authorizeDatabaseSnapshot();
         CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
 
@@ -3175,7 +3175,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final KeywordBasedExecutor sqlBackup = backupAgent::sqlBackup;
         final KeywordBasedExecutor vacuumTable = this::vacuum;
         final KeywordBasedExecutor compileCheckpoint = this::compileCheckpoint;
-        final KeywordBasedExecutor compileLegacySnapshot = this::compileLegacySnapshot;
+        final KeywordBasedExecutor compileLegacySnapshot = this::compileLegacyCheckpoint;
         final KeywordBasedExecutor compileDeallocate = this::compileDeallocate;
         final KeywordBasedExecutor cancelQuery = this::cancelQuery;
 

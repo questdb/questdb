@@ -204,7 +204,8 @@ public final class TableUtils {
         checkSum = checkSum * 31 + seqTxn;
         checkSum = checkSum * 31 + lagRowCount;
         checkSum = checkSum * 31 + lagTxnCount;
-        return Long.hashCode(checkSum);
+        //noinspection UseHashCodeMethodInspection
+        return (int) (checkSum ^ (checkSum >>> 32));
     }
 
     public static int changeColumnTypeInMetadata(CharSequence columnName, int newType, LowerCaseCharSequenceIntHashMap columnNameIndexMap, ObjList<TableColumnMetadata> columnMetadata) {
