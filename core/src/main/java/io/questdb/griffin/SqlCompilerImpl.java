@@ -29,6 +29,7 @@ import io.questdb.PropServerConfiguration;
 import io.questdb.TelemetryOrigin;
 import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
@@ -3527,8 +3528,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         sink.clear();
                         sink.put('\'').put(tableName).put('\'');
                         try (
-                                RecordCursorFactory factory = engine.select(sink, executionContext);
-                                RecordCursor cursor = factory.getCursor(executionContext)
+                                SqlExecutionContext allowAllContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE);
+                                RecordCursorFactory factory = engine.select(sink, allowAllContext);
+                                RecordCursor cursor = factory.getCursor(allowAllContext)
                         ) {
                             // statement/query timeout value is most likely too small for backup operation
                             copyTableData(
