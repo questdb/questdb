@@ -262,12 +262,12 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         of(SET);
     }
 
-    public void ofSnapshotComplete() {
-        of(SNAPSHOT_DB_COMPLETE);
+    public void ofCheckpointRelease() {
+        of(CHECKPOINT_RELEASE);
     }
 
-    public void ofSnapshotPrepare() {
-        of(SNAPSHOT_DB_PREPARE);
+    public void ofCheckpointCreate() {
+        of(CHECKPOINT_CREATE);
     }
 
     public void ofTableResume() {

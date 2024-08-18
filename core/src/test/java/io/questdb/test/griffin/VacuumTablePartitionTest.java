@@ -50,7 +50,7 @@ public class VacuumTablePartitionTest extends AbstractCairoTest {
             }
 
             // cleanup
-            try (O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(engine, engine.getSnapshotAgent(), 1)) {
+            try (O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(engine, 1)) {
                 purgeDiscoveryJob.drain(0);
             }
         });
