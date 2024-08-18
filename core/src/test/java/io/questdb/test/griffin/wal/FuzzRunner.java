@@ -286,9 +286,15 @@ public class FuzzRunner {
             if (reader.size() > 0) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 for (int columnIndex = 0; columnIndex < metadata.getColumnCount(); columnIndex++) {
-                    if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))
-                            && metadata.isColumnIndexed(columnIndex)) {
-                        checkIndexRandomValueScan(tableNameNoWal, tableNameWal, rnd, reader.size(), metadata.getColumnName(columnIndex));
+                    if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isColumnIndexed(columnIndex)) {
+                        checkIndexRandomValueScan(
+                                tableNameNoWal,
+                                tableNameWal,
+                                rnd,
+                                reader.size(),
+                                metadata.getColumnName(columnIndex),
+                                metadata.getColumnName(metadata.getTimestampIndex())
+                        );
                     }
                 }
             }
@@ -466,17 +472,27 @@ public class FuzzRunner {
         applyManyWalParallel(tablesTransactions, applyRnd, tableName, false, true);
     }
 
-    private void checkIndexRandomValueScan(String expectedTableName, String actualTableName, Rnd rnd, long recordCount, String columnName) throws SqlException {
+    private void checkIndexRandomValueScan(
+            String expectedTableName,
+            String actualTableName,
+            Rnd rnd,
+            long recordCount,
+            String symbolColumnName,
+            String tsColumnName
+    ) throws SqlException {
         long randomRow = rnd.nextLong(recordCount);
         sink.clear();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            TestUtils.printSql(compiler, sqlExecutionContext, "select \"" + columnName + "\" as a from " + expectedTableName + " limit " + randomRow + ", 1", sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, "select \"" + symbolColumnName + "\" as a from " + expectedTableName + " limit " + randomRow + ", 1", sink);
             String prefix = "a\n";
             String randomValue = sink.length() > prefix.length() + 2 ? sink.subSequence(prefix.length(), sink.length() - 1).toString() : null;
-            String indexedWhereClause = " where \"" + columnName + "\" = " + (randomValue == null ? "null" : "'" + randomValue + "'");
+            String indexedWhereClause = " where \"" + symbolColumnName + "\" = " + (randomValue == null ? "null" : "'" + randomValue + "'");
             LOG.info().$("checking random index with filter: ").$(indexedWhereClause).I$();
             String limit = ""; // For debugging
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedTableName + indexedWhereClause + limit, actualTableName + indexedWhereClause + limit, LOG);
+            // Now let's do backward order assertion
+            String orderBy = " order by " + tsColumnName + " desc";
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedTableName + indexedWhereClause + orderBy + limit, actualTableName + indexedWhereClause + orderBy + limit, LOG);
         }
     }
 

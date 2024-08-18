@@ -50,7 +50,6 @@ void filter_with_prefix_generic(
     for (; i < limit; i += step) {
         MM_PREFETCH_T0(rows + i + 64);
 
-        //TODO: optimize load
         TVec current_hashes_vec;
         for (int j = 0; j < TVec::size(); ++j) {
             current_hashes_vec.insert(j, hashes[to_local_row_id(rows[i + j] - 1)]);

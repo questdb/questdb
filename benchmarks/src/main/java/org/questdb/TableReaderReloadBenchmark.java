@@ -27,8 +27,6 @@ package org.questdb;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -53,7 +51,6 @@ public class TableReaderReloadBenchmark {
     private static final CairoConfiguration configuration = new DefaultCairoConfiguration(System.getProperty("java.io.tmpdir"));
     private static final long ts;
     private static TableReader reader;
-    private static long sum = 0;
     private static TableWriter writer;
 
     public static void main(String[] args) throws RunnerException {
@@ -115,10 +112,8 @@ public class TableReaderReloadBenchmark {
         reader = new TableReader(configuration, tableToken);
 
         // ensure reader opens all partitions and maps all data
-        RecordCursor cursor = reader.getCursor();
-        Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            sum += record.getTimestamp(0);
+        for (int i = 0; i < reader.getPartitionCount(); i++) {
+            reader.openPartition(i);
         }
     }
 

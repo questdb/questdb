@@ -28,7 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.Metrics;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameAlgebra;
-import io.questdb.cairo.frm.file.PartitionFrameFactory;
+import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
@@ -125,6 +125,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final int detachedMkDirMode;
     private final FilesFacade ff;
     private final int fileOperationRetryCount;
+    private final FrameFactory frameFactory;
     private final SOCountDownLatch indexLatch = new SOCountDownLatch();
     private final LongList indexSequences = new LongList();
     private final ObjList<ColumnIndexer> indexers;
@@ -155,7 +156,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final boolean parallelIndexerEnabled;
     private final int partitionBy;
     private final DateFormat partitionDirFmt;
-    private final PartitionFrameFactory partitionFrameFactory;
     private final LongList partitionRemoveCandidates = new LongList();
     private final Path path;
     private final int pathRootSize;
@@ -263,7 +263,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.configuration = configuration;
         this.ddlListener = ddlListener;
         this.checkpointStatus = checkpointStatus;
-        this.partitionFrameFactory = new PartitionFrameFactory(configuration);
+        this.frameFactory = new FrameFactory(configuration);
         this.mixedIOFlag = configuration.isWriterMixedIOEnabled();
         this.metrics = metrics;
         this.ownMessageBus = ownMessageBus;
@@ -1500,7 +1500,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         try {
-            LOG.info().$("BEGIN DROP INDEX [txn=").$(txWriter.getTxn())
+            LOG.info().$("removing index [txn=").$(txWriter.getTxn())
                     .$(", table=").utf8(tableToken.getTableName())
                     .$(", column=").utf8(columnName)
                     .I$();
@@ -1525,13 +1525,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             // purge old column versions
             finishColumnPurge();
-            LOG.info().$("END DROP INDEX [txn=").$(txWriter.getTxn())
+            LOG.info().$("REMOVED index [txn=").$(txWriter.getTxn())
                     .$(", table=").utf8(tableToken.getTableName())
                     .$(", column=").utf8(columnName)
                     .I$();
         } catch (Throwable e) {
             throw CairoException.critical(0)
-                    .put("Cannot DROP INDEX for [txn=").put(txWriter.getTxn())
+                    .put("cannot remove index for [txn=").put(txWriter.getTxn())
                     .put(", table=").put(tableToken.getTableName())
                     .put(", column=").put(columnName)
                     .put("]: ").put(e.getMessage());
@@ -4653,7 +4653,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         noOpRowCount = 0L;
         lastOpenPartitionTs = Long.MIN_VALUE;
         lastOpenPartitionIsReadOnly = false;
-        Misc.free(partitionFrameFactory);
+        Misc.free(frameFactory);
         assert !truncate || distressed || assertColumnPositionIncludeWalLag();
         freeColumns(truncate & !distressed);
         try {
@@ -5175,7 +5175,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         if (this.lockFd == -1) {
-            throw CairoException.critical(ff.errno()).put("Cannot lock table: ").put(path.$());
+            throw CairoException.critical(ff.errno()).put("cannot lock table: ").put(path.$());
         }
     }
 
@@ -5969,7 +5969,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             partitionTimestampHi = txWriter.getNextPartitionTimestamp(timestamp) - 1;
             int plen = path.size();
             if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
-                throw CairoException.critical(ff.errno()).put("Cannot create directory: ").put(path);
+                throw CairoException.critical(ff.errno()).put("cannot create directory: ").put(path);
             }
 
             assert columnCount > 0;
@@ -7559,7 +7559,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 boolean rw = !copyTargetFrame;
                 Frame targetFrame = null;
-                Frame firstPartitionFrame = partitionFrameFactory.open(rw, path, targetPartition, metadata, columnVersionWriter, originalSize);
+                Frame firstPartitionFrame = frameFactory.open(rw, path, targetPartition, metadata, columnVersionWriter, originalSize);
                 try {
                     if (copyTargetFrame) {
                         try {
@@ -7567,7 +7567,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             TableUtils.createDirsOrFail(ff, other.slash(), configuration.getMkDirMode());
                             LOG.info().$("copying partition to force squash [from=").$substr(pathRootSize, path).$(", to=").$(other).I$();
 
-                            targetFrame = partitionFrameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, 0);
+                            targetFrame = frameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, 0);
                             FrameAlgebra.append(targetFrame, firstPartitionFrame, configuration.getCommitMode());
                             addPhysicallyWrittenRows(firstPartitionFrame.getRowCount());
                             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexLo * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
@@ -7578,6 +7578,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     } else {
                         targetFrame = firstPartitionFrame;
                     }
+
                     for (int i = 0; i < squashCount; i++) {
                         long sourcePartition = txWriter.getPartitionTimestampByIndex(partitionIndexLo + 1);
 
@@ -7600,7 +7601,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$(", sourceSize=").$(partitionRowCount)
                                 .I$();
 
-                        try (Frame sourceFrame = partitionFrameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, partitionRowCount)) {
+                        try (Frame sourceFrame = frameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, partitionRowCount)) {
                             FrameAlgebra.append(targetFrame, sourceFrame, configuration.getCommitMode());
                             addPhysicallyWrittenRows(sourceFrame.getRowCount());
                         } catch (Throwable th) {

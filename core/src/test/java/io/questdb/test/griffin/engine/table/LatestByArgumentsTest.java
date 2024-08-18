@@ -43,9 +43,7 @@ public class LatestByArgumentsTest {
             LatestByArguments.setRowsCapacity(address, 4);
             LatestByArguments.setRowsSize(address, 5);
             LatestByArguments.setFilteredSize(address, 6);
-            LatestByArguments.setHashesAddress(address, 7);
 
-            assertEquals(7, LatestByArguments.getHashesAddress(address));
             assertEquals(6, LatestByArguments.getFilteredSize(address));
             assertEquals(5, LatestByArguments.getRowsSize(address));
             assertEquals(4, LatestByArguments.getRowsCapacity(address));
@@ -69,12 +67,10 @@ public class LatestByArgumentsTest {
                 LatestByArguments.setRowsCapacity(address, 4);
                 LatestByArguments.setRowsSize(address, 5);
                 LatestByArguments.setFilteredSize(address, 6);
-                LatestByArguments.setHashesAddress(address, 7);
             }
 
             for (int i = 0; i < elements; ++i) {
                 final long address = baseAddress + i * LatestByArguments.MEMORY_SIZE;
-                assertEquals(7, LatestByArguments.getHashesAddress(address));
                 assertEquals(6, LatestByArguments.getFilteredSize(address));
                 assertEquals(5, LatestByArguments.getRowsSize(address));
                 assertEquals(4, LatestByArguments.getRowsCapacity(address));
