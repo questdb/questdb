@@ -1480,6 +1480,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofBegin();
     }
 
+    private void compileCheckpoint(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getSecurityContext().authorizeDatabaseSnapshot();
+        CharSequence tok = expectToken(lexer, "'create' or 'release'");
+
+        if (SqlKeywords.isCreateKeyword(tok)) {
+            engine.checkpointCreate(executionContext);
+            compiledQuery.ofCheckpointCreate();
+        } else if (Chars.equalsLowerCaseAscii(tok, "release")) {
+            engine.checkpointRelease();
+            compiledQuery.ofCheckpointRelease();
+        } else {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'create' or 'release' expected");
+        }
+    }
+
     private void compileCommit(SqlExecutionContext executionContext) {
         compiledQuery.ofCommit();
     }
@@ -1632,6 +1647,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compiledQuery.withSqlStatement(Chars.toString(sqlText));
         }
         compiledQuery.withContext(executionContext);
+    }
+
+    private void compileLegacyCheckpoint(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getSecurityContext().authorizeDatabaseSnapshot();
+        CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
+
+        if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
+            engine.checkpointCreate(executionContext);
+            compiledQuery.ofCheckpointCreate();
+        } else if (Chars.equalsLowerCaseAscii(tok, "complete")) {
+            engine.checkpointRelease();
+            compiledQuery.ofCheckpointRelease();
+        } else {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'prepare' or 'complete' expected");
+        }
     }
 
     private void compileRollback(SqlExecutionContext executionContext) {
@@ -1940,15 +1970,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try {
             if (!isWalEnabled) {
                 writerAPI = writer = new TableWriter(
-                        configuration,
+                        engine.getConfiguration(),
                         tableToken,
-                        messageBus,
+                        engine.getMessageBus(),
                         null,
                         false,
                         DefaultLifecycleManager.INSTANCE,
-                        configuration.getRoot(),
+                        engine.getConfiguration().getRoot(),
                         engine.getDdlListener(tableToken),
-                        getEngine().getSnapshotAgent(),
+                        engine.getCheckpointStatus(),
                         engine.getMetrics()
                 );
             } else {
@@ -2800,21 +2830,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofRepair();
     }
 
-    private void snapshotDatabase(SqlExecutionContext executionContext) throws SqlException {
-        executionContext.getSecurityContext().authorizeDatabaseSnapshot();
-        CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
-
-        if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
-            engine.prepareSnapshot(executionContext);
-            compiledQuery.ofSnapshotPrepare();
-        } else if (Chars.equalsLowerCaseAscii(tok, "complete")) {
-            engine.completeSnapshot();
-            compiledQuery.ofSnapshotComplete();
-        } else {
-            throw SqlException.position(lexer.lastTokenPosition()).put("'prepare' or 'complete' expected");
-        }
-    }
-
     private TableToken tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
         if (executionContext.getTableStatus(path, tableName) != TableUtils.TABLE_EXISTS) {
             throw SqlException.tableDoesNotExist(position, tableName);
@@ -2989,7 +3004,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // the only reason why columns cannot be found at this stage is
             // concurrent table modification of table structure
             if (index == -1) {
-                // Cast isn't going to go away when we re-parse SQL. We must make this
+                // Cast isn't going to go away when we reparse SQL. We must make this
                 // permanent error
                 throw SqlException.invalidColumn(ccm.getColumnNamePos(), columnName);
             }
@@ -3159,7 +3174,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final KeywordBasedExecutor dropStatement = dropStmtCompiler::executorSelector;
         final KeywordBasedExecutor sqlBackup = backupAgent::sqlBackup;
         final KeywordBasedExecutor vacuumTable = this::vacuum;
-        final KeywordBasedExecutor snapshotDatabase = this::snapshotDatabase;
+        final KeywordBasedExecutor compileCheckpoint = this::compileCheckpoint;
+        final KeywordBasedExecutor compileLegacySnapshot = this::compileLegacyCheckpoint;
         final KeywordBasedExecutor compileDeallocate = this::compileDeallocate;
         final KeywordBasedExecutor cancelQuery = this::cancelQuery;
 
@@ -3177,7 +3193,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         keywordBasedExecutors.put("drop", dropStatement);
         keywordBasedExecutors.put("backup", sqlBackup);
         keywordBasedExecutors.put("vacuum", vacuumTable);
-        keywordBasedExecutors.put("snapshot", snapshotDatabase);
+        keywordBasedExecutors.put("checkpoint", compileCheckpoint);
+        keywordBasedExecutors.put("snapshot", compileLegacySnapshot);
         keywordBasedExecutors.put("deallocate", compileDeallocate);
         keywordBasedExecutors.put("cancel", cancelQuery);
     }

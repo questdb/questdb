@@ -29,12 +29,13 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
 /**
  * OS specific test that verifies errors returned on snapshot statement execution on Windows.
  */
-public class SnapshotWindowsTest extends AbstractCairoTest {
+public class CheckpointWindowsTest extends AbstractCairoTest {
 
     private static Path path = new Path();
     private int rootLen;
@@ -57,7 +58,7 @@ public class SnapshotWindowsTest extends AbstractCairoTest {
         Assume.assumeTrue(Os.isWindows());
 
         super.setUp();
-        path.of(configuration.getSnapshotRoot()).slash();
+        path.of(configuration.getCheckpointRoot()).slash();
         rootLen = path.size();
     }
 
@@ -69,13 +70,13 @@ public class SnapshotWindowsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSnapshotPrepare() throws Exception {
+    public void testCheckpointCreate() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table test (ts timestamp, name symbol, val int)");
             try {
-                assertExceptionNoLeakCheck("snapshot prepare");
+                assertExceptionNoLeakCheck("checkpoint create");
             } catch (SqlException ex) {
-                Assert.assertTrue(ex.getMessage().startsWith("[0] Snapshots are not supported on Windows"));
+                TestUtils.assertContains(ex.getFlyweightMessage(), "Checkpoint is not supported on Windows");
             }
         });
     }
