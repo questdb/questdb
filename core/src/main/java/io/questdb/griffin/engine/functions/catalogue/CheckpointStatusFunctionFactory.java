@@ -25,10 +25,8 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
@@ -94,7 +92,7 @@ public class CheckpointStatusFunctionFactory implements FunctionFactory {
             sink.val(SIGNATURE);
         }
 
-        private class CheckpointStatusRecordCursor implements RecordCursor {
+        private class CheckpointStatusRecordCursor implements NoRandomAccessRecordCursor {
             private final CheckpointStatusRecord record = new CheckpointStatusRecord();
             private boolean rowPending = true;
 
@@ -109,11 +107,6 @@ public class CheckpointStatusFunctionFactory implements FunctionFactory {
             }
 
             @Override
-            public Record getRecordB() {
-                throw new UnsupportedOperationException();
-            }
-
-            @Override
             public boolean hasNext() {
                 if (rowPending) {
                     final long startedAt = engine.getCheckpointStatus().startedAtTimestamp();
@@ -122,11 +115,6 @@ public class CheckpointStatusFunctionFactory implements FunctionFactory {
                     return true;
                 }
                 return false;
-            }
-
-            @Override
-            public void recordAt(Record record, long atRowId) {
-                throw new UnsupportedOperationException();
             }
 
             @Override
