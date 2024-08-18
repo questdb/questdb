@@ -29,6 +29,15 @@ import io.questdb.std.Numbers;
 public interface DatabaseCheckpointStatus {
 
     /**
+     * Returns true when database is in "checkpoint" mode. Checkpoint mode is
+     * entered when CHECKPOINT CREATE SQL is called and exited after
+     * CHECKPOINT RELEASE is called.
+     */
+    default boolean isInProgress() {
+        return startedAtTimestamp() != Numbers.LONG_NULL;
+    }
+
+    /**
      * Returns a non-negative number when database is in "checkpoint" mode.
      * Checkpoint mode is entered when CHECKPOINT CREATE SQL is called
      * and exited after CHECKPOINT RELEASE is called.

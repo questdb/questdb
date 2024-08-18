@@ -365,7 +365,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
         if (inErrorCount >= MAX_ERRORS) {
             return false;
         }
-        if (checkpointStatus.startedAtTimestamp() != Numbers.LONG_NULL) {
+        if (checkpointStatus.isInProgress()) {
             // do not purge anything before checkpoint is released
             return false;
         }

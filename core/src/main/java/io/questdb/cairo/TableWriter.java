@@ -954,7 +954,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public boolean checkScoreboardHasReadersBeforeLastCommittedTxn() {
-        if (checkpointStatus.startedAtTimestamp() != Numbers.LONG_NULL) {
+        if (checkpointStatus.isInProgress()) {
             // do not alter scoreboard while checkpoint is in progress
             return true;
         }
@@ -7524,7 +7524,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force) {
-        if (checkpointStatus.startedAtTimestamp() != Numbers.LONG_NULL) {
+        if (checkpointStatus.isInProgress()) {
             LOG.info().$("cannot squash partition [table=").$(tableToken.getTableName()).$("], checkpoint in progress").$();
             return;
         }
