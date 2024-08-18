@@ -149,11 +149,15 @@ public class DistinctIntKeyTest extends AbstractCairoTest {
                 Assert.assertTrue(Files.rmdir(path, true));
             }
 
-            try {
-                assertExceptionNoLeakCheck("select DISTINCT i from tab order by 1 LIMIT 3");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Partition '2020-02' does not exist in table 'tab' directory");
-            }
+            assertQuery(
+                    "count\n" +
+                            "0\n",
+                    "SELECT count(i) FROM tab WHERE ts IN '2020-02'",
+                    null,
+                    false,
+                    true
+            );
+
         });
     }
 }
