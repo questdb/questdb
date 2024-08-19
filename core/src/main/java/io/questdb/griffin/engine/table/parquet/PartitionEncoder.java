@@ -200,6 +200,62 @@ public class PartitionEncoder {
             int version
     );
 
+    public static void update(PartitionDescriptor descriptor, short rowGroupId, Path destPath) {
+        final int columnCount = descriptor.getColumnCount();
+        final long partitionSize = descriptor.getPartitionRowCount();
+        final int timestampIndex = descriptor.getTimestampIndex();
+        try {
+            updatePartition(
+                rowGroupId,
+                columnCount,
+                descriptor.getColumnNamesPtr(),
+                descriptor.getColumnNamesSize(),
+                descriptor.getColumnNameLengthsPtr(),
+                descriptor.getColumnTypesPtr(),
+                descriptor.getColumnIdsPtr(),
+                timestampIndex,
+                descriptor.getColumnTopsPtr(),
+                descriptor.getColumnAddressesPtr(),
+                descriptor.getColumnSizesPtr(),
+                descriptor.getColumnSecondaryAddressesPtr(),
+                descriptor.getColumnSecondarySizesPtr(),
+                descriptor.getSymbolOffsetsAddressesPtr(),
+                descriptor.getSymbolOffsetsSizesPtr(),
+                partitionSize,
+                destPath.ptr(),
+                destPath.size()
+            );
+        } catch (Throwable th) {
+            throw CairoException.critical(0).put("Could not update partition: [table=").put(descriptor.getTableName())
+                    .put(", exception=").put(th.getClass().getSimpleName())
+                    .put(", msg=").put(th.getMessage())
+                    .put(']');
+        } finally {
+            descriptor.clear();
+        }
+    }
+
+    private static native void updatePartition(
+            short rowGroupId,
+            int columnCount,
+            long columnNamesPtr,
+            int columnNamesLength,
+            long columnNameLengthsPtr,
+            long columnTypesPtr,
+            long columnIdsPtr,
+            int timestampIndex,
+            long columnTopsPtr,
+            long columnAddrsPtr,
+            long columnSizesPtr,
+            long columnSecondaryAddrsPtr,
+            long columnSecondarySizesPtr,
+            long symbolOffsetsAddrsPtr,
+            long symbolOffsetsSizesPtr,
+            long rowCount,
+            long destPathPtr,
+            int destPathLength
+    );
+
     static {
         Os.init();
     }
