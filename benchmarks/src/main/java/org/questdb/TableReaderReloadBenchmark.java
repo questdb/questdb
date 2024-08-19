@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import org.openjdk.jmh.annotations.*;
@@ -92,7 +93,7 @@ public class TableReaderReloadBenchmark {
                 DefaultLifecycleManager.INSTANCE,
                 configuration.getRoot(),
                 DefaultDdlListener.INSTANCE,
-                () -> false,
+                () -> Numbers.LONG_NULL,
                 Metrics.disabled()
         );
         writer.truncate();

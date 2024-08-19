@@ -792,11 +792,12 @@ io.questdb.griffin.engine.functions.catalogue.PgDatabaseFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedPgDatabaseFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PgShDescriptionFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.CurrentDatabaseFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentDatabaseFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.PrefixedVersionFunctionFactory
-
 io.questdb.griffin.engine.functions.catalogue.SimulateCrashFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.SimulateWarningsFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PrefixedCurrentDatabaseFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PrefixedVersionFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.TypeOfFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.CheckpointStatusFunctionFactory
 
 # PostgreSQL advisory locks functions
 io.questdb.griffin.engine.functions.lock.AdvisoryUnlockAll
@@ -991,5 +992,3 @@ io.questdb.griffin.engine.functions.geohash.GeoHashFromCoordinatesFunctionFactor
 
 # bin functions
 io.questdb.griffin.engine.functions.bin.Base64FunctionFactory
-
-io.questdb.griffin.engine.functions.catalogue.TypeOfFunctionFactory
