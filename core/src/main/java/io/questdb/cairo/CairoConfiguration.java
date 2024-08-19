@@ -96,6 +96,9 @@ public interface CairoConfiguration {
     boolean getCairoSqlLegacyOperatorPrecedence();
 
     @NotNull
+    CharSequence getCheckpointRoot(); // same as root/../.checkpoint
+
+    @NotNull
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 
     int getColumnCastModelPoolCapacity();
@@ -212,6 +215,9 @@ public interface CairoConfiguration {
     int getInsertModelPoolCapacity();
 
     int getLatestByQueueCapacity();
+
+    @NotNull
+    CharSequence getLegacyCheckpointRoot(); // same as root/../snapshot
 
     int getMaxCrashFiles();
 
@@ -352,12 +358,6 @@ public interface CairoConfiguration {
      */
     @NotNull
     CharSequence getSnapshotInstanceId();
-
-    @NotNull
-    CharSequence getCheckpointRoot(); // same as root/../.checkpoint
-
-    @NotNull
-    CharSequence getLegacyCheckpointRoot(); // same as root/../snapshot
 
     long getSpinLockTimeout();
 
@@ -517,6 +517,8 @@ public interface CairoConfiguration {
 
     long getWalEventAppendPageSize();
 
+    double getWalLagRowsMultiplier();
+
     long getWalMaxLagSize();
 
     int getWalMaxLagTxnCount();
@@ -547,8 +549,6 @@ public interface CairoConfiguration {
      */
     long getWalSegmentRolloverSize();
 
-    double getWalLagRowsMultiplier();
-
     int getWalTxnNotificationQueueCapacity();
 
     int getWalWriterPoolMaxSegments();
@@ -571,6 +571,13 @@ public interface CairoConfiguration {
 
     int getWriterTickRowsCountMod();
 
+    /**
+     * A flag to enable/disable checkpoint recovery mechanism. Defaults to {@code true}.
+     *
+     * @return enable/disable flag for recovering from the checkpoint
+     */
+    boolean isCheckpointRecoveryEnabled();
+
     boolean isDevModeEnabled();
 
     boolean isGroupByPresizeEnabled();
@@ -584,13 +591,6 @@ public interface CairoConfiguration {
     boolean isParallelIndexingEnabled();
 
     boolean isReadOnlyInstance();
-
-    /**
-     * A flag to enable/disable checkpoint recovery mechanism. Defaults to {@code true}.
-     *
-     * @return enable/disable flag for recovering from the checkpoint
-     */
-    boolean isCheckpointRecoveryEnabled();
 
     boolean isSqlJitDebugEnabled();
 
