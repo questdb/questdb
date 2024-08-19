@@ -737,7 +737,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
             int day = PartitionBy.DAY;
             int partitionToCheck = 0;
             String partitionDirBaseName = "2020-01-02";
-            int deletedPartitionIndex = 0;
+            int deletedPartitionIndex = 1;
             int rowCount = 10000;
             testPartitionDirDeleted(null, startDate, day, partitionToCheck, partitionDirBaseName, deletedPartitionIndex, 5, 1, rowCount, rowCount / 5);
         }
@@ -1032,11 +1032,7 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
 
                 if (expected == null) {
                     // Don't check that partition open fails if it's already opened
-
-                    // If partition cannot be opened assigns 0 instead of throwing an error to prevent breaking other SQL statements.
-                    if(reader.openPartition(deletedPartitionIndex) != 0){
-                        Assert.assertEquals(totalPartitionRowCount, reader.openPartition(deletedPartitionIndex));
-                    }
+                    Assert.assertEquals(0, reader.openPartition(deletedPartitionIndex));
                 } else {
                     // Should throw something meaningful
                     try {
