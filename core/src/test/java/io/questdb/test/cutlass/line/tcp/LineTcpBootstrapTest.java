@@ -30,10 +30,10 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.client.Sender;
 import io.questdb.cutlass.line.LineSenderException;
-import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
@@ -80,16 +80,18 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
             try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
                 serverMain.start();
                 CairoEngine engine = serverMain.getEngine();
-                try (SqlCompiler sqlCompiler = engine.getSqlCompiler();
-                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                    sqlCompiler.compile("CREATE TABLE 'betfairRunners' (\n" +
+                try (SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                    engine.ddl(
+                            "CREATE TABLE 'betfairRunners' (\n" +
                             "  id INT,\n" +
                             "  runner VARCHAR,\n" +
                             "  age BYTE,\n" +
                             "  remarks SYMBOL CAPACITY 2048 CACHE INDEX CAPACITY 256,\n" +
                             "  timestamp TIMESTAMP\n" +
                             ") timestamp (timestamp) PARTITION BY MONTH WAL\n" +
-                            "DEDUP UPSERT KEYS(timestamp, id);", sqlExecutionContext);
+                                    "DEDUP UPSERT KEYS(timestamp, id);",
+                            sqlExecutionContext
+                    );
 
                     try (Sender sender = Sender.fromConfig("http::addr=localhost:" + serverMain.getHttpServerPort() + ";")) {
                         for (int i = 0; i < 1; i++) {
@@ -112,15 +114,24 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                         }
                     }
 
-                    drainWalQueue(engine);
-
-                    CompiledQuery result = sqlCompiler.compile("select distinct runner from betfairRunners", sqlExecutionContext);
+                    // server main already runs Apply2Wal job in the background. We have to wait for the table to catchup
+                    try (RecordCursorFactory waitFact = engine.select("wal_tables where writertxn <> sequencertxn;", sqlExecutionContext)) {
+                        do {
+                            try (RecordCursor cursor = waitFact.getCursor(sqlExecutionContext)) {
+                                if (cursor.hasNext()) {
+                                    Os.pause();
+                                } else {
+                                    break;
+                                }
+                            }
+                        } while (true);
+                    }
 
                     try (
-                            RecordCursorFactory factory = result.getRecordCursorFactory();
+                            RecordCursorFactory factory = engine.select("select distinct runner from betfairRunners", sqlExecutionContext);
                             RecordCursor cursor = factory.getCursor(sqlExecutionContext)
                     ) {
-                        cursor.hasNext();
+                        Assert.assertTrue(cursor.hasNext());
                         if (cursor.hasNext()) {
                             // more than 1 distinct result..
                             // i.e
@@ -137,5 +148,4 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
             }
         });
     }
-
 }
