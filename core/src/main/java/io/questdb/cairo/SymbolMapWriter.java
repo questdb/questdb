@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -181,6 +182,16 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
         }
         nullValue = false;
+    }
+
+    @Override
+    public MemoryR getSymbolOffsetsMemory() {
+        return offsetMem;
+    }
+
+    @Override
+    public MemoryR getSymbolValuesMemory() {
+        return charMem;
     }
 
     @Override
