@@ -44,6 +44,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.StationaryMicrosClock;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 
@@ -59,6 +60,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
+        testMicrosClock = StationaryMicrosClock.INSTANCE;
         path = new Path();
         triggerFilePath = new Path();
         ff = testFilesFacade;
@@ -605,6 +607,33 @@ public class CheckpointTest extends AbstractCairoTest {
 
             // Dropped rows should be there.
             assertSql("count\n1\n", "select count() from test;");
+        });
+    }
+
+    @Test
+    public void testCheckpointStatus() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql(
+                    "in_progress\tstarted_at\n" +
+                            "false\t\n",
+                    "select * from checkpoint_status();"
+            );
+
+            ddl("checkpoint create");
+
+            assertSql(
+                    "in_progress\tstarted_at\n" +
+                            "true\t1970-01-01T00:00:00.000000Z\n",
+                    "select * from checkpoint_status();"
+            );
+
+            ddl("checkpoint release");
+
+            assertSql(
+                    "in_progress\tstarted_at\n" +
+                            "false\t\n",
+                    "select * from checkpoint_status();"
+            );
         });
     }
 
