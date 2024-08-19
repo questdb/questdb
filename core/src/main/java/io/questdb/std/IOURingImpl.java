@@ -87,7 +87,7 @@ public class IOURingImpl implements IOURing {
         if (closed) {
             return;
         }
-        Files.decrementFileCount(ringFd);
+        Files.detach(ringFd);
         facade.close(ringAddr);
         closed = true;
     }

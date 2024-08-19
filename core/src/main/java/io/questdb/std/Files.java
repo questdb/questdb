@@ -64,6 +64,7 @@ public final class Files {
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
     private static final AtomicInteger fdCounter = new AtomicInteger();
     private static final LongHashSet openFds = new LongHashSet();
+    // To be set in tests to check every call for using OPEN file descriptor
     public static boolean PARANOIA_FD_MODE = false;
     public static boolean VIRTIO_FS_DETECTED = false;
 
@@ -77,17 +78,6 @@ public final class Files {
 
     public static long append(long fd, long address, long len) {
         return append(toOsFd(fd), address, len);
-    }
-
-    public static synchronized int auditClose(long fd) {
-        int osFd = toOsFd(fd);
-        if (osFd < 0) {
-            throw new IllegalStateException("Invalid fd " + fd);
-        }
-        if (openFds.remove(fd) == -1) {
-            throw new IllegalStateException("fd " + fd + " is already closed!");
-        }
-        return osFd;
     }
 
     public static long bumpFileCount(int fd) {
@@ -105,8 +95,9 @@ public final class Files {
 
     public static int close(long fd) {
         // do not close `stdin` and `stdout`
-        if (fd > 1) {
-            int osFd = auditClose(fd);
+        int osFd;
+        if (fd != 0 && (osFd = toOsFd(fd)) > 1) {
+            auditClose(fd);
             int res = close0(osFd);
             if (res == 0) {
                 OPEN_FILE_COUNT.decrementAndGet();
@@ -129,24 +120,15 @@ public final class Files {
         return copyDataToOffset(toOsFd(srcFd), toOsFd(destFd), offsetSrc, offsetDest, length);
     }
 
-    /**
-     * close(fd) should be used instead of this method in most cases
-     * unless you don't need close() sys call to happen.
-     *
-     * @param fd file descriptor
-     */
-    public static void decrementFileCount(long fd) {
-        auditClose(fd);
-        OPEN_FILE_COUNT.decrementAndGet();
-    }
-
     public static int detach(long fd) {
-        // do not close `stdin` and `stdout`
-        int osFd = auditClose(fd);
+        int osFd = toOsFd(fd);
+        // do not detach `stdin` and `stdout`
         if (osFd > 1) {
+            auditClose(fd);
             OPEN_FILE_COUNT.decrementAndGet();
+            return osFd;
         }
-        return osFd;
+        return -1;
     }
 
     public static boolean exists(long fd) {
@@ -564,6 +546,7 @@ public final class Files {
             checkOsFd(fd);
         }
         int osFd = Numbers.decodeHighInt(fd);
+        // 0 FD can be closed, but no other operation is allowed
         assert fd == -1 || osFd > 0;
         return osFd;
     }
@@ -645,6 +628,12 @@ public final class Files {
     private native static boolean allocate(int fd, long size);
 
     private native static long append(int fd, long address, long len);
+
+    private static synchronized void auditClose(long fd) {
+        if (openFds.remove(fd) == -1) {
+            throw new IllegalStateException("fd " + fd + " is already closed!");
+        }
+    }
 
     private static synchronized long auditOpen(int fd) {
         if (fd < 0) {
