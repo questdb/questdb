@@ -1556,6 +1556,11 @@ public final class TableUtils {
         setSinkForPartition(path.slash(), partitionBy, timestamp, nameTxn);
     }
 
+    public static void setPathTable(@NotNull Path path, @NotNull CairoConfiguration configuration, @NotNull TableToken token) {
+        path.close();
+        path.of(configuration.getRoot()).concat(token.getDirName()).trimTo(path.size());
+    }
+
     /**
      * Sets the sink to the directory of a partition taking into account the timestamp, the partitioning scheme
      * and the partition version.
@@ -1570,6 +1575,10 @@ public final class TableUtils {
         if (nameTxn > -1L) {
             sink.put('.').put(nameTxn);
         }
+    }
+
+    public static void setTxReaderPath(@NotNull TxReader reader, @NotNull FilesFacade ff, @NotNull Path path, int partitionBy) {
+        reader.ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy);
     }
 
     public static int toIndexKey(int symbolKey) {
