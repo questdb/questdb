@@ -38,6 +38,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -47,25 +48,26 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.*;
 
-public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCloseable {
+public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietCloseable {
 
-    private final static Log LOG = LogFactory.getLog(DatabaseSnapshotAgentImpl.class);
+    private final static Log LOG = LogFactory.getLog(DatabaseCheckpointAgent.class);
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final FilesFacade ff;
-    private final AtomicBoolean inProgress = new AtomicBoolean();
     private final ReentrantLock lock = new ReentrantLock();
     private final WalWriterMetadata metadata; // protected with #lock
+    private final MicrosecondClock microClock;
     private final StringSink nameSink = new StringSink(); // protected with #lock
     private final Path path = new Path(); // protected with #lock
+    private final AtomicLong startedAtTimestamp = new AtomicLong(Numbers.LONG_NULL); // Numbers.LONG_NULL means no ongoing checkpoint
     private final SymbolMapUtil symbolMapUtil = new SymbolMapUtil();
     private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
@@ -78,9 +80,10 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private SimpleWaitingLock walPurgeJobRunLock = null; // used as a suspend/resume handler for the WalPurgeJob
 
-    DatabaseSnapshotAgentImpl(CairoEngine engine) {
+    DatabaseCheckpointAgent(CairoEngine engine) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
+        this.microClock = configuration.getMicrosecondClock();
         this.ff = configuration.getFilesFacade();
         this.metadata = new WalWriterMetadata(ff);
         this.tableNameRegistryStore = new GrowOnlyTableNameRegistryStore(ff);
@@ -108,13 +111,13 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
         }
     }
 
-    @Override
-    public boolean isInProgress() {
-        return inProgress.get();
-    }
-
     public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
         this.walPurgeJobRunLock = walPurgeJobRunLock;
+    }
+
+    @Override
+    public long startedAtTimestamp() {
+        return startedAtTimestamp.get();
     }
 
     private static void copyOrError(Path srcPath, Path dstPath, FilesFacade ff, AtomicInteger counter, String fileName) {
@@ -122,7 +125,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
         dstPath.concat(fileName);
         if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
             throw CairoException.critical(ff.errno())
-                    .put("Snapshot recovery failed. Aborting QuestDB startup. Cause: Error could not copy ")
+                    .put("Checkpoint recovery failed. Aborting QuestDB startup. Cause: Error could not copy ")
                     .put(fileName)
                     .put(" file [src=")
                     .put(srcPath)
@@ -255,58 +258,33 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
         }
     }
 
-    void completeSnapshot() throws SqlException {
-        if (!lock.tryLock()) {
-            throw SqlException.position(0).put("Another snapshot command in progress");
-        }
-        try {
-            // Delete snapshot/db directory.
-            path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).$();
-            ff.rmdir(path); // it's fine to ignore errors here
-
-            // Resume the WalPurgeJob
-            if (walPurgeJobRunLock != null) {
-                try {
-                    walPurgeJobRunLock.unlock();
-                } catch (IllegalStateException ignore) {
-                    // not an error here
-                    // completeSnapshot can be called several time in a row.
-                }
-            }
-
-            // Reset snapshot in-flight flag.
-            inProgress.set(false);
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    void prepareSnapshot(SqlExecutionContext executionContext) throws SqlException {
+    void checkpointCreate(SqlExecutionContext executionContext) throws SqlException {
         // Windows doesn't support sync() system call.
         if (Os.isWindows()) {
-            throw SqlException.position(0).put("Snapshots are not supported on Windows");
+            throw SqlException.position(0).put("Checkpoint is not supported on Windows");
         }
 
         if (!lock.tryLock()) {
-            throw SqlException.position(0).put("Another snapshot command in progress");
+            throw SqlException.position(0).put("Another checkpoint command is in progress");
         }
         try {
-            if (!inProgress.compareAndSet(false, true)) {
-                throw SqlException.position(0).put("Waiting for SNAPSHOT COMPLETE to be called");
+            final long startedAt = microClock.getTicks();
+            if (!startedAtTimestamp.compareAndSet(Numbers.LONG_NULL, startedAt)) {
+                throw SqlException.position(0).put("Waiting for CHECKPOINT RELEASE to be called");
             }
 
             try {
-                path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
-                int snapshotDbLen = path.size();
-                // Delete all contents of the snapshot/db dir.
+                path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
+                int checkpointDbLen = path.size();
+                // delete  contents of the checkpoint's "db" dir.
                 if (ff.exists(path.slash$())) {
-                    path.trimTo(snapshotDbLen).$();
+                    path.trimTo(checkpointDbLen).$();
                     if (!ff.rmdir(path)) {
-                        throw CairoException.critical(ff.errno()).put("Could not remove snapshot dir [dir=").put(path).put(']');
+                        throw CairoException.critical(ff.errno()).put("Could not remove checkpoint dir [dir=").put(path).put(']');
                     }
                 }
-                // Recreate the snapshot/db dir.
-                path.trimTo(snapshotDbLen).slash$();
+                // recreate the checkpoint's "db" dir.
+                path.trimTo(checkpointDbLen).slash$();
                 if (ff.mkdirs(path, configuration.getMkDirMode()) != 0) {
                     throw CairoException.critical(ff.errno()).put("Could not create [dir=").put(path).put(']');
                 }
@@ -321,9 +299,9 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
 
                 try {
                     // Prepare table name registry for copying.
-                    path.trimTo(snapshotDbLen).$();
+                    path.trimTo(checkpointDbLen).$();
                     tableNameRegistryStore.of(path, 0);
-                    path.trimTo(snapshotDbLen).$();
+                    path.trimTo(checkpointDbLen).$();
 
                     ObjHashSet<TableToken> tables = new ObjHashSet<>();
                     engine.getTableTokens(tables, false);
@@ -338,10 +316,10 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                             }
 
                             boolean isWalTable = engine.isWalTable(tableToken);
-                            path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory());
-                            LOG.info().$("preparing for snapshot [table=").$(tableToken).I$();
+                            path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
+                            LOG.info().$("creating table checkpoint [table=").$(tableToken).I$();
 
-                            path.trimTo(snapshotDbLen).concat(tableToken);
+                            path.trimTo(checkpointDbLen).concat(tableToken);
                             int rootLen = path.size();
                             if (isWalTable) {
                                 path.concat(WalUtils.SEQ_DIR);
@@ -399,14 +377,14 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                                         metadata.clear();
                                         long lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);
                                         path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
-                                        metadata.switchTo(path, path.size(), true); // dump sequencer metadata to snapshot/db/tableName/txn_seq/_meta
+                                        metadata.switchTo(path, path.size(), true); // dump sequencer metadata to checkpoint's  "db/tableName/txn_seq/_meta"
                                         metadata.close(true, Vm.TRUNCATE_TO_POINTER);
 
                                         mem.smallFile(ff, path.concat(TableUtils.TXN_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
-                                        mem.putLong(lastTxn); // write lastTxn to snapshot/db/tableName/txn_seq/_txn
+                                        mem.putLong(lastTxn); // write lastTxn to checkpoint's "db/tableName/txn_seq/_txn"
                                         mem.close(true, Vm.TRUNCATE_TO_POINTER);
                                     }
-                                    LOG.info().$("table included in the snapshot [table=").$(tableToken).I$();
+                                    LOG.info().$("table included in the checkpoint [table=").$(tableToken).I$();
                                     break;
                                 } finally {
                                     Misc.free(reader);
@@ -414,7 +392,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                             }
                         }
 
-                        path.of(configuration.getSnapshotRoot()).concat(configuration.getDbDirectory()).concat(TableUtils.SNAPSHOT_META_FILE_NAME);
+                        path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).concat(TableUtils.CHECKPOINT_META_FILE_NAME);
                         mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                         mem.putStr(configuration.getSnapshotInstanceId());
                         mem.close();
@@ -425,20 +403,20 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                         }
 
                         executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
-                        LOG.info().$("snapshot copying finished").$();
+                        LOG.info().$("checkpoint created").$();
                     }
                 } catch (Throwable e) {
                     // Resume the WalPurgeJob
                     if (walPurgeJobRunLock != null) {
                         walPurgeJobRunLock.unlock();
                     }
-                    LOG.error().$("snapshot error [e=").$(e).I$();
+                    LOG.error().$("checkpoint error [e=").$(e).I$();
                     throw e;
                 } finally {
                     tableNameRegistryStore.close();
                 }
             } catch (Throwable e) {
-                inProgress.set(false);
+                startedAtTimestamp.set(Numbers.LONG_NULL);
                 throw e;
             }
         } finally {
@@ -446,39 +424,87 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
         }
     }
 
-    void recoverSnapshot() {
-        if (!configuration.isSnapshotRecoveryEnabled()) {
+    void checkpointRelease() throws SqlException {
+        if (!lock.tryLock()) {
+            throw SqlException.position(0).put("Another checkpoint command is in progress");
+        }
+        try {
+            // Delete checkpoint's "db" directory.
+            path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).$();
+            ff.rmdir(path); // it's fine to ignore errors here
+
+            // Resume the WalPurgeJob
+            if (walPurgeJobRunLock != null) {
+                try {
+                    walPurgeJobRunLock.unlock();
+                } catch (IllegalStateException ignore) {
+                    // not an error here
+                    // checkpointRelease() can be called several time in a row.
+                }
+            }
+
+            // reset checkpoint in-flight flag.
+            startedAtTimestamp.set(Numbers.LONG_NULL);
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    void recover() {
+        if (!configuration.isCheckpointRecoveryEnabled()) {
             return;
         }
 
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getRoot();
-        final CharSequence snapshotRoot = configuration.getSnapshotRoot();
+        final CharSequence checkpointRoot = configuration.getCheckpointRoot();
+        final CharSequence legacyCheckpointRoot = configuration.getLegacyCheckpointRoot();
 
         try (
                 Path srcPath = new Path();
                 Path dstPath = new Path();
                 MemoryCMARW memFile = Vm.getCMARWInstance()
         ) {
-            srcPath.of(snapshotRoot).concat(configuration.getDbDirectory());
-            final int snapshotRootLen = srcPath.size();
+            // use current checkpoint root if it exists and don't
+            // bother checking that legacy path is there or not
 
-            dstPath.of(root).parent().concat(TableUtils.RESTORE_SNAPSHOT_TRIGGER_FILE_NAME);
+            srcPath.of(checkpointRoot);
+            if (!ff.exists(srcPath.$())) {
+                srcPath.of(legacyCheckpointRoot);
+
+                // check if legacy path exists, in case it doesn't
+                // we should report errors against the current checkpoint root
+                if (!ff.exists(srcPath.$())) {
+                    srcPath.of(checkpointRoot);
+                }
+            }
+
+            srcPath.concat(configuration.getDbDirectory());
+            final int checkpointRootLen = srcPath.size();
+
+            dstPath.of(root).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
             boolean triggerExists = ff.exists(dstPath.$());
 
-            // Check if the snapshot dir exists.
+            // Check if the checkpoint dir exists.
             if (!ff.exists(srcPath.slash$())) {
                 if (triggerExists) {
-                    throw CairoException.nonCritical().put("snapshot trigger file found, but snapshot directory does not exist [dir=").put(srcPath).put(", trigger=").put(dstPath).put(']');
+                    throw CairoException.nonCritical().put("checkpoint trigger file found, but the checkpoint directory does not exist [dir=").put(srcPath).put(", trigger=").put(dstPath).put(']');
                 }
                 return;
             }
 
-            // Check if the snapshot metadata file exists.
-            srcPath.trimTo(snapshotRootLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME);
+            // Check if the checkpoint metadata file exists.
+            // legacy file first:
+            srcPath.trimTo(checkpointRootLen).concat(TableUtils.CHECKPOINT_LEGACY_META_FILE_NAME);
+
+            if (!ff.exists(srcPath.$())) {
+                // now current metadata file
+                srcPath.trimTo(checkpointRootLen).concat(TableUtils.CHECKPOINT_META_FILE_NAME);
+            }
+
             if (!ff.exists(srcPath.$())) {
                 if (triggerExists) {
-                    throw CairoException.nonCritical().put("snapshot trigger file found, but snapshot metadata file does not exist [file=").put(srcPath).put(", trigger=").put(dstPath).put(']');
+                    throw CairoException.nonCritical().put("checkpoint trigger file found, but the checkpoint metadata file does not exist [file=").put(srcPath).put(", trigger=").put(dstPath).put(']');
                 }
                 return;
             }
@@ -490,18 +516,22 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             CharSequence snapshotInstanceId = memFile.getStrA(0);
             if (Chars.empty(snapshotInstanceId)) {
                 // Check _snapshot.txt file too reading it as a text file.
-                srcPath.trimTo(snapshotRootLen).concat(TableUtils.SNAPSHOT_META_FILE_NAME_TXT);
-                String snapshotIdTxt = TableUtils.readText(ff, srcPath.$());
-                if (snapshotIdTxt != null) {
-                    snapshotInstanceId = snapshotIdTxt.trim();
+                srcPath.trimTo(checkpointRootLen).concat(TableUtils.CHECKPOINT_LEGACY_META_FILE_NAME_TXT);
+                String snapshotInstanceIdRaw = TableUtils.readText(ff, srcPath.$());
+                if (snapshotInstanceIdRaw != null) {
+                    snapshotInstanceId = snapshotInstanceIdRaw.trim();
                 }
             }
 
-            if (!triggerExists &&
-                    (Chars.empty(currentInstanceId) || Chars.empty(snapshotInstanceId) || Chars.equals(currentInstanceId, snapshotInstanceId))
+            if (!triggerExists
+                    && (
+                    Chars.empty(currentInstanceId)
+                            || Chars.empty(snapshotInstanceId)
+                            || Chars.equals(currentInstanceId, snapshotInstanceId)
+            )
             ) {
                 LOG.info()
-                        .$("skipping snapshot recovery [currentId=").$(currentInstanceId)
+                        .$("skipping recovery from checkpoint [currentId=").$(currentInstanceId)
                         .$(", previousId=").$(snapshotInstanceId)
                         .I$();
                 return;
@@ -509,10 +539,10 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
 
             // OK, we need to recover from the snapshot.
             if (triggerExists) {
-                LOG.info().$("starting snapshot recovery [trigger=file]").$();
+                LOG.info().$("starting checkpoint recovery [trigger=file]").$();
             } else {
                 LOG.info()
-                        .$("starting snapshot recovery [trigger=snapshot id")
+                        .$("starting checkpoint recovery [trigger=snapshot id")
                         .$(", currentId=").$(currentInstanceId)
                         .$(", previousId=").$(snapshotInstanceId)
                         .I$();
@@ -522,7 +552,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             final int rootLen = dstPath.size();
 
             // First delete all table name registry files in dst.
-            srcPath.trimTo(snapshotRootLen).$();
+            srcPath.trimTo(checkpointRootLen).$();
             final int snapshotDbLen = srcPath.size();
             for (; ; ) {
                 dstPath.trimTo(rootLen).$();
@@ -531,7 +561,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                 LOG.info().$("backup removing table name registry file [dst=").$(dstPath).I$();
                 if (!ff.removeQuiet(dstPath.$())) {
                     throw CairoException.critical(ff.errno())
-                            .put("Snapshot recovery failed. Aborting QuestDB startup. Cause: Error could not remove registry file [file=").put(dstPath).put(']');
+                            .put("Checkpoint recovery failed. Aborting QuestDB startup. Cause: Error could not remove registry file [file=").put(dstPath).put(']');
                 }
                 if (version == 0) {
                     break;
@@ -542,7 +572,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             dstPath.trimTo(rootLen).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii(".0");
             if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
                 throw CairoException.critical(ff.errno())
-                        .put("Snapshot recovery failed. Aborting QuestDB startup. Cause: Could not copy registry file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
+                        .put("Checkpoint recovery failed. Aborting QuestDB startup. Cause: Could not copy registry file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
             }
 
             AtomicInteger recoveredMetaFiles = new AtomicInteger();
@@ -550,7 +580,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
             AtomicInteger recoveredCVFiles = new AtomicInteger();
             AtomicInteger recoveredWalFiles = new AtomicInteger();
             AtomicInteger symbolFilesCount = new AtomicInteger();
-            srcPath.trimTo(snapshotRootLen);
+            srcPath.trimTo(checkpointRootLen);
             ff.iterateDir(srcPath.$(), (pUtf8NameZ, type) -> {
                 if (ff.isDirOrSoftLinkDirNoDots(srcPath, snapshotDbLen, pUtf8NameZ, type)) {
                     dstPath.trimTo(rootLen).concat(pUtf8NameZ);
@@ -576,7 +606,7 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                     if (ff.exists(srcPath.$())) {
                         if (ff.copy(srcPath.$(), dstPath.$()) < 0) {
                             throw CairoException.critical(ff.errno())
-                                    .put("Snapshot recovery failed. Aborting QuestDB startup. Cause: Error could not copy meta file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
+                                    .put("Checkpoint recovery failed. Aborting QuestDB startup. Cause: Error could not copy meta file [src=").put(srcPath).put(", dst=").put(dstPath).put(']');
                         } else {
                             srcPath.trimTo(srcPathLen);
                             openSmallFile(ff, srcPath, srcPathLen, memFile, TableUtils.TXN_FILE_NAME, MemoryTag.MMAP_TX_LOG);
@@ -612,23 +642,23 @@ public class DatabaseSnapshotAgentImpl implements DatabaseSnapshotAgent, QuietCl
                 }
             });
             LOG.info()
-                    .$("snapshot recovery finished [metaFilesCount=").$(recoveredMetaFiles.get())
+                    .$("checkpoint recovered [metaFilesCount=").$(recoveredMetaFiles.get())
                     .$(", txnFilesCount=").$(recoveredTxnFiles.get())
                     .$(", cvFilesCount=").$(recoveredCVFiles.get())
                     .$(", walFilesCount=").$(recoveredWalFiles.get())
                     .$(", symbolFilesCount=").$(symbolFilesCount.get())
                     .I$();
 
-            // Delete snapshot directory to avoid recovery on next restart.
-            srcPath.trimTo(snapshotRootLen).$();
+            // Delete checkpoint directory to avoid recovery on next restart.
+            srcPath.trimTo(checkpointRootLen).$();
             memFile.close();
             if (!ff.rmdir(srcPath)) {
                 throw CairoException.critical(ff.errno())
-                        .put("could not remove snapshot dir [dir=").put(srcPath)
+                        .put("could not remove checkpoint dir [dir=").put(srcPath)
                         .put(", errno=").put(ff.errno())
                         .put(']');
             }
-            dstPath.of(root).parent().concat(TableUtils.RESTORE_SNAPSHOT_TRIGGER_FILE_NAME);
+            dstPath.of(root).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
             if (triggerExists && !ff.removeQuiet(dstPath.$())) {
                 throw CairoException.critical(ff.errno())
                         .put("could not remove restore trigger file. file permission issues? [file=").put(dstPath).put(']');
