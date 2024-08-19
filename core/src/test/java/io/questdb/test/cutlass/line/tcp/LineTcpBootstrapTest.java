@@ -52,29 +52,6 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testDisconnectOnErrorWithWAL() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
-                serverMain.start();
-                CairoEngine engine = serverMain.getEngine();
-                try (SqlCompiler sqlCompiler = engine.getSqlCompiler();
-                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                    sqlCompiler.compile("create table x (ts timestamp, a int) timestamp(ts) partition by day wal", sqlExecutionContext);
-                }
-
-                int port = serverMain.getConfiguration().getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindPort();
-                try (Sender sender = Sender.builder(Sender.Transport.TCP).address("localhost").port(port).build()) {
-                    for (int i = 0; i < 1_000_000; i++) {
-                        sender.table("x").stringColumn("a", "42").atNow();
-                    }
-                    Assert.fail();
-                } catch (LineSenderException expected) {
-                }
-            }
-        });
-    }
-
-    @Test
     public void testAsciiFlagCorrectlySetForVarcharColumns() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
@@ -83,12 +60,12 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 try (SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
                     engine.ddl(
                             "CREATE TABLE 'betfairRunners' (\n" +
-                            "  id INT,\n" +
-                            "  runner VARCHAR,\n" +
-                            "  age BYTE,\n" +
-                            "  remarks SYMBOL CAPACITY 2048 CACHE INDEX CAPACITY 256,\n" +
-                            "  timestamp TIMESTAMP\n" +
-                            ") timestamp (timestamp) PARTITION BY MONTH WAL\n" +
+                                    "  id INT,\n" +
+                                    "  runner VARCHAR,\n" +
+                                    "  age BYTE,\n" +
+                                    "  remarks SYMBOL CAPACITY 2048 CACHE INDEX CAPACITY 256,\n" +
+                                    "  timestamp TIMESTAMP\n" +
+                                    ") timestamp (timestamp) PARTITION BY MONTH WAL\n" +
                                     "DEDUP UPSERT KEYS(timestamp, id);",
                             sqlExecutionContext
                     );
@@ -144,6 +121,29 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                             throw SqlException.$(0, "More than one result in record cursor. Should be one row after distinct query.");
                         }
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDisconnectOnErrorWithWAL() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
+                serverMain.start();
+                CairoEngine engine = serverMain.getEngine();
+                try (SqlCompiler sqlCompiler = engine.getSqlCompiler();
+                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                    sqlCompiler.compile("create table x (ts timestamp, a int) timestamp(ts) partition by day wal", sqlExecutionContext);
+                }
+
+                int port = serverMain.getConfiguration().getLineTcpReceiverConfiguration().getDispatcherConfiguration().getBindPort();
+                try (Sender sender = Sender.builder(Sender.Transport.TCP).address("localhost").port(port).build()) {
+                    for (int i = 0; i < 1_000_000; i++) {
+                        sender.table("x").stringColumn("a", "42").atNow();
+                    }
+                    Assert.fail();
+                } catch (LineSenderException expected) {
                 }
             }
         });
