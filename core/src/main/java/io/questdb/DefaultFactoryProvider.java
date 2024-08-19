@@ -47,7 +47,6 @@ public class DefaultFactoryProvider implements FactoryProvider {
 
     @Override
     public @NotNull HttpCookieHandler getHttpCookieHandler() {
-        System.out.println("yes yes no");
         return DefaultHttpCookieHandler.INSTANCE;
     }
 

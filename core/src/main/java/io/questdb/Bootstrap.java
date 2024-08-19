@@ -77,7 +77,6 @@ public class Bootstrap {
     }
 
     public Bootstrap(BootstrapConfiguration bootstrapConfiguration, String... args) {
-        fun();
         if (args.length < 2) {
             throw new BootstrapException("Root directory name expected (-d <root-path>)");
         }
@@ -515,10 +514,6 @@ public class Bootstrap {
         }
         setPublicVersion(publicDir, thisVersion);
         extractConfDir(buffer);
-    }
-
-    private void fun() {
-        System.out.println("Having fun with sed!");
     }
 
     private void reportValidateConfig() {
