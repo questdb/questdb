@@ -912,7 +912,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         return path.equals(normalize(configuration.getConfRoot())) ||
                 path.equals(normalize(configuration.getRoot())) ||
                 path.equals(normalize(configuration.getDbDirectory())) ||
-                path.equals(normalize(configuration.getSnapshotRoot())) ||
+                path.equals(normalize(configuration.getCheckpointRoot())) ||
                 path.equals(normalize(configuration.getBackupRoot()));
     }
 
