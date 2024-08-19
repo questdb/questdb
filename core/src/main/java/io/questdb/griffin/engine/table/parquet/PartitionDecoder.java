@@ -55,6 +55,15 @@ public class PartitionDecoder implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(PartitionDecoder.class);
     private static final long ROW_COUNT_OFFSET;
     private static final long ROW_GROUP_COUNT_OFFSET;
+
+    private static final long CHUNK_STATS_FILE_OFFSET_OFFSET;
+    private static final long CHUNK_STATS_NULL_COUNT_OFFSET;
+    private static final long CHUNK_STATS_DISTINCT_COUNT_OFFSET;
+    private static final long CHUNK_STATS_MAX_VALUE_PTR_OFFSET;
+    private static final long CHUNK_STATS_MAX_VALUE_SIZE_OFFSET;
+    private static final long CHUNK_STATS_MIN_VALUE_PTR_OFFSET;
+    private static final long CHUNK_STATS_MIN_VALUE_SIZE_OFFSET;
+
     private final ObjectPool<DirectString> directStringPool = new ObjectPool<>(DirectString::new, 16);
     private final FilesFacade ff;
     private final Metadata metadata = new Metadata();
@@ -109,6 +118,71 @@ public class PartitionDecoder implements QuietCloseable {
         }
     }
 
+    public long getColumnChunkStats(long rowGroup, long columnId) {
+        assert ptr != 0;
+        try {
+            return getColumnChunkStats(
+                    ptr,
+                    rowGroup,
+                    columnId
+            );
+        } catch (Throwable th) {
+            LOG.error().$("could not get stats [fd=").$(fd)
+                    .$(", columnId=").$(columnId)
+                    .$(", rowGroup=").$(rowGroup)
+                    .$(", msg=").$(th.getMessage())
+                    .$(']').$();
+
+            throw CairoException.nonCritical().put(th.getMessage());
+        }
+    }
+
+    public long getColumnChunkMinTimestamp(long rowGroup, long timestampIndex) {
+        final long chunkStatsPtr = getColumnChunkStats(rowGroup, timestampIndex);
+        final long size = getChunkStatsMinValueSize(chunkStatsPtr);
+        assert size == Long.BYTES;
+        final long ptr = getChunkStatsMinValuePtr(chunkStatsPtr);
+        assert ptr != 0;
+        return Unsafe.getUnsafe().getLong(ptr);
+    }
+
+    public long getColumnChunkMaxTimestamp(long rowGroup, long timestampIndex) {
+        final long chunkStatsPtr = getColumnChunkStats(rowGroup, timestampIndex);
+        final long size = getChunkStatsMaxValueSize(chunkStatsPtr);
+        assert size == Long.BYTES;
+        final long ptr = getChunkStatsMaxValuePtr(chunkStatsPtr);
+        assert ptr != 0;
+        return Unsafe.getUnsafe().getLong(ptr);
+    }
+
+    public static long getChunkStatsFileOffset(long chunkStatsPtr) {
+        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_FILE_OFFSET_OFFSET);
+    }
+
+    public static long getChunkStatsNullCount(long chunkStatsPtr) {
+        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_NULL_COUNT_OFFSET);
+    }
+
+    public static long getChunkStatsDistinctCount(long chunkStatsPtr) {
+        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_DISTINCT_COUNT_OFFSET);
+    }
+
+    public static long getChunkStatsMaxValuePtr(long chunkStatsPtr) {
+        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_MAX_VALUE_PTR_OFFSET);
+    }
+
+    public static long getChunkStatsMaxValueSize(long chunkStatsPtr) {
+        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_MAX_VALUE_SIZE_OFFSET);
+    }
+
+    public static long getChunkStatsMinValuePtr(long chunkStatsPtr) {
+        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_MIN_VALUE_PTR_OFFSET);
+    }
+
+    public static long getChunkStatsMinValueSize(long chunkStatsPtr) {
+        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_MIN_VALUE_SIZE_OFFSET);
+    }
+
     public Metadata getMetadata() {
         assert ptr != 0;
         return metadata;
@@ -154,8 +228,8 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native long decodeColumnChunk(
             long decoderPtr,
-            long columnId,
             long rowGroup,
+            long columnId,
             int columnType
     );
 
@@ -164,6 +238,15 @@ public class PartitionDecoder implements QuietCloseable {
     private static native long rowCountOffset();
 
     private static native long rowGroupCountOffset();
+
+    private static native long getColumnChunkStats(long decoderPtr, long rowGroup, long columnId);
+    private static native long chunkStatFileOffsetOffset();
+    private static native long chunkStatNullCountOffset();
+    private static native long chunkStatDistinctCountOffset();
+    private static native long chunkStatMaxValuePtrOffset();
+    private static native long chunkStatMaxValueSizeOffset();
+    private static native long chunkStatMinValuePtrOffset();
+    private static native long chunkStatMinValueSizeOffset();
 
     private void destroy() {
         if (ptr != 0) {
@@ -239,5 +322,12 @@ public class PartitionDecoder implements QuietCloseable {
         CHUNK_DATA_PTR_OFFSET = chunkDataPtrOffset();
         CHUNK_AUX_PTR_OFFSET = chunkAuxPtrOffset();
         CHUNK_ROW_GROUP_COUNT_PTR_OFFSET = chunkRowGroupCountPtrOffset();
+        CHUNK_STATS_FILE_OFFSET_OFFSET = chunkStatFileOffsetOffset();
+        CHUNK_STATS_NULL_COUNT_OFFSET = chunkStatNullCountOffset();
+        CHUNK_STATS_DISTINCT_COUNT_OFFSET = chunkStatDistinctCountOffset();
+        CHUNK_STATS_MAX_VALUE_PTR_OFFSET = chunkStatMaxValuePtrOffset();
+        CHUNK_STATS_MAX_VALUE_SIZE_OFFSET = chunkStatMaxValueSizeOffset();
+        CHUNK_STATS_MIN_VALUE_PTR_OFFSET = chunkStatMinValuePtrOffset();
+        CHUNK_STATS_MIN_VALUE_SIZE_OFFSET = chunkStatMinValueSizeOffset();
     }
 }
