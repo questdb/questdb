@@ -287,10 +287,11 @@ public class PropServerConfigurationTest {
 
         TestUtils.assertEquals(new File(root, "db").getAbsolutePath(), configuration.getCairoConfiguration().getRoot());
         TestUtils.assertEquals(new File(root, "conf").getAbsolutePath(), configuration.getCairoConfiguration().getConfRoot());
-        TestUtils.assertEquals(new File(root, "snapshot").getAbsolutePath(), configuration.getCairoConfiguration().getSnapshotRoot());
+        TestUtils.assertEquals(new File(root, TableUtils.LEGACY_CHECKPOINT_DIRECTORY).getAbsolutePath(), configuration.getCairoConfiguration().getLegacyCheckpointRoot());
+        TestUtils.assertEquals(new File(root, TableUtils.CHECKPOINT_DIRECTORY).getAbsolutePath(), configuration.getCairoConfiguration().getCheckpointRoot());
 
         Assert.assertEquals("", configuration.getCairoConfiguration().getSnapshotInstanceId());
-        Assert.assertTrue(configuration.getCairoConfiguration().isSnapshotRecoveryEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isCheckpointRecoveryEnabled());
 
         // assert mime types
         TestUtils.assertEquals("application/json", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getMimeTypesCache().get(new Utf8String("json")));
@@ -680,13 +681,13 @@ public class PropServerConfigurationTest {
         //direct cases
         assertInputWorkRootCantBeSetTo(properties, root);
         assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getRoot());
-        assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getSnapshotRoot().toString());
+        assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getCheckpointRoot().toString());
         assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getConfRoot().toString());
 
         //relative cases
         assertInputWorkRootCantBeSetTo(properties, getRelativePath(root));
         assertInputWorkRootCantBeSetTo(properties, getRelativePath(configuration.getCairoConfiguration().getRoot()));
-        assertInputWorkRootCantBeSetTo(properties, getRelativePath(configuration.getCairoConfiguration().getSnapshotRoot().toString()));
+        assertInputWorkRootCantBeSetTo(properties, getRelativePath(configuration.getCairoConfiguration().getCheckpointRoot().toString()));
         assertInputWorkRootCantBeSetTo(properties, getRelativePath(configuration.getCairoConfiguration().getConfRoot().toString()));
     }
 
@@ -1307,7 +1308,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(8, configuration.getDoubleToStrCastScale());
         Assert.assertEquals(3, configuration.getFloatToStrCastScale());
         Assert.assertEquals("test-id-42", configuration.getSnapshotInstanceId());
-        Assert.assertFalse(configuration.isSnapshotRecoveryEnabled());
+        Assert.assertFalse(configuration.isCheckpointRecoveryEnabled());
 
         Assert.assertEquals(CommitMode.ASYNC, configuration.getCommitMode());
         Assert.assertEquals(12, configuration.getCreateAsSelectRetryCount());
