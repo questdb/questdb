@@ -46,7 +46,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     private final long databaseIdLo;
     private final LongSupplier importIDSupplier = () -> getRandom().nextPositiveLong();
     private final String root;
-    private final CharSequence snapshotRoot;
+    private final CharSequence checkpointRoot;
+    private final CharSequence legacyCheckpointRoot;
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
     private final TextConfiguration textConfiguration;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
@@ -56,7 +57,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         this.root = Chars.toString(root);
         this.confRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY);
         this.textConfiguration = new DefaultTextConfiguration(Chars.toString(confRoot));
-        this.snapshotRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.SNAPSHOT_DIRECTORY);
+        this.checkpointRoot = PropServerConfiguration.rootSubdir(root, TableUtils.CHECKPOINT_DIRECTORY);
+        this.legacyCheckpointRoot = PropServerConfiguration.rootSubdir(root, TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
         Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
         this.databaseIdLo = rnd.nextLong();
         this.databaseIdHi = rnd.nextLong();
@@ -575,8 +577,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getSnapshotRoot() {
-        return snapshotRoot;
+    public @NotNull CharSequence getCheckpointRoot() {
+        return checkpointRoot;
+    }
+
+    @Override
+    public @NotNull CharSequence getLegacyCheckpointRoot() {
+        return legacyCheckpointRoot;
     }
 
     @Override
@@ -1086,7 +1093,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean isSnapshotRecoveryEnabled() {
+    public boolean isCheckpointRecoveryEnabled() {
         return true;
     }
 
