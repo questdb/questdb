@@ -4888,7 +4888,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "  fill: null\n" +
                     "  range: (timestamp_floor('day',now()),null)\n" +
                     "  values: [count(*)]\n" +
-                    "    DataFrame\n" +
+                    "    PageFrame\n" +
                     "        Row forward scan\n" +
                     "        Interval forward scan on: trades\n" +
                     "          intervals: [(\"2024-08-12T00:00:00.000000Z\",\"MAX\")]\n");
