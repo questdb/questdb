@@ -518,7 +518,11 @@ pub fn decoder_page(
                     Ok(row_count)
                 }
 
-                (Encoding::DeltaLengthByteArray, None, ColumnType::Varchar) => {
+                (
+                    Encoding::DeltaLengthByteArray,
+                    None,
+                    ColumnType::Varchar | ColumnType::Symbol,
+                ) => {
                     let mut slicer = DeltaLengthArraySlicer::try_new(values_buffer, row_count)?;
                     decode_page(
                         version,
@@ -532,7 +536,7 @@ pub fn decoder_page(
                 (
                     Encoding::RleDictionary | Encoding::PlainDictionary,
                     Some(dict_page),
-                    ColumnType::Varchar,
+                    ColumnType::Varchar | ColumnType::Symbol,
                 ) => {
                     let dict_decoder = VarDictDecoder::try_new(dict_page, true)?;
                     let mut slicer = RleDictionarySlicer::try_new(
@@ -561,7 +565,7 @@ pub fn decoder_page(
                     Ok(row_count)
                 }
 
-                (Encoding::Plain, _, ColumnType::Varchar) => {
+                (Encoding::Plain, _, ColumnType::Varchar | ColumnType::Symbol) => {
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page(
                         version,
@@ -572,7 +576,7 @@ pub fn decoder_page(
                     Ok(row_count)
                 }
 
-                (Encoding::DeltaByteArray, _, ColumnType::Varchar) => {
+                (Encoding::DeltaByteArray, _, ColumnType::Varchar | ColumnType::Symbol) => {
                     let mut slicer = DeltaBytesArraySlicer::try_new(values_buffer, row_count)?;
                     decode_page(
                         version,
