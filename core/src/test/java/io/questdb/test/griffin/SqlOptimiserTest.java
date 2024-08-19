@@ -3443,7 +3443,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "      keys: [symbol,timestamp]\n" +
                             "      values: [last(price)]\n" +
                             "      filter: symbol ~ BTC-USD\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Interval forward scan on: trades\n" +
                             "              intervals: [(\"2024-08-11T10:13:00.000000Z\",\"2024-08-11T10:15:59.999999Z\")]\n");
