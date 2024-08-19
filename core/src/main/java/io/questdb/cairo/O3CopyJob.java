@@ -25,11 +25,14 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Sequence;
 import io.questdb.std.*;
+import io.questdb.std.str.*;
 import io.questdb.tasks.O3CopyTask;
 import org.jetbrains.annotations.Nullable;
 
@@ -359,6 +362,45 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         O3Utils.copyFixedSizeCol(ff, src, srcLo, dstFixAddr, dstFixFileOffset, dstFd, mixedIOFlag, len, shl);
     }
 
+    public static void mergeSymbols(
+            long timestampMergeIndexAddr,
+            long timestampMergeIndexCount,
+            long srcFixAddr,
+            long srcVarAddr,
+            long srcOooFixAddr,
+            MemoryR symbolMapOffsets,
+            MemoryR symbolMapValues,
+            MemoryCARWImpl dstFixMem,
+            MemoryCARWImpl dstVarMem
+    ) {
+        ColumnTypeDriver typeDriver = VarcharTypeDriver.INSTANCE;
+        try(DirectUtf8Sink sink = new DirectUtf8Sink(8*1024)) {
+            Utf8SplitString utf8SplitView = new Utf8SplitString();
+            for (long i = 0; i < timestampMergeIndexCount; i++) {
+                //        const uint64_t row = merge_index[l].i;
+                //        const uint32_t bit = (row >> 63);
+                //        const uint64_t rr = row & ~(1ull << 63);
+                final long raw = Unsafe.getUnsafe().getLong(timestampMergeIndexAddr + i * 2 *Long.BYTES + Long.BYTES);
+                final boolean pickFromSymbolMap = (raw >> 63L) == 0;
+                final long row = raw & ~(1L << 63L);
+                if (pickFromSymbolMap) {
+                    final int key = Unsafe.getUnsafe().getInt(srcOooFixAddr + row * Integer.BYTES);
+                    final CharSequence str = symbolMapValues.getStrA(symbolMapOffsets.getLong(SymbolMapWriter.keyToOffset(key)));
+                    if (str != null) {
+                        sink.clear();
+                        sink.put(str);
+                        VarcharTypeDriver.appendValue(dstFixMem, dstVarMem, sink);
+                    } else {
+                        typeDriver.appendNull(dstFixMem, dstVarMem);
+                    }
+                } else {
+                    final Utf8Sequence value = VarcharTypeDriver.getSplitValue(srcFixAddr, Long.MAX_VALUE, srcVarAddr, Long.MAX_VALUE, row, utf8SplitView);
+                    VarcharTypeDriver.appendValue(dstFixMem, dstVarMem, value);
+                }
+            }
+        }
+    }
+
     public static void o3ColumnCopy(
             FilesFacade ff,
             int columnType,
@@ -593,7 +635,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
         }
     }
 
-    private static void mergeCopy(
+    public static void mergeCopy(
             int columnType,
             long timestampMergeIndexAddr,
             long timestampMergeIndexCount,
