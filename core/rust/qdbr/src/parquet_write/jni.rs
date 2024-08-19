@@ -1,18 +1,19 @@
 use std::fs::File;
 use std::path::Path;
-use std::slice;
+use std::{fs, slice};
 
+use crate::parquet_write::file::{create_row_group, ParquetWriter, WriteOptions};
+use crate::parquet_write::schema::{to_encodings, Column, Partition};
+use crate::parquet_write::ParquetError;
 use anyhow::Context;
 use jni::objects::JClass;
-use jni::sys::{jboolean, jint, jlong};
+use jni::sys::{jboolean, jint, jlong, jshort};
 use jni::JNIEnv;
 use parquet2::compression::{BrotliLevel, CompressionOptions, GzipLevel, ZstdLevel};
 use parquet2::metadata::SortingColumn;
-use parquet2::write::Version;
-
-use crate::parquet_write::file::ParquetWriter;
-use crate::parquet_write::schema::{Column, Partition};
-use crate::parquet_write::ParquetError;
+use parquet2::read::read_metadata;
+use parquet2::write;
+use parquet2::write::{ParquetFile, Version};
 
 fn read_utf8_encoded_string_list(
     count: usize,

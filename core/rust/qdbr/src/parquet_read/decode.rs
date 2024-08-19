@@ -119,6 +119,42 @@ impl ParquetDecoder {
 
         Ok(())
     }
+
+    pub fn update_column_chunk_stats(
+        &mut self,
+        row_group: usize,
+        file_column_index: usize,
+        column: usize,
+    ) {
+        let columns = self.metadata.row_groups[row_group].columns();
+        let column_metadata = &columns[file_column_index];
+        let column_chunk = column_metadata.column_chunk();
+        let stats = &mut self.column_chunk_stats[column];
+
+        stats.file_offset = column_chunk.file_offset;
+        stats.max_value.clear();
+        stats.min_value.clear();
+
+        if let Some(meta_data) = &column_chunk.meta_data {
+            if let Some(statistics) = &meta_data.statistics {
+                stats.null_count = statistics.null_count.unwrap_or(-1);
+                stats.distinct_count = statistics.distinct_count.unwrap_or(-1);
+
+                if let Some(max) = statistics.max_value.as_ref() {
+                    stats.max_value.extend_from_slice(max);
+                }
+
+                if let Some(min) = statistics.min_value.as_ref() {
+                    stats.min_value.extend_from_slice(min);
+                }
+            }
+        }
+
+        stats.max_value_ptr = stats.max_value.as_mut_ptr();
+        stats.max_value_size = stats.max_value.len();
+        stats.min_value_ptr = stats.min_value.as_mut_ptr();
+        stats.min_value_size = stats.min_value.len();
+    }
 }
 
 pub fn decoder_page(

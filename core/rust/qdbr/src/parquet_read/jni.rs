@@ -5,7 +5,7 @@ use std::ptr;
 use jni::objects::JClass;
 use jni::JNIEnv;
 
-use crate::parquet_read::{ColumnChunkBuffers, ColumnMeta, ParquetDecoder};
+use crate::parquet_read::{ColumnChunkBuffers, ColumnChunkStats, ColumnMeta, ParquetDecoder};
 use crate::parquet_write::schema::ColumnType;
 
 fn from_raw_file_descriptor(raw: i32) -> File {
@@ -95,6 +95,35 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     }
     let buffer = &decoder.column_buffers[column];
     buffer as *const ColumnChunkBuffers
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_getColumnChunkStats(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *mut ParquetDecoder,
+    row_group: usize,
+    column: usize,
+) -> *const ColumnChunkStats {
+    assert!(!decoder.is_null(), "decoder pointer is null");
+    let decoder = unsafe { &mut *decoder };
+
+    if column >= decoder.columns.len() {
+        return throw_java_ex(
+            &mut env,
+            "getColumnChunkStats",
+            &format!(
+                "column index {} out of range [0,{})",
+                column,
+                decoder.columns.len()
+            ),
+        );
+    }
+
+    let column_file_index = decoder.columns[column].id;
+    decoder.update_column_chunk_stats(row_group, column_file_index as usize, column);
+    let stats = &decoder.column_chunk_stats[column];
+    stats as *const ColumnChunkStats
 }
 
 #[no_mangle]
@@ -191,6 +220,59 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _class: JClass,
 ) -> usize {
     offset_of!(ColumnChunkBuffers, row_count)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_chunkStatFileOffsetOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ColumnChunkStats, file_offset)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_chunkStatNullCountOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ColumnChunkStats, null_count)
+}
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_chunkStatDistinctCountOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ColumnChunkStats, distinct_count)
+}
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_chunkStatMaxValuePtrOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ColumnChunkStats, max_value_ptr)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_chunkStatMaxValueSizeOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ColumnChunkStats, max_value_size)
+}
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_chunkStatMinValuePtrOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ColumnChunkStats, min_value_ptr)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_chunkStatMinValueSizeOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ColumnChunkStats, min_value_size)
 }
 
 fn throw_java_ex<T>(env: &mut JNIEnv, method_name: &str, err: &impl std::fmt::Debug) -> *mut T {
