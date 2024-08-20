@@ -465,7 +465,7 @@ public class LimitTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 10\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row backward scan\n" +
                             "        Interval backward scan on: intervaltest\n" +
                             "          intervals: [(\"2023-04-06T00:09:59.000001Z\",\"MAX\")]\n"

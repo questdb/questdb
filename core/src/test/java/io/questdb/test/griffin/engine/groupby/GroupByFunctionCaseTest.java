@@ -211,7 +211,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                             "          keys: [candle_st,venue]\n" +
                             "          values: [count(*),sum(qty*price),sum(qty)]\n" +
                             "          filter: (instrument_key ~ ETH.USD.S..*? and venue in [CBS,FUS,LMX,BTS])\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Interval forward scan on: spot_trades\n" +
                             "                  intervals: [(\"2022-01-01T00:00:00.000000Z\",\"MAX\")]\n"
@@ -247,7 +247,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
         if (!rosti) {
             planSink.put("  filter: null\n");
         }
-        planSink.put("    DataFrame\n" +
+        planSink.put("    PageFrame\n" +
                 "        Row forward scan\n" +
                 "        Frame forward scan on: test\n");
     }

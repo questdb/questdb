@@ -25,26 +25,30 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.DataFrameCursor;
-import io.questdb.cairo.sql.DataFrameCursorFactory;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.NotNull;
 
-abstract class AbstractTreeSetRecordCursorFactory extends AbstractDataFrameRecordCursorFactory {
+abstract class AbstractTreeSetRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
     final DirectLongList rows;
-    protected DataFrameRecordCursor cursor;
+    protected PageFrameRecordCursor cursor;
 
     public AbstractTreeSetRecordCursorFactory(
-            RecordMetadata metadata,
-            DataFrameCursorFactory dataFrameCursorFactory,
-            CairoConfiguration configuration
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
     ) {
-        super(metadata, dataFrameCursorFactory);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
         this.rows = new DirectLongList(configuration.getSqlLatestByRowCount(), MemoryTag.NATIVE_LATEST_BY_LONG_LIST);
     }
 
@@ -55,11 +59,11 @@ abstract class AbstractTreeSetRecordCursorFactory extends AbstractDataFrameRecor
     }
 
     @Override
-    protected RecordCursor getCursorInstance(
-            DataFrameCursor dataFrameCursor,
+    protected RecordCursor initRecordCursor(
+            PageFrameCursor pageFrameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        cursor.of(dataFrameCursor, executionContext);
+        cursor.of(pageFrameCursor, executionContext);
         return cursor;
     }
 }

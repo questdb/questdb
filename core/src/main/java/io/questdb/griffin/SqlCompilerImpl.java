@@ -29,6 +29,7 @@ import io.questdb.PropServerConfiguration;
 import io.questdb.TelemetryOrigin;
 import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
@@ -1479,6 +1480,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofBegin();
     }
 
+    private void compileCheckpoint(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getSecurityContext().authorizeDatabaseSnapshot();
+        CharSequence tok = expectToken(lexer, "'create' or 'release'");
+
+        if (SqlKeywords.isCreateKeyword(tok)) {
+            engine.checkpointCreate(executionContext);
+            compiledQuery.ofCheckpointCreate();
+        } else if (Chars.equalsLowerCaseAscii(tok, "release")) {
+            engine.checkpointRelease();
+            compiledQuery.ofCheckpointRelease();
+        } else {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'create' or 'release' expected");
+        }
+    }
+
     private void compileCommit(SqlExecutionContext executionContext) {
         compiledQuery.ofCommit();
     }
@@ -1631,6 +1647,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compiledQuery.withSqlStatement(Chars.toString(sqlText));
         }
         compiledQuery.withContext(executionContext);
+    }
+
+    private void compileLegacyCheckpoint(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getSecurityContext().authorizeDatabaseSnapshot();
+        CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
+
+        if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
+            engine.checkpointCreate(executionContext);
+            compiledQuery.ofCheckpointCreate();
+        } else if (Chars.equalsLowerCaseAscii(tok, "complete")) {
+            engine.checkpointRelease();
+            compiledQuery.ofCheckpointRelease();
+        } else {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'prepare' or 'complete' expected");
+        }
     }
 
     private void compileRollback(SqlExecutionContext executionContext) {
@@ -1821,7 +1852,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return rowCount;
     }
 
-    //returns number of copied rows
+    // returns number of copied rows
     private long copyOrderedBatched0(
             TableWriterAPI writer,
             RecordCursor cursor,
@@ -1844,7 +1875,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 deadline = rowCount + batchSize;
             }
         }
-
         return rowCount;
     }
 
@@ -1900,9 +1930,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return rowCount;
     }
 
-    /*
-     * Returns number of copied rows.
-     */
+    // returns number of copied rows
     private long copyTableData(
             RecordCursor cursor,
             RecordMetadata metadata,
@@ -1942,15 +1970,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try {
             if (!isWalEnabled) {
                 writerAPI = writer = new TableWriter(
-                        configuration,
+                        engine.getConfiguration(),
                         tableToken,
-                        messageBus,
+                        engine.getMessageBus(),
                         null,
                         false,
                         DefaultLifecycleManager.INSTANCE,
-                        configuration.getRoot(),
+                        engine.getConfiguration().getRoot(),
                         engine.getDdlListener(tableToken),
-                        getEngine().getSnapshotAgent(),
+                        engine.getCheckpointStatus(),
                         engine.getMetrics()
                 );
             } else {
@@ -2802,21 +2830,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofRepair();
     }
 
-    private void snapshotDatabase(SqlExecutionContext executionContext) throws SqlException {
-        executionContext.getSecurityContext().authorizeDatabaseSnapshot();
-        CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
-
-        if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
-            engine.prepareSnapshot(executionContext);
-            compiledQuery.ofSnapshotPrepare();
-        } else if (Chars.equalsLowerCaseAscii(tok, "complete")) {
-            engine.completeSnapshot();
-            compiledQuery.ofSnapshotComplete();
-        } else {
-            throw SqlException.position(lexer.lastTokenPosition()).put("'prepare' or 'complete' expected");
-        }
-    }
-
     private TableToken tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
         if (executionContext.getTableStatus(path, tableName) != TableUtils.TABLE_EXISTS) {
             throw SqlException.tableDoesNotExist(position, tableName);
@@ -2991,7 +3004,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // the only reason why columns cannot be found at this stage is
             // concurrent table modification of table structure
             if (index == -1) {
-                // Cast isn't going to go away when we re-parse SQL. We must make this
+                // Cast isn't going to go away when we reparse SQL. We must make this
                 // permanent error
                 throw SqlException.invalidColumn(ccm.getColumnNamePos(), columnName);
             }
@@ -3161,7 +3174,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final KeywordBasedExecutor dropStatement = dropStmtCompiler::executorSelector;
         final KeywordBasedExecutor sqlBackup = backupAgent::sqlBackup;
         final KeywordBasedExecutor vacuumTable = this::vacuum;
-        final KeywordBasedExecutor snapshotDatabase = this::snapshotDatabase;
+        final KeywordBasedExecutor compileCheckpoint = this::compileCheckpoint;
+        final KeywordBasedExecutor compileLegacyCheckpoint = this::compileLegacyCheckpoint;
         final KeywordBasedExecutor compileDeallocate = this::compileDeallocate;
         final KeywordBasedExecutor cancelQuery = this::cancelQuery;
 
@@ -3173,13 +3187,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         keywordBasedExecutors.put("commit", compileCommit);
         keywordBasedExecutors.put("rollback", compileRollback);
         keywordBasedExecutors.put("discard", compileSet);
-        keywordBasedExecutors.put("close", compileSet); //no-op
-        keywordBasedExecutors.put("unlisten", compileSet);  //no-op
-        keywordBasedExecutors.put("reset", compileSet);  //no-op
+        keywordBasedExecutors.put("close", compileSet); // no-op
+        keywordBasedExecutors.put("unlisten", compileSet); // no-op
+        keywordBasedExecutors.put("reset", compileSet); // no-op
         keywordBasedExecutors.put("drop", dropStatement);
         keywordBasedExecutors.put("backup", sqlBackup);
         keywordBasedExecutors.put("vacuum", vacuumTable);
-        keywordBasedExecutors.put("snapshot", snapshotDatabase);
+        keywordBasedExecutors.put("checkpoint", compileCheckpoint);
+        keywordBasedExecutors.put("snapshot", compileLegacyCheckpoint);
         keywordBasedExecutors.put("deallocate", compileDeallocate);
         keywordBasedExecutors.put("cancel", cancelQuery);
     }
@@ -3396,12 +3411,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             Misc.free(dstPath);
         }
 
-        private void backupTable(@NotNull TableToken tableToken) {
+        private void backupTable(@NotNull TableToken tableToken, SqlExecutionContext executionContext) throws SqlException {
             LOG.info().$("starting backup of ").$(tableToken).$();
 
             // the table is copied to a TMP folder and then this folder is moved to the final destination (dstPath)
-            if (null == cachedBackupTmpRoot) {
-                if (null == configuration.getBackupRoot()) {
+            if (cachedBackupTmpRoot == null) {
+                if (configuration.getBackupRoot() == null) {
                     throw CairoException.nonCritical()
                             .put("backup is disabled, server.conf property 'cairo.sql.backup.root' is not set");
                 }
@@ -3526,9 +3541,26 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             );
                             tableBackupRowCopiedCache.put(srcPath, recordToRowCopier);
                         }
-                        RecordCursor cursor = reader.getCursor();
-                        //statement/query timeout value  is most likely too small for backup operation
-                        copyTableData(cursor, reader.getMetadata(), backupWriter, writerMetadata, recordToRowCopier, configuration.getCreateTableModelBatchSize(), configuration.getO3MaxLag(), SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+
+                        sink.clear();
+                        sink.put('\'').put(tableName).put('\'');
+                        try (
+                                SqlExecutionContext allowAllContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE);
+                                RecordCursorFactory factory = engine.select(sink, allowAllContext);
+                                RecordCursor cursor = factory.getCursor(allowAllContext)
+                        ) {
+                            // statement/query timeout value is most likely too small for backup operation
+                            copyTableData(
+                                    cursor,
+                                    factory.getMetadata(),
+                                    backupWriter,
+                                    writerMetadata,
+                                    recordToRowCopier,
+                                    configuration.getCreateTableModelBatchSize(),
+                                    configuration.getO3MaxLag(),
+                                    SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER
+                            );
+                        }
                         backupWriter.commit();
                     }
                 } // release reader lock
@@ -3604,7 +3636,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.position(lexer.lastTokenPosition()).put("expected 'table' or 'database'");
         }
 
-        private void sqlDatabaseBackup(SqlExecutionContext executionContext) {
+        private void sqlDatabaseBackup(SqlExecutionContext executionContext) throws SqlException {
             mkBackupDstRoot();
             mkBackupDstDir(configuration.getDbDirectory(), "could not create backup [db dir=");
 
@@ -3612,7 +3644,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             engine.getTableTokens(tableTokenBucket, false);
             executionContext.getSecurityContext().authorizeTableBackup(tableTokens);
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
-                backupTable(tableTokenBucket.get(i));
+                backupTable(tableTokenBucket.get(i), executionContext);
             }
 
             srcPath.of(configuration.getRoot()).$();
@@ -3674,7 +3706,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executionContext.getSecurityContext().authorizeTableBackup(tableTokens);
 
                 for (int i = 0, n = tableTokens.size(); i < n; i++) {
-                    backupTable(tableTokens.get(i));
+                    backupTable(tableTokens.get(i), executionContext);
                 }
                 compiledQuery.ofBackupTable();
             } finally {

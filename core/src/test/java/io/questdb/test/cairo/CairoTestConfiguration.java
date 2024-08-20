@@ -29,6 +29,7 @@ import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -46,7 +47,7 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
 
     public CairoTestConfiguration(CharSequence root, TelemetryConfiguration telemetryConfiguration, Overrides overrides) {
         this.root = Chars.toString(root);
-        this.snapshotRoot = Chars.toString(root) + Files.SEPARATOR + "snapshot";
+        this.snapshotRoot = Chars.toString(root) + Files.SEPARATOR + TableUtils.CHECKPOINT_DIRECTORY;
         this.telemetryConfiguration = telemetryConfiguration;
         this.overrides = overrides;
     }
@@ -114,7 +115,7 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
-    public @NotNull CharSequence getSnapshotRoot() {
+    public @NotNull CharSequence getCheckpointRoot() {
         return snapshotRoot;
     }
 

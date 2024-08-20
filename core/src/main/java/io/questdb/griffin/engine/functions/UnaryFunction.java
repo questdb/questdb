@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 public interface UnaryFunction extends Function {
+
     @Override
     default void close() {
         getArg().close();

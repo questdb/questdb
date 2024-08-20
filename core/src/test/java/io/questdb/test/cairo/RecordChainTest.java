@@ -25,8 +25,10 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.*;
@@ -67,12 +69,14 @@ public class RecordChainTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             int N = 10000;
             CreateTableTestUtils.createTestTable(N, new Rnd(), new TestRecord.ArrayBinarySequence());
-            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
                 RecordSink recordSink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter);
                 try (RecordChain chain = new RecordChain(reader.getMetadata(), recordSink, SIZE_4M, Integer.MAX_VALUE)) {
                     LongList rows = new LongList();
-                    RecordCursor cursor = reader.getCursor();
                     Record cursorRecord = cursor.getRecord();
 
                     chain.setSymbolTableResolver(cursor);
@@ -210,12 +214,13 @@ public class RecordChainTest extends AbstractCairoTest {
     }
 
     private static void populateChain(RecordChain chain, TableReader reader) {
-        RecordCursor cursor = reader.getCursor();
-        final Record record = cursor.getRecord();
-        chain.setSymbolTableResolver(cursor);
-        long o = -1L;
-        while (cursor.hasNext()) {
-            o = chain.put(record, o);
+        try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
+            final Record record = cursor.getRecord();
+            chain.setSymbolTableResolver(cursor);
+            long o = -1L;
+            while (cursor.hasNext()) {
+                o = chain.put(record, o);
+            }
         }
     }
 
@@ -223,16 +228,17 @@ public class RecordChainTest extends AbstractCairoTest {
         long count = 0L;
         chain.toTop();
         Record chainRecord = chain.getRecord();
-        RecordCursor cursor = reader.getCursor();
-        Record readerRecord = cursor.getRecord();
-        chain.setSymbolTableResolver(cursor);
+        try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
+            Record readerRecord = cursor.getRecord();
+            chain.setSymbolTableResolver(cursor);
 
-        while (chain.hasNext()) {
-            Assert.assertTrue(cursor.hasNext());
-            assertSame(readerRecord, chainRecord, reader.getMetadata());
-            count++;
+            while (chain.hasNext()) {
+                Assert.assertTrue(cursor.hasNext());
+                assertSame(readerRecord, chainRecord, reader.getMetadata());
+                count++;
+            }
+            Assert.assertEquals(expectedCount, count);
         }
-        Assert.assertEquals(expectedCount, count);
     }
 
     private void assertSame(Record expected, Record actual, RecordMetadata metadata) {

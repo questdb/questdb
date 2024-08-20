@@ -27,7 +27,7 @@ package io.questdb.cutlass.auth;
 import io.questdb.network.Socket;
 import org.jetbrains.annotations.NotNull;
 
-public class AnonymousAuthenticator implements Authenticator {
+public class AnonymousAuthenticator implements SocketAuthenticator {
 
     public static final AnonymousAuthenticator INSTANCE = new AnonymousAuthenticator();
 
