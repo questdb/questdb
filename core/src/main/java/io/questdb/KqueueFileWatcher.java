@@ -100,8 +100,8 @@ public class KqueueFileWatcher extends FileWatcher {
                 throw CairoException.critical(Os.errno()).put("could not create pipe");
             }
 
-            this.readEndFd = Files.bumpFileCount((int) (fds >>> 32));
-            this.writeEndFd = Files.bumpFileCount((int) fds);
+            this.readEndFd = Files.createUniqueFd((int) (fds >>> 32));
+            this.writeEndFd = Files.createUniqueFd((int) fds);
 
             this.evtPipe = KqueueAccessor.evtAlloc(
                     this.readEndFd,
@@ -111,7 +111,7 @@ public class KqueueFileWatcher extends FileWatcher {
                     0
             );
 
-            kq = Files.bumpFileCount(KqueueAccessor.kqueue());
+            kq = Files.createUniqueFd(KqueueAccessor.kqueue());
             if (kq < 0) {
                 throw CairoException.critical(Os.errno()).put("could create kqueue");
             }

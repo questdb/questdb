@@ -59,7 +59,7 @@ public class NetworkFacadeImpl implements NetworkFacade {
 
     @Override
     public long bumpFdCount(int fd) {
-        return Files.bumpFileCount(fd);
+        return Files.createUniqueFd(fd);
     }
 
     @Override

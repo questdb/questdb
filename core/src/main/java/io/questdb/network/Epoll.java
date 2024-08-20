@@ -52,7 +52,7 @@ public final class Epoll implements Closeable {
             Unsafe.free(events, size, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
             throw NetworkError.instance(epf.errno(), "could not create epoll");
         }
-        this.epollFd = Files.bumpFileCount(epollFd);
+        this.epollFd = Files.createUniqueFd(epollFd);
     }
 
     @Override

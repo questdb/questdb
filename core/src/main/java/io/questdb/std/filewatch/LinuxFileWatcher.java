@@ -62,7 +62,7 @@ public final class LinuxFileWatcher extends FileWatcher {
             if (inotifyFd2 < 0) {
                 throw CairoException.critical(Os.errno()).put("inotify_init error");
             }
-            this.inotifyFd = Files.bumpFileCount(inotifyFd2);
+            this.inotifyFd = Files.createUniqueFd(inotifyFd2);
 
             this.dirPath.of(filePath).parent();
             this.fileName.put(Paths.get(filePath.toString()).getFileName().toString());
@@ -92,8 +92,8 @@ public final class LinuxFileWatcher extends FileWatcher {
                 throw CairoException.critical(Os.errno()).put("create a pipe error");
             }
 
-            this.readEndFd = Files.bumpFileCount((int) (fds >>> 32));
-            this.writeEndFd = Files.bumpFileCount((int) fds);
+            this.readEndFd = Files.createUniqueFd((int) (fds >>> 32));
+            this.writeEndFd = Files.createUniqueFd((int) fds);
 
             if (epoll.control(readEndFd, 0, EpollAccessor.EPOLL_CTL_ADD, EpollAccessor.EPOLLIN) < 0) {
                 throw CairoException.critical(Os.errno()).put("epoll_ctl error");

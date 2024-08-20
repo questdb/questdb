@@ -53,7 +53,7 @@ public final class Kqueue implements Closeable {
             this.bufferSize = KqueueAccessor.SIZEOF_KEVENT * capacity;
             this.changeList = this.writeAddress = Unsafe.calloc(bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
             this.eventList = this.readAddress = Unsafe.calloc(bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
-            this.kq = Files.bumpFileCount(kqf.kqueue());
+            this.kq = Files.createUniqueFd(kqf.kqueue());
             if (kq < 0) {
                 throw NetworkError.instance(kqf.getNetworkFacade().errno(), "could not create kqueue");
             }

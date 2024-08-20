@@ -77,7 +77,7 @@ public final class Net {
     }
 
     public static long accept(long serverFd) {
-        return Files.bumpFileCount(accept0(toOsFd(serverFd)));
+        return Files.createUniqueFd(accept0(toOsFd(serverFd)));
     }
 
     public static void appendIP4(CharSink<?> sink, long ip) {
@@ -349,11 +349,11 @@ public final class Net {
     }
 
     public static long socketTcp(boolean blocking) {
-        return Files.bumpFileCount(socketTcp0(blocking));
+        return Files.createUniqueFd(socketTcp0(blocking));
     }
 
     public static long socketUdp() {
-        return Files.bumpFileCount(socketUdp0());
+        return Files.createUniqueFd(socketUdp0());
     }
 
     private static native int abortAccept(int fd);
