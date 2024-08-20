@@ -73,8 +73,8 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     public static class ShowColumnsCursor implements NoRandomAccessRecordCursor {
-        private final CairoColumn cairoColumn = new CairoColumn();
         private final ShowColumnsRecord record = new ShowColumnsRecord();
+        private CairoColumn cairoColumn = new CairoColumn();
         private CairoTable cairoTable;
         private int columnIndex;
         private ObjList<CharSequence> names;
@@ -93,7 +93,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         public boolean hasNext() {
             columnIndex++;
             if (columnIndex < cairoTable.getColumnCount()) {
-                cairoTable.getColumnQuick(names.getQuick(columnIndex)).copyTo(cairoColumn);
+                cairoColumn = cairoTable.getColumnQuick(names.getQuick(columnIndex));
                 return true;
             }
             return false;
@@ -101,15 +101,15 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
         public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition) {
             try {
-                CairoMetadata cairoMetadata = executionContext.getCairoEngine().getCairoMetadata();
-                cairoTable = cairoMetadata.getTableQuiet(tableToken);
+                cairoTable = CairoMetadata.INSTANCE.getTableQuiet(tableToken);
 
                 if (cairoTable == null) {
                     CairoMetadata.INSTANCE.hydrateTable(tableToken, executionContext.getCairoEngine().getConfiguration(), LOG, false);
-                    cairoTable = cairoMetadata.getTableQuiet(tableToken);
+                    cairoTable = CairoMetadata.INSTANCE.getTableQuiet(tableToken);
                 }
 
                 assert cairoTable != null;
+
                 names = cairoTable.getColumnNames();
             } catch (CairoException e) {
                 e.position(tokenPosition);

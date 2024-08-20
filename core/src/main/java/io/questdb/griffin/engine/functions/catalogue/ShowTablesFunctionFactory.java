@@ -177,7 +177,7 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
             }
 
             private class TableListRecord implements Record {
-                private final CairoTable table = new CairoTable();
+                private CairoTable table = new CairoTable();
 
                 @Override
                 public boolean getBool(int col) {
@@ -249,24 +249,14 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                         }
                     }
 
-                    final CairoEngine engine = executionContext.getCairoEngine();
-                    final CairoMetadata metadata = engine.getCairoMetadata();
-                    final TableToken lastTableToken = engine.getTableTokenIfExists(tableToken.getTableName());
-
-                    if (lastTableToken == null) {
-                        return false;
-                    }
-
-                    CairoTable table = metadata.getTableQuiet(lastTableToken);
+                    table = CairoMetadata.INSTANCE.getTableQuiet(tableToken);
 
                     if (table == null) {
-                        CairoMetadata.INSTANCE.hydrateTable(lastTableToken, engine.getConfiguration(), LOG, false);
-                        table = metadata.getTableQuiet(lastTableToken);
+                        CairoMetadata.INSTANCE.hydrateTable(tableToken, executionContext.getCairoEngine().getConfiguration(), LOG, false);
+                        table = CairoMetadata.INSTANCE.getTableQuiet(tableToken);
                     }
 
                     assert table != null;
-
-                    table.copyTo(this.table);
 
                     return true;
                 }

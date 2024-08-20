@@ -424,7 +424,7 @@ public class ServerMain implements Closeable {
     protected Services services() {
         return Services.INSTANCE;
     }
-    
+
     protected void setupWalApplyJob(
             WorkerPool workerPool,
             CairoEngine engine,
