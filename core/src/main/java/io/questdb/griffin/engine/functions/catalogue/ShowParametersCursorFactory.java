@@ -30,6 +30,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.PlanSink;
@@ -77,10 +78,22 @@ public class ShowParametersCursorFactory extends AbstractRecordCursorFactory {
         }
     }
 
-    private static class ShowParametersRecordCursor implements RecordCursor {
+    private static class ShowParametersRecordCursor implements NoRandomAccessRecordCursor {
         private ObjObjHashMap<ConfigPropertyKey, ConfigPropertyValue> allPairs;
         private ObjObjHashMap.Entry<ConfigPropertyKey, ConfigPropertyValue> entry;
         private final Record record = new Record() {
+            @Override
+            public boolean getBool(int col) {
+                switch (col) {
+                    case 4:
+                        return entry.key.isSensitive();
+                    case 5:
+                        return entry.value.isDynamic();
+                    default:
+                        return false;
+                }
+            }
+
             @Override
             public CharSequence getStrA(int col) {
                 switch (col) {
@@ -104,18 +117,6 @@ public class ShowParametersCursorFactory extends AbstractRecordCursorFactory {
                         }
                     default:
                         return null;
-                }
-            }
-
-            @Override
-            public boolean getBool(int col) {
-                switch (col) {
-                    case 4:
-                        return entry.key.isSensitive();
-                    case 5:
-                        return entry.value.isDynamic();
-                    default:
-                        return false;
                 }
             }
 
@@ -145,22 +146,12 @@ public class ShowParametersCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
-        public Record getRecordB() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public boolean hasNext() {
             if (iterator.hasNext()) {
                 entry = iterator.next();
                 return true;
             }
             return false;
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            throw new UnsupportedOperationException();
         }
 
         @Override

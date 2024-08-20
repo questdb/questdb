@@ -672,12 +672,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         int cpuUsed = 0;
         int cpuSpare = 0;
         int cpuIoWorkers = 0;
-        int cpuWalApplyWorkers = 2;
+        int cpuWalApplyWorkers = 1;
 
         if (cpuAvailable > 8) {
-            cpuWalApplyWorkers = 3;
+            cpuWalApplyWorkers = 2;
         } else if (cpuAvailable > 16) {
-            cpuWalApplyWorkers = 4;
+            cpuWalApplyWorkers = 2;
             cpuSpare = 1;
             // tested on 4/32/48 core servers
             cpuIoWorkers = cpuAvailable / 2;

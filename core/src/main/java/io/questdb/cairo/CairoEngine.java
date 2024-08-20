@@ -152,11 +152,6 @@ public class CairoEngine implements Closeable, WriterSource {
     public static void compile(SqlCompiler compiler, CharSequence sql, SqlExecutionContext sqlExecutionContext) throws SqlException {
         CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
         switch (cq.getType()) {
-            default:
-                try (OperationFuture future = cq.execute(null)) {
-                    future.await();
-                }
-                break;
             case INSERT:
             case INSERT_AS_SELECT:
                 final InsertOperation insertOperation = cq.getInsertOperation();
@@ -173,6 +168,11 @@ public class CairoEngine implements Closeable, WriterSource {
                 break;
             case SELECT:
                 throw SqlException.$(0, "use select()");
+            default:
+                try (OperationFuture future = cq.execute(null)) {
+                    future.await();
+                }
+                break;
         }
     }
 
@@ -184,17 +184,17 @@ public class CairoEngine implements Closeable, WriterSource {
     ) throws SqlException {
         CompiledQuery cc = compiler.compile(ddl, sqlExecutionContext);
         switch (cc.getType()) {
-            default:
-                try (OperationFuture future = cc.execute(eventSubSeq)) {
-                    future.await();
-                }
-                break;
             case INSERT:
                 throw SqlException.$(0, "use insert()");
             case DROP:
                 throw SqlException.$(0, "use drop()");
             case SELECT:
                 throw SqlException.$(0, "use select()");
+            default:
+                try (OperationFuture future = cc.execute(eventSubSeq)) {
+                    future.await();
+                }
+                break;
         }
     }
 
