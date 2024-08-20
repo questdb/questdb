@@ -27,39 +27,28 @@ package io.questdb.cairo.vm;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.str.DirectString;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8SplitString;
 
 // contiguous readable
 public abstract class AbstractMemoryCR implements MemoryCR, Mutable {
 
     private final MemoryCR.ByteSequenceView bsview = new MemoryCR.ByteSequenceView();
-    private final DirectString csviewA;
-    private final DirectString csviewB;
+    private final DirectString csviewA = new DirectString();
+    private final DirectString csviewB = new DirectString();
     private final Long256Impl long256A = new Long256Impl();
     private final Long256Impl long256B = new Long256Impl();
-    private final Utf8SplitString utf8SplitViewA;
-    private final Utf8SplitString utf8SplitViewB;
-    private final DirectUtf8String utf8ViewA;
-    private final DirectUtf8String utf8ViewB;
+    private final Utf8SplitString utf8SplitViewA = new Utf8SplitString();
+    private final Utf8SplitString utf8SplitViewB = new Utf8SplitString();
+    private final DirectUtf8String utf8ViewA = new DirectUtf8String();
+    private final DirectUtf8String utf8ViewB = new DirectUtf8String();
     protected FilesFacade ff;
     protected long lim;
     protected long pageAddress = 0;
     protected long size = 0;
     private long shiftAddressRight = 0;
-
-    public AbstractMemoryCR(boolean stableStrings) {
-        if (stableStrings) {
-            csviewA = new StableDirectString();
-            csviewB = new StableDirectString();
-        } else {
-            csviewA = new DirectString();
-            csviewB = new DirectString();
-        }
-        utf8SplitViewA = new Utf8SplitString(stableStrings);
-        utf8SplitViewB = new Utf8SplitString(stableStrings);
-        utf8ViewA = new DirectUtf8String(stableStrings);
-        utf8ViewB = new DirectUtf8String(stableStrings);
-    }
 
     public long addressOf(long offset) {
         offset -= shiftAddressRight;

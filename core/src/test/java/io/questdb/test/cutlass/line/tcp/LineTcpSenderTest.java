@@ -131,23 +131,6 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
-    public void testconfString_autoFlushBytes() throws Exception {
-        String confString = "tcp::addr=localhost:" + bindPort + ";auto_flush_bytes=1;"; // the minimal allowed buffer size
-        runInContext(r -> {
-            try (Sender sender = Sender.fromConfig(confString)) {
-                // just 2 rows must be enough to trigger flush
-                // why not 1? the first byte of the 2nd row will flush the last byte of the 1st row
-                sender.table("mytable").longColumn("my int field", 42).atNow();
-                sender.table("mytable").longColumn("my int field", 42).atNow();
-
-                // make sure to assert before closing the Sender
-                // since the Sender will always flush on close
-                assertTableExistsEventually(engine, "mytable");
-            }
-        });
-    }
-
-    @Test
     public void testBuilderPlainText_addressWithExplicitIpAndPort() throws Exception {
         runInContext(r -> {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
@@ -253,6 +236,23 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (TableReader reader = getReader("mytable")) {
                 TestUtils.assertReader("int_field\tbool_field\tstring_field\tdouble_field\tts_field\ttimestamp\n" +
                         "42\ttrue\tfoo\t42.0\t2022-02-25T00:00:00.000000Z\t2022-02-25T00:00:00.000000Z\n", reader, new StringSink());
+            }
+        });
+    }
+
+    @Test
+    public void testConfString_autoFlushBytes() throws Exception {
+        String confString = "tcp::addr=localhost:" + bindPort + ";auto_flush_bytes=1;"; // the minimal allowed buffer size
+        runInContext(r -> {
+            try (Sender sender = Sender.fromConfig(confString)) {
+                // just 2 rows must be enough to trigger flush
+                // why not 1? the first byte of the 2nd row will flush the last byte of the 1st row
+                sender.table("mytable").longColumn("my int field", 42).atNow();
+                sender.table("mytable").longColumn("my int field", 42).atNow();
+
+                // make sure to assert before closing the Sender
+                // since the Sender will always flush on close
+                assertTableExistsEventually(engine, "mytable");
             }
         });
     }
@@ -519,8 +519,11 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
                 }
             });
             // make sure the 2nd unfinished row was not inserted by the server
-            try (TableReader reader = getReader(tableName)) {
-                assertEquals(1, reader.getCursor().size());
+            try (
+                    RecordCursorFactory factory = engine.select(tableName, sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                assertEquals(1, cursor.size());
             }
         });
     }
@@ -614,6 +617,34 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
     }
 
     @Test
+    public void testUseVarcharAsString() throws Exception {
+        useLegacyStringDefault = false;
+        runInContext(r -> {
+            try (Sender sender = Sender.builder(Sender.Transport.TCP)
+                    .address("127.0.0.1")
+                    .port(bindPort)
+                    .build()
+            ) {
+                String table = "string_table";
+                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2024-02-27");
+                String expectedValue = "čćžšđçğéíáýůř";
+                sender.table(table)
+                        .stringColumn("string1", expectedValue)
+                        .at(tsMicros, ChronoUnit.MICROS);
+                sender.flush();
+                assertTableSizeEventually(engine, table, 1);
+                try (RecordCursorFactory fac = engine.select(table, sqlExecutionContext);
+                     RecordCursor cursor = fac.getCursor(sqlExecutionContext)
+                ) {
+                    TestUtils.assertCursor(
+                            "čćžšđçğéíáýůř:" + ColumnType.nameOf(ColumnType.VARCHAR) + "\t2024-02-27T00:00:00.000000Z:TIMESTAMP\n",
+                            cursor, fac.getMetadata(), false, true, sink);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testWriteAllTypes() throws Exception {
         runInContext(r -> {
             try (Sender sender = Sender.builder(Sender.Transport.TCP)
@@ -661,34 +692,6 @@ public class LineTcpSenderTest extends AbstractLineTcpReceiverTest {
             try (TableReader reader = getReader(table)) {
                 TestUtils.assertReader("max\tmin\ttimestamp\n" +
                         "9223372036854775807\tnull\t2023-02-22T00:00:00.000000Z\n", reader, new StringSink());
-            }
-        });
-    }
-
-    @Test
-    public void testUseVarcharAsString() throws Exception {
-        useLegacyStringDefault = false;
-        runInContext(r -> {
-            try (Sender sender = Sender.builder(Sender.Transport.TCP)
-                    .address("127.0.0.1")
-                    .port(bindPort)
-                    .build()
-            ) {
-                String table = "string_table";
-                long tsMicros = IntervalUtils.parseFloorPartialTimestamp("2024-02-27");
-                String expectedValue = "čćžšđçğéíáýůř";
-                sender.table(table)
-                        .stringColumn("string1", expectedValue)
-                        .at(tsMicros, ChronoUnit.MICROS);
-                sender.flush();
-                assertTableSizeEventually(engine, table, 1);
-                try (RecordCursorFactory fac = engine.select(table, sqlExecutionContext);
-                     RecordCursor cursor = fac.getCursor(sqlExecutionContext)
-                ) {
-                    TestUtils.assertCursor(
-                            "čćžšđçğéíáýůř:" + ColumnType.nameOf(ColumnType.VARCHAR) + "\t2024-02-27T00:00:00.000000Z:TIMESTAMP\n",
-                            cursor, fac.getMetadata(), false, true, sink);
-                }
             }
         });
     }

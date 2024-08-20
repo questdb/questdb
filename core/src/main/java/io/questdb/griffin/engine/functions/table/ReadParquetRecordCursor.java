@@ -151,8 +151,8 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         private final DirectString directCharSequenceB = new DirectString();
         private final Long256Impl long256A = new Long256Impl();
         private final Long256Impl long256B = new Long256Impl();
-        private final Utf8SplitString utf8SplitViewA = new Utf8SplitString(false);
-        private final Utf8SplitString utf8SplitViewB = new Utf8SplitString(false);
+        private final Utf8SplitString utf8SplitViewA = new Utf8SplitString();
+        private final Utf8SplitString utf8SplitViewB = new Utf8SplitString();
 
         @Override
         public BinarySequence getBin(int col) {

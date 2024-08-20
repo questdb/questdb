@@ -25,9 +25,14 @@
 package io.questdb.compat;
 
 import io.questdb.ServerMain;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
@@ -185,7 +190,7 @@ public class ParquetTest extends AbstractTest {
                 Configuration configuration = new Configuration();
                 final org.apache.hadoop.fs.Path parquetPath = new org.apache.hadoop.fs.Path(parquetPathStr);
                 final InputFile inputFile = HadoopInputFile.fromPath(parquetPath, configuration);
-                validateParquetData(inputFile, reader, partitionRowCount);
+                validateParquetData(inputFile, serverMain.getEngine(), reader.getTableToken(), partitionRowCount);
                 validateParquetMetadata(inputFile, partitionRowCount);
             }
         }
@@ -301,12 +306,21 @@ public class ParquetTest extends AbstractTest {
         }
     }
 
-    private void validateParquetData(InputFile inputFile, TableReader tableReader, long rows) throws IOException {
-        try (final ParquetReader<GenericRecord> parquetReader = AvroParquetReader.<GenericRecord>builder(inputFile).build()) {
+    private void validateParquetData(InputFile inputFile, CairoEngine engine, TableToken tableToken, long rows) throws Exception {
+        final SqlExecutionContext executionContext = new SqlExecutionContextImpl(engine, 1)
+                .with(
+                        engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                        null
+                );
+
+        try (
+                final ParquetReader<GenericRecord> parquetReader = AvroParquetReader.<GenericRecord>builder(inputFile).build();
+                final RecordCursorFactory factory = engine.select(tableToken.getTableName(), executionContext);
+                final RecordCursor cursor = factory.getCursor(executionContext)
+        ) {
             StringSink sink = new StringSink();
             long actualRows = 0;
 
-            final RecordCursor cursor = tableReader.getCursor();
             final Record tableReaderRecord = cursor.getRecord();
 
             GenericRecord nextParquetRecord;

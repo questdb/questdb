@@ -651,16 +651,16 @@ public class WriterPoolTest extends AbstractCairoTest {
             Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, pool.lock(tableToken, "testing"));
 
             TableWriter writer = new TableWriter(
-                    configuration,
+                    engine.getConfiguration(),
                     tableToken,
-                    messageBus,
+                    engine.getMessageBus(),
                     null,
                     false,
                     DefaultLifecycleManager.INSTANCE,
-                    configuration.getRoot(),
+                    engine.getConfiguration().getRoot(),
                     engine.getDdlListener(tableToken),
-                    () -> false,
-                    metrics
+                    engine.getCheckpointStatus(),
+                    engine.getMetrics()
             );
             for (int i = 0; i < 100; i++) {
                 TableWriter.Row row = writer.newRow();

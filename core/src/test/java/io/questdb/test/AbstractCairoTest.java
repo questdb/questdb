@@ -195,7 +195,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 rows.add(record.getRowId());
             }
 
-            final Record rec = cursor.getRecordB();
+            final Record rec = cursor.getRecord();
             CursorPrinter.println(metadata, sink);
             for (int i = 0, n = rows.size(); i < n; i++) {
                 cursor.recordAt(rec, rows.getQuick(i));
@@ -1185,7 +1185,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
             while (cursor.hasNext()) {
                 long ts = record.getTimestamp(index);
                 if ((isAscending && timestamp > ts) || (!isAscending && timestamp < ts)) {
-
                     StringSink error = new StringSink();
                     error.put("record # ").put(c).put(" should have ").put(isAscending ? "bigger" : "smaller").put(" (or equal) timestamp than the row before. Values prior=");
                     TimestampFormatUtils.appendDateTimeUSec(error, timestamp);
