@@ -28,7 +28,6 @@ open module io.questdb {
     requires transitive jdk.unsupported;
     requires static org.jetbrains.annotations;
     requires static java.management;
-    requires jdk.unsupported.desktop;
     requires jdk.management;
 
     uses io.questdb.griffin.FunctionFactory;
