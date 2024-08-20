@@ -86,6 +86,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SHOW_PARTITIONS = 3;
     public static final int SHOW_SEARCH_PATH = 8;
     public static final int SHOW_SERVER_VERSION = 12;
+    public static final int SHOW_SERVER_VERSION_NUM = 13;
     public static final int SHOW_STANDARD_CONFORMING_STRINGS = 7;
     public static final int SHOW_TABLES = 1;
     public static final int SHOW_TIME_ZONE = 10;

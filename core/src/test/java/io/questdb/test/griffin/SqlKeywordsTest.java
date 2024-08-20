@@ -224,6 +224,7 @@ public class SqlKeywordsTest {
         specialCases.put("isEmptyAlias", "''");
         specialCases.put("isKeyword", "select");
         specialCases.put("isServerVersionKeyword", "server_version");
+        specialCases.put("isServerVersionNumKeyword", "server_version_num");
         specialCases.put("isUTC", "'UTC'");
         specialCases.put("isZeroOffset", "'00:00'");
         specialCases.put("isJsonExtract", "json_extract");
