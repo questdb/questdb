@@ -143,9 +143,10 @@ public class CairoMetadata implements Sinkable {
                 CairoColumn column = new CairoColumn();
 
                 logger.debugW().$("hydrating column [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
-
-                // set basic values
+                
                 column.setName(columnName);
+                table.addColumn(column);
+
                 column.setPosition((int) (table.getColumnCount() - 1 < 0 ? 0 : table.getColumnCount() - 1));
                 column.setType(columnType);
                 column.setIsIndexed(TableUtils.isColumnIndexed(metaMem, writerIndex));
@@ -192,10 +193,6 @@ public class CairoMetadata implements Sinkable {
 
                     offsetMem.close();
                 }
-
-                logger.debugW().$("hydrating column [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
-
-                table.addColumn(column);
             }
         }
 

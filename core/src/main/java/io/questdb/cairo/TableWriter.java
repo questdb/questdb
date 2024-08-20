@@ -829,6 +829,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         updateMetaStructureVersion();
+        CairoMetadata.INSTANCE.hydrateTable(tableToken, configuration, LOG, true);
     }
 
     @Override

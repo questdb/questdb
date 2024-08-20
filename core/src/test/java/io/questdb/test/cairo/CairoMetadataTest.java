@@ -125,6 +125,41 @@ public class CairoMetadataTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterTableColumnCacheNocache() throws Exception {
+        assertMemoryLeak(() -> {
+            CairoMetadata.INSTANCE.clear();
+
+            ddl("CREATE TABLE y ( ts TIMESTAMP, x SYMBOL ) timestamp(ts) partition by day wal;");
+            drainWalQueue();
+
+            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+                            "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
+                            "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
+                            "\t\tCairoColumn [name=x, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=256, stableIndex=1, writerIndex=1]\n",
+                    CairoMetadata.INSTANCE.toString0());
+
+            ddl("ALTER TABLE y ALTER COLUMN x NOCACHE");
+            drainWalQueue();
+
+            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+                            "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
+                            "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
+                            "\t\tCairoColumn [name=x, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=128, isIndexed=false, indexBlockCapacity=256, stableIndex=1, writerIndex=1]\n",
+                    CairoMetadata.INSTANCE.toString0());
+
+            ddl("ALTER TABLE y ALTER COLUMN x CACHE");
+            drainWalQueue();
+
+            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+                            "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=2, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
+                            "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
+                            "\t\tCairoColumn [name=x, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=256, stableIndex=1, writerIndex=1]\n",
+                    CairoMetadata.INSTANCE.toString0());
+
+        });
+    }
+
+    @Test
     public void testAlterTableColumnDropIndex() throws Exception {
         assertMemoryLeak(() -> {
             CairoMetadata.INSTANCE.clear();

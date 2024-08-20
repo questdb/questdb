@@ -198,7 +198,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     }
 
     public boolean isCached() {
-        return cache != null;
+        return offsetMem.getBool(HEADER_CACHE_ENABLED);
     }
 
     @Override
