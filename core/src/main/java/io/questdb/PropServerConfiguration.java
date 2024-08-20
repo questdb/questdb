@@ -106,6 +106,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean cairoSqlLegacyOperatorPrecedence;
     private final long cairoTableRegistryAutoReloadFrequency;
     private final int cairoTableRegistryCompactionThreshold;
+    private final boolean checkpointRecoveryEnabled;
+    private final String checkpointRoot;
     private final PropSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new PropSqlExecutionCircuitBreakerConfiguration();
     private final int circuitBreakerThrottle;
     private final int columnIndexerQueueCapacity;
@@ -180,6 +182,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int jsonCacheSize;
     private final String keepAliveHeader;
     private final int latestByQueueCapacity;
+    private final String legacyCheckpointRoot;
     private final boolean lineHttpEnabled;
     private final CharSequence lineHttpPingVersion;
     private final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = new PropLineHttpProcessorConfiguration();
@@ -264,9 +267,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sharedWorkerSleepTimeout;
     private final long sharedWorkerYieldThreshold;
     private final String snapshotInstanceId;
-    private final boolean checkpointRecoveryEnabled;
-    private final String checkpointRoot;
-    private final String legacyCheckpointRoot;
     private final long spinLockTimeout;
     private final int sqlAsOfJoinLookahead;
     private final int sqlBindVariablePoolSize;
@@ -682,7 +682,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             // tested on 4/32/48 core servers
             cpuIoWorkers = cpuAvailable / 2;
         } else if (cpuAvailable > 32) {
-            cpuWalApplyWorkers = 3;
+            cpuWalApplyWorkers = 4;
             cpuSpare = 2;
             // tested on 4/32/48 core servers
             cpuIoWorkers = cpuAvailable / 2;
@@ -1998,11 +1998,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public @NotNull CharSequence getLegacyCheckpointRoot() {
-            return legacyCheckpointRoot;
-        }
-
-        @Override
         public boolean enableTestFactories() {
             return enableTestFactories;
         }
@@ -2060,6 +2055,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getCairoSqlLegacyOperatorPrecedence() {
             return cairoSqlLegacyOperatorPrecedence;
+        }
+
+        @Override
+        public @NotNull CharSequence getCheckpointRoot() {
+            return checkpointRoot;
         }
 
         @Override
@@ -2321,6 +2321,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public @NotNull CharSequence getLegacyCheckpointRoot() {
+            return legacyCheckpointRoot;
+        }
+
+        @Override
         public int getMaxCrashFiles() {
             return cairoMaxCrashFiles;
         }
@@ -2518,11 +2523,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull CharSequence getSnapshotInstanceId() {
             return snapshotInstanceId;
-        }
-
-        @Override
-        public @NotNull CharSequence getCheckpointRoot() {
-            return checkpointRoot;
         }
 
         @Override
@@ -2995,6 +2995,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isCheckpointRecoveryEnabled() {
+            return checkpointRecoveryEnabled;
+        }
+
+        @Override
         public boolean isDevModeEnabled() {
             return devModeEnabled;
         }
@@ -3027,11 +3032,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isReadOnlyInstance() {
             return isReadOnlyInstance;
-        }
-
-        @Override
-        public boolean isCheckpointRecoveryEnabled() {
-            return checkpointRecoveryEnabled;
         }
 
         @Override
