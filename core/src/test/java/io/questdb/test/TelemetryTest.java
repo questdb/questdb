@@ -36,6 +36,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -63,7 +64,7 @@ public class TelemetryTest extends AbstractCairoTest {
             }
         };
 
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (
                     CairoEngine engine = new CairoEngine(configuration);
                     TelemetryJob ignored = new TelemetryJob(engine)
@@ -80,50 +81,45 @@ public class TelemetryTest extends AbstractCairoTest {
     @Test
     public void testTelemetryConfigUpgrade() throws Exception {
         assertMemoryLeak(() -> {
-            ddl(
-                    "CREATE TABLE " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " (id long256, enabled boolean)"
-            );
-            insert(
-                    "INSERT INTO " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " values(CAST('0x01' AS LONG256), true)"
-            );
-            TelemetryJob telemetryJob = new TelemetryJob(engine);
-            String expected = "column	type	indexed	indexBlockCapacity	symbolCached	symbolCapacity	designated	upsertKey\n" +
-                    "id	LONG256	false	0	false	0	false	false\n" +
-                    "enabled	BOOLEAN	false	0	false	0	false	false\n" +
-                    "version	SYMBOL	false	256	true	128	false	false\n" +
-                    "os	SYMBOL	false	256	true	128	false	false\n" +
-                    "package	SYMBOL	false	256	true	128	false	false\n";
-            assertSql(expected, "SHOW COLUMNS FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
-            expected = "id\tversion\n" +
-                    "0x01\t\n" +
-                    "0x01\t[DEVELOPMENT]\n";
-            assertSql(expected, "SELECT id, version FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
+            ddl("CREATE TABLE " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " (id long256, enabled boolean)");
+            insert("INSERT INTO " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " values(CAST('0x01' AS LONG256), true)");
 
-            Misc.free(telemetryJob);
+            try (TelemetryJob ignore = new TelemetryJob(engine)) {
+                String expected = "column	type	indexed	indexBlockCapacity	symbolCached	symbolCapacity	designated	upsertKey\n" +
+                        "id	LONG256	false	0	false	0	false	false\n" +
+                        "enabled	BOOLEAN	false	0	false	0	false	false\n" +
+                        "version	SYMBOL	false	256	true	128	false	false\n" +
+                        "os	SYMBOL	false	256	true	128	false	false\n" +
+                        "package	SYMBOL	false	256	true	128	false	false\n";
+                assertSql(expected, "SHOW COLUMNS FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
+                expected = "id\tversion\n" +
+                        "0x01\t\n" +
+                        "0x01\t[DEVELOPMENT]\n";
+                assertSql(expected, "SELECT id, version FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
+            }
         });
     }
 
     @Test
     public void testTelemetryCreatesTablesWhenEnabled() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
-                final TelemetryJob telemetryJob = new TelemetryJob(engine);
-
-                try (Path path = new Path()) {
+                try (
+                        TelemetryJob ignore = new TelemetryJob(engine);
+                        Path path = new Path()
+                ) {
                     TableToken telemetry = engine.verifyTableName(TELEMETRY);
                     TableToken telemetry_config = engine.verifyTableName(TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME);
                     Assert.assertEquals(TableUtils.TABLE_EXISTS, TableUtils.exists(FF, path, root, telemetry.getDirName()));
                     Assert.assertEquals(TableUtils.TABLE_EXISTS, TableUtils.exists(FF, path, root, telemetry_config.getDirName()));
                 }
-
-                Misc.free(telemetryJob);
             }
         });
     }
 
     @Test
     public void testTelemetryDisabledByDefault() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (Path path = new Path()) {
                 Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(FF, path, root, TELEMETRY));
                 Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, TableUtils.exists(FF, path, root, TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME));
@@ -133,7 +129,7 @@ public class TelemetryTest extends AbstractCairoTest {
 
     @Test
     public void testTelemetryStoresNonEvents() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 TelemetryJob telemetryJob = new TelemetryJob(engine);
                 Misc.free(telemetryJob);
@@ -147,8 +143,10 @@ public class TelemetryTest extends AbstractCairoTest {
                 expectedClasses.add(TelemetrySystemEvent.SYSTEM_TABLE_COUNT_CLASS_BASE);
 
                 HashSet<Short> actualClasses = new HashSet<>();
-                try (TableReader reader = newOffPoolReader(configuration, TELEMETRY)) {
-                    final RecordCursor cursor = reader.getCursor();
+                try (
+                        TableReader reader = newOffPoolReader(configuration, TELEMETRY);
+                        TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+                ) {
                     final Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
                         final short event = record.getShort(1);
@@ -166,7 +164,7 @@ public class TelemetryTest extends AbstractCairoTest {
 
     @Test
     public void testTelemetryStoresUpAndDownEvents() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 TelemetryJob telemetryJob = new TelemetryJob(engine);
                 Misc.free(telemetryJob);
@@ -182,7 +180,7 @@ public class TelemetryTest extends AbstractCairoTest {
     @Test
     public void testTelemetryUpdatesVersion() throws Exception {
         final AtomicReference<String> refVersion = new AtomicReference<>();
-        BuildInformation buildInformation = new BuildInformation() {
+        final BuildInformation buildInformation = new BuildInformation() {
             @Override
             public String getCommitHash() {
                 return null;
@@ -203,55 +201,59 @@ public class TelemetryTest extends AbstractCairoTest {
                 return refVersion.get();
             }
         };
-        CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+        final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
             public @NotNull BuildInformation getBuildInformation() {
                 return buildInformation;
             }
         };
-        TestUtils.assertMemoryLeak(() -> {
+
+        assertMemoryLeak(() -> {
             try (
                     CairoEngine engine = new CairoEngine(configuration);
                     SqlCompiler compiler = engine.getSqlCompiler();
                     SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine)
             ) {
-                refVersion.set("1.0");
-                TelemetryJob telemetryJob = new TelemetryJob(engine);
                 String os = System.getProperty(TelemetryConfigLogger.OS_NAME);
+                refVersion.set("1.0");
 
-                String expectedSql = "count\n1\n";
-                TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
-                expectedSql = "version\tos\n" +
-                        "1.0\t" + os + "\n";
-                TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT version, os FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
-                Misc.free(telemetryJob);
+                try (TelemetryJob ignore = new TelemetryJob(engine)) {
+                    String expectedSql = "count\n1\n";
+                    TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
+                    expectedSql = "version\tos\n" +
+                            "1.0\t" + os + "\n";
+                    TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT version, os FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
+                }
 
-                telemetryJob = new TelemetryJob(engine);
-                expectedSql = "count\n1\n";
-                TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
-                Misc.free(telemetryJob);
+                try (TelemetryJob ignore = new TelemetryJob(engine)) {
+                    String expectedSql = "count\n1\n";
+                    TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
+                }
 
                 refVersion.set("1.1");
-                telemetryJob = new TelemetryJob(engine);
-                expectedSql = "count\n2\n";
-                TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
-                expectedSql = "version\tos\n" +
-                        "1.1\t" + os + "\n";
-                TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT version, os FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " LIMIT -1", sink, expectedSql);
-                Misc.free(telemetryJob);
+                try (TelemetryJob ignore = new TelemetryJob(engine)) {
+                    String expectedSql = "count\n2\n";
+                    TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT count(*) FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME, sink, expectedSql);
+                    expectedSql = "version\tos\n" +
+                            "1.1\t" + os + "\n";
+                    TestUtils.assertSql(compiler, sqlExecutionContext, "SELECT version, os FROM " + TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME + " LIMIT -1", sink, expectedSql);
+                }
             }
         });
     }
 
     @SuppressWarnings("SameParameterValue")
     private void assertEventAndOrigin(CharSequence expected) {
-        try (TableReader reader = newOffPoolReader(configuration, TELEMETRY)) {
+        try (
+                TableReader reader = newOffPoolReader(configuration, TELEMETRY);
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
             sink.clear();
-            printEventAndOrigin(reader.getCursor(), reader.getMetadata());
+            printEventAndOrigin(cursor, reader.getMetadata());
             TestUtils.assertEquals(expected, sink);
-            reader.getCursor().toTop();
+            cursor.toTop();
             sink.clear();
-            printEventAndOrigin(reader.getCursor(), reader.getMetadata());
+            printEventAndOrigin(cursor, reader.getMetadata());
             TestUtils.assertEquals(expected, sink);
         }
     }

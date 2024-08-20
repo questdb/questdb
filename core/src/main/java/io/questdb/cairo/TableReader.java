@@ -65,7 +65,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final LongList openPartitionInfo;
     private final int partitionBy;
     private final Path path;
-    private final TableReaderRecordCursor recordCursor = new TableReaderRecordCursor();
     private final int rootLen;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final MemoryMR todoMem = Vm.getCMRInstance();
@@ -149,7 +148,6 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
             columnTops = new LongList(capacity / 2);
             columnTops.setPos(capacity / 2);
-            recordCursor.of(this);
         } catch (Throwable e) {
             close();
             throw e;
@@ -242,11 +240,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         return columnVersionReader;
     }
 
-    public TableReaderRecordCursor getCursor() {
-        recordCursor.toTop();
-        return recordCursor;
-    }
-
     public long getDataVersion() {
         return this.txFile.getDataVersion();
     }
@@ -281,6 +274,11 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public int getPartitionCount() {
         return partitionCount;
+    }
+
+    @TestOnly
+    public int getPartitionIndex(int columnBase) {
+        return columnBase >>> columnCountShl;
     }
 
     public int getPartitionIndexByTimestamp(long timestamp) {
@@ -844,7 +842,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (mem != null && mem != NullMemoryCMR.INSTANCE) {
             mem.of(ff, path.$(), columnSize, columnSize, MemoryTag.MMAP_TABLE_READER);
         } else {
-            mem = Vm.getCMRInstance(ff, path.$(), columnSize, MemoryTag.MMAP_TABLE_READER, true);
+            mem = Vm.getCMRInstance(ff, path.$(), columnSize, MemoryTag.MMAP_TABLE_READER);
             columns.setQuick(primaryIndex, mem);
         }
         return mem;
@@ -1370,9 +1368,5 @@ public class TableReader implements Closeable, SymbolTableSource {
                 renewSymbolMapReader(null, i);
             }
         }
-    }
-
-    int getPartitionIndex(int columnBase) {
-        return columnBase >>> columnCountShl;
     }
 }

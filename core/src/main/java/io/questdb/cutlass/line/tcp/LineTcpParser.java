@@ -86,7 +86,7 @@ public class LineTcpParser {
     private byte entityHandler = -1;
     private long entityLo;
     private ErrorCode errorCode;
-    private boolean hasNonAscii;
+    private boolean asciiSegment;
     private boolean isQuotedFieldValue;
     private int nEntities;
     private int nEscapedChars;
@@ -147,10 +147,6 @@ public class LineTcpParser {
         return timestampUnit;
     }
 
-    public boolean hasNonAsciiChars() {
-        return hasNonAscii;
-    }
-
     public boolean hasTimestamp() {
         return timestamp != NULL_TIMESTAMP;
     }
@@ -194,7 +190,7 @@ public class LineTcpParser {
             }
 
             // slow path
-            hasNonAscii |= b < 0;
+            asciiSegment &= b >= 0;
             boolean endOfLine = false;
             boolean appendByte = false;
             // Important note: don't forget to update controlChars array when changing the following switch.
@@ -251,7 +247,7 @@ public class LineTcpParser {
                     if (b == '\\' && (entityHandler != ENTITY_HANDLER_VALUE)) {
                         return getError(bufHi);
                     }
-                    hasNonAscii |= b < 0;
+                    asciiSegment &= b >= 0;
                     appendByte = true;
                     break;
 
@@ -346,7 +342,7 @@ public class LineTcpParser {
         nQuoteCharacters = 0;
         scape = false;
         nextValueCanBeOpenQuote = false;
-        hasNonAscii = false;
+        asciiSegment = true;
     }
 
     private boolean completeEntity(byte endOfEntityByte, long bufHi) {
@@ -465,7 +461,8 @@ public class LineTcpParser {
         tagsComplete = endOfEntityByte == (byte) ' ';
         if (endOfEntityByte == (byte) ',' || tagsComplete) {
             long hi = bufAt - nEscapedChars;
-            measurementName.of(entityLo, hi, !hasNonAscii);
+            measurementName.of(entityLo, hi, asciiSegment);
+            asciiSegment = true;
             entityHandler = ENTITY_HANDLER_NAME;
             return true;
         }
@@ -483,7 +480,8 @@ public class LineTcpParser {
             if (endOfEntityByte == '\n') {
                 final long entityHi = bufAt - nEscapedChars;
                 if (entityLo < entityHi) {
-                    charSeq.of(entityLo, entityHi, !hasNonAscii);
+                    charSeq.of(entityLo, entityHi, asciiSegment);
+                    asciiSegment = true;
                     final int charSeqLen = charSeq.size();
                     final byte last = charSeq.byteAt(charSeqLen - 1);
                     switch (last) {
@@ -558,7 +556,7 @@ public class LineTcpParser {
         while (bufAt < bufHi) { // consume until the next quote, '\n', or eof
             byte b = Unsafe.getUnsafe().getByte(bufAt);
             copyByte = true;
-            hasNonAscii |= b < 0;
+            asciiSegment &= b >= 0;
             switch (b) {
                 case (byte) '\\':
                     if (!scape) {
@@ -719,7 +717,8 @@ public class LineTcpParser {
                             return false;
                         }
                     } else {
-                        charSeq.of(value.lo(), value.hi(), !hasNonAscii);
+                        charSeq.of(value.lo(), value.hi(), asciiSegment);
+                        asciiSegment = true;
                         if (SqlKeywords.isTrueKeyword(charSeq)) {
                             booleanValue = true;
                             type = ENTITY_TYPE_BOOLEAN;
@@ -770,18 +769,21 @@ public class LineTcpParser {
         }
 
         private void setName() {
-            name.of(entityLo, bufAt - nEscapedChars, !hasNonAscii);
+            name.of(entityLo, bufAt - nEscapedChars, asciiSegment);
+            asciiSegment = true;
         }
 
         private void setName(long hi) {
-            name.of(entityLo, hi - nEscapedChars, !hasNonAscii);
+            name.of(entityLo, hi - nEscapedChars, asciiSegment);
+            asciiSegment = true;
         }
 
         private boolean setValueAndUnit() {
             assert type == ENTITY_TYPE_NONE;
             long bufHi = bufAt - nEscapedChars;
             int valueLen = (int) (bufHi - entityLo);
-            value.of(entityLo, bufHi, !hasNonAscii);
+            value.of(entityLo, bufHi, asciiSegment);
+            asciiSegment = true;
             if (tagsComplete) {
                 if (valueLen > 0) {
                     byte lastByte = value.byteAt(valueLen - 1);

@@ -155,7 +155,7 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                 int n = tableBucket.size();
                 for (; tableIndex < n; tableIndex++) {
                     tableToken = tableBucket.get(tableIndex);
-                    if (!TableUtils.isPendingRenameTempTableName(tableToken.getTableName(), tempPendingRenameTablePrefix) && record.open(tableToken)) {
+                    if (TableUtils.isFinalTableName(tableToken.getTableName(), tempPendingRenameTablePrefix) && record.open(tableToken)) {
                         break;
                     }
                 }
