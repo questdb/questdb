@@ -77,8 +77,15 @@ public class ShowTablesTest extends AbstractCairoTest {
 
     @Test
     public void testShowStandardConformingStrings() throws Exception {
-        assertMemoryLeak(() -> assertQuery("standard_conforming_strings\n" +
-                "on\n", "show standard_conforming_strings", null, null, false, true));
+        assertMemoryLeak(() -> assertQuery(
+                "standard_conforming_strings\n" +
+                        "on\n",
+                "show standard_conforming_strings",
+                null,
+                null,
+                false,
+                true
+        ));
     }
 
     @Test
@@ -112,13 +119,19 @@ public class ShowTablesTest extends AbstractCairoTest {
     public void testShowTimeZone() throws Exception {
         assertMemoryLeak(() -> assertQuery(
                 "TimeZone\nUTC\n",
-                "show time zone", null, false, true
+                "show time zone",
+                null,
+                false,
+                true
         ));
     }
 
     @Test
     public void testShowTimeZoneWrongSyntax() throws Exception {
-        assertMemoryLeak(() -> assertException("show time", 9, "expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', 'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', 'max_identifier_length', 'standard_conforming_strings', 'parameters', 'server_version', 'search_path', 'datestyle', or 'time zone'"
+        assertMemoryLeak(() -> assertException(
+                "show time",
+                9,
+                "expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', 'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', 'max_identifier_length', 'standard_conforming_strings', 'parameters', 'server_version', 'server_version_num', 'search_path', 'datestyle', or 'time zone'"
         ));
     }
 
@@ -129,7 +142,7 @@ public class ShowTablesTest extends AbstractCairoTest {
             assertException(
                     "show",
                     4,
-                    "expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', 'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', 'max_identifier_length', 'standard_conforming_strings', 'parameters', 'server_version', 'search_path', 'datestyle', or 'time zone'"
+                    "expected 'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', 'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', 'max_identifier_length', 'standard_conforming_strings', 'parameters', 'server_version', 'server_version_num', 'search_path', 'datestyle', or 'time zone'"
             );
         });
     }
