@@ -521,6 +521,7 @@ public class WalWriter implements TableWriterAPI {
 
                     final int commitMode = configuration.getCommitMode();
                     for (int columnIndex = 0; columnIndex < columnsToRoll; columnIndex++) {
+                        columnRollSink.nextColumn();
                         final int columnType = metadata.getColumnType(columnIndex);
                         if (columnType > 0) {
                             final MemoryMA primaryColumn = getDataColumn(columnIndex);
@@ -560,7 +561,6 @@ public class WalWriter implements TableWriterAPI {
                         } else {
                             rowValueIsNotNull.setQuick(columnIndex, COLUMN_DELETED_NULL_FLAG);
                         }
-                        columnRollSink.nextColumn();
                     }
                 } catch (Throwable e) {
                     closeSegmentSwitchFiles(columnRollSink);
@@ -1205,7 +1205,7 @@ public class WalWriter implements TableWriterAPI {
         }
 
         if (walLockFd == -1) {
-            throw CairoException.critical(ff.errno()).put("Cannot lock table: ").put(path.$());
+            throw CairoException.critical(ff.errno()).put("cannot lock table: ").put(path.$());
         }
     }
 

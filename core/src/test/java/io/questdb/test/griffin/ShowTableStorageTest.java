@@ -24,20 +24,90 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.std.Files;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Test;
-
-import java.util.Arrays;
-import java.util.List;
-
-import static io.questdb.test.tools.TestUtils.replaceSizeToMatchPartitionSumInOS;
 
 public class ShowTableStorageTest extends AbstractCairoTest {
     @Test
+    public void testAllPartitionsStorageForMultipleTablesPartitionByHour() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table trades_1(timestamp TIMESTAMP, " +
+                    "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
+            ddl("create table trades_2(timestamp TIMESTAMP, " +
+                    "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
+            insert(
+                    "INSERT INTO trades_1\n" +
+                            "VALUES\n" +
+                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
+                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
+                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
+                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
+            );
+            insert(
+                    "INSERT INTO trades_2\n" +
+                            "VALUES\n" +
+                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
+                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
+                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
+                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
+            );
+            drainWalQueue();
+            engine.releaseAllWriters();
+            final CharSequence size1 = Long.toString(getDirSize("trades_1"));
+            final CharSequence size2 = Long.toString(getDirSize("trades_2"));
+            assertSql(
+                    "tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
+                            "trades_2\tfalse\tHOUR\t4\t4\t" + size1 + "\n" +
+                            "trades_1\tfalse\tHOUR\t4\t4\t" + size2 + "\n",
+                    "select * from table_storage()"
+            );
+        });
+    }
+
+    @Test
+    public void testAllPartitionsStorageForMultipleTablesWithNoPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table trades_1(timestamp TIMESTAMP, " +
+                    "id SYMBOL , price INT)TIMESTAMP(timestamp);");
+            ddl("create table trades_2(timestamp TIMESTAMP, " +
+                    "id SYMBOL , price INT)TIMESTAMP(timestamp);");
+            insert(
+                    "INSERT INTO trades_1\n" +
+                            "VALUES\n" +
+                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
+                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
+                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
+                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
+            );
+            insert(
+                    "INSERT INTO trades_2\n" +
+                            "VALUES\n" +
+                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
+                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
+                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
+                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
+            );
+            drainWalQueue();
+            engine.releaseAllWriters();
+            final CharSequence size1 = Long.toString(getDirSize("trades_1"));
+            final CharSequence size2 = Long.toString(getDirSize("trades_2"));
+            assertSql(
+                    "tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
+                            "trades_2\tfalse\tNONE\t1\t4\t" + size1 + "\n" +
+                            "trades_1\tfalse\tNONE\t1\t4\t" + size2 + "\n",
+                    "select * from table_storage()"
+            );
+        });
+    }
+
+    @Test
     public void testAllPartitionsStorageForSingleTablePartitionByHour() throws Exception {
         assertMemoryLeak(() -> {
-            List<String> partitionNameColumns = Arrays.asList("2021-10-05T11", "2021-10-05T12",
-                    "2021-10-05T13", "2021-10-05T14");
             ddl("create table trades_1(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
             insert(
@@ -48,10 +118,12 @@ public class ShowTableStorageTest extends AbstractCairoTest {
                             "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
                             "    ('2021-10-05T14:31:35.878Z', 's4', 250);\n"
             );
-            String expectedTrades1Response = replaceSizeToMatchPartitionSumInOS("trades_1\tfalse\tHOUR\t4\t4\tSIZE\n",
-                    "trades_1", partitionNameColumns, configuration, engine, sink);
+            drainWalQueue();
+            engine.releaseAllWriters();
+            engine.releaseAllWriters();
+            final CharSequence size = Long.toString(getDirSize("trades_1"));
             assertSql("tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
-                            expectedTrades1Response,
+                            "trades_1\tfalse\tHOUR\t4\t4\t" + size + "\n",
                     "select * from table_storage()"
             );
         });
@@ -60,7 +132,6 @@ public class ShowTableStorageTest extends AbstractCairoTest {
     @Test
     public void testAllPartitionsStorageForSingleTableWithNoPartitions() throws Exception {
         assertMemoryLeak(() -> {
-            List<String> partitionNameColumns = Arrays.asList("default");
             ddl("create table trades_1(timestamp TIMESTAMP, " +
                     "id SYMBOL , price INT)TIMESTAMP(timestamp);");
             insert(
@@ -71,95 +142,22 @@ public class ShowTableStorageTest extends AbstractCairoTest {
                             "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
                             "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
             );
-            String expectedTrades1Response = replaceSizeToMatchPartitionSumInOS("trades_1\tfalse\tNONE\t1\t4\tSIZE\n",
-                    "trades_1", partitionNameColumns, configuration, engine, sink);
+            drainWalQueue();
+            engine.releaseAllWriters();
+            final CharSequence size = Long.toString(getDirSize("trades_1"));
             assertSql("tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
-                            expectedTrades1Response,
+                            "trades_1\tfalse\tNONE\t1\t4\t" + size + "\n",
                     "select * from table_storage()"
             );
         });
     }
 
-    @Test
-    public void testAllPartitionsStorageForMultipleTablesPartitionByHour() throws Exception {
-        assertMemoryLeak(() -> {
-            List<String> partitionNameColumnsForTrades1 = Arrays.asList("2021-10-05T11", "2021-10-05T12",
-                    "2021-10-05T13", "2021-10-05T14");
-            List<String> partitionNameColumnsForTrades2 = Arrays.asList("2021-10-05T11", "2021-10-05T12",
-                    "2021-10-05T13", "2021-10-05T14");
-            ddl("create table trades_1(timestamp TIMESTAMP, " +
-                    "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
-            ddl("create table trades_2(timestamp TIMESTAMP, " +
-                    "id SYMBOL , price INT)TIMESTAMP(timestamp) PARTITION BY HOUR;");
-            insert(
-                    "INSERT INTO trades_1\n" +
-                            "VALUES\n" +
-                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
-                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
-                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
-                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
-            );
-            insert(
-                    "INSERT INTO trades_2\n" +
-                            "VALUES\n" +
-                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
-                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
-                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
-                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
-            );
-            String expectedTrades1Response = replaceSizeToMatchPartitionSumInOS(
-                    "trades_1\tfalse\tHOUR\t4\t4\tSIZE\n",
-                    "trades_1", partitionNameColumnsForTrades1, configuration, engine, sink);
-            String expectedTrades2Response = replaceSizeToMatchPartitionSumInOS(
-                    "trades_2\tfalse\tHOUR\t4\t4\tSIZE\n",
-                    "trades_1", partitionNameColumnsForTrades2, configuration, engine, sink);
-            assertSql(
-                    "tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
-                            expectedTrades2Response +
-                            expectedTrades1Response,
-                    "select * from table_storage()"
-            );
-        });
+    private long getDirSize(@NotNull CharSequence tableName) {
+        Path path = new Path();
+        TableToken token = sqlExecutionContext.getTableToken(tableName);
+        TableUtils.setPathTable(path, configuration, token);
+        final long size = Files.getDirSize(path);
+        path.close();
+        return size;
     }
-
-    @Test
-    public void testAllPartitionsStorageForMultipleTablesWithNoPartitions() throws Exception {
-        assertMemoryLeak(() -> {
-            List<String> partitionNameColumnsForTrades1 = Arrays.asList("default");
-            List<String> partitionNameColumnsForTrades2 = Arrays.asList("default");
-            ddl("create table trades_1(timestamp TIMESTAMP, " +
-                    "id SYMBOL , price INT)TIMESTAMP(timestamp);");
-            ddl("create table trades_2(timestamp TIMESTAMP, " +
-                    "id SYMBOL , price INT)TIMESTAMP(timestamp);");
-            insert(
-                    "INSERT INTO trades_1\n" +
-                            "VALUES\n" +
-                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
-                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
-                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
-                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
-            );
-            insert(
-                    "INSERT INTO trades_2\n" +
-                            "VALUES\n" +
-                            "    ('2021-10-05T11:31:35.878Z', 's1', 245),\n" +
-                            "    ('2021-10-05T12:31:35.878Z', 's2', 245),\n" +
-                            "    ('2021-10-05T13:31:35.878Z', 's3', 250),\n" +
-                            "    ('2021-10-05T14:31:35.878Z', 's4', 250);"
-            );
-            String expectedTrades1Response = replaceSizeToMatchPartitionSumInOS(
-                    "trades_1\tfalse\tNONE\t1\t4\tSIZE\n",
-                    "trades_1", partitionNameColumnsForTrades1, configuration, engine, sink);
-            String expectedTrades2Response = replaceSizeToMatchPartitionSumInOS(
-                    "trades_2\tfalse\tNONE\t1\t4\tSIZE\n",
-                    "trades_2", partitionNameColumnsForTrades2, configuration, engine, sink);
-            assertSql(
-                    "tableName\twalEnabled\tpartitionBy\tpartitionCount\trowCount\tdiskSize\n" +
-                            expectedTrades2Response + expectedTrades1Response,
-                    "select * from table_storage()"
-            );
-        });
-    }
-
-
 }

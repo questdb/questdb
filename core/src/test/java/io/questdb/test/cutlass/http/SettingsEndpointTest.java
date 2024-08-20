@@ -101,7 +101,7 @@ public class SettingsEndpointTest extends AbstractBootstrapTest {
                                     @Override
                                     public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
                                         final CairoConfiguration config = getCairoConfiguration();
-                                        settings.put(PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID.getPropertyPath(), str(config.getDbDirectory().toString()));
+                                        settings.put(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID.getPropertyPath(), str(config.getDbDirectory().toString()));
                                         settings.put(PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH.getPropertyPath(), integer(config.getMaxFileNameLength()));
                                         settings.put(PropertyKey.CAIRO_WAL_SUPPORTED.getPropertyPath(), bool(config.isWalSupported()));
                                     }

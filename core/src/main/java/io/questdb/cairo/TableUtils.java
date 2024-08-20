@@ -55,6 +55,10 @@ import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
 public final class TableUtils {
     public static final int ANY_TABLE_VERSION = -1;
     public static final String ATTACHABLE_DIR_MARKER = ".attachable";
+    public static final String CHECKPOINT_DIRECTORY = ".checkpoint";
+    public static final String CHECKPOINT_LEGACY_META_FILE_NAME = "_snapshot";
+    public static final String CHECKPOINT_LEGACY_META_FILE_NAME_TXT = "_snapshot.txt";
+    public static final String CHECKPOINT_META_FILE_NAME = "_checkpoint_meta.d";
     public static final long COLUMN_NAME_TXN_NONE = -1L;
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
     public static final String DEFAULT_PARTITION_NAME = "default";
@@ -63,6 +67,7 @@ public final class TableUtils {
     public static final String FILE_SUFFIX_D = ".d";
     public static final String FILE_SUFFIX_I = ".i";
     public static final int INITIAL_TXN = 0;
+    public static final String LEGACY_CHECKPOINT_DIRECTORY = "snapshot";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
@@ -100,9 +105,7 @@ public final class TableUtils {
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     public static final int NULL_LEN = -1;
-    public static final String RESTORE_SNAPSHOT_TRIGGER_FILE_NAME = "_restore";
-    public static final String SNAPSHOT_META_FILE_NAME = "_snapshot";
-    public static final String SNAPSHOT_META_FILE_NAME_TXT = "_snapshot.txt";
+    public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
     public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
     public static final int TABLE_DOES_NOT_EXIST = 1;
@@ -202,6 +205,7 @@ public final class TableUtils {
         checkSum = checkSum * 31 + seqTxn;
         checkSum = checkSum * 31 + lagRowCount;
         checkSum = checkSum * 31 + lagTxnCount;
+        //noinspection UseHashCodeMethodInspection
         return (int) (checkSum ^ (checkSum >>> 32));
     }
 
@@ -803,8 +807,16 @@ public final class TableUtils {
         return iFile(path, columnName, COLUMN_NAME_TXN_NONE);
     }
 
-    public static boolean isPendingRenameTempTableName(String tableName, CharSequence tempTablePrefix) {
-        return Chars.startsWith(tableName, tempTablePrefix);
+    /**
+     * Check is table name does not start with temp table prefix. Usually in case
+     * of table renames, table name can have temp prefix.
+     *
+     * @param tableName       name of the table
+     * @param tempTablePrefix the temp prefix
+     * @return true if table name is not pending table rename.
+     */
+    public static boolean isFinalTableName(String tableName, CharSequence tempTablePrefix) {
+        return !Chars.startsWith(tableName, tempTablePrefix);
     }
 
     public static boolean isSymbolCached(MemoryMR metaMem, int columnIndex) {
@@ -1149,7 +1161,11 @@ public final class TableUtils {
             log.debug().$("open [file=").$(path).$(", fd=").$(fd).I$();
             return fd;
         }
-        throw CairoException.critical(ff.errno()).put("could not open read-only [file=").put(path).put(']');
+        int errno = ff.errno();
+        if (CairoException.errnoReadPathDoesNotExist(errno)) {
+            throw CairoException.critical(errno).put("could not open, file does not exist: ").put(path).put(']');
+        }
+        throw CairoException.critical(errno).put("could not open read-only [file=").put(path).put(']');
     }
 
     public static int openRW(FilesFacade ff, LPSZ path, Log log, long opts) {
@@ -1540,6 +1556,11 @@ public final class TableUtils {
         setSinkForPartition(path.slash(), partitionBy, timestamp, nameTxn);
     }
 
+    public static void setPathTable(@NotNull Path path, @NotNull CairoConfiguration configuration, @NotNull TableToken token) {
+        path.close();
+        path.of(configuration.getRoot()).concat(token.getDirName()).trimTo(path.size());
+    }
+
     /**
      * Sets the sink to the directory of a partition taking into account the timestamp, the partitioning scheme
      * and the partition version.
@@ -1554,6 +1575,10 @@ public final class TableUtils {
         if (nameTxn > -1L) {
             sink.put('.').put(nameTxn);
         }
+    }
+
+    public static void setTxReaderPath(@NotNull TxReader reader, @NotNull FilesFacade ff, @NotNull Path path, int partitionBy) {
+        reader.ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy);
     }
 
     public static int toIndexKey(int symbolKey) {
@@ -1850,7 +1875,6 @@ public final class TableUtils {
     }
 
     static {
-        //noinspection ConstantValue
         assert TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8 <= TX_OFFSET_MAP_WRITER_COUNT_32;
     }
 }

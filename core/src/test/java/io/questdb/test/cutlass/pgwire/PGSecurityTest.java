@@ -165,11 +165,11 @@ public class PGSecurityTest extends BasePGTest {
         Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(() -> {
             ddl("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day");
-            ddl("snapshot prepare");
+            ddl("checkpoint create");
             try {
-                assertQueryDisallowed("snapshot complete");
+                assertQueryDisallowed("checkpoint release");
             } finally {
-                ddl("snapshot complete");
+                ddl("checkpoint release");
             }
         });
     }
@@ -179,7 +179,7 @@ public class PGSecurityTest extends BasePGTest {
         // snapshot is not supported on Windows at all
         assertMemoryLeak(() -> {
             ddl("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day");
-            assertQueryDisallowed("snapshot prepare");
+            assertQueryDisallowed("checkpoint create");
         });
     }
 

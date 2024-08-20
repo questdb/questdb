@@ -129,9 +129,6 @@ public class BoolList implements Mutable {
         buffer[index] = element;
     }
 
-    /**
-     * {@inheritDoc}
-     */
     public void removeIndex(int index) {
         if (pos < 1 || index >= pos) {
             return;

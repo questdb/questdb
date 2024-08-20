@@ -30,8 +30,8 @@ import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
+import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.line.tcp.LineTcpParser.ParseResult;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -50,7 +50,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     private static final Log LOG = LogFactory.getLog(LineTcpConnectionContext.class);
     private static final long QUEUE_FULL_LOG_HYSTERESIS_IN_MS = 10_000;
     protected final NetworkFacade nf;
-    private final Authenticator authenticator;
+    private final SocketAuthenticator authenticator;
     private final DirectUtf8String byteCharSequence = new DirectUtf8String();
     private final long checkIdleInterval;
     private final long commitInterval;
@@ -263,9 +263,9 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         try {
             int result = authenticator.handleIO();
             switch (result) {
-                case Authenticator.NEEDS_WRITE:
+                case SocketAuthenticator.NEEDS_WRITE:
                     return IOContextResult.NEEDS_WRITE;
-                case Authenticator.OK:
+                case SocketAuthenticator.OK:
                     assert authenticator.isAuthenticated();
                     assert securityContext == DenyAllSecurityContext.INSTANCE;
                     securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getInstance(
@@ -282,11 +282,11 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                     recvBufPos = authenticator.getRecvBufPos();
                     resetParser(authenticator.getRecvBufPseudoStart());
                     return parseMeasurements(netIoJob);
-                case Authenticator.NEEDS_READ:
+                case SocketAuthenticator.NEEDS_READ:
                     return IOContextResult.NEEDS_READ;
-                case Authenticator.NEEDS_DISCONNECT:
+                case SocketAuthenticator.NEEDS_DISCONNECT:
                     return IOContextResult.NEEDS_DISCONNECT;
-                case Authenticator.QUEUE_FULL:
+                case SocketAuthenticator.QUEUE_FULL:
                     return IOContextResult.QUEUE_FULL;
                 default:
                     LOG.error().$("unexpected authenticator result [result=").$(result).I$();
@@ -305,7 +305,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 .$("] could not parse measurement, ").$(parser.getErrorCode())
                 .$(" at ").$(position)
                 .$(", line (may be mangled due to partial parsing): '")
-                .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress(), !parser.hasNonAsciiChars())).$("'")
+                .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress(), false)).$("'")
                 .$();
     }
 
