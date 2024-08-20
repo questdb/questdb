@@ -196,7 +196,7 @@ steps:
       llvm-cov show \
         --format=html \
         --output-dir=questdbr-coverage-report \
-        --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
+        --ignore-filename-regex='(\.cargo/registry|rustc/.*\.rs)' \
         --instr-profile=questdbr.profdata \
         --object core/target/rust-maven-plugin/qdbr/debug/libquestdbr.so \
         --object $QUESTDBR_TEST_BIN
