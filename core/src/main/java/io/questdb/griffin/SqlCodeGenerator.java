@@ -1762,7 +1762,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
                 final QueryColumn col = model.getColumns().getQuick(i);
                 final ExpressionNode ast = col.getAst();
-                if (Chars.equals(ast.token, "timestamp_floor")) {
+                if (Chars.equalsIgnoreCase("timestamp_floor", ast.token)) {
                     final CharSequence ts = ast.paramCount == 3 ? ast.args.getQuick(1).token : ast.rhs.token;
                     if (Chars.equals(ts, currTimestamp)) {
                         alias = col.getAlias();
@@ -5604,7 +5604,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return;
         }
 
-        if (curr.getFillValues().size() == 1 && Chars.equals(curr.getFillValues().getQuick(0).token, "none")) {
+        if (curr.getFillValues().size() == 1 && SqlKeywords.isNoneKeyword(curr.getFillValues().getQuick(0).token)) {
             return;
         }
 

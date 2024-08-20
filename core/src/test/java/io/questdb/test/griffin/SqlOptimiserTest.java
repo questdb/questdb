@@ -3421,6 +3421,36 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByGroupByFillNone() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE 'trades' (\n" +
+                    "  symbol SYMBOL capacity 256 CACHE,\n" +
+                    "  side SYMBOL capacity 256 CACHE,\n" +
+                    "  price DOUBLE,\n" +
+                    "  amount DOUBLE,\n" +
+                    "  timestamp TIMESTAMP\n" +
+                    ") timestamp (timestamp) PARTITION BY DAY WAL;");
+
+            assertPlanNoLeakCheck("SELECT last(price) value, symbol, timestamp \n" +
+                            "FROM trades\n" +
+                            "WHERE timestamp >= '2024-08-11T10:13:00' \n" +
+                            "AND timestamp < '2024-08-11T10:16:00' \n" +
+                            "AND (symbol LIKE ('BTC-USD')) \n" +
+                            "SAMPLE BY 1m FILL(NONE) ALIGN TO CALENDAR",
+                    "Sort light\n" +
+                            "  keys: [timestamp]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [symbol,timestamp]\n" +
+                            "      values: [last(price)]\n" +
+                            "      filter: symbol ~ BTC-USD\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Interval forward scan on: trades\n" +
+                            "              intervals: [(\"2024-08-11T10:13:00.000000Z\",\"2024-08-11T10:15:59.999999Z\")]\n");
+        });
+    }
+
+    @Test
     public void testSelectMultipleColumnsIncludingLastFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table y ( x int, ts timestamp) timestamp(ts);");
