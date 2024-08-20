@@ -26,9 +26,45 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.BitmapIndexReader;
 
+/**
+ * Represents a contiguous fragment of a table partition.
+ * <p>
+ * When it comes to data access, page frames should not be used directly
+ * as it's only valid for partitions in the native format. Instead,
+ * a combination of {@link PageFrameAddressCache} and {@link PageFrameMemoryPool}
+ * should be used.
+ */
 public interface PageFrame {
+    /**
+     * Page frame belonging to a partition in native QDB format.
+     */
+    byte NATIVE_FORMAT = 0;
+    /**
+     * Page frame belonging to a partition in Apache Parquet format.
+     */
+    byte PARQUET_FORMAT = 1;
 
-    BitmapIndexReader getBitmapIndexReader(int columnIndex, int dirForward);
+    /**
+     * Auxiliary index page for variable-length column types, such as Varchar, String, and Binary.
+     * <p>
+     * Can be called only for frames in native format.
+     *
+     * @param columnIndex index of variable length column
+     * @return contiguous memory address containing offsets for variable value entries
+     */
+    long getAuxPageAddress(int columnIndex);
+
+    /**
+     * Return the size of the page frame aux vector in bytes.
+     * <p>
+     * Can be called only for frames in native format.
+     *
+     * @param columnIndex index of column
+     * @return size of column in bytes
+     */
+    long getAuxPageSize(int columnIndex);
+
+    BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction);
 
     /**
      * The count of columns in the page frame. In some cases it is possible to have
@@ -39,24 +75,18 @@ public interface PageFrame {
     int getColumnCount();
 
     /**
-     * Return the size the column as power 2 of the bytes e.g. long == 3, int == 2 etc.
-     *
-     * @param columnIndex index of column
-     * @return logarithm base 2 of size of column in bytes
+     * Returns page frame format.
+     * <p>
+     * Possible values: {@link #NATIVE_FORMAT} and {@link #PARQUET_FORMAT}.
      */
-    int getColumnShiftBits(int columnIndex);
-
-    /**
-     * Index page for variable-length column types, such as String and Binary
-     *
-     * @param columnIndex index of variable length column
-     * @return contiguous memory address containing offsets for variable value entries
-     */
-    long getIndexPageAddress(int columnIndex);
+    byte getFormat();
 
     /**
      * Return the address of the start of the page frame or if this page represents
-     * a column top (a column that was added to the table when other columns already had data) then return 0
+     * a column top (a column that was added to the table when other columns already
+     * had data) then return 0.
+     * <p>
+     * Can be called only for frames in native format.
      *
      * @param columnIndex index of column
      * @return address of column or 0 if column is empty
@@ -64,16 +94,27 @@ public interface PageFrame {
     long getPageAddress(int columnIndex);
 
     /**
-     * Return the size of the page frame column in bytes.
+     * Return the size of the page frame data vector in bytes.
+     * <p>
+     * Can be called only for frames in native format.
      *
      * @param columnIndex index of column
      * @return size of column in bytes
      */
     long getPageSize(int columnIndex);
 
+    /**
+     * Return high row index within the frame's partition, exclusive.
+     */
     long getPartitionHi();
 
+    /**
+     * Return index of the partition the frame belongs to.
+     */
     int getPartitionIndex();
 
+    /**
+     * Return low row index within the frame's partition, inclusive.
+     */
     long getPartitionLo();
 }

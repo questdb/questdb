@@ -59,7 +59,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT;
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ANY;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ANY;
 
 public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
@@ -722,7 +722,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         try {
             withPool((engine, compiler, sqlExecutionContext) -> {
                 sqlExecutionContext.setJitMode(jitMode);
-                compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
+                compiler.compile("create table x as (select x, rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
                 final String sql = "x where a > 0.345747032 and a < 0.34575";
                 try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
                     Assert.assertEquals(expectedFactoryClass, f.getBaseFactory().getClass());
@@ -730,11 +730,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
                 assertQueryNoLeakCheck(
                         compiler,
-                        "a\tt\n" +
-                                "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
-                                "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
-                                "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
-                                "0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
+                        "x\ta\tt\n" +
+                                "541806\t0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
+                                "944577\t0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
+                                "1162067\t0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
+                                "1602980\t0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
                         sql,
                         "t",
                         true,

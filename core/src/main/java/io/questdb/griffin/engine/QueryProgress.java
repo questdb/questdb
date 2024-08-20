@@ -46,13 +46,13 @@ public class QueryProgress extends AbstractRecordCursorFactory {
     private static final Log LOG = LogFactory.getLog(QueryProgress.class);
     private final RecordCursorFactory base;
     private final RegisteredRecordCursor cursor;
+    private final boolean jit;
     private final QueryRegistry registry;
     private final String sqlText;
     private long beginNanos;
     private SqlExecutionContext executionContext;
     private boolean failed = false;
     private long sqlId;
-    private final boolean jit;
 
     public QueryProgress(QueryRegistry registry, CharSequence sqlText, RecordCursorFactory base) {
         super(base.getMetadata());
@@ -140,11 +140,6 @@ public class QueryProgress extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public String getBaseColumnNameNoRemap(int idx) {
-        return base.getBaseColumnNameNoRemap(idx);
-    }
-
-    @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
     }
@@ -158,7 +153,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
             logStart(sqlId, sqlText, executionContext, jit);
             try {
                 final RecordCursor baseCursor = base.getCursor(executionContext);
-                cursor.of(baseCursor); // this should not fail, it is just variable assigment
+                cursor.of(baseCursor); // this should not fail, it is just variable assignment
             } catch (Throwable e) {
                 registry.unregister(sqlId, executionContext);
                 logError(e);

@@ -24,8 +24,8 @@
 
 package io.questdb;
 
+import io.questdb.cutlass.auth.UsernamePasswordMatcher;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.UsernamePasswordMatcher;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
@@ -69,7 +69,6 @@ public class DynamicUsernamePasswordMatcher implements UsernamePasswordMatcher, 
     @Override
     public boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
         if (serverConfiguration != null && serverConfiguration.getPGWireConfiguration() != pgwireConfiguration) {
-
             if (lock.writeLock().tryLock()) {
                 try {
                     // Update the cached pgwire config
