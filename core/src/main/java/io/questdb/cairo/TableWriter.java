@@ -2497,6 +2497,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             finishMetaSwapUpdate();
             metadata.setMaxUncommittedRows(maxUncommittedRows);
+            CairoMetadata.INSTANCE.hydrateTable(tableToken, configuration, LOG, true);
+
         } finally {
             ddlMem.close();
         }
@@ -2518,6 +2520,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             finishMetaSwapUpdate();
             metadata.setO3MaxLag(o3MaxLagUs);
+            CairoMetadata.INSTANCE.hydrateTable(tableToken, configuration, LOG, true);
         } finally {
             ddlMem.close();
         }
