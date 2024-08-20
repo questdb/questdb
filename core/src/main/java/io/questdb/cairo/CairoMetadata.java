@@ -32,19 +32,23 @@ import io.questdb.std.*;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
 
+import java.lang.ThreadLocal;
+
 
 public class CairoMetadata implements Sinkable {
     public static final CairoMetadata INSTANCE = new CairoMetadata();
     public static final Log LOG = LogFactory.getLog(CairoMetadata.class);
     private final SimpleReadWriteLock lock; // consider StampedLock
     private final CharSequenceObjHashMap<CairoTable> tables;
+    ThreadLocal<ColumnVersionReader> tlColumnVersionReader = ThreadLocal.withInitial(ColumnVersionReader::new);
+    ThreadLocal<Path> tlPath = ThreadLocal.withInitial(Path::new);
 
     public CairoMetadata() {
         this.tables = new CharSequenceObjHashMap<>();
         this.lock = new SimpleReadWriteLock();
     }
 
-    public static void hydrateTable(@NotNull TableToken token, @NotNull CairoConfiguration configuration, @NotNull Path path, @NotNull Log logger, @NotNull ColumnVersionReader columnVersionReader) {
+    public static void hydrateTable(@NotNull TableToken token, @NotNull CairoConfiguration configuration, @NotNull Log logger, @NotNull Path path, @NotNull ColumnVersionReader columnVersionReader) {
         logger.debugW().$("hydrating metadata [table=").$(token.getTableName()).I$();
 
         // set up table path
@@ -366,6 +370,13 @@ public class CairoMetadata implements Sinkable {
 
     public int getTablesCountUnsafe() {
         return tables.size();
+    }
+
+    public void hydrateTable(@NotNull TableToken token, @NotNull CairoConfiguration configuration, @NotNull Log logger) {
+        logger.debugW().$("hydrating table using thread-local path and column version reader [table=").$(token.getTableName()).I$();
+        hydrateTable(token, configuration, logger, tlPath.get(), tlColumnVersionReader.get());
+        tlPath.get().close();
+        tlColumnVersionReader.get().close();
     }
 
     public void renameColumn(@NotNull TableToken token, @NotNull CharSequence currentName, @NotNull CharSequence newName, long metadataVersion) {

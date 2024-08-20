@@ -1380,12 +1380,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
             getDdlListener(tableToken).onTableCreated(securityContext, tableToken);
 
-            // todo: refactor this garbage
-            Path path2 = new Path();
-            ColumnVersionReader reader = new ColumnVersionReader();
-            CairoMetadata.hydrateTable(tableToken, configuration, path2, LOG, reader);
-            path2.close();
-            reader.close();
+            CairoMetadata.INSTANCE.hydrateTable(tableToken, configuration, LOG);
 
             return tableToken;
         }

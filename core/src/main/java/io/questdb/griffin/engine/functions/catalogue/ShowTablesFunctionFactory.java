@@ -38,7 +38,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Path;
 import io.questdb.tasks.TelemetryTask;
 
 public class ShowTablesFunctionFactory implements FunctionFactory {
@@ -261,10 +260,8 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                     CairoTable table = metadata.getTableQuiet(lastTableToken.getTableName());
 
                     if (table == null) {
-                        Path path = new Path();
-                        CairoMetadata.hydrateTable(lastTableToken, engine.getConfiguration(), path, LOG, new ColumnVersionReader());
+                        CairoMetadata.INSTANCE.hydrateTable(lastTableToken, engine.getConfiguration(), LOG);
                         table = metadata.getTableQuiet(lastTableToken.getTableName());
-                        path.close();
                     }
 
                     assert table != null;

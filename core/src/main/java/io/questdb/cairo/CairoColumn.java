@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
@@ -47,6 +48,41 @@ public class CairoColumn implements Sinkable {
 
     public CairoColumn() {
     }
+
+
+    public void copyFromUnsafe(@NotNull MemoryCR metaMem) {
+        isSequential = TableUtils.isSequential(metaMem, writerIndex);
+    }
+
+    public void copyFromUnsafe(@NotNull TableColumnMetadata columnMetadata) {
+        name = columnMetadata.getName();
+        type = columnMetadata.getType();
+        // position?
+        isIndexed = columnMetadata.isIndexed();
+        indexBlockCapacity = columnMetadata.getIndexValueBlockCapacity();
+        isSymbolTableStatic = columnMetadata.isSymbolTableStatic();
+        isDedupKey = columnMetadata.isDedupKey();
+        writerIndex = columnMetadata.getWriterIndex();
+        // stableIndex
+        // isDesignated
+        // isSequential
+
+
+        // set basic values
+//        column.setNameUnsafe(columnName);
+//        column.setPositionUnsafe((int) (table.getColumnCountUnsafe() - 1 < 0 ? 0 : table.getColumnCountUnsafe() - 1));
+//        column.setTypeUnsafe(columnType);
+//        column.setIsIndexedUnsafe(TableUtils.isColumnIndexed(metaMem, writerIndex));
+//        column.setIndexBlockCapacityUnsafe(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
+//        column.setIsSymbolTableStaticUnsafe(true);
+//        column.setIsDedupKeyUnsafe(TableUtils.isColumnDedupKey(metaMem, writerIndex));
+//        column.setWriterIndexUnsafe(writerIndex);
+//        column.setDenseSymbolIndexUnsafe(denseSymbolIndex);
+//        column.setStableIndex(stableIndex);
+//        column.setIsDesignatedUnsafe(writerIndex == table.getTimestampIndexUnsafe());
+//        column.setIsSequentialUnsafe(TableUtils.isSequential(metaMem, writerIndex));
+    }
+
 
     public void copyTo(@NotNull CairoColumn target) {
         target.denseSymbolIndex = this.denseSymbolIndex;

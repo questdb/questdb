@@ -1533,7 +1533,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             // purge old column versions
             finishColumnPurge();
-            LOG.info().$("REMOVED index [txn=").$(txWriter.getTxn())
+            LOG.info().$("REMOVED index [txn=").$(txWriter.getTxn());
 
             CairoMetadata.INSTANCE.dropIndex(tableToken, columnName, defaultIndexValueBlockSize, getMetadataVersion());
 
@@ -2442,11 +2442,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // todo: refactor this garbage
         CairoMetadata.INSTANCE.dropTable(tableToken);
-        Path path = new Path();
-        ColumnVersionReader reader = new ColumnVersionReader();
-        CairoMetadata.hydrateTable(tableToken, configuration, path, LOG, reader);
-        path.close();
-        reader.close();
+        CairoMetadata.INSTANCE.hydrateTable(tableToken, configuration, LOG);
     }
 
     @Override

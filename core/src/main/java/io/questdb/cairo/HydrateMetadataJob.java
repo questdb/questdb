@@ -94,7 +94,7 @@ public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
 
         // skip system tables
         if (!token.isSystem()) {
-            CairoMetadata.hydrateTable(token, configuration, path, LOG, columnVersionReader);
+            CairoMetadata.INSTANCE.hydrateTable(token, configuration, LOG);
         }
 
         position++;

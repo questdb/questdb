@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
 public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -106,10 +105,8 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
                 cairoTable = cairoMetadata.getTableQuiet(tableToken.getTableName());
 
                 if (cairoTable == null) {
-                    Path path = new Path();
-                    CairoMetadata.hydrateTable(tableToken, executionContext.getCairoEngine().getConfiguration(), path, LOG, new ColumnVersionReader());
+                    CairoMetadata.INSTANCE.hydrateTable(tableToken, executionContext.getCairoEngine().getConfiguration(), LOG);
                     cairoTable = cairoMetadata.getTableQuiet(tableToken.getTableName());
-                    path.close();
                 }
 
                 assert cairoTable != null;
