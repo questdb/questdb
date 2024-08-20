@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.ObjList;
-import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
@@ -38,34 +37,31 @@ import org.jetbrains.annotations.NotNull;
 // todo: update this to use column order map, column name index map etc.
 public class CairoTable implements Sinkable {
     // consider a versioned lock. consider more granular locking
-    public final SimpleReadWriteLock lock;
     public LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     public IntList columnOrderMap = new IntList();
     public ObjList<CairoColumn> columns = new ObjList<>();
-    public TableToken token;
     // todo: intern, its a column name
     private boolean isDedup;
     private boolean isSoftLink;
-    private long lastMetadataVersion = -1;
     private int maxUncommittedRows;
+    private long metadataVersion = -1;
     private long o3MaxLag;
-    private String partitionBy;
+    private int partitionBy;
     private int timestampIndex;
+    private TableToken token;
 
     public CairoTable() {
-        this.lock = new SimpleReadWriteLock();
     }
 
     public CairoTable(@NotNull TableToken token) {
-        this.token = token;
-        this.lock = new SimpleReadWriteLock();
+        this.setTableToken(token);
     }
 
-    public void addColumnUnsafe(@NotNull CairoColumn newColumn) throws CairoException {
-        final CharSequence columnName = newColumn.getNameUnsafe();
-        final CairoColumn existingColumn = getColumnQuietUnsafe(columnName);
+    public void addColumn(@NotNull CairoColumn newColumn) throws CairoException {
+        final CharSequence columnName = newColumn.getName();
+        final CairoColumn existingColumn = getColumnQuiet(columnName);
         if (existingColumn != null) {
-            throw CairoException.nonCritical().put("column already exists in table [table=").put(getNameUnsafe()).put(", column=").put(columnName).put("]");
+            throw CairoException.nonCritical().put("column already exists in table [table=").put(getName()).put(", column=").put(columnName).put("]");
         }
         columns.add(newColumn);
 
@@ -74,49 +70,31 @@ public class CairoTable implements Sinkable {
     }
 
     public void clear() {
-        lock.writeLock().lock();
         for (int i = 0, n = columns.size(); i < n; i++) {
             columns.remove(i);
         }
-        lock.writeLock().unlock();
     }
 
     public void copyTo(@NotNull CairoTable target) {
-        lock.readLock().lock();
-        target.lock.writeLock().lock();
-
         target.columns = columns;
         target.columnOrderMap = columnOrderMap;
         target.columnNameIndexMap = columnNameIndexMap;
-        target.token = token;
+        target.setTableToken(getTableToken());
         target.timestampIndex = timestampIndex;
         target.isDedup = isDedup;
         target.isSoftLink = isSoftLink;
-        target.lastMetadataVersion = lastMetadataVersion;
+        target.metadataVersion = metadataVersion;
         target.maxUncommittedRows = maxUncommittedRows;
         target.o3MaxLag = o3MaxLag;
         target.partitionBy = partitionBy;
-
-        target.lock.writeLock().unlock();
-        lock.readLock().unlock();
     }
 
     public long getColumnCount() {
-        lock.readLock().lock();
-        final long columnCount = this.columns.size();
-        lock.readLock().unlock();
-        return columnCount;
-    }
-
-    public long getColumnCountUnsafe() {
         return this.columns.size();
     }
 
     public ObjList<CharSequence> getColumnNames() {
-        lock.readLock().lock();
-        final ObjList<CharSequence> names = this.columnNameIndexMap.keys();
-        lock.readLock().unlock();
-        return names;
+        return this.columnNameIndexMap.keys();
     }
 
     public @NotNull CairoColumn getColumnQuick(@NotNull CharSequence columnName) {
@@ -127,22 +105,7 @@ public class CairoTable implements Sinkable {
         return col;
     }
 
-    public @NotNull CairoColumn getColumnQuickUnsafe(@NotNull CharSequence columnName) {
-        final CairoColumn col = getColumnQuietUnsafe(columnName);
-        if (col == null) {
-            throw CairoException.columnDoesNotExist(columnName);
-        }
-        return col;
-    }
-
     public CairoColumn getColumnQuiet(@NotNull CharSequence columnName) {
-        lock.readLock().lock();
-        final CairoColumn col = getColumnQuietUnsafe(columnName);
-        lock.readLock().unlock();
-        return col;
-    }
-
-    public CairoColumn getColumnQuietUnsafe(@NotNull CharSequence columnName) {
         final int index = columnNameIndexMap.get(columnName);
         if (index != -1) {
             return columns.getQuiet(index);
@@ -152,190 +115,114 @@ public class CairoTable implements Sinkable {
     }
 
     public String getDirectoryName() {
-        lock.readLock().lock();
-        final String directoryName = this.token.getDirName();
-        lock.readLock().unlock();
-        return directoryName;
-    }
-
-    public String getDirectoryNameUnsafe() {
-        return token.getDirName();
+        return getTableToken().getDirName();
     }
 
     public int getId() {
-        lock.readLock().lock();
-        final int id = this.token.getTableId();
-        lock.readLock().unlock();
-        return id;
-    }
-
-    public int getIdUnsafe() {
-        return this.token.getTableId();
+        return this.getTableToken().getTableId();
     }
 
     public boolean getIsDedup() {
-        lock.readLock().lock();
-        final boolean isDedup = this.isDedup;
-        lock.readLock().unlock();
-        return isDedup;
-    }
-
-    public boolean getIsDedupUnsafe() {
         return isDedup;
     }
 
     public boolean getIsSoftLink() {
-        lock.readLock().lock();
-        final boolean isSoftLink = this.isSoftLink;
-        lock.readLock().unlock();
         return isSoftLink;
-    }
-
-    public boolean getIsSoftLinkUnsafe() {
-        return isSoftLink;
-    }
-
-    public long getLastMetadataVersion() {
-        lock.readLock().lock();
-        final long lastMetadataVersion = this.lastMetadataVersion;
-        lock.readLock().unlock();
-        return lastMetadataVersion;
-    }
-
-    public long getLastMetadataVersionUnsafe() {
-        return lastMetadataVersion;
     }
 
     public int getMaxUncommittedRows() {
-        lock.readLock().lock();
-        final int maxUncommittedRows = this.maxUncommittedRows;
-        lock.readLock().unlock();
         return maxUncommittedRows;
     }
 
-    public int getMaxUncommittedRowsUnsafe() {
-        return maxUncommittedRows;
+    public long getMetadataVersion() {
+        return metadataVersion;
     }
 
     public @NotNull String getName() {
-        lock.readLock().lock();
-        final String name = this.token.getTableName();
-        lock.readLock().unlock();
-        return name;
-    }
-
-    public @NotNull String getNameUnsafe() {
-        return this.token.getTableName();
+        return this.getTableToken().getTableName();
     }
 
     public long getO3MaxLag() {
-        lock.readLock().lock();
-        final long o3MaxLag = this.o3MaxLag;
-        lock.readLock().unlock();
         return o3MaxLag;
     }
 
-    public long getO3MaxLagUnsafe() {
-        return o3MaxLag;
-    }
-
-    public String getPartitionBy() {
-        lock.readLock().lock();
-        final String partitionBy = this.partitionBy;
-        lock.readLock().unlock();
+    public int getPartitionBy() {
         return partitionBy;
     }
 
-    public String getPartitionByUnsafe() {
-        return partitionBy;
+    public String getPartitionByName() {
+        return PartitionBy.toString(partitionBy);
+    }
+
+    public TableToken getTableToken() {
+        return token;
     }
 
     public int getTimestampIndex() {
-        lock.readLock().lock();
-        final int timestampIndex = this.timestampIndex;
-        lock.readLock().unlock();
-        return timestampIndex;
-    }
-
-    public int getTimestampIndexUnsafe() {
         return timestampIndex;
     }
 
     public CharSequence getTimestampName() {
-        lock.readLock().lock();
-        final CharSequence timestampName = getTimestampNameUnsafe();
-        lock.readLock().unlock();
-        return timestampName;
-    }
-
-    public CharSequence getTimestampNameUnsafe() {
-        final CairoColumn timestampColumn = getColumnQuietUnsafe(this.timestampIndex);
+        final CairoColumn timestampColumn = getColumnQuiet(this.timestampIndex);
         if (timestampColumn != null) {
-            return timestampColumn.getNameUnsafe();
+            return timestampColumn.getName();
         } else {
             return null;
         }
     }
 
     public boolean getWalEnabled() {
-        lock.readLock().lock();
-        final boolean walEnabled = this.token.isWal();
-        lock.readLock().unlock();
-        return walEnabled;
+        return getTableToken().isWal();
     }
 
-    public boolean getWalEnabledUnsafe() {
-        return token.isWal();
-    }
-
-    public boolean isInitialised() {
-        return getLastMetadataVersion() != -1;
-    }
-
-    public void setIsDedupUnsafe(boolean isDedup) {
+    public void setIsDedup(boolean isDedup) {
         this.isDedup = isDedup;
     }
 
-    public void setIsSoftLinkUnsafe(boolean isSoftLink) {
+    public void setIsSoftLink(boolean isSoftLink) {
         this.isSoftLink = isSoftLink;
     }
 
-    public void setLastMetadataVersionUnsafe(long lastMetadataVersion) {
-        this.lastMetadataVersion = lastMetadataVersion;
-    }
-
-    public void setMaxUncommittedRowsUnsafe(int maxUncommittedRows) {
+    public void setMaxUncommittedRows(int maxUncommittedRows) {
         this.maxUncommittedRows = maxUncommittedRows;
     }
 
-    public void setO3MaxLagUnsafe(long o3MaxLag) {
+    public void setMetadataVersion(long metadataVersion) {
+        this.metadataVersion = metadataVersion;
+    }
+
+    public void setO3MaxLag(long o3MaxLag) {
         this.o3MaxLag = o3MaxLag;
     }
 
-    public void setPartitionByUnsafe(String partitionBy) {
+    public void setPartitionBy(int partitionBy) {
         this.partitionBy = partitionBy;
     }
 
-    public void setTimestampIndexUnsafe(int timestampIndex) {
+    public void setTableToken(TableToken token) {
+        this.token = token;
+    }
+
+    public void setTimestampIndex(int timestampIndex) {
         this.timestampIndex = timestampIndex;
     }
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.put("CairoTable [");
-        sink.put("name=").put(getNameUnsafe()).put(", ");
-        sink.put("id=").put(getIdUnsafe()).put(", ");
-        sink.put("directoryName=").put(getDirectoryNameUnsafe()).put(", ");
-        sink.put("isDedup=").put(getIsDedupUnsafe()).put(", ");
-        sink.put("isSoftLink=").put(getIsSoftLinkUnsafe()).put(", ");
-        sink.put("lastMetadataVersion=").put(getLastMetadataVersionUnsafe()).put(", ");
-        sink.put("maxUncommittedRows=").put(getMaxUncommittedRowsUnsafe()).put(", ");
-        sink.put("o3MaxLag=").put(getO3MaxLagUnsafe()).put(", ");
-        sink.put("partitionBy=").put(getPartitionByUnsafe()).put(", ");
-        sink.put("timestampIndex=").put(getTimestampIndexUnsafe()).put(", ");
-        sink.put("timestampName=").put(getTimestampNameUnsafe()).put(", ");
-        sink.put("walEnabled=").put(getWalEnabledUnsafe()).put(", ");
-        sink.put("columnCount=").put(getColumnCountUnsafe()).put("]");
+        sink.put("name=").put(getName()).put(", ");
+        sink.put("id=").put(getId()).put(", ");
+        sink.put("directoryName=").put(getDirectoryName()).put(", ");
+        sink.put("isDedup=").put(getIsDedup()).put(", ");
+        sink.put("isSoftLink=").put(getIsSoftLink()).put(", ");
+        sink.put("metadataVersion=").put(getMetadataVersion()).put(", ");
+        sink.put("maxUncommittedRows=").put(getMaxUncommittedRows()).put(", ");
+        sink.put("o3MaxLag=").put(getO3MaxLag()).put(", ");
+        sink.put("partitionBy=").put(getPartitionByName()).put(", ");
+        sink.put("timestampIndex=").put(getTimestampIndex()).put(", ");
+        sink.put("timestampName=").put(getTimestampName()).put(", ");
+        sink.put("walEnabled=").put(getWalEnabled()).put(", ");
+        sink.put("columnCount=").put(getColumnCount()).put("]");
         sink.put('\n');
         for (int i = 0, n = columns.size(); i < n; i++) {
             sink.put("\t\t");
@@ -346,18 +233,11 @@ public class CairoTable implements Sinkable {
         }
     }
 
-    public void updateColumnUnsafe(@NotNull CairoColumn newColumn, long metadataVersion) {
-        if (getLastMetadataVersionUnsafe() < metadataVersion) {
-            final CairoColumn existingColumn = getColumnQuietUnsafe(newColumn.getNameUnsafe());
-            newColumn.copyTo(existingColumn);
-        }
-    }
-
-    private CairoColumn getColumnQuickUnsafe(int position) {
+    private CairoColumn getColumnQuick(int position) {
         return columns.getQuick(position);
     }
 
-    private CairoColumn getColumnQuietUnsafe(int position) {
+    private CairoColumn getColumnQuiet(int position) {
         if (position > -1) {
             return columns.getQuiet(position);
         } else {

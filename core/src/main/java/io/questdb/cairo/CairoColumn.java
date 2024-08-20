@@ -24,20 +24,22 @@
 
 package io.questdb.cairo;
 
-import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
 // todo: do we need to add column version?
 public class CairoColumn implements Sinkable {
-    private int denseSymbolIndex;
+    public static final Log LOG = LogFactory.getLog(CairoMetadata.class);
     private int indexBlockCapacity;
     private boolean isDedupKey;
     private boolean isDesignated;
     private boolean isIndexed;
     private boolean isSequential;
     private boolean isSymbolTableStatic;
+    private long metadataVersion;
     private CharSequence name;
     private int position;
     private int stableIndex;
@@ -49,43 +51,7 @@ public class CairoColumn implements Sinkable {
     public CairoColumn() {
     }
 
-
-    public void copyFromUnsafe(@NotNull MemoryCR metaMem) {
-        isSequential = TableUtils.isSequential(metaMem, writerIndex);
-    }
-
-    public void copyFromUnsafe(@NotNull TableColumnMetadata columnMetadata) {
-        name = columnMetadata.getName();
-        type = columnMetadata.getType();
-        // position?
-        isIndexed = columnMetadata.isIndexed();
-        indexBlockCapacity = columnMetadata.getIndexValueBlockCapacity();
-        isSymbolTableStatic = columnMetadata.isSymbolTableStatic();
-        isDedupKey = columnMetadata.isDedupKey();
-        writerIndex = columnMetadata.getWriterIndex();
-        // stableIndex
-        // isDesignated
-        // isSequential
-
-
-        // set basic values
-//        column.setNameUnsafe(columnName);
-//        column.setPositionUnsafe((int) (table.getColumnCountUnsafe() - 1 < 0 ? 0 : table.getColumnCountUnsafe() - 1));
-//        column.setTypeUnsafe(columnType);
-//        column.setIsIndexedUnsafe(TableUtils.isColumnIndexed(metaMem, writerIndex));
-//        column.setIndexBlockCapacityUnsafe(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
-//        column.setIsSymbolTableStaticUnsafe(true);
-//        column.setIsDedupKeyUnsafe(TableUtils.isColumnDedupKey(metaMem, writerIndex));
-//        column.setWriterIndexUnsafe(writerIndex);
-//        column.setDenseSymbolIndexUnsafe(denseSymbolIndex);
-//        column.setStableIndex(stableIndex);
-//        column.setIsDesignatedUnsafe(writerIndex == table.getTimestampIndexUnsafe());
-//        column.setIsSequentialUnsafe(TableUtils.isSequential(metaMem, writerIndex));
-    }
-
-
     public void copyTo(@NotNull CairoColumn target) {
-        target.denseSymbolIndex = this.denseSymbolIndex;
         target.isDesignated = this.isDesignated;
         target.indexBlockCapacity = this.indexBlockCapacity;
         target.isDedupKey = this.isDedupKey;
@@ -99,102 +65,90 @@ public class CairoColumn implements Sinkable {
         target.type = this.type;
         target.writerIndex = this.writerIndex;
         target.isSequential = this.isSequential;
+        target.metadataVersion = this.metadataVersion;
     }
 
-    public int getDenseSymbolIndexUnsafe() {
-        return denseSymbolIndex;
-    }
-
-    public int getIndexBlockCapacityUnsafe() {
+    public int getIndexBlockCapacity() {
         return indexBlockCapacity;
     }
 
-    public boolean getIsDedupKeyUnsafe() {
+    public boolean getIsDedupKey() {
         return isDedupKey;
     }
 
-    public boolean getIsDesignatedUnsafe() {
+    public boolean getIsDesignated() {
         return isDesignated;
     }
 
-    public boolean getIsIndexedUnsafe() {
+    public boolean getIsIndexed() {
         return isIndexed;
     }
 
-    public boolean getIsSequentialUnsafe() {
+    public boolean getIsSequential() {
         return isSequential;
     }
 
-    public boolean getIsSymbolTableStaticUnsafe() {
+    public boolean getIsSymbolTableStatic() {
         return isSymbolTableStatic;
     }
 
-    public CharSequence getNameUnsafe() {
+    public CharSequence getName() {
         return name;
     }
 
-    public int getPositionUnsafe() {
+    public int getPosition() {
         return position;
     }
 
-    public int getStableIndexUnsafe() {
+    public int getStableIndex() {
         return stableIndex;
     }
 
-    public boolean getSymbolCachedUnsafe() {
+    public boolean getSymbolCached() {
         return symbolCached;
     }
 
-    public int getSymbolCapacityUnsafe() {
+    public int getSymbolCapacity() {
         return symbolCapacity;
     }
 
-    public int getTypeUnsafe() {
+    public int getType() {
         return type;
     }
 
-    // todo: review naming
-    public boolean getUpsertKeyUnsafe() {
-        return isDedupKey;
-    }
-
-    public int getWriterIndexUnsafe() {
+    public int getWriterIndex() {
         return writerIndex;
     }
 
-    public void setDenseSymbolIndexUnsafe(int denseSymbolIndex) {
-        this.denseSymbolIndex = denseSymbolIndex;
-    }
-
-    public void setIndexBlockCapacityUnsafe(int indexBlockCapacity) {
+    public void setIndexBlockCapacity(int indexBlockCapacity) {
         this.indexBlockCapacity = indexBlockCapacity;
     }
 
-    public void setIsDedupKeyUnsafe(boolean isDedupKey) {
+    public void setIsDedupKey(boolean isDedupKey) {
         this.isDedupKey = isDedupKey;
     }
 
-    public void setIsDesignatedUnsafe(boolean isDesignated) {
+    public void setIsDesignated(boolean isDesignated) {
         this.isDesignated = isDesignated;
     }
 
-    public void setIsIndexedUnsafe(boolean isIndexed) {
+    public void setIsIndexed(boolean isIndexed) {
         this.isIndexed = isIndexed;
     }
 
-    public void setIsSequentialUnsafe(boolean isSequential) {
+    public void setIsSequential(boolean isSequential) {
         this.isSequential = isSequential;
     }
 
-    public void setIsSymbolTableStaticUnsafe(boolean symbolTableStatic) {
+    public void setIsSymbolTableStatic(boolean symbolTableStatic) {
         isSymbolTableStatic = symbolTableStatic;
     }
 
-    public void setNameUnsafe(CharSequence name) {
+    public void setName(CharSequence name) {
         this.name = name;
     }
 
-    public void setPositionUnsafe(int position) {
+    public void setPosition(int position) {
         this.position = position;
     }
 
@@ -202,39 +156,38 @@ public class CairoColumn implements Sinkable {
         this.stableIndex = stableIndex;
     }
 
-    public void setSymbolCachedUnsafe(boolean symbolCached) {
+    public void setSymbolCached(boolean symbolCached) {
         this.symbolCached = symbolCached;
     }
 
-    public void setSymbolCapacityUnsafe(int symbolCapacity) {
+    public void setSymbolCapacity(int symbolCapacity) {
         this.symbolCapacity = symbolCapacity;
     }
 
-    public void setTypeUnsafe(int type) {
+    public void setType(int type) {
         this.type = type;
     }
 
-    public void setWriterIndexUnsafe(int writerIndex) {
+    public void setWriterIndex(int writerIndex) {
         this.writerIndex = writerIndex;
     }
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.put("CairoColumn [");
-        sink.put("name=").put(getNameUnsafe()).put(", ");
-        sink.put("position=").put(getPositionUnsafe()).put(", ");
-        sink.put("type=").put(ColumnType.nameOf(getTypeUnsafe())).put(", ");
-        sink.put("isDedupKey=").put(getIsDedupKeyUnsafe()).put(", ");
-        sink.put("isDesignated=").put(getIsDesignatedUnsafe()).put(", ");
-        sink.put("isSequential=").put(getIsSequentialUnsafe()).put(", ");
-        sink.put("isSymbolTableStatic=").put(getIsSymbolTableStaticUnsafe()).put(", ");
-        sink.put("symbolCached=").put(getSymbolCachedUnsafe()).put(", ");
-        sink.put("symbolCapacity=").put(getSymbolCapacityUnsafe()).put(", ");
-        sink.put("denseSymbolIndex=").put(getDenseSymbolIndexUnsafe()).put(", ");
-        sink.put("isIndexed=").put(getIsIndexedUnsafe()).put(", ");
-        sink.put("indexBlockCapacity=").put(getIndexBlockCapacityUnsafe()).put(", ");
-        sink.put("stableIndex=").put(getStableIndexUnsafe()).put(", ");
-        sink.put("writerIndex=").put(getWriterIndexUnsafe()).put("]");
+        sink.put("name=").put(getName()).put(", ");
+        sink.put("position=").put(getPosition()).put(", ");
+        sink.put("type=").put(ColumnType.nameOf(getType())).put(", ");
+        sink.put("isDedupKey=").put(getIsDedupKey()).put(", ");
+        sink.put("isDesignated=").put(getIsDesignated()).put(", ");
+        sink.put("isSequential=").put(getIsSequential()).put(", ");
+        sink.put("isSymbolTableStatic=").put(getIsSymbolTableStatic()).put(", ");
+        sink.put("symbolCached=").put(getSymbolCached()).put(", ");
+        sink.put("symbolCapacity=").put(getSymbolCapacity()).put(", ");
+        sink.put("isIndexed=").put(getIsIndexed()).put(", ");
+        sink.put("indexBlockCapacity=").put(getIndexBlockCapacity()).put(", ");
+        sink.put("stableIndex=").put(getStableIndex()).put(", ");
+        sink.put("writerIndex=").put(getWriterIndex()).put("]");
     }
 
 }

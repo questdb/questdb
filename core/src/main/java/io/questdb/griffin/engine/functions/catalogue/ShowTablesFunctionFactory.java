@@ -182,10 +182,10 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                 @Override
                 public boolean getBool(int col) {
                     if (col == WAL_ENABLED_COLUMN) {
-                        return table.getWalEnabledUnsafe();
+                        return table.getWalEnabled();
                     }
                     if (col == DEDUP_NAME_COLUMN) {
-                        return table.getIsDedupUnsafe();
+                        return table.getIsDedup();
                     }
                     return false;
                 }
@@ -193,34 +193,34 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                 @Override
                 public int getInt(int col) {
                     if (col == ID_COLUMN) {
-                        return table.getIdUnsafe();
+                        return table.getId();
                     }
                     assert col == MAX_UNCOMMITTED_ROWS_COLUMN;
-                    return table.getMaxUncommittedRowsUnsafe();
+                    return table.getMaxUncommittedRows();
                 }
 
                 @Override
                 public long getLong(int col) {
                     assert col == O3_MAX_LAG_COLUMN;
-                    return table.getO3MaxLagUnsafe();
+                    return table.getO3MaxLag();
                 }
 
                 @Override
                 public CharSequence getStrA(int col) {
                     if (Chars.equals(ShowTablesCursorFactory.TABLE_NAME_COLUMN_NAME, getMetadata().getColumnName(col))) {
-                        return table.getNameUnsafe();
+                        return table.getName();
                     }
                     if (col == PARTITION_BY_COLUMN) {
-                        return table.getPartitionByUnsafe();
+                        return table.getPartitionByName();
                     }
                     if (col == DESIGNATED_TIMESTAMP_COLUMN) {
-                        return table.getTimestampNameUnsafe();
+                        return table.getTimestampName();
                     }
                     if (col == DIRECTORY_NAME_COLUMN) {
-                        if (table.getIsSoftLinkUnsafe()) {
-                            return table.getDirectoryNameUnsafe() + " (->)";
+                        if (table.getIsSoftLink()) {
+                            return table.getDirectoryName() + " (->)";
                         }
-                        return table.getDirectoryNameUnsafe();
+                        return table.getDirectoryName();
                     }
                     return null;
                 }
@@ -257,11 +257,11 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                         return false;
                     }
 
-                    CairoTable table = metadata.getTableQuiet(lastTableToken.getTableName());
+                    CairoTable table = metadata.getTableQuiet(lastTableToken);
 
                     if (table == null) {
-                        CairoMetadata.INSTANCE.hydrateTable(lastTableToken, engine.getConfiguration(), LOG);
-                        table = metadata.getTableQuiet(lastTableToken.getTableName());
+                        CairoMetadata.INSTANCE.hydrateTable(lastTableToken, engine.getConfiguration(), LOG, false);
+                        table = metadata.getTableQuiet(lastTableToken);
                     }
 
                     assert table != null;

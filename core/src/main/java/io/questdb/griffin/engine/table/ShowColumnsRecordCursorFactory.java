@@ -102,11 +102,11 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition) {
             try {
                 CairoMetadata cairoMetadata = executionContext.getCairoEngine().getCairoMetadata();
-                cairoTable = cairoMetadata.getTableQuiet(tableToken.getTableName());
+                cairoTable = cairoMetadata.getTableQuiet(tableToken);
 
                 if (cairoTable == null) {
-                    CairoMetadata.INSTANCE.hydrateTable(tableToken, executionContext.getCairoEngine().getConfiguration(), LOG);
-                    cairoTable = cairoMetadata.getTableQuiet(tableToken.getTableName());
+                    CairoMetadata.INSTANCE.hydrateTable(tableToken, executionContext.getCairoEngine().getConfiguration(), LOG, false);
+                    cairoTable = cairoMetadata.getTableQuiet(tableToken);
                 }
 
                 assert cairoTable != null;
@@ -138,16 +138,16 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             @Override
             public boolean getBool(int col) {
                 if (col == N_INDEXED_COL) {
-                    return cairoColumn.getIsIndexedUnsafe();
+                    return cairoColumn.getIsIndexed();
                 }
                 if (col == N_SYMBOL_CACHED_COL) {
-                    return cairoColumn.getSymbolCachedUnsafe();
+                    return cairoColumn.getSymbolCached();
                 }
                 if (col == N_DESIGNATED_COL) {
-                    return cairoColumn.getIsDesignatedUnsafe();
+                    return cairoColumn.getIsDesignated();
                 }
                 if (col == N_UPSERT_KEY_COL) {
-                    return cairoColumn.getIsDedupKeyUnsafe();
+                    return cairoColumn.getIsDedupKey();
                 }
                 throw new UnsupportedOperationException();
             }
@@ -155,11 +155,11 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             @Override
             public int getInt(int col) {
                 if (col == N_INDEX_BLOCK_CAPACITY_COL) {
-                    return cairoColumn.getIndexBlockCapacityUnsafe();
+                    return cairoColumn.getIndexBlockCapacity();
                 }
                 if (col == N_SYMBOL_CAPACITY_COL) {
-                    if (ColumnType.isSymbol(cairoColumn.getTypeUnsafe())) {
-                        int symbolCapacity = cairoColumn.getSymbolCapacityUnsafe();
+                    if (ColumnType.isSymbol(cairoColumn.getType())) {
+                        int symbolCapacity = cairoColumn.getSymbolCapacity();
                         assert symbolCapacity != 0;
                         return symbolCapacity;
                     } else {
@@ -173,10 +173,10 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             @NotNull
             public CharSequence getStrA(int col) {
                 if (col == N_NAME_COL) {
-                    return cairoColumn.getNameUnsafe();
+                    return cairoColumn.getName();
                 }
                 if (col == N_TYPE_COL) {
-                    return ColumnType.nameOf(cairoColumn.getTypeUnsafe());
+                    return ColumnType.nameOf(cairoColumn.getType());
                 }
                 throw new UnsupportedOperationException();
             }

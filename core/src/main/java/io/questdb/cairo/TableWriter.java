@@ -579,7 +579,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlListener.onColumnAdded(securityContext, tableToken, columnName);
         }
 
-        CairoMetadata.INSTANCE.upsertColumn(tableToken, columnName, columnType, columnIndex, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, metadata.getWriterIndex(columnIndex), /* todo: */ -1, getMetadataVersion());
+        CairoMetadata.INSTANCE.hydrateTable(metadata, LOG, true);
     }
 
     @Override
@@ -622,7 +622,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnMetadata.setIndexed(true);
         columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
-        CairoMetadata.INSTANCE.addIndex(tableToken, columnName, indexValueBlockSize, getMetadataVersion());
+        CairoMetadata.INSTANCE.hydrateTable(metadata, LOG, true);
         LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$substr(pathRootSize, path).$();
     }
 
@@ -945,9 +945,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     dedupColumnCommitAddresses.setDedupColumnCount(dedupColumnCommitAddresses.getColumnCount() - 1);
                 }
 
-                CairoMetadata.INSTANCE.upsertColumn(tableToken, columnName, newType, existingColIndex, symbolCapacity,
-                        symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, newColumnDedupKey, metadata.getWriterIndex(columnIndex), /* todo: */ -1, getMetadataVersion());
-
+                CairoMetadata.INSTANCE.hydrateTable(metadata, LOG, true);
             } finally {
                 // clear temp resources
                 convertOperator.finishColumnConversion();
@@ -1481,7 +1479,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         checkDistressed();
         LOG.info().$("disabling row deduplication [table=").utf8(tableToken.getTableName()).I$();
         updateMetadataWithDeduplicationUpsertKeys(false, null);
-        CairoMetadata.INSTANCE.dedupDisable(tableToken, getMetadataVersion());
+        CairoMetadata.INSTANCE.hydrateTable(metadata, LOG, true);
     }
 
     @Override
@@ -1535,7 +1533,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             finishColumnPurge();
             LOG.info().$("REMOVED index [txn=").$(txWriter.getTxn());
 
-            CairoMetadata.INSTANCE.dropIndex(tableToken, columnName, defaultIndexValueBlockSize, getMetadataVersion());
+            CairoMetadata.INSTANCE.hydrateTable(metadata, LOG, true);
 
             LOG.info().$("END DROP INDEX [txn=").$(txWriter.getTxn())
                     .$(", table=").utf8(tableToken.getTableName())
@@ -1584,7 +1582,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             logRec.I$();
         }
         updateMetadataWithDeduplicationUpsertKeys(true, columnsIndexes);
-        CairoMetadata.INSTANCE.dedupEnable(tableToken, columnsIndexes, getMetadataVersion());
+        CairoMetadata.INSTANCE.hydrateTable(metadata, LOG, true);
     }
 
     public long getAppliedSeqTxn() {
@@ -2333,7 +2331,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         finishColumnPurge();
 
-        CairoMetadata.INSTANCE.dropColumn(tableToken, name, getMetadataVersion());
+        CairoMetadata.INSTANCE.hydrateTable(tableToken, configuration, LOG, true);
         LOG.info().$("REMOVED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' from ").$substr(pathRootSize, path).$();
     }
 
@@ -2422,7 +2420,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlListener.onColumnRenamed(securityContext, tableToken, currentName, newName);
         }
 
-        CairoMetadata.INSTANCE.renameColumn(tableToken, currentName, newName, getMetadataVersion());
+        CairoMetadata.INSTANCE.hydrateTable(metadata, LOG, true);
 
         LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$substr(pathRootSize, path).$();
     }
@@ -2440,9 +2438,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Record column structure version bump in txn file for WAL sequencer structure version to match writer structure version.
         bumpColumnStructureVersion();
 
-        // todo: refactor this garbage
-        CairoMetadata.INSTANCE.dropTable(tableToken);
-        CairoMetadata.INSTANCE.hydrateTable(tableToken, configuration, LOG);
+        CairoMetadata.INSTANCE.hydrateTable(metadata, LOG, true);
     }
 
     @Override

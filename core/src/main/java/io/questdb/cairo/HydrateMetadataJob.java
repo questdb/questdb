@@ -84,7 +84,7 @@ public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
         if (position >= tokens.size()) {
             completed = true;
             close();
-            LOG.infoW().$("Hydration completed [num_tables=").$(CairoMetadata.INSTANCE.getTablesCountUnsafe()).I$();
+            LOG.infoW().$("Hydration completed [num_tables=").$(CairoMetadata.INSTANCE.getTablesCount()).I$();
             tokens.clear();
             position = -1;
             return true;
@@ -94,7 +94,7 @@ public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
 
         // skip system tables
         if (!token.isSystem()) {
-            CairoMetadata.INSTANCE.hydrateTable(token, configuration, LOG);
+            CairoMetadata.INSTANCE.hydrateTable(token, configuration, LOG, false);
         }
 
         position++;
