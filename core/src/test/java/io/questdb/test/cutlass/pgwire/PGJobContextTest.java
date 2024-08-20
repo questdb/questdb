@@ -7765,7 +7765,7 @@ nodejs code:
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, long opts) {
                     if (Utf8s.endsWithAscii(name, "_meta.swp")) {
                         queryStartedCountDown.await();
                         Os.sleep(configuration.getWriterAsyncCommandBusyWaitTimeout() * 2);
@@ -7789,7 +7789,7 @@ nodejs code:
             SOCountDownLatch queryStartedCountDown = new SOCountDownLatch();
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, long opts) {
                     if (Utf8s.endsWithAscii(name, "_meta.swp")) {
                         queryStartedCountDown.await();
                         // wait for twice the time to allow busy wait to time out
@@ -7809,7 +7809,7 @@ nodejs code:
             node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 1);
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, long opts) {
                     if (Utf8s.endsWithAscii(name, "_meta.swp")) {
                         Os.sleep(50);
                     }
@@ -12397,7 +12397,7 @@ create table tab as (
         private final AtomicBoolean delaying = new AtomicBoolean(false);
 
         @Override
-        public int sendRaw(int fd, long buffer, int bufferLen) {
+        public int sendRaw(long fd, long buffer, int bufferLen) {
             if (!delaying.get()) {
                 return super.sendRaw(fd, buffer, bufferLen);
             }
@@ -12427,13 +12427,13 @@ create table tab as (
         }
 
         @Override
-        public int close(int fd) {
+        public int close(long fd) {
             socketClosed = true;
             return super.close(fd);
         }
 
         @Override
-        public int recvRaw(int fd, long buffer, int bufferLen) {
+        public int recvRaw(long fd, long buffer, int bufferLen) {
             if (remainingAllowedSendCalls.get() < 0) {
                 remainingAllowedSendCalls.decrementAndGet();
                 return -1;
@@ -12442,7 +12442,7 @@ create table tab as (
         }
 
         @Override
-        public int sendRaw(int fd, long buffer, int bufferLen) {
+        public int sendRaw(long fd, long buffer, int bufferLen) {
             if (remainingAllowedSendCalls.decrementAndGet() < 0) {
                 return -1;
             }

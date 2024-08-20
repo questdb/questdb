@@ -340,7 +340,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
     public void testDropActivePartitionFailsBecausePrevMaxPartitionIsIncorrect() throws Exception {
         FilesFacade myFf = new TestFilesFacadeImpl() {
             @Override
-            public long readNonNegativeLong(int fd, long offset) {
+            public long readNonNegativeLong(long fd, long offset) {
                 return 17;
             }
         };
@@ -375,7 +375,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
     public void testDropActivePartitionFailsBecauseWeCannotReadPrevMaxPartition() throws Exception {
         FilesFacade myFf = new TestFilesFacadeImpl() {
             @Override
-            public long readNonNegativeLong(int fd, long offset) {
+            public long readNonNegativeLong(long fd, long offset) {
                 return -1;
             }
         };

@@ -67,7 +67,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         this.ff = ff;
     }
 
-    public static long readMaxStructureVersion(int logFileFd, FilesFacade ff) {
+    public static long readMaxStructureVersion(long logFileFd, FilesFacade ff) {
         long maxTxn = ff.readNonNegativeLong(logFileFd, TableTransactionLogFile.MAX_TXN_OFFSET_64);
         if (maxTxn < 0) {
             return -1;
@@ -187,7 +187,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {
         private long address;
-        private int fd;
+        private long fd;
         private FilesFacade ff;
         private long txn;
         private long txnCount = -1;
@@ -321,7 +321,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             }
         }
 
-        private static int openFileRO(final FilesFacade ff, final Path path, final String fileName) {
+        private static long openFileRO(final FilesFacade ff, final Path path, final String fileName) {
             return TableUtils.openRO(ff, path, fileName, LOG);
         }
 

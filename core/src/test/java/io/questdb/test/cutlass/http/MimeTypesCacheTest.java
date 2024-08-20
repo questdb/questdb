@@ -71,23 +71,23 @@ public class MimeTypesCacheTest extends AbstractTest {
         AtomicInteger closeCount = new AtomicInteger(0);
         testFailure(new TestFilesFacadeImpl() {
             @Override
-            public boolean close(int fd) {
+            public boolean close(long fd) {
                 closeCount.incrementAndGet();
                 return true;
             }
 
             @Override
-            public long length(int fd) {
+            public long length(long fd) {
                 return 1024;
             }
 
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 return 123;
             }
 
             @Override
-            public long read(int fd, long buf, long len, long offset) {
+            public long read(long fd, long buf, long len, long offset) {
                 return -1;
             }
         }, "could not read");
@@ -101,23 +101,23 @@ public class MimeTypesCacheTest extends AbstractTest {
         testFailure(new TestFilesFacadeImpl() {
 
             @Override
-            public boolean close(int fd) {
+            public boolean close(long fd) {
                 closeCount.incrementAndGet();
                 return true;
             }
 
             @Override
-            public long length(int fd) {
+            public long length(long fd) {
                 return 1024;
             }
 
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 return 123;
             }
 
             @Override
-            public long read(int fd, long buf, long len, long offset) {
+            public long read(long fd, long buf, long len, long offset) {
                 return 128;
             }
         }, "could not read");
@@ -153,18 +153,18 @@ public class MimeTypesCacheTest extends AbstractTest {
         AtomicInteger closeCount = new AtomicInteger();
         testFailure(new TestFilesFacadeImpl() {
             @Override
-            public boolean close(int fd) {
+            public boolean close(long fd) {
                 closeCount.incrementAndGet();
                 return true;
             }
 
             @Override
-            public long length(int fd) {
+            public long length(long fd) {
                 return 0;
             }
 
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 return 123;
             }
         }, "wrong file size");
@@ -177,18 +177,18 @@ public class MimeTypesCacheTest extends AbstractTest {
         AtomicInteger closeCount = new AtomicInteger(0);
         testFailure(new TestFilesFacadeImpl() {
             @Override
-            public boolean close(int fd) {
+            public boolean close(long fd) {
                 closeCount.incrementAndGet();
                 return true;
             }
 
             @Override
-            public long length(int fd) {
+            public long length(long fd) {
                 return -1;
             }
 
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 return 123;
             }
         }, "wrong file size");
@@ -201,18 +201,18 @@ public class MimeTypesCacheTest extends AbstractTest {
         AtomicInteger closeCount = new AtomicInteger();
         testFailure(new TestFilesFacadeImpl() {
             @Override
-            public boolean close(int fd) {
+            public boolean close(long fd) {
                 closeCount.incrementAndGet();
                 return true;
             }
 
             @Override
-            public long length(int fd) {
+            public long length(long fd) {
                 return 1024 * 1024 * 2;
             }
 
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 return 123;
             }
         }, "wrong file size");

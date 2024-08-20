@@ -66,7 +66,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final MicrosecondClock nowClock = () -> now;
     private boolean parallelFilterEnabled;
     private Rnd random;
-    private int requestFd = -1;
+    private long requestFd = -1;
     private SecurityContext securityContext;
     private boolean useSimpleCircuitBreaker;
 
@@ -194,7 +194,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public int getRequestFd() {
+    public long getRequestFd() {
         return requestFd;
     }
 
@@ -324,7 +324,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         return this;
     }
 
-    public void with(int requestFd) {
+    public void with(long requestFd) {
         this.requestFd = requestFd;
         this.cacheHit = false;
         this.containsSecret = false;
@@ -350,7 +350,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
             @NotNull SecurityContext securityContext,
             @Nullable BindVariableService bindVariableService,
             @Nullable Rnd rnd,
-            int requestFd,
+            long requestFd,
             @Nullable SqlExecutionCircuitBreaker circuitBreaker
     ) {
         this.securityContext = securityContext;

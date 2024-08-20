@@ -237,7 +237,7 @@ public class StaticContentProcessor implements HttpRequestProcessor, Closeable {
             CharSequence contentType,
             boolean asAttachment
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        int fd = ff.openRO(path);
+        long fd = ff.openRO(path);
         if (fd == -1) {
             LOG.info().$("Cannot open file: ").$(path).$('(').$(ff.errno()).$(')').$();
             sendStatusTextContent(context, 404);

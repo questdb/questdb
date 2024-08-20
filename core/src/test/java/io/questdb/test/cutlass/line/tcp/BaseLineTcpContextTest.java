@@ -430,12 +430,12 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
     class LineTcpNetworkFacade extends NetworkFacadeImpl {
         @Override
-        public void close(int fd, Log log) {
+        public void close(long fd, Log log) {
             Assert.assertEquals(FD, fd);
         }
 
         @Override
-        public int recvRaw(int fd, long buffer, int bufferLen) {
+        public int recvRaw(long fd, long buffer, int bufferLen) {
             Assert.assertEquals(FD, fd);
             if (recvBuffer == null) {
                 return -1;

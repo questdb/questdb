@@ -35,15 +35,15 @@ import io.questdb.std.str.Utf8Sequence;
 
 public class KqueueFileWatcher extends FileWatcher {
     private final int bufferSize;
-    private final int dirFd;
+    private final long dirFd;
     private final long eventList;
     private final long evtDir;
     private final long evtFile;
     private final long evtPipe;
-    private final int fileFd;
-    private final int kq;
-    private final int readEndFd;
-    private final int writeEndFd;
+    private final long fileFd;
+    private final long kq;
+    private final long readEndFd;
+    private final long writeEndFd;
 
     public KqueueFileWatcher(Utf8Sequence filePath, FileEventCallback callback) {
         super(callback);
@@ -100,10 +100,8 @@ public class KqueueFileWatcher extends FileWatcher {
                 throw CairoException.critical(Os.errno()).put("could not create pipe");
             }
 
-            this.readEndFd = (int) (fds >>> 32);
-            this.writeEndFd = (int) fds;
-            Files.bumpFileCount(this.readEndFd);
-            Files.bumpFileCount(this.writeEndFd);
+            this.readEndFd = Files.createUniqueFd((int) (fds >>> 32));
+            this.writeEndFd = Files.createUniqueFd((int) fds);
 
             this.evtPipe = KqueueAccessor.evtAlloc(
                     this.readEndFd,
@@ -113,12 +111,10 @@ public class KqueueFileWatcher extends FileWatcher {
                     0
             );
 
-            kq = KqueueAccessor.kqueue();
+            kq = Files.createUniqueFd(KqueueAccessor.kqueue());
             if (kq < 0) {
                 throw CairoException.critical(Os.errno()).put("could create kqueue");
             }
-            Files.bumpFileCount(this.kq);
-
             this.bufferSize = KqueueAccessor.SIZEOF_KEVENT;
             this.eventList = Unsafe.calloc(bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
 
