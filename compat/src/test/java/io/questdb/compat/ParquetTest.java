@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
+import io.questdb.griffin.engine.table.parquet.BorrowedMemoryPartitionDescriptor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -167,7 +168,7 @@ public class ParquetTest extends AbstractTest {
             final String parquetPathStr;
             try (
                     Path path = new Path();
-                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    PartitionDescriptor partitionDescriptor = new BorrowedMemoryPartitionDescriptor();
                     TableReader reader = serverMain.getEngine().getReader("x")
             ) {
                 path.of(root).concat("x.parquet").$();

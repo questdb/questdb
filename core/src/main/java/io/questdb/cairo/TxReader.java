@@ -376,6 +376,14 @@ public class TxReader implements Closeable, Mutable {
         return false;
     }
 
+    public boolean isPartitionParquetByPartitionTimestamp(long ts) {
+        int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(ts);
+        if (indexRaw > -1) {
+            return isParquetPartitionByRawIndex(indexRaw);
+        }
+        return false;
+    }
+
     public TxReader ofRO(@Transient LPSZ path, int partitionBy) {
         clear();
         try {

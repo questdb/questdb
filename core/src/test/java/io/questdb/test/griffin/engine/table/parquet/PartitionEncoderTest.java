@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.table.parquet;
 import io.questdb.cairo.TableReader;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
+import io.questdb.griffin.engine.table.parquet.BorrowedMemoryPartitionDescriptor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -52,7 +53,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     " from long_sequence(10)) timestamp(designated_ts) partition by month");
             try (
                     Path path = new Path();
-                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    PartitionDescriptor partitionDescriptor = new BorrowedMemoryPartitionDescriptor();
                     TableReader reader = engine.getReader("x")
             ) {
                 path.of(root).concat("x.parquet").$();
@@ -77,7 +78,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     " from long_sequence(10)) timestamp(designated_ts) partition by month");
             try (
                     Path path = new Path();
-                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    PartitionDescriptor partitionDescriptor = new BorrowedMemoryPartitionDescriptor();
                     TableReader reader = engine.getReader("x")
             ) {
                 path.of(root).concat("x.parquet").$();
@@ -101,7 +102,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
 
         try (
                 Path path = new Path();
-                PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                PartitionDescriptor partitionDescriptor = new BorrowedMemoryPartitionDescriptor();
                 TableReader reader = node2.getEngine().getReader("request_logs")
         ) {
             path.of(root2).concat("x.parquet").$();
@@ -145,7 +146,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
 
             try (
                     Path path = new Path();
-                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    PartitionDescriptor partitionDescriptor = new BorrowedMemoryPartitionDescriptor();
                     TableReader reader = engine.getReader("x")
             ) {
                 path.of(root).concat("x.parquet").$();
@@ -168,7 +169,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
 
             try (
                     Path path = new Path();
-                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    PartitionDescriptor partitionDescriptor = new BorrowedMemoryPartitionDescriptor();
                     TableReader reader = engine.getReader("x")
             ) {
                 path.of(root).concat("x.parquet").$();

@@ -43,6 +43,7 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.engine.table.parquet.MappedMemoryPartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
@@ -1141,11 +1142,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         IntList fileDescriptors = tmpIntList;
         long parquetFileLength;
         try {
-            try (PartitionDescriptor partitionDescriptor = new PartitionDescriptor()) {
+            try (PartitionDescriptor partitionDescriptor = new MappedMemoryPartitionDescriptor()) {
 
                 final long partitionRowCount = getPartitionSize(partitionIndex);
                 final int timestampIndex = metadata.getTimestampIndex();
-                partitionDescriptor.of(getTableToken().getTableName(), partitionRowCount, timestampIndex, true);
+                partitionDescriptor.of(getTableToken().getTableName(), partitionRowCount, timestampIndex);
 
                 final int columnCount = metadata.getColumnCount();
                 for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -5513,7 +5514,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long newPartitionSize,
             long oldPartitionSize,
             long partitionUpdateSinkAddr,
-            long dedupColSinkAddr
+            long dedupColSinkAddr,
+            boolean isParquet
     ) {
         long cursor = messageBus.getO3PartitionPubSeq().next();
         if (cursor > -1) {
@@ -5540,7 +5542,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     newPartitionSize,
                     oldPartitionSize,
                     partitionUpdateSinkAddr,
-                    dedupColSinkAddr
+                    dedupColSinkAddr,
+                    isParquet
             );
             messageBus.getO3PartitionPubSeq().done(cursor);
         } else {
@@ -5566,7 +5569,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     newPartitionSize,
                     oldPartitionSize,
                     partitionUpdateSinkAddr,
-                    dedupColSinkAddr
+                    dedupColSinkAddr,
+                    isParquet
             );
         }
     }
@@ -6234,6 +6238,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     // check partition read-only state
                     final boolean partitionIsReadOnly = txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp);
+                    final boolean isParquet = txWriter.isPartitionParquetByPartitionTimestamp(partitionTimestamp);
 
                     pCount++;
 
@@ -6396,7 +6401,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 newPartitionSize,
                                 srcDataMax,
                                 partitionUpdateSinkAddr,
-                                dedupColSinkAddr
+                                dedupColSinkAddr,
+                                isParquet
                         );
                     }
                 } catch (CairoException | CairoError e) {

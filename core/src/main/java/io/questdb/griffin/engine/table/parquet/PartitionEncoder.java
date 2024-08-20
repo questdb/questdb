@@ -110,7 +110,7 @@ public class PartitionEncoder {
         final long partitionSize = tableReader.openPartition(partitionIndex);
         assert partitionSize != 0;
         final int timestampIndex = tableReader.getMetadata().getTimestampIndex();
-        descriptor.of(tableReader.getTableToken().getTableName(), partitionSize, timestampIndex, false);
+        descriptor.of(tableReader.getTableToken().getTableName(), partitionSize, timestampIndex);
 
         final TableReaderMetadata metadata = tableReader.getMetadata();
         final int columnCount = metadata.getColumnCount();
