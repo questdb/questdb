@@ -33,7 +33,6 @@ import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
@@ -42,6 +41,8 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.time.temporal.ChronoUnit;
+
+import static io.questdb.test.tools.TestUtils.assertEventually;
 
 public class LineTcpBootstrapTest extends AbstractBootstrapTest {
     @Before
@@ -93,15 +94,15 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
 
                     // server main already runs Apply2Wal job in the background. We have to wait for the table to catchup
                     try (RecordCursorFactory waitFact = engine.select("wal_tables where writertxn <> sequencertxn;", sqlExecutionContext)) {
-                        do {
-                            try (RecordCursor cursor = waitFact.getCursor(sqlExecutionContext)) {
-                                if (cursor.hasNext()) {
-                                    Os.pause();
-                                } else {
-                                    break;
+                        assertEventually(() -> {
+                            try {
+                                try (RecordCursor cursor = waitFact.getCursor(sqlExecutionContext)) {
+                                    Assert.assertFalse(cursor.hasNext());
                                 }
+                            } catch (SqlException e) {
+                                throw new RuntimeException(e);
                             }
-                        } while (true);
+                        });
                     }
 
                     try (
@@ -110,8 +111,8 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                     ) {
                         Assert.assertTrue(cursor.hasNext());
                         if (cursor.hasNext()) {
-                            // more than 1 distinct result..
-                            // i.e
+                            // more than 1 distinct result...
+                            // i.e.
                             // runner
                             // varchar
                             // BallyMac Fifra
