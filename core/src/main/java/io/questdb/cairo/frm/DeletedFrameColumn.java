@@ -62,12 +62,12 @@ public class DeletedFrameColumn implements FrameColumn {
     }
 
     @Override
-    public int getPrimaryFd() {
+    public long getPrimaryFd() {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public int getSecondaryFd() {
+    public long getSecondaryFd() {
         throw new UnsupportedOperationException();
     }
 

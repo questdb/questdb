@@ -126,7 +126,7 @@ public interface SqlExecutionContext extends Closeable {
         return getCairoEngine().getReader(tableName);
     }
 
-    int getRequestFd();
+    long getRequestFd();
 
     @NotNull
     SecurityContext getSecurityContext();

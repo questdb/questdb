@@ -693,7 +693,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             volumeDefinitions.of(getString(properties, env, PropertyKey.CAIRO_VOLUMES, null), path, root);
             ff.mkdirs(path.of(this.root).slash(), this.mkdirMode);
             path.of(this.root).concat(TableUtils.TAB_INDEX_FILE_NAME);
-            final int tableIndexFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
+            final long tableIndexFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
             final long fileSize = ff.length(tableIndexFd);
             if (fileSize < Long.BYTES) {
                 if (!ff.allocate(tableIndexFd, Files.PAGE_SIZE)) {

@@ -125,7 +125,7 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean checkIfTripped(long millis, int fd) {
+            public boolean checkIfTripped(long millis, long fd) {
                 return false;
             }
 
@@ -135,7 +135,7 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
-            public int getFd() {
+            public long getFd() {
                 return -1;
             }
 
@@ -145,7 +145,7 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
-            public int getState(long millis, int fd) {
+            public int getState(long millis, long fd) {
                 return SqlExecutionCircuitBreaker.STATE_OK;
             }
 
@@ -165,7 +165,7 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
-            public void setFd(int fd) {
+            public void setFd(long fd) {
             }
 
             @Override

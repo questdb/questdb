@@ -105,7 +105,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     }
 
     @Override
-    public int getFd() {
+    public long getFd() {
         return -1;
     }
 

@@ -39,7 +39,7 @@ public class ColumnTaskJob extends AbstractQueueConsumerJob<ColumnTask> {
     public static void processColumnTask(ColumnTask task, long cursor, @NotNull Sequence subSeq) {
         final int columnIndex = task.getColumnIndex();
         final int columnType = task.getColumnType();
-        final int timestampColumnIndex = task.getTimestampColumnIndex();
+        final long timestampColumnIndex = task.getTimestampColumnIndex();
         final long lon0 = task.getLong0();
         final long long1 = task.getLong1();
         final long long2 = task.getLong2();

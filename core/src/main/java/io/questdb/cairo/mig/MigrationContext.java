@@ -39,7 +39,7 @@ class MigrationContext {
     private final long tempMemory;
     private final int tempMemoryLen;
     private final MemoryARW tempVirtualMem;
-    private int metadataFd;
+    private long metadataFd;
     private Path tablePath;
     private Path tablePath2;
 
@@ -72,7 +72,7 @@ class MigrationContext {
         return getConfiguration().getFilesFacade();
     }
 
-    public int getMetadataFd() {
+    public long getMetadataFd() {
         return metadataFd;
     }
 
@@ -111,7 +111,7 @@ class MigrationContext {
         return tempVirtualMem;
     }
 
-    public void of(Path path, Path pathCopy, int metadataFd) {
+    public void of(Path path, Path pathCopy, long metadataFd) {
         this.tablePath = path;
         this.tablePath2 = pathCopy;
         this.metadataFd = metadataFd;

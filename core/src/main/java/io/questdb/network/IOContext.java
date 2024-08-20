@@ -85,7 +85,7 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         return PeerIsSlowToWriteException.INSTANCE;
     }
 
-    public int getFd() {
+    public long getFd() {
         return socket != null ? socket.getFd() : -1;
     }
 
@@ -109,7 +109,7 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
     }
 
     @SuppressWarnings("unchecked")
-    public T of(int fd, @NotNull IODispatcher<T> dispatcher) {
+    public T of(long fd, @NotNull IODispatcher<T> dispatcher) {
         if (fd != -1) {
             connectionCountGauge.inc();
         }
