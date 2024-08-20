@@ -56,6 +56,9 @@ public final class TableUtils {
     public static final int ANY_TABLE_VERSION = -1;
     public static final String ATTACHABLE_DIR_MARKER = ".attachable";
     public static final String CHECKPOINT_DIRECTORY = ".checkpoint";
+    public static final String CHECKPOINT_LEGACY_META_FILE_NAME = "_snapshot";
+    public static final String CHECKPOINT_LEGACY_META_FILE_NAME_TXT = "_snapshot.txt";
+    public static final String CHECKPOINT_META_FILE_NAME = "_checkpoint_meta.d";
     public static final long COLUMN_NAME_TXN_NONE = -1L;
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
     public static final String DEFAULT_PARTITION_NAME = "default";
@@ -103,9 +106,6 @@ public final class TableUtils {
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     public static final int NULL_LEN = -1;
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
-    public static final String CHECKPOINT_LEGACY_META_FILE_NAME = "_snapshot";
-    public static final String CHECKPOINT_LEGACY_META_FILE_NAME_TXT = "_snapshot.txt";
-    public static final String CHECKPOINT_META_FILE_NAME = "_checkpoint_meta.d";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
     public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
     public static final int TABLE_DOES_NOT_EXIST = 1;
@@ -1556,6 +1556,11 @@ public final class TableUtils {
         setSinkForPartition(path.slash(), partitionBy, timestamp, nameTxn);
     }
 
+    public static void setPathTable(@NotNull Path path, @NotNull CairoConfiguration configuration, @NotNull TableToken token) {
+        path.close();
+        path.of(configuration.getRoot()).concat(token.getDirName()).trimTo(path.size());
+    }
+
     /**
      * Sets the sink to the directory of a partition taking into account the timestamp, the partitioning scheme
      * and the partition version.
@@ -1570,6 +1575,10 @@ public final class TableUtils {
         if (nameTxn > -1L) {
             sink.put('.').put(nameTxn);
         }
+    }
+
+    public static void setTxReaderPath(@NotNull TxReader reader, @NotNull FilesFacade ff, @NotNull Path path, int partitionBy) {
+        reader.ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy);
     }
 
     public static int toIndexKey(int symbolKey) {
