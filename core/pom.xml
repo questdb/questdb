@@ -46,10 +46,6 @@
         -->
         <qdbr.failpoints>fail/failpoints</qdbr.failpoints>
         <qdbr.rustflags>-D warnings</qdbr.rustflags>
-        <!--
-        Set -Dqdbr-test.phase=disabled to skip running Rust tests.
-        -->
-        <qdbr-test.phase>test</qdbr-test.phase>
     </properties>
 
     <version>8.1.1-SNAPSHOT</version>
@@ -120,7 +116,7 @@
                         <goals>
                             <goal>test</goal>
                         </goals>
-                        <phase>${qdbr-test.phase}</phase>
+                        <phase>test</phase>
                         <configuration>
                             <path>rust/qdbr</path>
                             <release>${qdbr.release}</release>
