@@ -302,9 +302,6 @@ public class VectTest {
                         colBuffs.setReservedValuesSet2(
                                 addr,
                                 0L,
-                                0L,
-                                0L,
-                                0L,
                                 0L
                         );
                     }
