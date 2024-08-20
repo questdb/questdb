@@ -99,9 +99,9 @@ public class CairoMetadata implements Sinkable {
 
         // make sure we aren't duplicating work
         CairoTable potentiallyExistingTable = tables.get(token.getDirName());
-        if (potentiallyExistingTable != null && table.getMetadataVersion() > metadataVersion) {
+        if (potentiallyExistingTable != null && potentiallyExistingTable.getMetadataVersion() > metadataVersion) {
             logger.debugW().$("table in cache with newer version [table=")
-                    .$(token.getTableName()).$(", version=").$(table.getMetadataVersion()).I$();
+                    .$(token.getTableName()).$(", version=").$(potentiallyExistingTable.getMetadataVersion()).I$();
             return;
         }
 
@@ -143,7 +143,7 @@ public class CairoMetadata implements Sinkable {
                 CairoColumn column = new CairoColumn();
 
                 logger.debugW().$("hydrating column [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
-                
+
                 column.setName(columnName);
                 table.addColumn(column);
 
