@@ -64,7 +64,7 @@ jobs:
         with:
           path: |
             core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdb.dylib
-            core/src/main/bin/darwin-x8664/libjemalloc.dylib
+            core/src/main/bin/darwin-x86-64/libjemalloc.dylib
           key: nativelibs-osx-${{ github.sha }}
   build-all-linux-x86-64:
     runs-on: ubuntu-latest
