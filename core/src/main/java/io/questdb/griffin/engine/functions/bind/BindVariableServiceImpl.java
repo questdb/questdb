@@ -71,11 +71,11 @@ public class BindVariableServiceImpl implements BindVariableService {
         this.byteVarPool = new ObjectPool<>(ByteBindVariable::new, poolSize);
         this.geoHashVarPool = new ObjectPool<>(GeoHashBindVariable::new, poolSize);
         this.booleanVarPool = new ObjectPool<>(BooleanBindVariable::new, poolSize);
-        this.strVarPool = new ObjectPool<>(() -> new StrBindVariable(configuration.getFloatToStrCastScale()), poolSize);
+        this.strVarPool = new ObjectPool<>(StrBindVariable::new, poolSize);
         this.charVarPool = new ObjectPool<>(CharBindVariable::new, 8);
         this.long256VarPool = new ObjectPool<>(Long256BindVariable::new, 8);
         this.uuidVarPool = new ObjectPool<>(UuidBindVariable::new, 8);
-        this.varcharVarPool = new ObjectPool<>(() -> new VarcharBindVariable(configuration.getFloatToStrCastScale()), poolSize);
+        this.varcharVarPool = new ObjectPool<>(VarcharBindVariable::new, poolSize);
     }
 
     @Override
