@@ -24,23 +24,18 @@
 
 package io.questdb.cutlass.auth;
 
-import io.questdb.cairo.SecurityContext;
-
 public interface UsernamePasswordMatcher {
-    default byte getAuthType() {
-        return SecurityContext.AUTH_TYPE_CREDENTIALS;
-    }
 
     /**
      * Verify password for a user.
      * <p>
-     * When the user has no active password then this method returns false.
-     * This also return false when username is empty or null.
+     * When the user has no active password then this method returns 0.
+     * This also return 0 when username is empty or null.
      *
-     * @param username    user name, cannot be null or empty
+     * @param username    name of user, cannot be null or empty
      * @param passwordPtr pointer to password
      * @param passwordLen length of password
-     * @return true if password matches
+     * @return a positive byte representing the authentication type, 0 (AUTH_TYPE_NONE) means wrong credentials
      */
-    boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen);
+    byte verifyPassword(CharSequence username, long passwordPtr, int passwordLen);
 }
