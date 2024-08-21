@@ -239,7 +239,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                     final int offset = slaveChain.put(record.getRowId(), -1);
                     value.putInt(0, offset);
                 } else {
-                    value.putInt(0, slaveChain.put(record.getRowId(), value.getInt(1)));
+                    value.putInt(0, slaveChain.put(record.getRowId(), value.getInt(0)));
                 }
             }
         }
