@@ -73,6 +73,16 @@ public class LongChainTest {
         });
     }
 
+    @Test
+    public void testCompressOffset() {
+        Assert.assertEquals(0, LongChain.compressOffset(0));
+        Assert.assertEquals(1 / LongChain.CHAIN_VALUE_SIZE, LongChain.compressOffset(1));
+        for (long i = 0; i < 1000; i++) {
+            Assert.assertEquals(i, LongChain.compressOffset(i * LongChain.CHAIN_VALUE_SIZE));
+        }
+        Assert.assertEquals(Integer.MAX_VALUE, LongChain.compressOffset(Integer.MAX_VALUE * LongChain.CHAIN_VALUE_SIZE));
+    }
+
     private int populateChain(LongChain chain, Rnd rnd, LongList expectedValues) {
         int head = -1;
         int tail = -1;

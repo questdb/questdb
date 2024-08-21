@@ -41,8 +41,9 @@ import java.io.Closeable;
  * holding up to 32GB of data.
  */
 public class LongChain implements Closeable, Mutable, Reopenable {
-    private static final long CHAIN_VALUE_SIZE = 12;
-    private static final long MAX_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 3;
+    // public for test purposes
+    public static final long CHAIN_VALUE_SIZE = 12;
+    private static final long MAX_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) * CHAIN_VALUE_SIZE;
     private final Cursor cursor = new Cursor();
     private final long initialHeapSize;
     private final long maxHeapSize;
@@ -56,6 +57,19 @@ public class LongChain implements Closeable, Mutable, Reopenable {
         heapStart = heapPos = Unsafe.malloc(heapSize, MemoryTag.NATIVE_DEFAULT);
         heapLimit = heapStart + heapSize;
         maxHeapSize = Math.min(valuePageSize * valueMaxPages, MAX_HEAP_SIZE_LIMIT);
+    }
+
+    // public for test purposes
+    public static int compressOffset(long rawOffset) {
+//        // the below code is same as:
+//        return (int) (rawOffset / CHAIN_VALUE_SIZE);
+
+        // first, divide by 4
+        rawOffset = rawOffset >> 2;
+        // next, divide by 3
+        //return (int) ((rawOffset * 0xAAAAAAABL) >>> 33);
+        // The magic number is obtained by solving 3*x + 2^64*y = 1 equation with the Extended Euclidean Algorithm.
+        return (int) (rawOffset * -6148914691236517205L);
     }
 
     @Override
@@ -110,10 +124,6 @@ public class LongChain implements Closeable, Mutable, Reopenable {
             heapStart = heapPos = Unsafe.malloc(heapSize, MemoryTag.NATIVE_DEFAULT);
             heapLimit = heapStart + heapSize;
         }
-    }
-
-    private static int compressOffset(long rawOffset) {
-        return (int) (rawOffset / CHAIN_VALUE_SIZE);
     }
 
     private static long uncompressOffset(int offset) {
