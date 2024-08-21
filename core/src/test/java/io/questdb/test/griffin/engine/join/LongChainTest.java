@@ -30,9 +30,10 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class LongChainTest {
     @SuppressWarnings("unused")
@@ -40,7 +41,7 @@ public class LongChainTest {
 
     @Test
     public void testAll() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
+        assertMemoryLeak(() -> {
             try (LongChain chain = new LongChain(1024 * 1024, Integer.MAX_VALUE)) {
                 final int N = 1000;
                 final int nChains = 10;
@@ -56,7 +57,7 @@ public class LongChainTest {
                 }
                 Assert.assertEquals(nChains, expectedValues.size());
 
-                // values are be in reverse order
+                // values are expected in reverse order
                 for (int i = 0; i < nChains; i++) {
                     LongChain.TreeCursor cursor = chain.getCursor(heads.getQuick(i));
                     LongList expected = expectedValues.get(i);
