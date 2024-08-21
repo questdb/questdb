@@ -155,7 +155,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
     @Override
     public void close() {
-        final int fd = getFd();
+        final long fd = getFd();
         LOG.debug().$("close [fd=").$(fd).I$();
         super.close();
         if (this.pendingRetry) {
@@ -292,7 +292,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     @Override
-    public HttpConnectionContext of(int fd, @NotNull IODispatcher<HttpConnectionContext> dispatcher) {
+    public HttpConnectionContext of(long fd, @NotNull IODispatcher<HttpConnectionContext> dispatcher) {
         super.of(fd, dispatcher);
         // The context is obtained from the pool, so we should initialize the memory.
         if (recvBuffer == 0) {

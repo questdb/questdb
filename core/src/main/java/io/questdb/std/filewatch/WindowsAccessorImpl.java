@@ -32,29 +32,6 @@ import io.questdb.std.str.LPSZ;
 public class WindowsAccessorImpl implements WindowsAccessor {
     public static final WindowsAccessorImpl INSTANCE = new WindowsAccessorImpl();
     private final Log LOG = LogFactory.getLog(WindowsAccessorImpl.class);
-//    public static void main(String[] args) {
-//        Os.init();
-//        try (Path path = new Path()) {
-//            path.of("C:\\qdb\\conf\\").$();
-//            final long pwatch = openDirectory(path);
-//            Thread th = new Thread(new Runnable() {
-//                @Override
-//                public void run() {
-//                    while (true) {
-//                        System.out.println(readDirectoryChanges(pwatch));
-//                    }
-//                }
-//            });
-//
-//            th.start();
-//
-//////            Os.sleep(1000);
-//////            Files.close(dirFd);
-//            th.join();
-//        } catch (InterruptedException e) {
-//            throw new RuntimeException(e);
-//        }
-//    }
 
     @Override
     public void closeDirectory(long pWatch) {

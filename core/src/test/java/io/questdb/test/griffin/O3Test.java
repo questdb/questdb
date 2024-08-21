@@ -850,7 +850,7 @@ public class O3Test extends AbstractO3Test {
         // Read the partition while it's being merged
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, "2020-02-05.") && Utf8s.containsAscii(name, Files.SEPARATOR + "last.d")) {
                     try {
                         TestUtils.assertSqlCursors(
@@ -1119,7 +1119,7 @@ public class O3Test extends AbstractO3Test {
                     );
                 }, new TestFilesFacadeImpl() {
                     @Override
-                    public long write(int fd, long address, long len, long offset) {
+                    public long write(long fd, long address, long len, long offset) {
                         writeLen.add(len);
                         return super.write(fd, address, len, offset);
                     }

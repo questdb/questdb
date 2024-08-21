@@ -27,13 +27,13 @@ package io.questdb.network;
 public interface KqueueFacade {
     NetworkFacade getNetworkFacade();
 
-    int kevent(int kq, long changeList, int nChanges, long eventList, int nEvents, int timeout);
+    int kevent(long kq, long changeList, int nChanges, long eventList, int nEvents, int timeout);
 
     int kqueue();
 
     long pipe();
 
-    int readPipe(int fd);
+    int readPipe(long fd);
 
-    int writePipe(int fd);
+    int writePipe(long fd);
 }

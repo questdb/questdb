@@ -76,7 +76,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, int fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts) {
+    public void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, long fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts) {
         auxMem.ofOffset(
                 ff,
                 fd,
@@ -93,7 +93,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
             FilesFacade ff,
             MemoryR auxMem,
             MemoryOM dataMem,
-            int dataFd,
+            long dataFd,
             LPSZ fileName,
             long rowLo,
             long rowHi,
@@ -152,7 +152,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public long getDataVectorSizeAtFromFd(FilesFacade ff, int auxFd, long row) {
+    public long getDataVectorSizeAtFromFd(FilesFacade ff, long auxFd, long row) {
         long auxFileOffset = getAuxVectorOffset(row + 1);
         long dataOffset = row > -1 ? ff.readNonNegativeLong(auxFd, auxFileOffset) : 0;
 
@@ -205,7 +205,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
             long srcHi,
             long dstAddr,
             long dstFileOffset,
-            int dstFd,
+            long dstFd,
             boolean mixedIOFlag
     ) {
         // srcHi is inclusive, and we also copy 1 extra entry due to N+1 aux vector structure

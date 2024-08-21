@@ -128,7 +128,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return instance(PARTITION_MANIPULATION_RECOVERABLE);
     }
 
-    public static CairoException queryCancelled(int fd) {
+    public static CairoException queryCancelled(long fd) {
         CairoException exception = nonCritical().put("cancelled by user").setInterruption(true).setCancellation(true);
         if (fd > -1) {
             exception.put(" [fd=").put(fd).put(']');
@@ -140,7 +140,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return nonCritical().put("cancelled by user").setInterruption(true).setCancellation(true);
     }
 
-    public static CairoException queryTimedOut(int fd) {
+    public static CairoException queryTimedOut(long fd) {
         return nonCritical().put("timeout, query aborted [fd=").put(fd).put(']').setInterruption(true);
     }
 

@@ -499,7 +499,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (fail.get() != null && Misc.getThreadLocalUtf8Sink().put(name).toString().endsWith(fail.get())) {
                     fail.set(null);
                     return -1;
@@ -508,7 +508,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (fail.get() != null && Misc.getThreadLocalUtf8Sink().put(name).toString().endsWith(fail.get())) {
                     fail.set(null);
                     return -1;

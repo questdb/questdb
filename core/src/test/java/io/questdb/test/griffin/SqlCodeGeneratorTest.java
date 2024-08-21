@@ -3672,7 +3672,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     if (Utf8s.endsWithAscii(name, "b.d")) {
                         return -1;
                     }

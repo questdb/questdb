@@ -57,6 +57,7 @@ import org.junit.Test;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.vm.Vm.getStorageLength;
 
@@ -65,7 +66,7 @@ public class O3FailureTest extends AbstractO3Test {
     private final static AtomicInteger counter = new AtomicInteger(0);
     private static final FilesFacade ffOpenIndexFailure = new TestFilesFacadeImpl() {
         @Override
-        public int openRW(LPSZ name, long opts) {
+        public long openRW(LPSZ name, long opts) {
             if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "sym.v") && Utf8s.containsAscii(name, "1970-01-02") && counter.decrementAndGet() == 0) {
                 return -1;
             }
@@ -75,7 +76,7 @@ public class O3FailureTest extends AbstractO3Test {
     private final static AtomicBoolean fixFailure = new AtomicBoolean(true);
     private static final FilesFacade ffMapRW = new TestFilesFacadeImpl() {
         @Override
-        public boolean close(int fd) {
+        public boolean close(long fd) {
             if (fd > 0 && fd == this.fd) {
                 this.fd = -1;
             }
@@ -83,7 +84,7 @@ public class O3FailureTest extends AbstractO3Test {
         }
 
         @Override
-        public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
             if (!fixFailure.get() || this.fd == fd) {
                 fixFailure.set(false);
                 this.fd = -1;
@@ -93,8 +94,8 @@ public class O3FailureTest extends AbstractO3Test {
         }
 
         @Override
-        public int openRW(LPSZ name, long opts) {
-            int fd = super.openRW(name, opts);
+        public long openRW(LPSZ name, long opts) {
+            long fd = super.openRW(name, opts);
             if (Utf8s.endsWithAscii(name, "1970-01-06.16" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0) {
                 this.fd = fd;
             }
@@ -113,7 +114,7 @@ public class O3FailureTest extends AbstractO3Test {
     };
     private static final FilesFacade ffOpenRW = new TestFilesFacadeImpl() {
         @Override
-        public int openRW(LPSZ name, long opts) {
+        public long openRW(LPSZ name, long opts) {
             if (!fixFailure.get() || (Utf8s.endsWithAscii(name, "1970-01-06.16" + Files.SEPARATOR + "i.d") && counter.decrementAndGet() == 0)) {
                 fixFailure.set(false);
                 return -1;
@@ -135,7 +136,7 @@ public class O3FailureTest extends AbstractO3Test {
         String fileName = "1970-01-06" + Files.SEPARATOR + "ts.d";
         executeWithPool(0, O3FailureTest::testAllocateFailsAtO3OpenColumn0, new TestFilesFacadeImpl() {
             @Override
-            public boolean allocate(int fd, long size) {
+            public boolean allocate(long fd, long size) {
                 if (fd == this.fd && size == 1472) {
                     this.fd = -1;
                     return false;
@@ -144,7 +145,7 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public boolean close(int fd) {
+            public boolean close(long fd) {
                 if (fd > 0 && fd == this.fd) {
                     boolean result = super.close(fd);
                     this.fd = 0;
@@ -154,7 +155,7 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public long length(int fd) {
+            public long length(long fd) {
                 long len = super.length(fd);
                 if (fd == this.fd) {
                     if (len == Files.PAGE_SIZE) {
@@ -165,8 +166,8 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
-                int fd = TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
+            public long openRW(LPSZ name, long opts) {
+                long fd = TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
                 if (this.fd >= 0 && fd > 0 && Utf8s.endsWithAscii(name, fileName)) {
                     this.fd = fd;
                     return fd;
@@ -187,7 +188,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testAllocateToResizeLastPartition0, new TestFilesFacadeImpl() {
 
             @Override
-            public boolean allocate(int fd, long size) {
+            public boolean allocate(long fd, long size) {
                 if (fd == this.fd) {
                     if (size == 1480) {
                         this.fd = -1;
@@ -198,7 +199,7 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public boolean close(int fd) {
+            public boolean close(long fd) {
                 if (fd > 0 && fd == this.fd) {
                     this.fd = -1;
                 }
@@ -206,7 +207,7 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public long length(int fd) {
+            public long length(long fd) {
                 long len = super.length(fd);
                 if (fd == this.fd) {
                     if (len == Files.PAGE_SIZE) {
@@ -217,8 +218,8 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
-                int fd = TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
+            public long openRW(LPSZ name, long opts) {
+                long fd = TestFilesFacadeImpl.INSTANCE.openRW(name, opts);
                 if (fd > 0 && Utf8s.endsWithAscii(name, fileName)) {
                     this.fd = fd;
                     return fd;
@@ -254,7 +255,7 @@ public class O3FailureTest extends AbstractO3Test {
 
 
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (fd == this.fd && flags == Files.MAP_RO) {
                     this.fd = -1;
                     return -1;
@@ -263,8 +264,8 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
-                int fd = super.openRW(name, opts);
+            public long openRW(LPSZ name, long opts) {
+                long fd = super.openRW(name, opts);
                 if (Utf8s.containsAscii(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
                 }
@@ -280,7 +281,7 @@ public class O3FailureTest extends AbstractO3Test {
 
 
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (fd == this.fd && flags == Files.MAP_RO) {
                     this.fd = -1;
                     return -1;
@@ -289,8 +290,8 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
-                int fd = super.openRW(name, opts);
+            public long openRW(LPSZ name, long opts) {
+                long fd = super.openRW(name, opts);
                 if (Utf8s.containsAscii(name, "1970-01-07" + Files.SEPARATOR + "v11.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
                 }
@@ -326,7 +327,7 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(3);
         executeWithoutPool(O3FailureTest::testColumnTopMidAppendColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, "1970-01-07" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
@@ -359,7 +360,7 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(3);
         executeWithPool(0, O3FailureTest::testColumnTopMidAppendColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, "1970-01-07" + Files.SEPARATOR + "v12.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
@@ -398,7 +399,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithoutPool(O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new TestFilesFacadeImpl() {
 
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (fixFailure.get() && fd != this.fd) {
                     return super.mmap(fd, len, offset, flags, memoryTag);
                 }
@@ -408,8 +409,8 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
-                int fd = super.openRW(name, opts);
+            public long openRW(LPSZ name, long opts) {
+                long fd = super.openRW(name, opts);
                 if (Utf8s.containsAscii(name, "1970-01-06.16" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
                 }
@@ -424,7 +425,7 @@ public class O3FailureTest extends AbstractO3Test {
         executeWithPool(0, O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new TestFilesFacadeImpl() {
 
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (fixFailure.get() && fd != this.fd) {
                     return super.mmap(fd, len, offset, flags, memoryTag);
                 }
@@ -435,8 +436,8 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
-                int fd = super.openRW(name, opts);
+            public long openRW(LPSZ name, long opts) {
+                long fd = super.openRW(name, opts);
                 if (Utf8s.containsAscii(name, "1970-01-06.16" + Files.SEPARATOR + "v8.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
                 }
@@ -462,7 +463,7 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(3);
         executeWithoutPool(O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (!fixFailure.get() || (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0)) {
                     fixFailure.set(false);
                     return -1;
@@ -477,7 +478,7 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(3);
         executeWithoutPool(O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (!fixFailure.get() || (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "b.d") && counter.decrementAndGet() == 0)) {
                     fixFailure.set(false);
                     return -1;
@@ -492,7 +493,7 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(3);
         executeWithPool(4, O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (!fixFailure.get() || (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "b.d") && counter.decrementAndGet() == 0)) {
                     fixFailure.set(false);
                     return -1;
@@ -507,7 +508,7 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(3);
         executeWithPool(0, O3FailureTest::testColumnTopMidMergeBlankColumnFailRetry0, new TestFilesFacadeImpl() {
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (!fixFailure.get() || (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0)) {
                     fixFailure.set(false);
                     return -1;
@@ -562,7 +563,7 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(0);
         executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new TestFilesFacadeImpl() {
             @Override
-            public boolean truncate(int fd, long size) {
+            public boolean truncate(long fd, long size) {
                 // First two calls to truncate are for varchar column
                 if (size == 0 && counter.getAndIncrement() == 2) {
                     return false;
@@ -579,7 +580,7 @@ public class O3FailureTest extends AbstractO3Test {
         // the number targets truncate of key file in BitmapIndexWriter
         executeWithPool(0, O3FailureTest::testColumnTopLastOOOPrefixFailRetry0, new TestFilesFacadeImpl() {
             @Override
-            public boolean truncate(int fd, long size) {
+            public boolean truncate(long fd, long size) {
                 // First two calls to truncate are for varchar column
                 if (size == 0 && counter.getAndIncrement() == 2) {
                     return false;
@@ -649,7 +650,7 @@ public class O3FailureTest extends AbstractO3Test {
                 },
                 new TestFilesFacadeImpl() {
                     @Override
-                    public long write(int fd, long address, long len, long offset) {
+                    public long write(long fd, long address, long len, long offset) {
                         if (offset == 0 && len == storageLength * (records - 1)) {
                             return -1;
                         }
@@ -678,10 +679,10 @@ public class O3FailureTest extends AbstractO3Test {
                 (engine, compiler, sqlExecutionContext) -> testOooFollowedByAnotherOOO0(engine, compiler, sqlExecutionContext, restoreDiskSpace),
                 new TestFilesFacadeImpl() {
                     boolean armageddon = false;
-                    int theFd = 0;
+                    long theFd = 0;
 
                     @Override
-                    public boolean allocate(int fd, long size) {
+                    public boolean allocate(long fd, long size) {
                         if (restoreDiskSpace.get()) {
                             return super.allocate(fd, size);
                         }
@@ -698,7 +699,7 @@ public class O3FailureTest extends AbstractO3Test {
                     }
 
                     @Override
-                    public boolean close(int fd) {
+                    public boolean close(long fd) {
                         if (fd == theFd) {
                             theFd = 0;
                         }
@@ -706,8 +707,8 @@ public class O3FailureTest extends AbstractO3Test {
                     }
 
                     @Override
-                    public int openRW(LPSZ name, long opts) {
-                        int fd = super.openRW(name, opts);
+                    public long openRW(LPSZ name, long opts) {
+                        long fd = super.openRW(name, opts);
                         if (Utf8s.endsWithAscii(name, "x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX + Files.SEPARATOR + "1970-01-01.1" + Files.SEPARATOR + "m.d")) {
                             if (counter.decrementAndGet() == 0) {
                                 theFd = fd;
@@ -724,13 +725,13 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(1195); // 995 files are opened when provisioning tables
         executeWithPool(4, O3FailureTest::testOutOfFileHandles0, new TestFilesFacadeImpl() {
             @Override
-            public boolean close(int fd) {
+            public boolean close(long fd) {
                 counter.incrementAndGet();
                 return super.close(fd);
             }
 
             @Override
-            public int openAppend(LPSZ name) {
+            public long openAppend(LPSZ name) {
                 if (counter.decrementAndGet() < 0) {
                     return -1;
                 }
@@ -738,7 +739,7 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (counter.decrementAndGet() < 0) {
                     return -1;
                 }
@@ -746,7 +747,7 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (counter.decrementAndGet() < 0) {
                     return -1;
                 }
@@ -772,10 +773,10 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(4);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataFailRetry0, new TestFilesFacadeImpl() {
             private final AtomicInteger mapCounter = new AtomicInteger(2);
-            private int theFd = 0;
+            private long theFd = 0;
 
             @Override
-            public boolean close(int fd) {
+            public boolean close(long fd) {
                 if (fd > 0 && fd == theFd) {
                     theFd = 0;
                 }
@@ -783,7 +784,7 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (!fixFailure.get() || (theFd == fd && mapCounter.decrementAndGet() == 0)) {
                     fixFailure.set(false);
                     theFd = 0;
@@ -793,8 +794,8 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
-                int fd = super.openRW(name, opts);
+            public long openRW(LPSZ name, long opts) {
+                long fd = super.openRW(name, opts);
                 if (Utf8s.endsWithAscii(name, "ts.d") && counter.decrementAndGet() == 0) {
                     theFd = fd;
                 }
@@ -808,10 +809,10 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(4);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataFailRetry0, new TestFilesFacadeImpl() {
             private final AtomicInteger mapCounter = new AtomicInteger(2);
-            private int theFd = 0;
+            private long theFd = 0;
 
             @Override
-            public boolean close(int fd) {
+            public boolean close(long fd) {
                 if (fd > 0 && fd == theFd) {
                     theFd = 0;
                 }
@@ -819,7 +820,7 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (!fixFailure.get() || (theFd == fd && mapCounter.decrementAndGet() == 0)) {
                     fixFailure.set(false);
                     theFd = 0;
@@ -829,8 +830,8 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
-                int fd = super.openRW(name, opts);
+            public long openRW(LPSZ name, long opts) {
+                long fd = super.openRW(name, opts);
                 if (Utf8s.endsWithAscii(name, "ts.d") && counter.decrementAndGet() == 0) {
                     theFd = fd;
                 }
@@ -844,7 +845,7 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(3);
         executeWithoutPool(O3FailureTest::testPartitionedDataAppendOODataIndexedFailRetry0, new TestFilesFacadeImpl() {
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "timestamp.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
@@ -858,7 +859,7 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(3);
         executeWithPool(0, O3FailureTest::testPartitionedDataAppendOODataIndexedFailRetry0, new TestFilesFacadeImpl() {
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "timestamp.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
@@ -912,7 +913,7 @@ public class O3FailureTest extends AbstractO3Test {
         counter.set(0);
         executeWithPool(0, O3FailureTest::testPartitionedWithAllocationCallLimit0, new TestFilesFacadeImpl() {
             @Override
-            public boolean allocate(int fd, long size) {
+            public boolean allocate(long fd, long size) {
                 // This tests that BitmapIndexWriter allocates value file in configured incremental pages
                 // instead of allocating block by block.
                 // If allocation block by block happens, number of calls is very big here and failure is simulated.
@@ -990,7 +991,7 @@ public class O3FailureTest extends AbstractO3Test {
                 },
                 new TestFilesFacadeImpl() {
                     @Override
-                    public long write(int fd, long address, long len, long offset) {
+                    public long write(long fd, long address, long len, long offset) {
                         if (offset == 0 && len == storageLength * (records - 1)) {
                             return -1;
                         }
@@ -1012,7 +1013,7 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (tooManyFiles) {
                     return -1;
                 }
@@ -1020,7 +1021,7 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, "1970-01-01.4" + Files.SEPARATOR + "g.d")) {
                     tooManyFiles = true;
                     return -1;
@@ -1085,7 +1086,7 @@ public class O3FailureTest extends AbstractO3Test {
         AtomicInteger counter = new AtomicInteger(count);
         return new TestFilesFacadeImpl() {
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, fileName) && counter.decrementAndGet() == 0) {
                     return -1;
                 }
@@ -3696,13 +3697,13 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     private FilesFacade failToFSync(String fileName) {
-        AtomicInteger targetFd = new AtomicInteger();
+        AtomicLong targetFd = new AtomicLong();
         AtomicInteger counter = new AtomicInteger(1);
 
         return new TestFilesFacadeImpl() {
 
             @Override
-            public void fsync(int fd) {
+            public void fsync(long fd) {
                 if (fd == targetFd.get()) {
                     targetFd.set(0);
                     throw CairoException.critical(22).put("cannot fsync");
@@ -3711,8 +3712,8 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
-                final int fd = super.openRW(name, opts);
+            public long openRW(LPSZ name, long opts) {
+                final long fd = super.openRW(name, opts);
                 if (Utf8s.endsWithAscii(name, fileName) && counter.decrementAndGet() == 0) {
                     targetFd.set(fd);
                 }
@@ -3722,12 +3723,12 @@ public class O3FailureTest extends AbstractO3Test {
     }
 
     private FilesFacade failToMMap(String fileName) {
-        AtomicInteger targetFd = new AtomicInteger();
+        AtomicLong targetFd = new AtomicLong();
         AtomicInteger counter = new AtomicInteger(2);
 
         return new TestFilesFacadeImpl() {
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (fd == targetFd.get() && counter.decrementAndGet() == 0) {
                     return -1;
                 }
@@ -3735,8 +3736,8 @@ public class O3FailureTest extends AbstractO3Test {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
-                int fd = super.openRW(name, opts);
+            public long openRW(LPSZ name, long opts) {
+                long fd = super.openRW(name, opts);
                 if (Utf8s.endsWithAscii(name, fileName)) {
                     targetFd.set(fd);
                 }

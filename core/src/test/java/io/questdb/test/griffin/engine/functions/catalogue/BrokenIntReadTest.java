@@ -211,7 +211,7 @@ public class BrokenIntReadTest extends AbstractCairoTest {
         }
 
         @Override
-        public long read(int fd, long buf, long len, long offset) {
+        public long read(long fd, long buf, long len, long offset) {
             callCount++;
             if (callCount == failOnCount) {
                 return -1;

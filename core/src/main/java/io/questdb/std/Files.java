@@ -62,59 +62,34 @@ public final class Files {
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
     private static final AtomicInteger OPEN_FILE_COUNT = new AtomicInteger();
     private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
+    private static final AtomicInteger fdCounter = new AtomicInteger();
+    private static final LongHashSet openFds = new LongHashSet();
+    // To be set in tests to check every call for using OPEN file descriptor
+    public static boolean PARANOIA_FD_MODE = false;
     public static boolean VIRTIO_FS_DETECTED = false;
-    static IntHashSet openFds;
 
     private Files() {
         // Prevent construction.
     }
 
-    public native static boolean allocate(int fd, long size);
-
-    public native static long append(int fd, long address, long len);
-
-    public static synchronized boolean auditClose(int fd) {
-        if (fd < 0) {
-            throw new IllegalStateException("Invalid fd " + fd);
-        }
-        if (openFds.remove(fd) == -1) {
-            throw new IllegalStateException("fd " + fd + " is already closed!");
-        }
-        return true;
+    public static boolean allocate(long fd, long size) {
+        return allocate(toOsFd(fd), size);
     }
 
-    public static synchronized boolean auditOpen(int fd) {
-        if (openFds == null) {
-            openFds = new IntHashSet();
-        }
-        if (fd < 0) {
-            throw new IllegalStateException("Invalid fd " + fd);
-        }
-        if (openFds.contains(fd)) {
-            throw new IllegalStateException("fd " + fd + " is already open");
-        }
-        openFds.add(fd);
-        return true;
-    }
-
-    public static int bumpFileCount(int fd) {
-        if (fd != -1) {
-            //noinspection AssertWithSideEffects
-            assert auditOpen(fd);
-            OPEN_FILE_COUNT.incrementAndGet();
-        }
-        return fd;
+    public static long append(long fd, long address, long len) {
+        return append(toOsFd(fd), address, len);
     }
 
     public static long ceilPageSize(long size) {
         return ((size + PAGE_SIZE - 1) / PAGE_SIZE) * PAGE_SIZE;
     }
 
-    public static int close(int fd) {
+    public static int close(long fd) {
         // do not close `stdin` and `stdout`
-        if (fd > 1) {
-            assert auditClose(fd);
-            int res = close0(fd);
+        int osFd;
+        if (fd > 0 && (osFd = toOsFd(fd)) > 2) {
+            auditClose(fd);
+            int res = close0(osFd);
             if (res == 0) {
                 OPEN_FILE_COUNT.decrementAndGet();
             }
@@ -124,49 +99,51 @@ public final class Files {
         return -1;
     }
 
-    public static int detach(int fd) {
-        // do not close `stdin` and `stdout`
-        if (fd > 1) {
-            assert auditClose(fd);
-            OPEN_FILE_COUNT.decrementAndGet();
-        }
-        return fd;
-    }
-
-    public static native int copy(long from, long to);
-
     public static int copy(LPSZ from, LPSZ to) {
         return copy(from.ptr(), to.ptr());
     }
 
-    public static native long copyData(int srcFd, int destFd, long offsetSrc, long length);
-
-    public static native long copyDataToOffset(int srcFd, int destFd, long offsetSrc, long offsetDest, long length);
-
-    /**
-     * close(fd) should be used instead of this method in most cases
-     * unless you don't need close() sys call to happen.
-     *
-     * @param fd file descriptor
-     */
-    public static void decrementFileCount(int fd) {
-        assert auditClose(fd);
-        OPEN_FILE_COUNT.decrementAndGet();
+    public static long copyData(long srcFd, long destFd, long offsetSrc, long length) {
+        return copyData(toOsFd(srcFd), toOsFd(destFd), offsetSrc, length);
     }
 
-    public static native boolean exists(int fd);
+    public static long copyDataToOffset(long srcFd, long destFd, long offsetSrc, long offsetDest, long length) {
+        return copyDataToOffset(toOsFd(srcFd), toOsFd(destFd), offsetSrc, offsetDest, length);
+    }
+
+    public static long createUniqueFd(int fd) {
+        if (fd != -1) {
+            long uniqueFd = auditOpen(fd);
+            OPEN_FILE_COUNT.incrementAndGet();
+            return uniqueFd;
+        }
+        return fd;
+    }
+
+    public static int detach(long fd) {
+        int osFd = toOsFd(fd);
+        // do not detach `stdin` and `stdout`
+        if (osFd > 1) {
+            auditClose(fd);
+            OPEN_FILE_COUNT.decrementAndGet();
+            return osFd;
+        }
+        return -1;
+    }
+
+    public static boolean exists(long fd) {
+        return exists(toOsFd(fd));
+    }
 
     public static boolean exists(LPSZ lpsz) {
         return lpsz != null && exists0(lpsz.ptr());
     }
 
-    public static void fadvise(int fd, long offset, long len, int advise) {
+    public static void fadvise(long fd, long offset, long len, int advise) {
         if (Os.isLinux()) {
-            fadvise0(fd, offset, len, advise);
+            fadvise0(toOsFd(fd), offset, len, advise);
         }
     }
-
-    public static native void fadvise0(int fd, long offset, long len, int advise);
 
     public native static void findClose(long findPtr);
 
@@ -184,7 +161,9 @@ public final class Files {
         return size - size % PAGE_SIZE;
     }
 
-    public static native int fsync(int fd);
+    public static int fsync(long fd) {
+        return fsync(toOsFd(fd));
+    }
 
     public static long getDirSize(Path path) {
         long pFind = findFirst(path.$().ptr());
@@ -251,10 +230,7 @@ public final class Files {
     public native static long getMapCountLimit();
 
     public static String getOpenFdDebugInfo() {
-        if (openFds != null) {
-            return openFds.toString();
-        }
-        return null;
+        return openFds.toString();
     }
 
     public static long getOpenFileCount() {
@@ -270,7 +246,12 @@ public final class Files {
         return file;
     }
 
-    public native static int getStdOutFd();
+    public synchronized static long getStdOutFdInternal() {
+        int stdoutFd = getStdOutFd();
+        long uniqueFd = Numbers.encodeLowHighInts(0, stdoutFd);
+        openFds.add(uniqueFd);
+        return uniqueFd;
+    }
 
     public static native int hardLink(long lpszSrc, long lpszHardLink);
 
@@ -313,9 +294,13 @@ public final class Files {
         return length0(lpsz.ptr());
     }
 
-    public native static long length(int fd);
+    public static long length(long fd) {
+        return length(toOsFd(fd));
+    }
 
-    public static native int lock(int fd);
+    public static int lock(long fd) {
+        return lock(toOsFd(fd));
+    }
 
     public static void madvise(long address, long len, int advise) {
         if (Os.isLinux()) {
@@ -355,15 +340,15 @@ public final class Files {
         return 0;
     }
 
-    public static long mmap(int fd, long len, long offset, int flags, int memoryTag) {
-        long address = mmap0(fd, len, offset, flags, 0);
+    public static long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+        long address = mmap0(toOsFd(fd), len, offset, flags, 0);
         if (address != -1) {
             Unsafe.recordMemAlloc(len, memoryTag);
         }
         return address;
     }
 
-    public static long mremap(int fd, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
+    public static long mremap(long fd, long address, long previousSize, long newSize, long offset, int flags, int memoryTag) {
         if (newSize < 1) {
             throw CairoException.critical(0).put("could not remap file, invalid newSize [previousSize=").put(previousSize)
                     .put(", newSize=").put(newSize)
@@ -372,7 +357,7 @@ public final class Files {
                     .put(']');
         }
 
-        address = mremap0(fd, address, previousSize, newSize, offset, flags);
+        address = mremap0(toOsFd(fd), address, previousSize, newSize, offset, flags);
         if (address != -1) {
             Unsafe.recordMemAlloc(newSize - previousSize, memoryTag);
         }
@@ -411,31 +396,35 @@ public final class Files {
         return b1 != 0 && (b1 != '.' || Unsafe.getUnsafe().getByte(pUtf8NameZ + 2) != 0);
     }
 
-    public static int openAppend(LPSZ lpsz) {
-        return bumpFileCount(openAppend(lpsz.ptr()));
+    public static long openAppend(LPSZ lpsz) {
+        return createUniqueFd(openAppend(lpsz.ptr()));
     }
 
-    public static int openCleanRW(LPSZ lpsz, long size) {
-        return bumpFileCount(openCleanRW(lpsz.ptr(), size));
+    public static long openCleanRW(LPSZ lpsz, long size) {
+        return createUniqueFd(openCleanRW(lpsz.ptr(), size));
     }
 
     public native static int openCleanRW(long lpszName, long size);
 
-    public static int openRO(LPSZ lpsz) {
-        return bumpFileCount(openRO(lpsz.ptr()));
+    public static long openRO(LPSZ lpsz) {
+        return createUniqueFd(openRO(lpsz.ptr()));
     }
 
-    public static int openRW(LPSZ lpsz) {
-        return bumpFileCount(openRW(lpsz.ptr()));
+    public static long openRW(LPSZ lpsz) {
+        return createUniqueFd(openRW(lpsz.ptr()));
     }
 
-    public static int openRW(LPSZ lpsz, long opts) {
-        return bumpFileCount(openRWOpts(lpsz.ptr(), opts));
+    public static long openRW(LPSZ lpsz, long opts) {
+        return createUniqueFd(openRWOpts(lpsz.ptr(), opts));
     }
 
-    public native static long read(int fd, long address, long len, long offset);
+    public static long read(long fd, long address, long len, long offset) {
+        return read(toOsFd(fd), address, len, offset);
+    }
 
-    public native static long readIntAsUnsignedLong(int fd, long offset);
+    public static long readIntAsUnsignedLong(long fd, long offset) {
+        return readIntAsUnsignedLong(toOsFd(fd), offset);
+    }
 
     public static boolean readLink(Path softLink, Path readTo) {
         final int len = readTo.size();
@@ -462,13 +451,21 @@ public final class Files {
         return false;
     }
 
-    public native static byte readNonNegativeByte(int fd, long offset);
+    public static byte readNonNegativeByte(long fd, long offset) {
+        return readNonNegativeByte(toOsFd(fd), offset);
+    }
 
-    public native static int readNonNegativeInt(int fd, long offset);
+    public static int readNonNegativeInt(long fd, long offset) {
+        return readNonNegativeInt(toOsFd(fd), offset);
+    }
 
-    public native static long readNonNegativeLong(int fd, long offset);
+    public static long readNonNegativeLong(long fd, long offset) {
+        return readNonNegativeLong(toOsFd(fd), offset);
+    }
 
-    public native static short readNonNegativeShort(int fd, long offset);
+    public static short readNonNegativeShort(long fd, long offset) {
+        return readNonNegativeShort(toOsFd(fd), offset);
+    }
 
     public static boolean remove(LPSZ lpsz) {
         return remove(lpsz.ptr());
@@ -542,8 +539,18 @@ public final class Files {
 
     public static native int sync();
 
+    public static int toOsFd(long fd) {
+        if (PARANOIA_FD_MODE && fd != -1) {
+            checkFdOpen(fd);
+        }
+        int osFd = Numbers.decodeHighInt(fd);
+        // 0 FD can be closed, but no other operation is allowed
+        assert fd == -1 || osFd > 0;
+        return osFd;
+    }
+
     public static boolean touch(LPSZ lpsz) {
-        int fd = openRW(lpsz);
+        long fd = openRW(lpsz);
         boolean result = fd > 0;
         if (result) {
             close(fd);
@@ -551,7 +558,9 @@ public final class Files {
         return result;
     }
 
-    public native static boolean truncate(int fd, long size);
+    public static boolean truncate(long fd, long size) {
+        return truncate(toOsFd(fd), size);
+    }
 
     public static int typeDirOrSoftLinkDirNoDots(Path path, int rootLen, long pUtf8NameZ, int type, @Nullable MutableUtf8Sink nameSink) {
         if (!notDots(pUtf8NameZ)) {
@@ -610,14 +619,54 @@ public final class Files {
         }
     }
 
-    public native static long write(int fd, long address, long len, long offset);
+    public static long write(long fd, long address, long len, long offset) {
+        return write(toOsFd(fd), address, len, offset);
+    }
+
+    private native static boolean allocate(int fd, long size);
+
+    private native static long append(int fd, long address, long len);
+
+    private static synchronized void auditClose(long fd) {
+        if (openFds.remove(fd) == -1) {
+            throw new IllegalStateException("fd " + fd + " is already closed!");
+        }
+    }
+
+    private static synchronized long auditOpen(int fd) {
+        if (fd < 0) {
+            throw new IllegalStateException("Invalid fd " + fd);
+        }
+        int index = fdCounter.getAndIncrement();
+        long uniqueFd = Numbers.encodeLowHighInts(index, fd);
+        openFds.add(uniqueFd);
+        return uniqueFd;
+    }
+
+    private static synchronized void checkFdOpen(long fd) {
+        if (!openFds.contains(fd)) {
+            throw new IllegalStateException("fd " + fd + " is not open!");
+        }
+    }
 
     private native static int close0(int fd);
 
+    private static native int copy(long from, long to);
+
+    private static native long copyData(int srcFd, int destFd, long offsetSrc, long length);
+
+    private static native long copyDataToOffset(int srcFd, int destFd, long offsetSrc, long offsetDest, long length);
+
+    private static native boolean exists(int fd);
+
     private static native boolean exists0(long lpsz);
+
+    private static native void fadvise0(int fd, long offset, long len, int advise);
 
     // caller must call findClose to free allocated struct
     private native static long findFirst(long lpszName);
+
+    private static native int fsync(int fd);
 
     private static native long getDiskSize(long lpszPath);
 
@@ -635,9 +684,15 @@ public final class Files {
 
     private native static int getPosixMadvSequential();
 
+    private native static int getStdOutFd();
+
     private native static boolean isDir(long pUtf8PathZ);
 
+    private native static long length(int fd);
+
     private native static long length0(long lpszName);
+
+    private static native int lock(int fd);
 
     private native static int mkdir(long lpszPath, int mode);
 
@@ -655,7 +710,19 @@ public final class Files {
 
     private native static int openRWOpts(long lpszName, long opts);
 
+    private native static long read(int fd, long address, long len, long offset);
+
+    private native static long readIntAsUnsignedLong(int fd, long offset);
+
     private static native int readLink0(long lpszPath, long buffer, int len);
+
+    private native static byte readNonNegativeByte(int fd, long offset);
+
+    private native static int readNonNegativeInt(int fd, long offset);
+
+    private native static long readNonNegativeLong(int fd, long offset);
+
+    private native static short readNonNegativeShort(int fd, long offset);
 
     private native static boolean remove(long lpsz);
 
@@ -664,6 +731,10 @@ public final class Files {
     private native static boolean rmdir(long lpsz);
 
     private native static boolean setLastModified(long lpszName, long millis);
+
+    private native static boolean truncate(int fd, long size);
+
+    private native static long write(int fd, long address, long len, long offset);
 
     static {
         Os.init();

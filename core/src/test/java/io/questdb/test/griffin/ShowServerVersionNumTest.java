@@ -22,30 +22,24 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.http.processors;
+package io.questdb.test.griffin;
 
-import io.questdb.std.Files;
-import io.questdb.std.Mutable;
+import io.questdb.griffin.engine.functions.catalogue.Constants;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Test;
 
-import java.io.Closeable;
+public class ShowServerVersionNumTest extends AbstractCairoTest {
 
-class StaticContentProcessorState implements Mutable, Closeable {
-    long bytesSent;
-    long fd = -1;
-    long sendMax;
-
-    @Override
-    public void clear() {
-        if (fd > -1) {
-            Files.close(fd);
-            fd = -1;
-        }
-        bytesSent = 0;
-        sendMax = Long.MAX_VALUE;
-    }
-
-    @Override
-    public void close() {
-        clear();
+    @Test
+    public void testShowServerVersion() throws Exception {
+        final String expected = "server_version_num\n" +
+                Constants.PG_COMPATIBLE_VERSION_NUM + "\n";
+        assertQuery(
+                expected,
+                "show server_version_num",
+                null,
+                false,
+                true
+        );
     }
 }
