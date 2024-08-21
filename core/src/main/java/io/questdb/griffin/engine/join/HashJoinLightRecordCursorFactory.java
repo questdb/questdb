@@ -49,7 +49,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             @Transient ColumnTypes joinColumnTypes,
-            @Transient ColumnTypes valueTypes, // this expected to be just LONG, we store chain references in map
+            @Transient ColumnTypes valueTypes, // this expected to be just 3 INTs, we store chain references in map
             RecordSink masterSink,
             RecordSink slaveKeySink,
             int columnSplit,
@@ -109,6 +109,25 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         sink.child("Hash", slaveFactory);
     }
 
+    private static long computeCursorSizeFromMap(RecordCursor masterCursor, Map map, RecordSink keySink) {
+        final Record masterRecord = masterCursor.getRecord();
+        long size = 0;
+        try {
+            masterCursor.toTop();
+            while (masterCursor.hasNext()) {
+                MapKey key = map.withKey();
+                key.put(masterRecord, keySink);
+                MapValue value = key.findValue();
+                if (value != null) {
+                    size += value.getInt(2);
+                }
+            }
+            return size;
+        } finally {
+            masterCursor.toTop();
+        }
+    }
+
     @Override
     protected void _close() {
         Misc.freeIfCloseable(getMetadata());
@@ -126,7 +145,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         private boolean isOpen;
         private Record masterRecord;
         private long size = -1;
-        private LongChain.TreeCursor slaveChainCursor;
+        private LongChain.Cursor slaveChainCursor;
         private Record slaveRecord;
 
         public HashJoinRecordCursor(int columnSplit, CairoConfiguration configuration, ColumnTypes joinColumnTypes, ColumnTypes valueTypes) {
@@ -172,7 +191,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 key.put(masterRecord, masterSink);
                 MapValue value = key.findValue();
                 if (value != null) {
-                    slaveChainCursor = slaveChain.getCursor(value.getLong(0));
+                    slaveChainCursor = slaveChain.getCursor(value.getInt(0));
                     // we know cursor has values
                     // advance to get the first value
                     slaveChainCursor.hasNext();
@@ -189,7 +208,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 return size;
             }
             buildMapOfSlaveRecords();
-            return size = TableUtils.computeCursorSizeFromMap(masterCursor, joinKeyMap, masterSink);
+            return size = computeCursorSizeFromMap(masterCursor, joinKeyMap, masterSink);
         }
 
         @Override

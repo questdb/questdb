@@ -259,25 +259,6 @@ public final class TableUtils {
         return count;
     }
 
-    public static long computeCursorSizeFromMap(RecordCursor masterCursor, Map map, RecordSink keySink) {
-        final Record masterRecord = masterCursor.getRecord();
-        long size = 0;
-        try {
-            masterCursor.toTop();
-            while (masterCursor.hasNext()) {
-                MapKey key = map.withKey();
-                key.put(masterRecord, keySink);
-                MapValue value = key.findValue();
-                if (value != null) {
-                    size += value.getLong(2);
-                }
-            }
-            return size;
-        } finally {
-            masterCursor.toTop();
-        }
-    }
-
     public static void createColumnVersionFile(MemoryMARW mem) {
         // Create page of 0s for Column Version file "_cv"
         mem.extend(COLUMN_VERSION_FILE_HEADER_SIZE);
@@ -1238,13 +1219,13 @@ public final class TableUtils {
             key.put(record, recordSink);
             MapValue value = key.createValue();
             if (value.isNew()) {
-                final long offset = rowIDChain.put(record.getRowId(), -1);
-                value.putLong(0, offset);
-                value.putLong(1, offset);
-                value.putLong(2, 1);
+                final int offset = rowIDChain.put(record.getRowId(), -1);
+                value.putInt(0, offset);
+                value.putInt(1, offset);
+                value.putInt(2, 1);
             } else {
-                value.putLong(1, rowIDChain.put(record.getRowId(), value.getLong(1)));
-                value.addLong(2, 1);
+                value.putInt(1, rowIDChain.put(record.getRowId(), value.getInt(1)));
+                value.addInt(2, 1);
             }
         }
     }

@@ -32,10 +32,18 @@ import io.questdb.std.Unsafe;
 
 import java.io.Closeable;
 
+/**
+ * A native memory heap-based chain of long values. Used to store row id lists in hash joins.
+ * <p>
+ * For each long value also stores compressed offset for its parent (previous in the chain) value.
+ * A compressed offset contains an offset to the address of the parent value in the heap memory
+ * compressed to an int. Value addresses are 8 byte aligned, so a LongChain is capable of
+ * holding up to 32GB of data.
+ */
 public class LongChain implements Closeable, Mutable, Reopenable {
-    private static final long CHAIN_VALUE_SIZE = 16;
+    private static final long CHAIN_VALUE_SIZE = 12;
     private static final long MAX_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 3;
-    private final TreeCursor cursor = new TreeCursor();
+    private final Cursor cursor = new Cursor();
     private final long initialHeapSize;
     private final long maxHeapSize;
     private long heapLimit;
@@ -64,12 +72,12 @@ public class LongChain implements Closeable, Mutable, Reopenable {
         }
     }
 
-    public TreeCursor getCursor(long tailOffset) {
+    public Cursor getCursor(int tailOffset) {
         cursor.of(tailOffset);
         return cursor;
     }
 
-    public long put(long value, long parentOffset) {
+    public int put(long value, int parentOffset) {
         if (heapPos + CHAIN_VALUE_SIZE > heapLimit) {
             final long newHeapSize = heapSize << 1;
             if (newHeapSize > maxHeapSize) {
@@ -84,12 +92,13 @@ public class LongChain implements Closeable, Mutable, Reopenable {
             this.heapStart = newHeapPos;
             this.heapLimit = newHeapPos + newHeapSize;
         }
-        final long appendOffset = heapPos - heapStart;
+        final long appendRawOffset = heapPos - heapStart;
+        final int appendOffset = compressOffset(appendRawOffset);
         if (parentOffset != -1) {
-            Unsafe.getUnsafe().putLong(heapStart + parentOffset, appendOffset);
+            Unsafe.getUnsafe().putInt(heapStart + uncompressOffset(parentOffset) + 8, appendOffset);
         }
-        Unsafe.getUnsafe().putLong(heapPos, -1);
-        Unsafe.getUnsafe().putLong(heapPos + 8, value);
+        Unsafe.getUnsafe().putLong(heapPos, value);
+        Unsafe.getUnsafe().putInt(heapPos + 8, -1);
         heapPos += CHAIN_VALUE_SIZE;
         return appendOffset;
     }
@@ -103,21 +112,29 @@ public class LongChain implements Closeable, Mutable, Reopenable {
         }
     }
 
-    public class TreeCursor {
-        private long nextOffset;
+    private static int compressOffset(long rawOffset) {
+        return (int) (rawOffset / CHAIN_VALUE_SIZE);
+    }
+
+    private static long uncompressOffset(int offset) {
+        return CHAIN_VALUE_SIZE * offset;
+    }
+
+    public class Cursor {
+        private int nextOffset;
 
         public boolean hasNext() {
             return nextOffset != -1;
         }
 
         public long next() {
-            final long next = Unsafe.getUnsafe().getLong(heapStart + nextOffset);
-            final long value = Unsafe.getUnsafe().getLong(heapStart + nextOffset + 8);
-            this.nextOffset = next;
+            final long rawOffset = uncompressOffset(nextOffset);
+            final long value = Unsafe.getUnsafe().getLong(heapStart + rawOffset);
+            nextOffset = Unsafe.getUnsafe().getInt(heapStart + rawOffset + 8);
             return value;
         }
 
-        void of(long startOffset) {
+        void of(int startOffset) {
             this.nextOffset = startOffset;
         }
     }

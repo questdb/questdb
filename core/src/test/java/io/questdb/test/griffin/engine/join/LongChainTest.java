@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.join;
 import io.questdb.griffin.engine.join.LongChain;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -42,11 +43,11 @@ public class LongChainTest {
     @Test
     public void testAll() throws Exception {
         assertMemoryLeak(() -> {
-            try (LongChain chain = new LongChain(1024 * 1024, Integer.MAX_VALUE)) {
+            try (LongChain chain = new LongChain(1024, Integer.MAX_VALUE)) {
                 final int N = 1000;
                 final int nChains = 10;
                 final Rnd rnd = new Rnd();
-                final LongList heads = new LongList(nChains);
+                final IntList heads = new IntList(nChains);
                 final ObjList<LongList> expectedValues = new ObjList<>();
 
                 for (int i = 0; i < nChains; i++) {
@@ -59,7 +60,7 @@ public class LongChainTest {
 
                 // values are expected in reverse order
                 for (int i = 0; i < nChains; i++) {
-                    LongChain.TreeCursor cursor = chain.getCursor(heads.getQuick(i));
+                    LongChain.Cursor cursor = chain.getCursor(heads.getQuick(i));
                     LongList expected = expectedValues.get(i);
                     int count = 0;
                     while (cursor.hasNext()) {
@@ -72,9 +73,9 @@ public class LongChainTest {
         });
     }
 
-    private long populateChain(LongChain chain, Rnd rnd, LongList expectedValues) {
-        long head = -1;
-        long tail = -1;
+    private int populateChain(LongChain chain, Rnd rnd, LongList expectedValues) {
+        int head = -1;
+        int tail = -1;
         for (int i = 0; i < 1000; i++) {
             long expected = rnd.nextLong();
             tail = chain.put(expected, tail);

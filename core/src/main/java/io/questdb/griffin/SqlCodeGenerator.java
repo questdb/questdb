@@ -858,12 +858,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 writeStringAsVarcharA
         );
 
-        valueTypes.clear();
-        valueTypes.add(ColumnType.LONG);
-        valueTypes.add(ColumnType.LONG);
-        valueTypes.add(ColumnType.LONG); // record count for the key
-
         if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
+            // Light factories store compressed offsets in LongChain, so we use INT values intead of LONGs.
+            valueTypes.clear();
+            valueTypes.add(ColumnType.INT); // chain head offset
+            valueTypes.add(ColumnType.INT); // chain tail offset
+            valueTypes.add(ColumnType.INT); // record count for the key
+
             if (joinType == JOIN_INNER) {
                 return new HashJoinLightRecordCursorFactory(
                         configuration,
@@ -908,6 +909,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     context
             );
         }
+
+        valueTypes.clear();
+        valueTypes.add(ColumnType.LONG); // chain head offset
+        valueTypes.add(ColumnType.LONG); // chain tail offset
+        valueTypes.add(ColumnType.LONG); // record count for the key
 
         entityColumnFilter.of(slaveMetadata.getColumnCount());
         RecordSink slaveSink = RecordSinkFactory.getInstance(asm, slaveMetadata, entityColumnFilter);
