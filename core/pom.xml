@@ -89,49 +89,6 @@
     <build>
         <plugins>
             <plugin>
-                <groupId>org.questdb</groupId>
-                <artifactId>rust-maven-plugin</artifactId>
-                <version>1.1.1</version>
-                <executions>
-                    <execution>
-                        <id>qdbr-build</id>
-                        <goals>
-                            <goal>build</goal>
-                        </goals>
-                        <configuration>
-                            <path>rust/qdbr</path>
-                            <release>${qdbr.release}</release>
-                            <copyTo>${project.build.directory}/classes/io/questdb/bin</copyTo>
-                            <copyWithPlatformDir>true</copyWithPlatformDir>
-                            <environmentVariables>
-                                <RUSTFLAGS>${qdbr.rustflags}</RUSTFLAGS>
-                            </environmentVariables>
-                            <features>
-                                <feature>${qdbr.failpoints}</feature>
-                            </features>
-                        </configuration>
-                    </execution>
-                    <execution>
-                        <id>qdbr-test</id>
-                        <goals>
-                            <goal>test</goal>
-                        </goals>
-                        <phase>test</phase>
-                        <configuration>
-                            <path>rust/qdbr</path>
-                            <release>${qdbr.release}</release>
-                            <environmentVariables>
-                                <RUSTFLAGS>${qdbr.rustflags}</RUSTFLAGS>
-                                <LLVM_PROFILE_FILE>questdbr-cargo-test.profraw</LLVM_PROFILE_FILE>
-                            </environmentVariables>
-                            <features>
-                                <feature>${qdbr.failpoints}</feature>
-                            </features>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.8.1</version>
@@ -754,6 +711,53 @@
                 <qdr.release>false</qdr.release>
                 <qdbr.rustflags>-D warnings -C instrument-coverage</qdbr.rustflags>
             </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.questdb</groupId>
+                        <artifactId>rust-maven-plugin</artifactId>
+                        <version>1.2.0</version>
+                        <executions>
+                            <execution>
+                                <id>qdbr-build</id>
+                                <goals>
+                                    <goal>build</goal>
+                                </goals>
+                                <configuration>
+                                    <path>rust/qdbr</path>
+                                    <release>${qdbr.release}</release>
+                                    <copyTo>${project.build.directory}/classes/io/questdb/bin</copyTo>
+                                    <copyWithPlatformDir>true</copyWithPlatformDir>
+                                    <environmentVariables>
+                                        <RUSTFLAGS>${qdbr.rustflags}</RUSTFLAGS>
+                                    </environmentVariables>
+                                    <features>
+                                        <feature>${qdbr.failpoints}</feature>
+                                    </features>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>qdbr-test</id>
+                                <goals>
+                                    <goal>test</goal>
+                                </goals>
+                                <phase>test</phase>
+                                <configuration>
+                                    <path>rust/qdbr</path>
+                                    <release>${qdbr.release}</release>
+                                    <environmentVariables>
+                                        <RUSTFLAGS>${qdbr.rustflags}</RUSTFLAGS>
+                                        <LLVM_PROFILE_FILE>questdbr-cargo-test.profraw</LLVM_PROFILE_FILE>
+                                    </environmentVariables>
+                                    <features>
+                                        <feature>${qdbr.failpoints}</feature>
+                                    </features>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
     </profiles>
 
