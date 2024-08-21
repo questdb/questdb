@@ -859,13 +859,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
 
         if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
-            // Light factories store compressed offsets in LongChain, so we use INT values intead of LONGs.
             valueTypes.clear();
-            valueTypes.add(ColumnType.INT); // chain head offset
             valueTypes.add(ColumnType.INT); // chain tail offset
-            valueTypes.add(ColumnType.INT); // record count for the key
 
             if (joinType == JOIN_INNER) {
+                // For inner join we can also store per-key count to speed up size calculation.
+                valueTypes.add(ColumnType.INT); // record count for the key
+
                 return new HashJoinLightRecordCursorFactory(
                         configuration,
                         metadata,

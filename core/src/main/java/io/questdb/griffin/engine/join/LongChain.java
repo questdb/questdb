@@ -41,8 +41,7 @@ import java.io.Closeable;
  * holding up to 32GB of data.
  */
 public class LongChain implements Closeable, Mutable, Reopenable {
-    // public for test purposes
-    public static final long CHAIN_VALUE_SIZE = 12;
+    private static final long CHAIN_VALUE_SIZE = 12;
     private static final long MAX_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) * CHAIN_VALUE_SIZE;
     private final Cursor cursor = new Cursor();
     private final long initialHeapSize;
@@ -57,19 +56,6 @@ public class LongChain implements Closeable, Mutable, Reopenable {
         heapStart = heapPos = Unsafe.malloc(heapSize, MemoryTag.NATIVE_DEFAULT);
         heapLimit = heapStart + heapSize;
         maxHeapSize = Math.min(valuePageSize * valueMaxPages, MAX_HEAP_SIZE_LIMIT);
-    }
-
-    // public for test purposes
-    public static int compressOffset(long rawOffset) {
-//        // the below code is same as:
-//        return (int) (rawOffset / CHAIN_VALUE_SIZE);
-
-        // first, divide by 4
-        rawOffset = rawOffset >> 2;
-        // next, divide by 3
-        //return (int) ((rawOffset * 0xAAAAAAABL) >>> 33);
-        // The magic number is obtained by solving 3*x + 2^64*y = 1 equation with the Extended Euclidean Algorithm.
-        return (int) (rawOffset * -6148914691236517205L);
     }
 
     @Override
@@ -92,6 +78,34 @@ public class LongChain implements Closeable, Mutable, Reopenable {
     }
 
     public int put(long value, int parentOffset) {
+        checkCapacity();
+
+        final long appendRawOffset = heapPos - heapStart;
+        final int appendOffset = compressOffset(appendRawOffset);
+        Unsafe.getUnsafe().putLong(heapPos, value);
+        Unsafe.getUnsafe().putInt(heapPos + 8, parentOffset);
+        heapPos += CHAIN_VALUE_SIZE;
+        return appendOffset;
+    }
+
+    @Override
+    public void reopen() {
+        if (heapStart == 0) {
+            heapSize = initialHeapSize;
+            heapStart = heapPos = Unsafe.malloc(heapSize, MemoryTag.NATIVE_DEFAULT);
+            heapLimit = heapStart + heapSize;
+        }
+    }
+
+    private static int compressOffset(long rawOffset) {
+        return (int) (rawOffset / CHAIN_VALUE_SIZE);
+    }
+
+    private static long uncompressOffset(int offset) {
+        return CHAIN_VALUE_SIZE * offset;
+    }
+
+    private void checkCapacity() {
         if (heapPos + CHAIN_VALUE_SIZE > heapLimit) {
             final long newHeapSize = heapSize << 1;
             if (newHeapSize > maxHeapSize) {
@@ -106,28 +120,6 @@ public class LongChain implements Closeable, Mutable, Reopenable {
             this.heapStart = newHeapPos;
             this.heapLimit = newHeapPos + newHeapSize;
         }
-        final long appendRawOffset = heapPos - heapStart;
-        final int appendOffset = compressOffset(appendRawOffset);
-        if (parentOffset != -1) {
-            Unsafe.getUnsafe().putInt(heapStart + uncompressOffset(parentOffset) + 8, appendOffset);
-        }
-        Unsafe.getUnsafe().putLong(heapPos, value);
-        Unsafe.getUnsafe().putInt(heapPos + 8, -1);
-        heapPos += CHAIN_VALUE_SIZE;
-        return appendOffset;
-    }
-
-    @Override
-    public void reopen() {
-        if (heapStart == 0) {
-            heapSize = initialHeapSize;
-            heapStart = heapPos = Unsafe.malloc(heapSize, MemoryTag.NATIVE_DEFAULT);
-            heapLimit = heapStart + heapSize;
-        }
-    }
-
-    private static long uncompressOffset(int offset) {
-        return CHAIN_VALUE_SIZE * offset;
     }
 
     public class Cursor {

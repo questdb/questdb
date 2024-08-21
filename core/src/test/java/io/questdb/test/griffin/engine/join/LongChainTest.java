@@ -47,12 +47,12 @@ public class LongChainTest {
                 final int N = 1000;
                 final int nChains = 10;
                 final Rnd rnd = new Rnd();
-                final IntList heads = new IntList(nChains);
+                final IntList tails = new IntList(nChains);
                 final ObjList<LongList> expectedValues = new ObjList<>();
 
                 for (int i = 0; i < nChains; i++) {
                     LongList expected = new LongList(N);
-                    heads.add(populateChain(chain, rnd, expected));
+                    tails.add(populateChain(chain, rnd, expected));
                     expectedValues.add(expected);
                     Assert.assertEquals(N, expected.size());
                 }
@@ -60,7 +60,7 @@ public class LongChainTest {
 
                 // values are expected in reverse order
                 for (int i = 0; i < nChains; i++) {
-                    LongChain.Cursor cursor = chain.getCursor(heads.getQuick(i));
+                    LongChain.Cursor cursor = chain.getCursor(tails.getQuick(i));
                     LongList expected = expectedValues.get(i);
                     int count = 0;
                     while (cursor.hasNext()) {
@@ -73,27 +73,14 @@ public class LongChainTest {
         });
     }
 
-    @Test
-    public void testCompressOffset() {
-        Assert.assertEquals(0, LongChain.compressOffset(0));
-        Assert.assertEquals(1 / LongChain.CHAIN_VALUE_SIZE, LongChain.compressOffset(1));
-        for (long i = 0; i < 1000; i++) {
-            Assert.assertEquals(i, LongChain.compressOffset(i * LongChain.CHAIN_VALUE_SIZE));
-        }
-        Assert.assertEquals(Integer.MAX_VALUE, LongChain.compressOffset(Integer.MAX_VALUE * LongChain.CHAIN_VALUE_SIZE));
-    }
-
-    private int populateChain(LongChain chain, Rnd rnd, LongList expectedValues) {
-        int head = -1;
+    private int populateChain(LongChain tails, Rnd rnd, LongList expectedValues) {
         int tail = -1;
         for (int i = 0; i < 1000; i++) {
             long expected = rnd.nextLong();
-            tail = chain.put(expected, tail);
+            tail = tails.put(expected, tail);
             expectedValues.add(expected);
-            if (i == 0) {
-                head = tail;
-            }
         }
-        return head;
+        expectedValues.reverse();
+        return tail;
     }
 }

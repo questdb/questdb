@@ -36,7 +36,6 @@ import io.questdb.griffin.AnyRecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.join.LongChain;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
@@ -1200,32 +1199,6 @@ public final class TableUtils {
             } else {
                 value.putLong(1, chain.put(record, value.getLong(1)));
                 value.addLong(2, 1);
-            }
-        }
-    }
-
-    public static void populateRowIDHashMap(
-            SqlExecutionCircuitBreaker circuitBreaker,
-            RecordCursor cursor,
-            Map keyMap,
-            RecordSink recordSink,
-            LongChain rowIDChain
-    ) {
-        final Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-
-            MapKey key = keyMap.withKey();
-            key.put(record, recordSink);
-            MapValue value = key.createValue();
-            if (value.isNew()) {
-                final int offset = rowIDChain.put(record.getRowId(), -1);
-                value.putInt(0, offset);
-                value.putInt(1, offset);
-                value.putInt(2, 1);
-            } else {
-                value.putInt(1, rowIDChain.put(record.getRowId(), value.getInt(1)));
-                value.addInt(2, 1);
             }
         }
     }

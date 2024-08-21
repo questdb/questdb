@@ -2313,10 +2313,10 @@ public class JoinTest extends AbstractCairoTest {
             final String expected = "c\ta\tb\n" +
                     "2\t568\t16\n" +
                     "2\t568\t72\n" +
-                    "4\t371\t14\n" +
                     "4\t371\t3\n" +
-                    "6\t439\t81\n" +
+                    "4\t371\t14\n" +
                     "6\t439\t12\n" +
+                    "6\t439\t81\n" +
                     "8\t521\t16\n" +
                     "8\t521\t97\n" +
                     "10\t598\t5\n" +
@@ -2325,19 +2325,20 @@ public class JoinTest extends AbstractCairoTest {
             ddl("create table x as (select cast(x as int) c, abs(rnd_int() % 650) a from long_sequence(10))");
             ddl("create table y as (select x, cast(2*((x-1)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(10))");
 
-            assertQueryAndCache(expected, "select x.c, x.a, b from x join y on y.m = x.c", null, true);
+            assertQueryAndCache(expected, "select x.c, x.a, b from x join y on y.m = x.c order by 1,2,3", null, true, true);
 
             insert("insert into x select cast(x+10 as int) c, abs(rnd_int() % 650) a from long_sequence(4)");
             insert("insert into y select x, cast(2*((x-1+10)/2) as int)+2 m, abs(rnd_int() % 100) b from long_sequence(6)");
 
-            assertQueryNoLeakCheck(expected +
-                            "12\t347\t7\n" +
+            assertQueryNoLeakCheck(
+                    expected +
                             "12\t347\t0\n" +
+                            "12\t347\t7\n" +
                             "14\t197\t50\n" +
                             "14\t197\t68\n",
-                    "select x.c, x.a, b from x join y on y.m = x.c",
+                    "select x.c, x.a, b from x join y on y.m = x.c order by 1,2,3",
                     null,
-                    false,
+                    true,
                     true
             );
         });

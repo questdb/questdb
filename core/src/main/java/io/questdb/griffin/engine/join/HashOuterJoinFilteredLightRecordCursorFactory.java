@@ -58,7 +58,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             @Transient ColumnTypes joinColumnTypes,
-            @Transient ColumnTypes valueTypes, // this expected to be just 3 INTs, we store chain references in map
+            @Transient ColumnTypes valueTypes, // this expected to be just 2 INTs, we store chain references in map
             RecordSink masterKeySink,
             RecordSink slaveKeySink,
             int columnSplit,
@@ -238,9 +238,8 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 if (value.isNew()) {
                     final int offset = slaveChain.put(record.getRowId(), -1);
                     value.putInt(0, offset);
-                    value.putInt(1, offset);
                 } else {
-                    value.putInt(1, slaveChain.put(record.getRowId(), value.getInt(1)));
+                    value.putInt(0, slaveChain.put(record.getRowId(), value.getInt(1)));
                 }
             }
         }
