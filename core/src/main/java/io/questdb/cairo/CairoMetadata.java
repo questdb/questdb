@@ -213,9 +213,12 @@ public class CairoMetadata implements Sinkable {
      */
     public void hydrateTable(@NotNull TableToken token, @NotNull CairoConfiguration configuration, @NotNull Log logger, boolean blindUpsert) {
         logger.debugW().$("hydrating table using thread-local path and column version reader [table=").$(token.getTableName()).I$();
-        hydrateTable(token, configuration, logger, tlPath.get(), tlColumnVersionReader.get(), blindUpsert);
-        tlPath.get().close();
-        tlColumnVersionReader.get().close();
+        try {
+            hydrateTable(token, configuration, logger, tlPath.get(), tlColumnVersionReader.get(), blindUpsert);
+        } finally {
+            tlPath.get().close();
+            tlColumnVersionReader.get().close();
+        }
     }
 
     public void hydrateTable(@NotNull TableWriterMetadata metadata, @NotNull Log logger, boolean blindUpsert) {
@@ -229,19 +232,14 @@ public class CairoMetadata implements Sinkable {
 
         int columnCount = metadata.getColumnCount();
 
-        logger.debugW().$("reading columns [table=").$(table.getName())
-                .$(", count=").$(columnCount)
-                .I$();
-
-        logger.debugW().$("set metadata version [table=").$(table.getName())
-                .$(", version=").$(table.getMetadataVersion())
-                .I$();
+        logger.debugW().$("set metadata version [table=").$(table.getName()).$(", version=").$(table.getMetadataVersion()).I$();
 
         table.setPartitionBy(metadata.getPartitionBy());
         table.setMaxUncommittedRows(metadata.getMaxUncommittedRows());
         table.setO3MaxLag(metadata.getO3MaxLag());
         table.setTimestampIndex(metadata.getTimestampIndex());
 
+        logger.debugW().$("reading columns [table=").$(table.getName()).$(", count=").$(columnCount).I$();
 
         for (int i = 0; i < columnCount; i++) {
             TableColumnMetadata columnMetadata = metadata.columnMetadata.getQuick(i);
@@ -267,10 +265,8 @@ public class CairoMetadata implements Sinkable {
                 column.setSymbolCapacity(metadata.getSymbolCapacity(i));
                 column.setSymbolCached(metadata.getSymbolCacheFlag(i));
             }
-
             table.addColumn(column);
         }
-
 
         if (blindUpsert) {
             tables.put(table.getDirectoryName(), table);
@@ -296,12 +292,6 @@ public class CairoMetadata implements Sinkable {
         StringSink sink = Misc.getThreadLocalSink();
         this.toSink(sink);
         return sink.toString();
-    }
-
-    // assume that this is sequenced so we don't go backwards in metadata versions
-    // tablewriter is singleton
-    public void upsertTableUnsafe(@NotNull CairoTable newTable) {
-        tables.put(newTable.getDirectoryName(), newTable);
     }
 }
 

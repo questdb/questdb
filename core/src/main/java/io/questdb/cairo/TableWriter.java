@@ -946,7 +946,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     dedupColumnCommitAddresses.setDedupColumnCount(dedupColumnCommitAddresses.getColumnCount() - 1);
                 }
 
-                CairoMetadata.INSTANCE.hydrateTable(metadata, LOG, true);
+                CairoMetadata.INSTANCE.hydrateTable(tableToken, configuration, LOG, true);
             } finally {
                 // clear temp resources
                 convertOperator.finishColumnConversion();
