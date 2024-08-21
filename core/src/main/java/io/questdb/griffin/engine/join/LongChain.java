@@ -37,8 +37,7 @@ import java.io.Closeable;
  * <p>
  * For each long value also stores compressed offset for its parent (previous in the chain) value.
  * A compressed offset contains an offset to the address of the parent value in the heap memory
- * compressed to an int. Value addresses are 8 byte aligned, so a LongChain is capable of
- * holding up to 32GB of data.
+ * compressed to an int. Value addresses are 12 byte aligned.
  */
 public class LongChain implements Closeable, Mutable, Reopenable {
     private static final long CHAIN_VALUE_SIZE = 12;

@@ -73,11 +73,11 @@ public class LongChainTest {
         });
     }
 
-    private int populateChain(LongChain tails, Rnd rnd, LongList expectedValues) {
+    private int populateChain(LongChain chain, Rnd rnd, LongList expectedValues) {
         int tail = -1;
         for (int i = 0; i < 1000; i++) {
             long expected = rnd.nextLong();
-            tail = tails.put(expected, tail);
+            tail = chain.put(expected, tail);
             expectedValues.add(expected);
         }
         expectedValues.reverse();
