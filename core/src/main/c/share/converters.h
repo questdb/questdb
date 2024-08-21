@@ -29,44 +29,12 @@
 #include <cmath>
 #include <cstdint>
 #include "jni.h"
+#include "column_type.h"
 
 /**
  * ColumnType enum, matching the Java definitions.
  */
-enum class ColumnType : int {
-    UNDEFINED = 0,
-    BOOLEAN = 1,
-    BYTE = 2,
-    SHORT = 3,
-    CHAR = 4,
-    INT = 5,
-    LONG = 6,
-    DATE = 7,
-    TIMESTAMP = 8,
-    FLOAT = 9,
-    DOUBLE = 10,
-    STRING = 11,
-    SYMBOL = 12,
-    LONG256 = 13,
-    GEOBYTE = 14,
-    GEOSHORT = 15,
-    GEOINT = 16,
-    GEOLONG = 17,
-    BINARY = 18,
-    UUID = 19,
-    CURSOR = 20,
-    VAR_ARG = 21,
-    RECORD = 22,
-    GEOHASH = 23,
-    LONG128 = 24,
-    IPV4 = 25,
-    VARCHAR = 26,
-    REGCLASS = 27,
-    REGPROCEDURE = 28,
-    ARRAY_STRING = 29,
-    PARAMETER = 30,
-    NULL_ = 31
-};
+
 
 /**
  * Packs the column types into an int64_t, so we can use a single switch over both enum values.

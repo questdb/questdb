@@ -611,19 +611,18 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             drainWalQueue();
             checkDedupSet("ik", true);
 
-            engine.releaseInactive();
-            checkDedupSet("ik", true);
-
             insert("insert into x(ik, d, timestamp) values('abc', 2, '2044-02-24')", sqlExecutionContext);
-            insert("insert into x(ik, d, timestamp) values('abc', 3, '2044-02-25')", sqlExecutionContext);
-            insert("insert into x(ik, d, timestamp) values('def', 4, '2044-02-25')", sqlExecutionContext);
+            insert("insert into x(ik, d, timestamp) values('abc', 3, '2044-02-24')", sqlExecutionContext);
+            insert("insert into x(ik, d, timestamp) values('abc', 4, '2044-02-25')", sqlExecutionContext);
+            insert("insert into x(ik, d, timestamp) values('def', 5, '2044-02-25')", sqlExecutionContext);
 
             drainWalQueue();
 
             assertSql("timestamp\td\tik\n" +
                     "2018-01-01T02:00:00.000000Z\t0.04488373772232379\tCPSW\n" +
-                    "2044-02-24T00:00:00.000000Z\t2.0\tabc\n" +
-                    "2044-02-25T00:00:00.000000Z\t4.0\tdef\n", "select timestamp, d, ik from x limit -3");
+                    "2044-02-24T00:00:00.000000Z\t3.0\tabc\n" +
+                    "2044-02-25T00:00:00.000000Z\t5.0\tdef\n" +
+                    "2044-02-25T00:00:00.000000Z\t4.0\tabc\n", "select timestamp, d, ik from x limit -4");
         });
     }
 

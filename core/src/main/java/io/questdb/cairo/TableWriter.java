@@ -4554,7 +4554,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     dedupCommitAddr,
                                     dedupKeyIndex++,
                                     columnType,
-                                    (int) driver.auxRowsToBytes(1),
+                                    -1,
                                     0L
                             );
 
@@ -4569,12 +4569,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 long roHi = roLo + lagRows;
 
                                 long lagAuxOffset = driver.getAuxVectorOffset(roLo);
-                                // TODO: check that it works for Strings when offset is > 0
                                 long lagAuxSize = driver.getAuxVectorSize(lagRows);
-                                long lagAuxKeyAddr = mapAppendColumnBuffer(columns.get(getSecondaryColumnIndex(i)), lagAuxOffset, lagAuxSize, false);
+                                long lagAuxKeyAddr = mapAppendColumnBuffer(columns.get(getSecondaryColumnIndex(i)), 0, lagAuxOffset + lagAuxSize, false);
 
-                                long lagVarDataOffset = driver.getDataVectorOffset(lagAuxKeyAddr, roLo);
-                                long lagVarDataSize = driver.getDataVectorSize(lagAuxKeyAddr, roLo, roHi);
+                                long lagVarDataOffset = driver.getDataVectorOffset(lagAuxKeyAddr, 0);
+                                long lagVarDataSize = driver.getDataVectorSize(lagAuxKeyAddr, 0, lagRows);
                                 long lagVarDataAddr = mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagVarDataOffset, lagVarDataSize, false);
                                 dedupColumnCommitAddresses.setO3DataAddressValues(addr, Math.abs(lagAuxKeyAddr), Math.abs(lagVarDataAddr), lagVarDataSize);
                                 dedupColumnCommitAddresses.setReservedValuesSet1(addr, lagAuxKeyAddr, lagAuxOffset, lagAuxSize);

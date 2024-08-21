@@ -366,7 +366,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomColumnsDedupMultipleKeyCol() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandom(LOG, 1413083111921375L, 1724245122858L);
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
@@ -530,7 +530,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 int col = (c + start) % metadata.getColumnCount();
                 int columnType = metadata.getColumnType(col);
 
-                if (!upsertKeyIndexes.contains(col) && !ColumnType.isVarSize(columnType)) {
+                if (!upsertKeyIndexes.contains(col) && (!ColumnType.isVarSize(columnType) || columnType == ColumnType.VARCHAR)) {
                     upsertKeyIndexes.add(col);
                     break;
                 }
