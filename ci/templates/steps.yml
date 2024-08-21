@@ -182,7 +182,7 @@ steps:
       find . -name \*.profraw
 
       FROM_RUST_TEST=core/rust/qdbr/questdbr-cargo-test.profraw
-      FROM_JAVA_TEST=core/rust/qdbr/questdbr-junit.profraw
+      FROM_JAVA_TEST=core/questdbr-junit.profraw
       if [ ! -f $FROM_RUST_TEST ]; then
         FROM_RUST_TEST=""
       fi
