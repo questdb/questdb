@@ -949,7 +949,7 @@ public class BindVariableServiceImplTest {
             TestUtils.assertEquals("1000.88", bindVariableService.getFunction(0).getStrA(null));
 
             bindVariableService.setFloat(0, 451f);
-            TestUtils.assertEquals("451.0000", bindVariableService.getFunction(0).getStrA(null));
+            TestUtils.assertEquals("451.0", bindVariableService.getFunction(0).getStrA(null));
 
             bindVariableService.setFloat(0, Float.NaN);
             Assert.assertNull(bindVariableService.getFunction(0).getStrA(null));

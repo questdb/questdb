@@ -789,7 +789,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         final float floatValue = record.getFloat(columnIndex);
         if (floatValue == floatValue) {
             final long a = responseUtf8Sink.skip();
-            responseUtf8Sink.put(floatValue, 3);
+            responseUtf8Sink.put(floatValue);
             responseUtf8Sink.putLenEx(a);
         } else {
             responseUtf8Sink.setNullValue();
