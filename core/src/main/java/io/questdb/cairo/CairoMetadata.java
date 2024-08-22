@@ -28,12 +28,11 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
-import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
+import io.questdb.std.*;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.NotNull;
+
+import java.lang.ThreadLocal;
 
 
 public class CairoMetadata implements Sinkable {
@@ -79,10 +78,15 @@ public class CairoMetadata implements Sinkable {
     public void hydrateTable(@NotNull TableToken token, @NotNull CairoConfiguration configuration, @NotNull Log logger, @NotNull Path path, @NotNull ColumnVersionReader columnVersionReader, boolean blindUpsert) {
         logger.debugW().$("hydrating metadata [table=").$(token.getTableName()).I$();
 
-        // set up table path
+        // set up dir path
         path.of(configuration.getRoot())
-                .concat(token.getDirName())
-                .concat(TableUtils.META_FILE_NAME)
+                .concat(token.getDirName());
+
+
+        boolean isSoftLink = Files.isSoftLink(path.$());
+
+        // set up table path
+        path.concat(TableUtils.META_FILE_NAME)
                 .trimTo(path.size());
 
         MemoryCMR metaMem = Vm.getCMRInstance();
@@ -123,6 +127,7 @@ public class CairoMetadata implements Sinkable {
             table.setMaxUncommittedRows(metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS));
             table.setO3MaxLag(metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG));
             table.setTimestampIndex(metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX));
+            table.setIsSoftLink(isSoftLink);
 
             TableUtils.buildWriterOrderMap(metaMem, table.columnOrderMap, metaMem, columnCount);
 
@@ -249,6 +254,8 @@ public class CairoMetadata implements Sinkable {
         table.setMaxUncommittedRows(metadata.getMaxUncommittedRows());
         table.setO3MaxLag(metadata.getO3MaxLag());
         table.setTimestampIndex(metadata.getTimestampIndex());
+        table.setIsSoftLink(metadata.isSoftLink());
+
 
         logger.debugW().$("reading columns [table=").$(table.getName()).$(", count=").$(columnCount).I$();
 

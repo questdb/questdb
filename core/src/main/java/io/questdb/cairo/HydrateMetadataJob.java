@@ -71,14 +71,13 @@ public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
 
     @Override
     protected boolean runSerially() {
-
-        if (position == 0) {
-            LOG.infoW().$("hydration started [all_tables=").$(tokens.size()).I$();
-        }
-
         if (completed) {
             close();
             return true;
+        }
+
+        if (position == 0) {
+            LOG.infoW().$("hydration started [all_tables=").$(tokens.size()).I$();
         }
 
         if (position >= tokens.size()) {
