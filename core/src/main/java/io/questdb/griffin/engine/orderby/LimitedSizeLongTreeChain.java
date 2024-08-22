@@ -59,7 +59,7 @@ import org.jetbrains.annotations.TestOnly;
  * -2 - marks an unused element on the value chain list for the current tree node
  * but should only happen once. It's meant to limit value chain allocations on delete/insert.
  * <p>
- * Values are stored on a heap. Value chain addresses are 12-byte aligned.
+ * Values are stored on a heap. Value chain addresses are 4-byte aligned.
  */
 public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Reopenable {
     // value marks end of value chain
@@ -68,7 +68,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     // marks value chain entry as unused (belonging to a node on the freelist)
     // it's meant to avoid unnecessary reallocations when removing nodes and adding nodes
     private static final long FREE_SLOT = -2;
-    private static final long MAX_VALUE_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) * CHAIN_VALUE_SIZE;
+    private static final long MAX_VALUE_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 2;
     // LIFO list of free blocks to reuse, allocated on the value chain
     private final DirectIntList chainFreeList;
     private final LimitedSizeLongTreeChain.TreeCursor cursor = new LimitedSizeLongTreeChain.TreeCursor();
@@ -309,11 +309,11 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     }
 
     private static int compressValueOffset(long rawOffset) {
-        return (int) (rawOffset / CHAIN_VALUE_SIZE);
+        return (int) (rawOffset >> 2);
     }
 
     private static long uncompressValueOffset(int offset) {
-        return CHAIN_VALUE_SIZE * offset;
+        return ((long) offset) << 2;
     }
 
     private int appendValue(long value, int prevValueOffset) {

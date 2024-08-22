@@ -34,11 +34,11 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 
 /**
- * Values are stored on a heap. Value chain addresses are 12-byte aligned.
+ * Values are stored on a heap. Value chain addresses are 4-byte aligned.
  */
 public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
     private static final long CHAIN_VALUE_SIZE = 12;
-    private static final long MAX_VALUE_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) * CHAIN_VALUE_SIZE;
+    private static final long MAX_VALUE_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 2;
     private final TreeCursor cursor = new TreeCursor();
     private final long initialValueHeapSize;
     private final long maxValueHeapSize;
@@ -142,11 +142,11 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
     }
 
     private static int compressValueOffset(long rawOffset) {
-        return (int) (rawOffset / CHAIN_VALUE_SIZE);
+        return (int) (rawOffset >> 2);
     }
 
     private static long uncompressValueOffset(int offset) {
-        return CHAIN_VALUE_SIZE * offset;
+        return ((long) offset) << 2;
     }
 
     private int appendNewValue(long rowId) {
