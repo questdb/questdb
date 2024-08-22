@@ -39,7 +39,7 @@ import java.util.concurrent.locks.LockSupport;
 
 public final class Os {
     public static final int ARCH_AARCH64 = 1;
-    public static final int ARCH_AMD64 = 2;
+    public static final int ARCH_X86_64 = 2;
     public static final int DARWIN = 1;
     public static final int FREEBSD = 4;
     public static final int LINUX = 2;
@@ -264,8 +264,8 @@ public final class Os {
             arch = ARCH_AARCH64;
             archName = "aarch64";
         } else {
-            arch = ARCH_AMD64;
-            archName = "amd64";
+            arch = ARCH_X86_64;
+            archName = "x86-64";
         }
 
         if ("64".equals(System.getProperty("sun.arch.data.model"))) {
