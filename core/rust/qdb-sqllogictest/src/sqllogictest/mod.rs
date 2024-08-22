@@ -16,6 +16,7 @@ pub extern "system" fn Java_io_questdb_test_Sqllogictest_setEnvVar(
 ) {
     let var_name = unsafe { CStr::from_ptr(var_name).to_str().expect("Invalid UTF-8") };
     let var_value = unsafe { CStr::from_ptr(var_value).to_str().expect("Invalid UTF-8") };
+    println!("Mock code! Delete! {var_name} = {var_value}");
     std::env::set_var(var_name, var_value);
 }
 
