@@ -1617,12 +1617,12 @@ public class JoinTest extends AbstractCairoTest {
                     "(select * from TabB where x = 1 limit 3) )";
             assertSkipToAndCalculateSize(selectWithFilterWithLimit, 9);
 
-            // fwd data frame
+            // fwd page frame
             String selectWithFwdFrame = "(select * from TabA " +
                     "cross join TabB )";
             assertSkipToAndCalculateSize(selectWithFwdFrame, 100);
 
-            // bwd data frame
+            // bwd page frame
             String selectWithBwdFrame = "(select * from " +
                     "(select * from TabA order by ts desc) " +
                     "cross join " +
@@ -1635,7 +1635,7 @@ public class JoinTest extends AbstractCairoTest {
                     "(select * from TabB where ts > 15L*60L*1000000L) )";
             assertSkipToAndCalculateSize(selectWithIntervalFwdFrame, 81);
 
-            // bwd data frame
+            // bwd page frame
             String selectWithIntervalBwdFrame = "( select * from " +
                     "(select * from TabA where ts > 1 order by ts desc ) " +
                     "cross join " +
@@ -3685,11 +3685,11 @@ public class JoinTest extends AbstractCairoTest {
                             "        SelectedRecord\n" +
                             "            Hash Outer Join Light\n" +
                             "              condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: fact_table\n" +
                             "                Hash\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: dim_apTemperature\n"
             );
@@ -4914,11 +4914,11 @@ public class JoinTest extends AbstractCairoTest {
                     "(select * from taBC where x = 0 limit 1) )";
             assertSkipToAndCalculateSize(selectWithFilterAndLimit, 6);
 
-            // fwd data frame
+            // fwd page frame
             String selectWithFwdFrame = "(select * from TabA union all select * from TabB union all select * from TabC)";
             assertSkipToAndCalculateSize(selectWithFwdFrame, 20);
 
-            // bwd data frame
+            // bwd page frame
             String selectWithBwdFrame = "(select * from " +
                     "(select * from TabA order by ts desc) " +
                     "union all " +
@@ -4926,7 +4926,7 @@ public class JoinTest extends AbstractCairoTest {
                     "union all (select * from tabC order by ts desc) )";
             assertSkipToAndCalculateSize(selectWithBwdFrame, 20);
 
-            // interval fwd data frame
+            // interval fwd page frame
             String selectWithIntervalFwdFrame = "(" +
                     "(select * from TabA where ts > 1) " +
                     "union all " +
@@ -5660,7 +5660,7 @@ public class JoinTest extends AbstractCairoTest {
             AtomicInteger counter = new AtomicInteger();
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "ts.d") && counter.incrementAndGet() == 1) {
                         return -1;
                     }

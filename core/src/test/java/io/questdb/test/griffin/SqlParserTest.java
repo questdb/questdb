@@ -9378,7 +9378,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testTableNameCannotOpen() throws Exception {
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
                     return -1;
                 }

@@ -2376,6 +2376,48 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertPartitionParquetExpected() throws Exception {
+        final String ddl = "create table x as (select x l," +
+                " timestamp_sequence(400000000000, 500000000) ts" +
+                " from long_sequence(5)) timestamp(ts) partition by DAY";
+
+        assertException(
+                "alter table x convert partition to list '1970-01-01' to '1970-01-02'",
+                ddl,
+                35,
+                "'parquet' expected"
+        );
+    }
+
+    @Test
+    public void testConvertPartitionPartitionExpected() throws Exception {
+        final String ddl = "create table x as (select x l," +
+                " timestamp_sequence(400000000000, 500000000) ts" +
+                " from long_sequence(5)) timestamp(ts) partition by DAY";
+
+        assertException(
+                "alter table x convert to parquet list '1970-01-01' to '1970-01-02'",
+                ddl,
+                22,
+                "'partition' expected"
+        );
+    }
+
+    @Test
+    public void testConvertPartitionToExpected() throws Exception {
+        final String ddl = "create table x as (select x l," +
+                " timestamp_sequence(400000000000, 500000000) ts" +
+                " from long_sequence(5)) timestamp(ts) partition by DAY";
+
+        assertException(
+                "alter table x convert partition list '1970-01-01' to '1970-01-02'",
+                ddl,
+                32,
+                "'to' expected"
+        );
+    }
+
+    @Test
     public void testCreateAsSelect() throws Exception {
         String expectedData = "a1\ta\tb\tc\td\te\tf\tf1\tg\th\ti\tj\tj1\tk\tl\tm\n" +
                 "1569490116\tnull\tfalse\t\tnull\t0.7611\t428\t-1593\t2015-04-04T16:34:47.226Z\t\t\t185\t7039584373105579285\t1970-01-01T00:00:00.000000Z\t4\t00000000 af 19 c4 95 94 36 53 49 b4 59 7e\n" +
@@ -2808,7 +2850,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             }
 
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (mapCount++ == 6) {
                     return -1;
                 }
@@ -2834,7 +2876,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             private long txnFd;
 
             @Override
-            public boolean close(int fd) {
+            public boolean close(long fd) {
                 if (fd == metaFd) {
                     metaFd = -1;
                 }
@@ -2850,7 +2892,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             }
 
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 // this is very specific failure
                 // it fails to open table writer metadata
                 // and then fails to close txMem
@@ -2865,8 +2907,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             }
 
             @Override
-            public int openRO(LPSZ name) {
-                int fd = super.openRO(name);
+            public long openRO(LPSZ name) {
+                long fd = super.openRO(name);
                 if (Utf8s.endsWithAscii(name, Files.SEPARATOR + TableUtils.META_FILE_NAME)) {
                     metaFd = fd;
                 }
@@ -2874,8 +2916,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
-                int fd = super.openRW(name, opts);
+            public long openRW(LPSZ name, long opts) {
+                long fd = super.openRW(name, opts);
                 if (Utf8s.endsWithAscii(name, Files.SEPARATOR + TableUtils.TXN_FILE_NAME)) {
                     txnFd = fd;
                 }
@@ -3358,7 +3400,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             // number of rows we are appending
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (count-- != 0) {
                     return super.mmap(fd, len, offset, flags, memoryTag);
                 }
@@ -4492,7 +4534,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             }
 
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (inError.get() && pageCount++ > 12) {
                     return -1;
                 }
@@ -4597,7 +4639,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             }
 
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (inError.get() && pageCount++ == 14) {
                     return -1;
                 }
@@ -5054,14 +5096,14 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "            Nested Loop Left Join\n" +
                             "              filter: T1.created<T2.created\n" +
                             "                Limit lo: 0\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: tab\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n" +
                             "        Hash\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tab\n"
             );
@@ -5097,10 +5139,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "        Nested Loop Left Join\n" +
                             "          filter: T1.created<T2.created\n" +
                             "            Limit lo: 1\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row backward scan\n" +
                             "                    Frame backward scan on: tab\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tab\n"
             );
@@ -5253,19 +5295,19 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "                Nested Loop Left Join\n" +
                             "                  filter: T1.created<T2.created\n" +
                             "                    Limit lo: 2\n" +
-                            "                        DataFrame\n" +
+                            "                        PageFrame\n" +
                             "                            Row forward scan\n" +
                             "                            Frame forward scan on: tab\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: tab\n" +
                             "                Hash\n" +
                             "                    Limit lo: 3\n" +
-                            "                        DataFrame\n" +
+                            "                        PageFrame\n" +
                             "                            Row forward scan\n" +
                             "                            Frame forward scan on: tab\n" +
                             "            Limit lo: 4\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n"
             );
@@ -5537,7 +5579,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 compile("reindex table rebuild_index column sym lock exclusive");
                 Assert.fail();
             } catch (CairoException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "Cannot lock table");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "cannot lock table");
             }
         });
     }
@@ -6318,48 +6360,6 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 }
             }
         });
-    }
-
-    @Test
-    public void testConvertPartitionPartitionExpected() throws Exception {
-        final String ddl = "create table x as (select x l," +
-                " timestamp_sequence(400000000000, 500000000) ts" +
-                " from long_sequence(5)) timestamp(ts) partition by DAY";
-
-        assertException(
-                "alter table x convert to parquet list '1970-01-01' to '1970-01-02'",
-                ddl,
-                22,
-                "'partition' expected"
-        );
-    }
-
-    @Test
-    public void testConvertPartitionToExpected() throws Exception {
-        final String ddl = "create table x as (select x l," +
-                " timestamp_sequence(400000000000, 500000000) ts" +
-                " from long_sequence(5)) timestamp(ts) partition by DAY";
-
-        assertException(
-                "alter table x convert partition list '1970-01-01' to '1970-01-02'",
-                ddl,
-                32,
-                "'to' expected"
-        );
-    }
-
-    @Test
-    public void testConvertPartitionParquetExpected() throws Exception {
-        final String ddl = "create table x as (select x l," +
-                " timestamp_sequence(400000000000, 500000000) ts" +
-                " from long_sequence(5)) timestamp(ts) partition by DAY";
-
-        assertException(
-                "alter table x convert partition to list '1970-01-01' to '1970-01-02'",
-                ddl,
-                35,
-                "'parquet' expected"
-        );
     }
 
     private void assertCast(String expectedData, String expectedMeta, String ddl) throws Exception {

@@ -443,7 +443,7 @@ public class Bootstrap {
     private static void verifyFileOpts(Path path, CairoConfiguration cairoConfiguration) {
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         path.of(cairoConfiguration.getRoot()).concat("_verify_").put(cairoConfiguration.getRandom().nextPositiveInt()).put(".d").$();
-        int fd = ff.openRW(path.$(), cairoConfiguration.getWriterFileOpenOpts());
+        long fd = ff.openRW(path.$(), cairoConfiguration.getWriterFileOpenOpts());
         try {
             if (fd > -1) {
                 long mem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -537,7 +537,8 @@ public class Bootstrap {
         try (Path path = new Path()) {
             verifyFileSystem(path, cairoConfig.getRoot(), "db", true);
             verifyFileSystem(path, cairoConfig.getBackupRoot(), "backup", true);
-            verifyFileSystem(path, cairoConfig.getSnapshotRoot(), "snapshot", true);
+            verifyFileSystem(path, cairoConfig.getCheckpointRoot(), TableUtils.CHECKPOINT_DIRECTORY, true);
+            verifyFileSystem(path, cairoConfig.getLegacyCheckpointRoot(), TableUtils.LEGACY_CHECKPOINT_DIRECTORY, true);
             verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input", false);
             verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker", true);
             verifyFileOpts(path, cairoConfig);

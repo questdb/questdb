@@ -36,7 +36,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     private final BitmapIndexWriter writer;
     private long columnTop;
     private volatile boolean distressed = false;
-    private int fd = -1;
+    private long fd = -1;
     private FilesFacade ff;
     @SuppressWarnings({"FieldCanBeLocal", "FieldMayBeFinal"})
     private volatile long sequence = 0L;
@@ -103,7 +103,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
-    public int getFd() {
+    public long getFd() {
         return fd;
     }
 
@@ -118,7 +118,7 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     }
 
     @Override
-    public void index(FilesFacade ff, int dataColumnFd, long loRow, long hiRow) {
+    public void index(FilesFacade ff, long dataColumnFd, long loRow, long hiRow) {
         // while we may have to read column starting with zero offset
         // index values have to be adjusted to partition-level row id
         writer.rollbackConditionally(loRow);

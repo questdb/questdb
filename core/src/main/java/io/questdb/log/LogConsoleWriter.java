@@ -33,7 +33,7 @@ import io.questdb.std.Files;
 import java.io.Closeable;
 
 public class LogConsoleWriter extends SynchronizedJob implements Closeable, LogWriter {
-    private final int fd = Files.getStdOutFd();
+    private final long fd = Files.getStdOutFdInternal();
     private final int level;
     private final RingQueue<LogRecordUtf8Sink> ring;
     private final SCSequence subSeq;

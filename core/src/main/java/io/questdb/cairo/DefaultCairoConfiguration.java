@@ -40,13 +40,14 @@ import java.util.function.LongSupplier;
 
 public class DefaultCairoConfiguration implements CairoConfiguration {
     private final BuildInformation buildInformation = new BuildInformationHolder();
+    private final CharSequence checkpointRoot;
     private final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
     private final CharSequence confRoot;
     private final long databaseIdHi;
     private final long databaseIdLo;
     private final LongSupplier importIDSupplier = () -> getRandom().nextPositiveLong();
+    private final CharSequence legacyCheckpointRoot;
     private final String root;
-    private final CharSequence snapshotRoot;
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
     private final TextConfiguration textConfiguration;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
@@ -56,7 +57,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         this.root = Chars.toString(root);
         this.confRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.CONFIG_DIRECTORY);
         this.textConfiguration = new DefaultTextConfiguration(Chars.toString(confRoot));
-        this.snapshotRoot = PropServerConfiguration.rootSubdir(root, PropServerConfiguration.SNAPSHOT_DIRECTORY);
+        this.checkpointRoot = PropServerConfiguration.rootSubdir(root, TableUtils.CHECKPOINT_DIRECTORY);
+        this.legacyCheckpointRoot = PropServerConfiguration.rootSubdir(root, TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
         Rnd rnd = new Rnd(NanosecondClockImpl.INSTANCE.getTicks(), MicrosecondClockImpl.INSTANCE.getTicks());
         this.databaseIdLo = rnd.nextLong();
         this.databaseIdHi = rnd.nextLong();
@@ -121,6 +123,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean getCairoSqlLegacyOperatorPrecedence() {
         return false;
+    }
+
+    @Override
+    public @NotNull CharSequence getCheckpointRoot() {
+        return checkpointRoot;
     }
 
     @Override
@@ -265,7 +272,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getDoubleToStrCastScale() {
-        return Numbers.MAX_SCALE;
+        return Numbers.MAX_DOUBLE_SCALE;
     }
 
     @Override
@@ -290,7 +297,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getFloatToStrCastScale() {
-        return 4;
+        return Numbers.MAX_FLOAT_SCALE;
     }
 
     @Override
@@ -376,6 +383,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getLatestByQueueCapacity() {
         return 32;
+    }
+
+    @Override
+    public @NotNull CharSequence getLegacyCheckpointRoot() {
+        return legacyCheckpointRoot;
     }
 
     @Override
@@ -572,11 +584,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public @NotNull CharSequence getSnapshotInstanceId() {
         return "";
-    }
-
-    @Override
-    public @NotNull CharSequence getSnapshotRoot() {
-        return snapshotRoot;
     }
 
     @Override
@@ -952,6 +959,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public double getWalLagRowsMultiplier() {
+        return 20;
+    }
+
+    @Override
     public long getWalMaxLagSize() {
         return 75 * Numbers.SIZE_1MB;
     }
@@ -984,11 +996,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getWalSegmentRolloverSize() {
         return 0;  // watermark level disabled.
-    }
-
-    @Override
-    public double getWalLagRowsMultiplier() {
-        return 20;
     }
 
     @Override
@@ -1051,6 +1058,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isCheckpointRecoveryEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isDevModeEnabled() {
         return false;
     }
@@ -1083,11 +1095,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isReadOnlyInstance() {
         return false;
-    }
-
-    @Override
-    public boolean isSnapshotRecoveryEnabled() {
-        return true;
     }
 
     @Override

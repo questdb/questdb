@@ -91,7 +91,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
     private int errorCount = 0;
     private boolean failOnTsError;
     // input file descriptor (cached between initial boundary scan & indexing phases)
-    private int fd = -1;
+    private long fd = -1;
     private long fieldHi;
     private int fieldIndex;
     // these two are pointers either into file read buffer or roll buffer
@@ -361,7 +361,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
         }
     }
 
-    public void sort(int srcFd, long srcSize) {
+    public void sort(long srcFd, long srcSize) {
         if (srcSize < 1) {
             return;
         }

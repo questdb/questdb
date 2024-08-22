@@ -55,7 +55,7 @@ public interface MemoryOM extends MemoryM {
      * @param memoryTag memory tag for diagnostics
      * @param opts      file options
      */
-    void ofOffset(FilesFacade ff, int fd, LPSZ name, long lo, long hi, int memoryTag, long opts);
+    void ofOffset(FilesFacade ff, long fd, LPSZ name, long lo, long hi, int memoryTag, long opts);
 
     /**
      * Maps file to memory

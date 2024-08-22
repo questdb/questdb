@@ -36,7 +36,7 @@ public class DebugUtils {
     public static final Log LOG = LogFactory.getLog(DebugUtils.class);
 
     // For debugging purposes
-    public static boolean checkAscendingTimestamp(FilesFacade ff, long size, int fd) {
+    public static boolean checkAscendingTimestamp(FilesFacade ff, long size, long fd) {
         if (size > 0) {
             long buffer = TableUtils.mapAppendColumnBuffer(ff, fd, 0, size * Long.BYTES, false, MemoryTag.MMAP_DEFAULT);
             try {

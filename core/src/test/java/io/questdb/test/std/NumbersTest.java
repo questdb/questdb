@@ -242,15 +242,15 @@ public class NumbersTest {
             float d2 = (float) random.nextGaussian();
             float d3 = random.nextFloat() * Float.MAX_VALUE;
             sink.clear();
-            Numbers.append(sink, d1);
+            Numbers.append(sink, (double) d1);
             TestUtils.assertEquals(Double.toString(d1), sink);
 
             sink.clear();
-            Numbers.append(sink, d2);
+            Numbers.append(sink, (double) d2);
             TestUtils.assertEquals(Double.toString(d2), sink);
 
             sink.clear();
-            Numbers.append(sink, d3);
+            Numbers.append(sink, (double) d3);
             TestUtils.assertEquals(Double.toString(d3), sink);
         }
     }

@@ -113,7 +113,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
                 int attempt = 0;
 
                 @Override
-                public int openRO(LPSZ path) {
+                public long openRO(LPSZ path) {
                     if (Utf8s.endsWithAscii(path, TableUtils.META_FILE_NAME) && (attempt++ == 2)) {
                         return -1;
                     }
@@ -265,7 +265,7 @@ public class AlterTableO3MaxLagTest extends AbstractCairoTest {
             engine.releaseAllWriters();
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ from) {
+                public long openRO(LPSZ from) {
                     if (Utf8s.endsWithAscii(from, TableUtils.META_FILE_NAME)) {
                         return -1;
                     }

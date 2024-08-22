@@ -58,6 +58,7 @@ import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.cutlass.suspend.TestCase;
 import io.questdb.test.cutlass.suspend.TestCases;
@@ -212,7 +213,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
                 }).start();
 
-                int fd = Net.socketTcp(true);
+                long fd = Net.socketTcp(true);
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
@@ -281,17 +282,17 @@ public class IODispatcherTest extends AbstractTest {
         assertMemoryLeak(() -> {
             final HttpServerConfiguration serverConfiguration = new DefaultHttpServerConfiguration();
             final NetworkFacade nf = new NetworkFacadeImpl() {
-                int theFd;
+                long theFd;
 
                 @Override
-                public int accept(int serverFd) {
-                    int fd = super.accept(serverFd);
+                public long accept(long serverFd) {
+                    long fd = super.accept(serverFd);
                     theFd = fd;
                     return fd;
                 }
 
                 @Override
-                public int configureNonBlocking(int fd) {
+                public int configureNonBlocking(long fd) {
                     if (fd == theFd) {
                         return -1;
                     }
@@ -324,7 +325,7 @@ public class IODispatcherTest extends AbstractTest {
 
                 try {
                     long socketAddr = Net.sockaddr(Net.parseIPv4("127.0.0.1"), 9001);
-                    int fd = Net.socketTcp(true);
+                    long fd = Net.socketTcp(true);
                     try {
                         TestUtils.assertConnect(fd, socketAddr);
 
@@ -376,7 +377,7 @@ public class IODispatcherTest extends AbstractTest {
                     DefaultIODispatcherConfiguration.INSTANCE,
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
-                        public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration, metrics, PlainSocketFactory.INSTANCE) {
                                 @Override
@@ -426,7 +427,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
                 }).start();
 
-                int fd = Net.socketTcp(true);
+                long fd = Net.socketTcp(true);
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
@@ -729,7 +730,7 @@ public class IODispatcherTest extends AbstractTest {
                         "\"&nbsp;&nbsp;&nbsp;&nbsp;Async Filter workers: 2\"\r\n" +
                         "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;limit: 1\"\r\n" +
                         "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)\"\r\n" +
-                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;DataFrame\"\r\n" +
+                        "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;PageFrame\"\r\n" +
                         "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan\"\r\n" +
                         "\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x\"\r\n" +
                         "\r\n" +
@@ -837,13 +838,14 @@ public class IODispatcherTest extends AbstractTest {
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
                         "0288\r\n" +
-                        "{\"query\":\"explain select 1 from x where f>systimestamp() and f<0 limit 1\",\"columns\":[{\"name\":\"QUERY PLAN\",\"type\":\"STRING\"}],\"timestamp\":-1," +
-                        "\"dataset\":[[\"VirtualRecord\"]," +
+                        "{\"query\":\"explain select 1 from x where f>systimestamp() and f<0 limit 1\",\"columns\":[{\"name\":\"QUERY PLAN\",\"type\":\"STRING\"}]," +
+                        "\"timestamp\":-1,\"dataset\":" +
+                        "[[\"VirtualRecord\"]," +
                         "[\"&nbsp;&nbsp;functions: [1]\"]," +
                         "[\"&nbsp;&nbsp;&nbsp;&nbsp;Async Filter workers: 2\"]," +
                         "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;limit: 1\"]," +
                         "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;filter: (systimestamp()&lt;f and f&lt;0)\"]," +
-                        "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;DataFrame\"]," +
+                        "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;PageFrame\"]," +
                         "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Row forward scan\"]," +
                         "[\"&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Frame forward scan on: x\"]]," +
                         "\"count\":8}\r\n" +
@@ -2257,7 +2259,7 @@ public class IODispatcherTest extends AbstractTest {
                         "--------------------------27d997ca93d2689d--",
                 new NetworkFacadeImpl() {
                     @Override
-                    public int sendRaw(int fd, long buffer, int bufferLen) {
+                    public int sendRaw(long fd, long buffer, int bufferLen) {
                         // ensure we do not send more than one byte at a time
                         if (bufferLen > 0) {
                             return super.sendRaw(fd, buffer, 1);
@@ -2330,7 +2332,7 @@ public class IODispatcherTest extends AbstractTest {
         // ensure we do not send more than one byte at a time
         final NetworkFacade nf = new NetworkFacadeImpl() {
             @Override
-            public int sendRaw(int fd, long buffer, int bufferLen) {
+            public int sendRaw(long fd, long buffer, int bufferLen) {
                 // ensure we do not send more than one byte at a time
                 if (bufferLen > 0) {
                     return super.sendRaw(fd, buffer, 1);
@@ -2353,7 +2355,7 @@ public class IODispatcherTest extends AbstractTest {
                 .withTelemetry(false)
                 .withQueryTimeout(100)
                 .run(engine -> {
-                    final int fd = nf.socketTcp(true);
+                    final long fd = nf.socketTcp(true);
                     try {
                         final long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
                         assert sockAddrInfo != -1;
@@ -2476,7 +2478,7 @@ public class IODispatcherTest extends AbstractTest {
                     int totalSent = 0;
 
                     @Override
-                    public int sendRaw(int fd, long buffer, int bufferLen) {
+                    public int sendRaw(long fd, long buffer, int bufferLen) {
                         if (bufferLen > 0) {
                             int result = super.sendRaw(fd, buffer, 1);
                             totalSent += result;
@@ -3611,7 +3613,7 @@ public class IODispatcherTest extends AbstractTest {
                             "\r\n";
 
                     NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-                    int fd = nf.socketTcp(true);
+                    long fd = nf.socketTcp(true);
                     try {
                         long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
                         assert sockAddrInfo != -1;
@@ -3676,7 +3678,7 @@ public class IODispatcherTest extends AbstractTest {
                             + SendAndReceiveRequestBuilder.RequestHeaders;
 
                     final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-                    int fd = -1;
+                    long fd = -1;
                     try {
                         fd = new SendAndReceiveRequestBuilder().connectAndSendRequest(request);
                         TestUtils.assertEventually(() -> Assert.assertNotNull(eventRef.get()), 10);
@@ -5328,7 +5330,7 @@ public class IODispatcherTest extends AbstractTest {
                             "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                             "\r\n";
 
-                    int fd = nf.socketTcp(true);
+                    long fd = nf.socketTcp(true);
                     try {
                         long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
                         assert sockAddrInfo != -1;
@@ -5545,7 +5547,7 @@ public class IODispatcherTest extends AbstractTest {
                     new IOContextFactory<HttpConnectionContext>() {
                         @SuppressWarnings("resource")
                         @Override
-                        public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             openCount.incrementAndGet();
                             return new HttpConnectionContext(httpServerConfiguration, metrics, PlainSocketFactory.INSTANCE) {
                                 @Override
@@ -5589,7 +5591,7 @@ public class IODispatcherTest extends AbstractTest {
                         }
                     }).start();
 
-                    IntList openFds = new IntList();
+                    LongList openFds = new LongList();
 
                     final long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     final long buf = Unsafe.malloc(4096, MemoryTag.NATIVE_DEFAULT);
@@ -5713,7 +5715,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testMissingURL() throws Exception {
         testJsonQuery0(2, engine -> {
-            int fd = Net.socketTcp(true);
+            long fd = Net.socketTcp(true);
             try {
                 long sockAddrInfo = Net.getAddrInfo("127.0.0.1", 9001);
                 try {
@@ -6139,7 +6141,7 @@ public class IODispatcherTest extends AbstractTest {
 
                         writeRandomFile(path, rnd, 122299092L);
 
-                        int fd = Net.socketTcp(true);
+                        long fd = Net.socketTcp(true);
                         try {
                             long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                             try {
@@ -6432,7 +6434,7 @@ public class IODispatcherTest extends AbstractTest {
                     DefaultIODispatcherConfiguration.INSTANCE,
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
-                        public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration, metrics, PlainSocketFactory.INSTANCE) {
                                 @Override
@@ -6498,7 +6500,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
                 }).start();
 
-                int fd = Net.socketTcp(true);
+                long fd = Net.socketTcp(true);
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
@@ -6604,7 +6606,7 @@ public class IODispatcherTest extends AbstractTest {
                     DefaultIODispatcherConfiguration.INSTANCE,
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
-                        public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration, metrics, PlainSocketFactory.INSTANCE) {
                                 @Override
@@ -6674,7 +6676,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
                 }).start();
 
-                int fd = Net.socketTcp(true);
+                long fd = Net.socketTcp(true);
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
@@ -6764,7 +6766,7 @@ public class IODispatcherTest extends AbstractTest {
                     },
                     new IOContextFactory<HttpConnectionContext>() {
                         @Override
-                        public HttpConnectionContext newInstance(int fd, IODispatcher<HttpConnectionContext> dispatcher1) {
+                        public HttpConnectionContext newInstance(long fd, IODispatcher<HttpConnectionContext> dispatcher1) {
                             connectLatch.countDown();
                             return new HttpConnectionContext(httpServerConfiguration, metrics, PlainSocketFactory.INSTANCE) {
                                 @Override
@@ -6829,7 +6831,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
                 }).start();
 
-                int fd = Net.socketTcp(true);
+                long fd = Net.socketTcp(true);
                 try {
                     long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                     try {
@@ -7859,7 +7861,7 @@ public class IODispatcherTest extends AbstractTest {
                             long sockAddr = Net.sockaddr("127.0.0.1", 9001);
                             try {
                                 for (int i = 0; i < N && !finished.get(); i++) {
-                                    int fd = Net.socketTcp(true);
+                                    long fd = Net.socketTcp(true);
                                     try {
                                         TestUtils.assertConnect(fd, sockAddr);
                                         int len = request.length();
@@ -8232,7 +8234,7 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     private static void assertDownloadResponse(
-            int fd,
+            long fd,
             Rnd rnd,
             long buffer,
             int len,
@@ -8385,7 +8387,7 @@ public class IODispatcherTest extends AbstractTest {
                 .execute(request, response);
     }
 
-    private static void sendRequest(String request, int fd, long buffer) {
+    private static void sendRequest(String request, long fd, long buffer) {
         final int requestLen = request.length();
         Utf8s.strCpyAscii(request, requestLen, buffer);
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
@@ -8410,7 +8412,7 @@ public class IODispatcherTest extends AbstractTest {
                         TestCase testCase = testCases.getQuick(i);
                         // http does not support bind variables yet
                         if (testCase.getBindVariableValues().length == 0) {
-                            System.out.println("************** SQL ******************");
+                            System.out.println("************** SQL " + i + " ******************");
                             System.out.println(testCase.getQuery());
                             System.out.println("*************************************");
 
@@ -8444,13 +8446,17 @@ public class IODispatcherTest extends AbstractTest {
 
         String dirName = TableUtils.getTableDir(mangleTableDirNames, tableName, 1, false);
         TableToken tableToken = new TableToken(tableName, dirName, 1, false, false, false);
-        try (TableReader reader = new TableReader(configuration, tableToken)) {
+        try (
+                TableReader reader = new TableReader(configuration, tableToken);
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
+        ) {
+            cursor.of(reader);
             Assert.assertEquals(expectedO3MaxLag, reader.getO3MaxLag());
             Assert.assertEquals(expectedMaxUncommittedRows, reader.getMaxUncommittedRows());
             Assert.assertEquals(expectedImportedRows, reader.size());
             Assert.assertEquals(0, expectedImportedRows - reader.size());
             StringSink sink = new StringSink();
-            TestUtils.assertCursor(expectedData, reader.getCursor(), reader.getMetadata(), false, sink);
+            TestUtils.assertCursor(expectedData, cursor, reader.getMetadata(), false, sink);
         }
     }
 
@@ -8460,14 +8466,18 @@ public class IODispatcherTest extends AbstractTest {
 
         String telemetry = TelemetryTask.TABLE_NAME;
         TableToken telemetryTableName = new TableToken(telemetry, telemetry, 0, false, false, false, true);
-        try (TableReader reader = new TableReader(configuration, telemetryTableName)) {
+        try (
+                TableReader reader = new TableReader(configuration, telemetryTableName);
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()
+        ) {
+            cursor.of(reader);
             final StringSink sink = new StringSink();
             sink.clear();
-            printTelemetryEventAndOrigin(reader.getCursor(), reader.getMetadata(), sink);
+            printTelemetryEventAndOrigin(cursor, reader.getMetadata(), sink);
             TestUtils.assertEquals(expected, sink);
-            reader.getCursor().toTop();
+            cursor.toTop();
             sink.clear();
-            printTelemetryEventAndOrigin(reader.getCursor(), reader.getMetadata(), sink);
+            printTelemetryEventAndOrigin(cursor, reader.getMetadata(), sink);
             TestUtils.assertEquals(expected, sink);
         }
     }
@@ -8783,7 +8793,7 @@ public class IODispatcherTest extends AbstractTest {
                     TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
 
                     final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
-                    int fd = nf.socketTcp(true);
+                    long fd = nf.socketTcp(true);
                     try {
                         long sockAddrInfo = nf.getAddrInfo("127.0.0.1", 9001);
                         assert sockAddrInfo != -1;
@@ -9108,7 +9118,7 @@ public class IODispatcherTest extends AbstractTest {
     private void testMaxConnections0(
             IODispatcher<HttpConnectionContext> dispatcher,
             long sockAddr,
-            IntList openFds,
+            LongList openFds,
             long buf
     ) {
         // Connect sockets that would be consumed by dispatcher plus
@@ -9116,7 +9126,7 @@ public class IODispatcherTest extends AbstractTest {
         // This is necessary for TCP stack to start rejecting new connections
         openFds.clear();
         for (int i = 0; i < 400; i++) {
-            int fd = Net.socketTcp(true);
+            long fd = Net.socketTcp(true);
             LOG.info().$("Connecting socket ").$(i).$(" fd=").$(fd).$();
             TestUtils.assertConnect(fd, sockAddr);
             openFds.add(fd);
@@ -9147,7 +9157,7 @@ public class IODispatcherTest extends AbstractTest {
         try {
             for (int i = 0; i < 400; i++) {
                 LOG.info().$("Sending request via socket #").$(i).$();
-                int fd = openFds.getQuick(i);
+                long fd = openFds.getQuick(i);
                 Assert.assertEquals(request.length(), Net.send(fd, mem, request.length()));
                 // ensure we have response from server
                 int len = Net.recv(fd, buf, 64);
@@ -9187,10 +9197,10 @@ public class IODispatcherTest extends AbstractTest {
             final long queuedConnectionTimeoutInMs = 250;
 
             class TestIOContext extends IOContext<TestIOContext> {
-                private final IntHashSet serverConnectedFds;
+                private final LongHashSet serverConnectedFds;
                 private long heartbeatId;
 
-                public TestIOContext(int fd, IntHashSet serverConnectedFds) {
+                public TestIOContext(long fd, LongHashSet serverConnectedFds) {
                     super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG, NullLongGauge.INSTANCE);
                     socket.of(fd);
                     this.serverConnectedFds = serverConnectedFds;
@@ -9198,7 +9208,7 @@ public class IODispatcherTest extends AbstractTest {
 
                 @Override
                 public void close() {
-                    final int fd = getFd();
+                    final long fd = getFd();
                     super.close();
                     LOG.info().$(fd).$(" disconnected").$();
                     serverConnectedFds.remove(fd);
@@ -9240,8 +9250,8 @@ public class IODispatcherTest extends AbstractTest {
             final int listenBackLog = configuration.getListenBacklog();
 
             final AtomicInteger nConnected = new AtomicInteger();
-            final IntHashSet serverConnectedFds = new IntHashSet();
-            final IntHashSet clientActiveFds = new IntHashSet();
+            final LongHashSet serverConnectedFds = new LongHashSet();
+            final LongHashSet clientActiveFds = new LongHashSet();
             IOContextFactory<TestIOContext> contextFactory = (fd, dispatcher) -> {
                 LOG.info().$(fd).$(" connected").$();
                 serverConnectedFds.add(fd);
@@ -9262,7 +9272,7 @@ public class IODispatcherTest extends AbstractTest {
                     public void run() {
                         long smem = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
                         IORequestProcessor<TestIOContext> requestProcessor = (operation, context, dispatcher) -> {
-                            int fd = context.getFd();
+                            long fd = context.getFd();
                             int rc;
                             switch (operation) {
                                 case IOOperation.READ:
@@ -9311,7 +9321,7 @@ public class IODispatcherTest extends AbstractTest {
                 int nClientConnects = 0;
                 int nClientConnectRefused = 0;
                 for (int i = 0; i < listenBackLog + activeConnectionLimit; i++) {
-                    int fd = Net.socketTcp(true);
+                    long fd = Net.socketTcp(true);
                     assertTrue(fd > -1);
                     clientActiveFds.add(fd);
                     if (Net.connect(fd, sockAddr) != 0) {
@@ -9336,7 +9346,7 @@ public class IODispatcherTest extends AbstractTest {
 
                 // Close all connections and wait for server to resume listening
                 while (clientActiveFds.size() > 0) {
-                    int fd = clientActiveFds.get(0);
+                    long fd = clientActiveFds.get(0);
                     clientActiveFds.remove(fd);
                     Net.close(fd);
                 }
@@ -9351,7 +9361,7 @@ public class IODispatcherTest extends AbstractTest {
                 nClientConnects = 0;
                 nClientConnectRefused = 0;
                 for (int i = 0; i < listenBackLog + activeConnectionLimit; i++) {
-                    int fd = Net.socketTcp(true);
+                    long fd = Net.socketTcp(true);
                     assertTrue(fd > -1);
                     clientActiveFds.add(fd);
                     if (Net.connect(fd, sockAddr) != 0) {
@@ -9376,7 +9386,7 @@ public class IODispatcherTest extends AbstractTest {
 
                 // Close all remaining client connections
                 for (int n = 0; n < clientActiveFds.size(); n++) {
-                    int fd = clientActiveFds.get(n);
+                    long fd = clientActiveFds.get(n);
                     Net.close(fd);
                 }
                 serverThread.interrupt();
@@ -9396,7 +9406,7 @@ public class IODispatcherTest extends AbstractTest {
         if (Files.exists(path.$())) {
             assertTrue(Files.remove(path.$()));
         }
-        int fd = Files.openAppend(path.$());
+        long fd = Files.openAppend(path.$());
 
         long buf = Unsafe.malloc(1048576, MemoryTag.NATIVE_DEFAULT); // 1Mb buffer
         for (int i = 0; i < 1048576; i++) {
@@ -9478,7 +9488,7 @@ public class IODispatcherTest extends AbstractTest {
         private final long buffer = Unsafe.malloc(1024, MemoryTag.NATIVE_DEFAULT);
         private final SOCountDownLatch closeLatch;
 
-        public HelloContext(int fd, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
+        public HelloContext(long fd, SOCountDownLatch closeLatch, IODispatcher<HelloContext> dispatcher) {
             super(PlainSocketFactory.INSTANCE, NetworkFacadeImpl.INSTANCE, LOG, NullLongGauge.INSTANCE);
             this.of(fd, dispatcher);
             this.closeLatch = closeLatch;

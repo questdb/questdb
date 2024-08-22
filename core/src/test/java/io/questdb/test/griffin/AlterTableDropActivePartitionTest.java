@@ -340,7 +340,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
     public void testDropActivePartitionFailsBecausePrevMaxPartitionIsIncorrect() throws Exception {
         FilesFacade myFf = new TestFilesFacadeImpl() {
             @Override
-            public long readNonNegativeLong(int fd, long offset) {
+            public long readNonNegativeLong(long fd, long offset) {
                 return 17;
             }
         };
@@ -375,7 +375,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
     public void testDropActivePartitionFailsBecauseWeCannotReadPrevMaxPartition() throws Exception {
         FilesFacade myFf = new TestFilesFacadeImpl() {
             @Override
-            public long readNonNegativeLong(int fd, long offset) {
+            public long readNonNegativeLong(long fd, long offset) {
                 return -1;
             }
         };
@@ -975,7 +975,7 @@ public class AlterTableDropActivePartitionTest extends AbstractCairoTest {
         assertSql(expected, tableName);
 
         workerPool = new TestWorkerPool(1);
-        O3PartitionPurgeJob partitionPurgeJob = new O3PartitionPurgeJob(engine, engine.getSnapshotAgent(), 1);
+        O3PartitionPurgeJob partitionPurgeJob = new O3PartitionPurgeJob(engine, 1);
         workerPool.assign(partitionPurgeJob);
         workerPool.freeOnExit(partitionPurgeJob);
         workerPool.start(); // closed by assertTableX

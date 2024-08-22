@@ -211,7 +211,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
     }
 
     @Override
-    public LineTcpConnectionContext of(int fd, @NotNull IODispatcher<LineTcpConnectionContext> dispatcher) {
+    public LineTcpConnectionContext of(long fd, @NotNull IODispatcher<LineTcpConnectionContext> dispatcher) {
         super.of(fd, dispatcher);
         if (recvBufStart == 0) {
             recvBufStart = Unsafe.malloc(configuration.getNetMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
@@ -305,7 +305,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
                 .$("] could not parse measurement, ").$(parser.getErrorCode())
                 .$(" at ").$(position)
                 .$(", line (may be mangled due to partial parsing): '")
-                .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress(), !parser.hasNonAsciiChars())).$("'")
+                .$(byteCharSequence.of(recvBufStartOfMeasurement, parser.getBufferAddress(), false)).$("'")
                 .$();
     }
 

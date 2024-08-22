@@ -36,6 +36,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.*;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -1236,7 +1237,7 @@ public class WalWriterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, long opts) {
                     if (Utf8s.endsWithAscii(name, WAL_INDEX_FILE_NAME)) {
                         // Set errno to path does not exist
                         this.openRO(Path.getThreadLocal2("does-not-exist").$());
@@ -1439,7 +1440,7 @@ public class WalWriterTest extends AbstractCairoTest {
     public void testOverlappingStructureChangeCannotCreateFile() throws Exception {
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, "0" + Files.SEPARATOR + "c.d")) {
                     return -1;
                 }
@@ -1467,7 +1468,7 @@ public class WalWriterTest extends AbstractCairoTest {
     public void testOverlappingStructureChangeFails() throws Exception {
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 try {
                     throw new RuntimeException("Test failure");
                 } catch (Exception e) {
@@ -1500,7 +1501,7 @@ public class WalWriterTest extends AbstractCairoTest {
     public void testOverlappingStructureChangeMissing() throws Exception {
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public long readNonNegativeLong(int fd, long offset) {
+            public long readNonNegativeLong(long fd, long offset) {
                 try {
                     throw new RuntimeException("Test failure");
                 } catch (Exception e) {
@@ -2925,10 +2926,12 @@ public class WalWriterTest extends AbstractCairoTest {
                 walWriter.commit();
             }
 
-            try (TableReader reader = engine.getReader(tableToken)) {
+            try (
+                    TableReader reader = engine.getReader(tableToken);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
                 assertEquals(5, reader.getMetadata().getColumnCount());
                 assertEquals(5, reader.getTransientRowCount());
-                RecordCursor cursor = reader.getCursor();
                 Record record = cursor.getRecord();
                 int i = 0;
                 while (cursor.hasNext()) {
@@ -3052,7 +3055,7 @@ public class WalWriterTest extends AbstractCairoTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
 
             @Override
-            public long length(int fd) {
+            public long length(long fd) {
                 long len = super.length(fd);
                 if (fd == this.fd && evenFileLengthCallBack.get() != null) {
                     TestUtils.unchecked(() -> {
@@ -3064,7 +3067,7 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (fd == this.fd) {
                     if (evenFileLengthCallBack.get() != null) {
                         TestUtils.unchecked(() -> {
@@ -3081,8 +3084,8 @@ public class WalWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public int openRO(LPSZ path) {
-                int fd = super.openRO(path);
+            public long openRO(LPSZ path) {
+                long fd = super.openRO(path);
                 if (Utf8s.endsWithAscii(path, EVENT_FILE_NAME)) {
                     this.fd = fd;
                 }

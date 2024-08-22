@@ -55,7 +55,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private long buffer;
     private Status currentStatus = Status.OK;
     private long errorId;
-    private int fd = -1;
+    private long fd = -1;
     private int line = 0;
     private long recvBufEnd;
     private long recvBufPos;
@@ -151,7 +151,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         return currentStatus == Status.OK;
     }
 
-    public void of(int fd, byte timestampPrecision, SecurityContext securityContext) {
+    public void of(long fd, byte timestampPrecision, SecurityContext securityContext) {
         this.fd = fd;
         this.securityContext = securityContext;
         this.appender.setTimestampAdapter(timestampPrecision);
@@ -189,7 +189,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         }
     }
 
-    public void reject(Status status, String errorText, int fd) {
+    public void reject(Status status, String errorText, long fd) {
         currentStatus = status;
         error.put(errorText);
         this.fd = fd;

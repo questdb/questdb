@@ -30,7 +30,7 @@ package io.questdb.network;
 public class EventFdSuspendEvent extends SuspendEvent {
 
     private final EpollFacade epf;
-    private final int fd;
+    private final long fd;
 
     public EventFdSuspendEvent(EpollFacade epf) {
         this.epf = epf;
@@ -38,8 +38,7 @@ public class EventFdSuspendEvent extends SuspendEvent {
         if (fd < 0) {
             throw NetworkError.instance(epf.errno(), "could not create EventFdSuspendEvent");
         }
-        this.fd = fd;
-        epf.getNetworkFacade().bumpFdCount(fd);
+        this.fd = epf.getNetworkFacade().bumpFdCount(fd);
     }
 
     @Override
@@ -53,7 +52,7 @@ public class EventFdSuspendEvent extends SuspendEvent {
     }
 
     @Override
-    public int getFd() {
+    public long getFd() {
         return fd;
     }
 

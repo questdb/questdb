@@ -86,6 +86,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SHOW_PARTITIONS = 3;
     public static final int SHOW_SEARCH_PATH = 8;
     public static final int SHOW_SERVER_VERSION = 12;
+    public static final int SHOW_SERVER_VERSION_NUM = 13;
     public static final int SHOW_STANDARD_CONFORMING_STRINGS = 7;
     public static final int SHOW_TABLES = 1;
     public static final int SHOW_TIME_ZONE = 10;
@@ -935,11 +936,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public ObjList<CharSequence> getUpdateTableColumnNames() {
-        return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnNames() : updateTableColumnNames;
+        return updateTableModel != null ? updateTableModel.getUpdateTableColumnNames() : updateTableColumnNames;
     }
 
     public IntList getUpdateTableColumnTypes() {
-        return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnTypes() : updateTableColumnTypes;
+        return updateTableModel != null ? updateTableModel.getUpdateTableColumnTypes() : updateTableColumnTypes;
     }
 
     public TableToken getUpdateTableToken() {

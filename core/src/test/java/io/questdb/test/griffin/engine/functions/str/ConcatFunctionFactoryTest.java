@@ -33,6 +33,7 @@ import io.questdb.test.tools.BindVariableTestTuple;
 import org.junit.Test;
 
 public class ConcatFunctionFactoryTest extends AbstractCairoTest {
+
     @Test
     public void testAllTypes() throws Exception {
         assertMemoryLeak(() -> {

@@ -233,7 +233,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         sendBuffer(buffer);
     }
 
-    private int getFd() {
+    private long getFd() {
         return socket != null ? socket.getFd() : -1;
     }
 

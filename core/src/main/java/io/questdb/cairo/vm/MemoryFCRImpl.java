@@ -33,10 +33,6 @@ import io.questdb.cairo.vm.api.MemoryFR;
  */
 public class MemoryFCRImpl extends AbstractMemoryCR implements MemoryFR, MemoryCR {
 
-    public MemoryFCRImpl() {
-        super(false);
-    }
-
     @Override
     public long addressHi() {
         return lim;
@@ -54,7 +50,7 @@ public class MemoryFCRImpl extends AbstractMemoryCR implements MemoryFR, MemoryC
     }
 
     @Override
-    public int getFd() {
+    public long getFd() {
         return -1;
     }
 

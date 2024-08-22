@@ -145,7 +145,7 @@ public class TableConverter {
     }
 
     private static boolean readWalEnabled(LPSZ path, FilesFacade ff) {
-        int fd = -1;
+        long fd = -1;
         try {
             fd = ff.openRO(path);
             if (fd < 1) {
