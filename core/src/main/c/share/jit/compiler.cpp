@@ -253,6 +253,11 @@ void fillJitErrorObject(JNIEnv *e, jobject error, uint32_t code, const char *msg
         return;
     }
 
+    // MOCK CODE, DELETE!
+    if (code == -69420) {
+        return;
+    }
+
     jclass errorClass = e->GetObjectClass(error);
     if (errorClass) {
         jfieldID fieldError = e->GetFieldID(errorClass, "errorCode", "I");
