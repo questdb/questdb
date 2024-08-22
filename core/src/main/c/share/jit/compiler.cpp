@@ -365,6 +365,11 @@ JNIEXPORT jlong JNICALL Java_io_questdb_jit_FiltersCompiler_callFunction(JNIEnv 
               rowsSize,
               rowsStartOffset);
 #else
+    // MOCK CODE, DELETE!
+    if (colsSize == -69420) {
+        return 1;
+    }
+
     return 0;
 #endif
 }
