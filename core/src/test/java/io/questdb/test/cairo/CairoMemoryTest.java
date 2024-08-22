@@ -58,7 +58,7 @@ public class CairoMemoryTest extends AbstractTest {
             boolean force = true;
 
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (force || rnd.nextBoolean()) {
                     force = false;
                     return super.mmap(fd, len, offset, flags, memoryTag);
@@ -102,7 +102,7 @@ public class CairoMemoryTest extends AbstractTest {
             int count = 2;
 
             @Override
-            public boolean allocate(int fd, long size) {
+            public boolean allocate(long fd, long size) {
                 if (allClear || --count > 0) {
                     return super.allocate(fd, size);
                 }
@@ -138,7 +138,7 @@ public class CairoMemoryTest extends AbstractTest {
 
         class X extends FilesFacadeImpl {
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 int n = name.size();
                 if (n > 5 && Utf8s.equalsAscii(".fail", name, n - 5, n)) {
                     return -1;
@@ -220,7 +220,7 @@ public class CairoMemoryTest extends AbstractTest {
                     mem.putLong(i);
                 }
                 Assert.assertEquals(8L * N, mem.getAppendOffset());
-                int fd = mem.getFd();
+                long fd = mem.getFd();
                 mem.detachFdClose();
 
                 MemoryCMORImpl memR = new MemoryCMORImpl();
@@ -245,7 +245,7 @@ public class CairoMemoryTest extends AbstractTest {
                 for (int i = 0; i < N; i++) {
                     mem.putLong(i);
                 }
-                int fd = mem.getFd();
+                long fd = mem.getFd();
                 mem.detachFdClose();
 
                 MemoryCMORImpl memR = new MemoryCMORImpl();
@@ -267,7 +267,7 @@ public class CairoMemoryTest extends AbstractTest {
 
         class X extends FilesFacadeImpl {
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 int n = name.size();
                 if (n > 5 && Utf8s.equalsAscii(".fail", name, n - 5, n)) {
                     return -1;
@@ -432,7 +432,7 @@ public class CairoMemoryTest extends AbstractTest {
             }
 
             @Override
-            public long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
                 if (rnd.nextBoolean()) {
                     return -1;
                 }

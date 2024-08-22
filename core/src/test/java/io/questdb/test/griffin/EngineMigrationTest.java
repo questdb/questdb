@@ -158,7 +158,7 @@ public class EngineMigrationTest extends AbstractCairoTest {
 
         // Make abc _txn too short
         Path abcTxnPath = Path.getThreadLocal(config.getRoot()).concat(tokenAbc).concat(TableUtils.TXN_FILE_NAME);
-        int fd = TableUtils.openRW(ff, abcTxnPath.$(), LOG, config.getWriterFileOpenOpts());
+        long fd = TableUtils.openRW(ff, abcTxnPath.$(), LOG, config.getWriterFileOpenOpts());
         Assert.assertTrue(ff.truncate(fd, 50));
         ff.close(fd);
 

@@ -59,7 +59,6 @@ import static io.questdb.cairo.wal.WalUtils.*;
  * Header and record is described in @link TableTransactionLogFile
  * <p>
  * Transaction record: 60 bytes
- * <p>
  */
 public class TableTransactionLogV2 implements TableTransactionLogFile {
     public static final long MIN_TIMESTAMP_OFFSET = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
@@ -85,7 +84,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         rootPath = new Path();
     }
 
-    public static long readMaxStructureVersion(Path path, int logFileFd, FilesFacade ff) {
+    public static long readMaxStructureVersion(Path path, long logFileFd, FilesFacade ff) {
         long lastTxn = ff.readNonNegativeLong(logFileFd, TableTransactionLogFile.MAX_TXN_OFFSET_64);
         if (lastTxn < 0) {
             return -1;
@@ -101,7 +100,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             long part = prevTxn / partTransactionCount;
             int size = path.size();
             path.concat(TXNLOG_PARTS_DIR).slash().put(part);
-            int partFd = -1;
+            long partFd = -1;
             try {
                 partFd = openRO(ff, path.$(), LOG);
                 long fileReadOffset = (prevTxn % partTransactionCount) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET;
@@ -308,8 +307,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         private final Path rootPath;
         private long address;
         private FilesFacade ff;
-        private int headerFd;
-        private int partFd = -1;
+        private long headerFd;
+        private long partFd = -1;
         private long partId = -1;
         private long partMapSize;
         private int partTransactionCount;

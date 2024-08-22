@@ -24,6 +24,8 @@
 
 package io.questdb;
 
+import static io.questdb.std.Files.toOsFd;
+
 public class KqueueAccessor {
     public static final short DATA_OFFSET;
     public static final short EVFILT_READ;
@@ -45,61 +47,85 @@ public class KqueueAccessor {
     public static final short NOTE_WRITE;
     public static final short SIZEOF_KEVENT;
 
-    public static native long evtAlloc(long ident, int filter, int flags, int fflags, long data);
+    public static long evtAlloc(long ident, int filter, int flags, int fflags, long data) {
+        return evtAlloc(toOsFd(ident), filter, flags, fflags, data);
+    }
 
     public static native long evtFree(long event);
 
-    public static native short getDataOffset();
+    public static int kevent(long kq, long changeList, int nChanges, long eventList, int nEvents, int timeout) {
+        return kevent(toOsFd(kq), changeList, nChanges, eventList, nEvents, timeout);
+    }
 
-    public static native short getEvAdd();
+    public static int keventGetBlocking(long kq, long eventList, int nEvents) {
+        return keventGetBlocking(toOsFd(kq), eventList, nEvents);
+    }
 
-    public static native short getEvClear();
-
-    public static native short getEvDelete();
-
-    public static native short getEvOneshot();
-
-    public static native short getEvfiltRead();
-
-    public static native short getEvfiltVnode();
-
-    public static native short getEvfiltWrite();
-
-    public static native short getFdOffset();
-
-    public static native short getFilterOffset();
-
-    public static native short getFlagsOffset();
-
-    public static native short getNoteAttrib();
-
-    public static native short getNoteDelete();
-
-    public static native short getNoteExtend();
-
-    public static native short getNoteLink();
-
-    public static native short getNoteRename();
-
-    public static native short getNoteRevoke();
-
-    public static native short getNoteWrite();
-
-    public static native short getSizeofKevent();
-
-    public static native int kevent(int kq, long changeList, int nChanges, long eventList, int nEvents, int timeout);
-
-    public static native int keventGetBlocking(int kq, long eventList, int nEvents);
-
-    public static native int keventRegister(int kq, long changeList, int nChanges);
+    public static int keventRegister(long kq, long changeList, int nChanges) {
+        return keventRegister(toOsFd(kq), changeList, nChanges);
+    }
 
     public static native int kqueue();
 
     public static native long pipe();
 
-    public static native int readPipe(int fd);
+    public static int readPipe(long fd) {
+        return readPipe(toOsFd(fd));
+    }
 
-    public static native int writePipe(int fd);
+    public static int writePipe(long fd) {
+        return writePipe(toOsFd(fd));
+    }
+
+    private static native long evtAlloc(int ident, int filter, int flags, int fflags, long data);
+
+    private static native short getDataOffset();
+
+    private static native short getEvAdd();
+
+    private static native short getEvClear();
+
+    private static native short getEvDelete();
+
+    private static native short getEvOneshot();
+
+    private static native short getEvfiltRead();
+
+    private static native short getEvfiltVnode();
+
+    private static native short getEvfiltWrite();
+
+    private static native short getFdOffset();
+
+    private static native short getFilterOffset();
+
+    private static native short getFlagsOffset();
+
+    private static native short getNoteAttrib();
+
+    private static native short getNoteDelete();
+
+    private static native short getNoteExtend();
+
+    private static native short getNoteLink();
+
+    private static native short getNoteRename();
+
+    private static native short getNoteRevoke();
+
+    private static native short getNoteWrite();
+
+    private static native short getSizeofKevent();
+
+    private static native int kevent(int kq, long changeList, int nChanges, long eventList, int nEvents, int timeout);
+
+    private static native int keventGetBlocking(int kq, long eventList, int nEvents);
+
+    private static native int keventRegister(int kq, long changeList, int nChanges);
+
+    private static native int readPipe(int fd);
+
+    private static native int writePipe(int fd);
 
     static {
         EVFILT_READ = getEvfiltRead();

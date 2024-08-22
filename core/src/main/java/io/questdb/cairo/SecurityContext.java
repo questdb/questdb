@@ -35,7 +35,8 @@ public interface SecurityContext extends Mutable {
     byte AUTH_TYPE_CREDENTIALS = 1;
     // The user authenticated with a JWK token.
     byte AUTH_TYPE_JWK_TOKEN = 2;
-    // The context is not aware of authentication types.
+    // The user is not authenticated.
+    // Either tried to authenticate and failed, or did not try to authenticate at all.
     byte AUTH_TYPE_NONE = 0;
 
     void authorizeAdminAction();

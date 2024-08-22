@@ -684,7 +684,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         doQuerySuffix(response, columnCount);
     }
 
-    private int getFd() {
+    private long getFd() {
         return httpConnectionContext.getFd();
     }
 

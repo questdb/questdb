@@ -284,7 +284,7 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     protected Socket newSocket() {
         final int ipv4address = Net.parseIPv4("127.0.0.1");
         final long sockaddr = Net.sockaddr(ipv4address, bindPort);
-        final int fd = Net.socketTcp(true);
+        final long fd = Net.socketTcp(true);
         final Socket socket = new Socket(sockaddr, fd);
 
         if (TestUtils.connect(fd, sockaddr) != 0) {
@@ -401,10 +401,10 @@ public class AbstractLineTcpReceiverTest extends AbstractCairoTest {
     }
 
     protected class Socket implements AutoCloseable {
-        private final int fd;
+        private final long fd;
         private final long sockaddr;
 
-        private Socket(long sockaddr, int fd) {
+        private Socket(long sockaddr, long fd) {
             this.sockaddr = sockaddr;
             this.fd = fd;
         }

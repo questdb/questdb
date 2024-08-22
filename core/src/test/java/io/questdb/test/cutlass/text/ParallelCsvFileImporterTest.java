@@ -270,7 +270,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportCsvFailsOnStructureParsingIO() throws Exception {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public long read(int fd, long buf, long len, long offset) {
+            public long read(long fd, long buf, long len, long offset) {
                 return -1L;
             }
         };
@@ -530,7 +530,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportFailsOnBoundaryScanningIO() throws Exception {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
-            public long read(int fd, long buf, long len, long offset) {
+            public long read(long fd, long buf, long len, long offset) {
                 if (offset > 30000) {
                     return -1L;
                 } else {
@@ -564,7 +564,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
-            public long read(int fd, long buf, long len, long offset) {
+            public long read(long fd, long buf, long len, long offset) {
                 if (offset == 31 && len == 1940) {
                     return -1;
                 }
@@ -590,7 +590,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             int count = 0;
 
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, "test-quotes-big.csv")) {
                     if (count++ > 1) {
                         return -1;
@@ -607,7 +607,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportFailsOnFileOpenInBuildSymbolIndexPhase() throws Exception {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, "line.v") && stackContains("PhaseBuildSymbolIndex")) {
                     return -1;
                 }
@@ -623,7 +623,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportFailsOnFileOpenInDataImportPhase() throws Exception {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, "3_1")) {
                     return -1;
                 }
@@ -638,7 +638,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportFailsOnFileOpenInIndexingPhase() throws Exception {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, "test-quotes-big.csv") && stackContains("CsvFileIndexer")) {
                     return -1;
                 }
@@ -653,7 +653,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportFailsOnFileOpenInSymbolKeysUpdatePhase() throws Exception {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, "line.r") && stackContains("PhaseUpdateSymbolKeys")) {
                     return -1;
                 }
@@ -668,7 +668,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportFailsOnFileOpenInSymbolMergePhase() throws Exception {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, "line.c")) {
                     return -1;
                 }
@@ -683,7 +683,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportFailsOnFileSortingInIndexingPhase() throws Exception {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (Arrays.stream(new Exception().getStackTrace())
                         .anyMatch(ste -> ste.getClassName().endsWith("CsvFileIndexer") && ste.getMethodName().equals("sort"))) {
                     return -1;
@@ -699,7 +699,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testImportFailsOnSourceFileIndexingIO() throws Exception {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
-            public long read(int fd, long buf, long len, long offset) {
+            public long read(long fd, long buf, long len, long offset) {
                 if (offset == 0 && len == 16797) {
                     return -1;
                 }
@@ -1451,7 +1451,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             }
 
             @Override
-            public long enqueueRead(int fd, long offset, long bufAddr, int len) {
+            public long enqueueRead(long fd, long offset, long bufAddr, int len) {
                 if (rnd.nextBoolean()) {
                     return super.enqueueRead(fd, offset, bufAddr, len);
                 }
@@ -2406,7 +2406,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testWhenImportFailsWhenAttachingPartitionsThenPreExistingTableIsStillEmpty() throws Exception {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
-            public int openRO(LPSZ path) {
+            public long openRO(LPSZ path) {
                 if (Utf8s.endsWithAscii(path, "1972-09" + configuration.getAttachPartitionSuffix() + File.separator + "ts.d")) {
                     return -1;
                 }
@@ -2469,7 +2469,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
     public void testWhenImportFailsWhileAttachingPartitionThenNewlyCreatedTableIsRemoved() throws Exception {
         FilesFacade brokenFf = new TestFilesFacadeImpl() {
             @Override
-            public int openRO(LPSZ path) {
+            public long openRO(LPSZ path) {
                 if (Utf8s.endsWithAscii(path, "1972-09" + configuration.getAttachPartitionSuffix() + File.separator + "ts.d")) {
                     return -1;
                 }
@@ -2527,7 +2527,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             importer.setMinChunkSize(1);
             importer.of("table", fileName, 1, PartitionBy.DAY, (byte) ',', "unknown", null, false);
 
-            int fd = ff.openRO(path.$());
+            long fd = ff.openRO(path.$());
             long length = ff.length(fd);
             Assert.assertTrue(fd > -1);
 
@@ -2611,7 +2611,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
             importer.setMinChunkSize(1);
             importer.of("tableName", fileName, 1, partitionBy, (byte) ',', "ts", format, false);
 
-            int fd = TableUtils.openRO(ff, path.$(), LOG);
+            long fd = TableUtils.openRO(ff, path.$(), LOG);
             try {
                 importer.parseStructure(fd, sqlExecutionContext.getSecurityContext());
                 long length = ff.length(fd);

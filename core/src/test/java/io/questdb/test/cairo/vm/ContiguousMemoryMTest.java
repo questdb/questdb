@@ -156,7 +156,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
 
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
-                public long length(int fd) {
+                public long length(long fd) {
                     long r = Files.length(fd);
                     if (r < 0 || trigger.get()) {
                         throw CairoException.critical(Os.errno()).put("Checking file size failed");
@@ -339,7 +339,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
         try (Path path = new Path().of(root).concat("tmp1")) {
             ff.touch(path.$());
-            final int fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
+            final long fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
             try (MemoryMARW mem = Vm.getMARWInstance()) {
                 mem.of(ff, fd, null, -1, MemoryTag.MMAP_DEFAULT);
 
@@ -719,7 +719,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
             boolean failTruncate = false;
 
             @Override
-            public long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
                 if (--counter < 0) {
                     failTruncate = true;
                     return -1;
@@ -728,7 +728,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean truncate(int fd, long size) {
+            public boolean truncate(long fd, long size) {
                 if (failTruncate) {
                     return false;
                 }

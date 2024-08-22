@@ -12862,7 +12862,7 @@ public class SampleByTest extends AbstractCairoTest {
             int count = x;
 
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (count-- > 0) {
                     return super.mmap(fd, len, offset, flags, memoryTag);
                 }

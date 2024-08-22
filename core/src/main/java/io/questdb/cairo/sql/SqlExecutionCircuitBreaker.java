@@ -42,7 +42,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
-        public boolean checkIfTripped(long millis, int fd) {
+        public boolean checkIfTripped(long millis, long fd) {
             return false;
         }
 
@@ -52,7 +52,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
-        public int getFd() {
+        public long getFd() {
             return -1;
         }
 
@@ -62,7 +62,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
-        public int getState(long millis, int fd) {
+        public int getState(long millis, long fd) {
             return STATE_OK;
         }
 
@@ -85,7 +85,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
         }
 
         @Override
-        public void setFd(int fd) {
+        public void setFd(long fd) {
         }
 
         @Override
@@ -112,12 +112,12 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
      */
     void cancel();
 
-    boolean checkIfTripped(long millis, int fd);
+    boolean checkIfTripped(long millis, long fd);
 
     @Nullable
     SqlExecutionCircuitBreakerConfiguration getConfiguration();
 
-    int getFd();
+    long getFd();
 
     /**
      * Similar to checkIfTripped() method but returns int value describing reason for tripping.
@@ -131,7 +131,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
     int getState();
 
     /**
-     * Similar to checkIfTripped(long millis, int fd) method but returns int value describing reason for tripping.
+     * Similar to checkIfTripped(long millis, long fd) method but returns int value describing reason for tripping.
      *
      * @return circuit breaker state, one of: <br>
      * - {@link #STATE_OK} <br>
@@ -139,7 +139,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
      * - {@link #STATE_BROKEN_CONNECTION} <br>
      * - {@link #STATE_TIMEOUT} <br>
      */
-    int getState(long millis, int fd);
+    int getState(long millis, long fd);
 
     /**
      * Checks if timer is due.
@@ -152,7 +152,7 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker {
 
     void setCancelledFlag(AtomicBoolean cancelled);
 
-    void setFd(int fd);
+    void setFd(long fd);
 
     /**
      * Uses internal state of the circuit breaker to assert conditions. This method also

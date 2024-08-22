@@ -103,14 +103,14 @@ public class WalWriter implements TableWriterAPI {
     private boolean open;
     private boolean rollSegmentOnNextRow = false;
     private int segmentId = -1;
-    private int segmentLockFd = -1;
+    private long segmentLockFd = -1;
     private long segmentRowCount = -1;
     private TableToken tableToken;
     private TxReader txReader;
     private long txnMaxTimestamp = -1;
     private long txnMinTimestamp = Long.MAX_VALUE;
     private boolean txnOutOfOrder = false;
-    private int walLockFd = -1;
+    private long walLockFd = -1;
 
     public WalWriter(
             CairoConfiguration configuration,
@@ -486,7 +486,7 @@ public class WalWriter implements TableWriterAPI {
                         .put(", walId=").put(walId)
                         .put(", segmentId=").put(newSegmentId).put(']');
             }
-            final int oldSegmentLockFd = segmentLockFd;
+            final long oldSegmentLockFd = segmentLockFd;
             segmentLockFd = -1;
             try {
                 createSegmentDir(newSegmentId);
@@ -704,11 +704,11 @@ public class WalWriter implements TableWriterAPI {
         return columnIndex * 2;
     }
 
-    private int acquireSegmentLock() {
+    private long acquireSegmentLock() {
         final int segmentPathLen = path.size();
         try {
             lockName(path);
-            final int segmentLockFd = TableUtils.lock(ff, path.$());
+            final long segmentLockFd = TableUtils.lock(ff, path.$());
             if (segmentLockFd == -1) {
                 path.trimTo(segmentPathLen);
                 throw CairoException.critical(ff.errno()).put("Cannot lock wal segment: ").put(path);
@@ -874,14 +874,14 @@ public class WalWriter implements TableWriterAPI {
     private void closeSegmentSwitchFiles(SegmentColumnRollSink newColumnFiles) {
         int commitMode = configuration.getCommitMode();
         for (int columnIndex = 0, n = newColumnFiles.count(); columnIndex < n; columnIndex++) {
-            final int primaryFd = newColumnFiles.getDestPrimaryFd(columnIndex);
+            final long primaryFd = newColumnFiles.getDestPrimaryFd(columnIndex);
             if (commitMode != CommitMode.NOSYNC) {
                 ff.fsyncAndClose(primaryFd);
             } else {
                 ff.close(primaryFd);
             }
 
-            final int secondaryFd = newColumnFiles.getDestAuxFd(columnIndex);
+            final long secondaryFd = newColumnFiles.getDestAuxFd(columnIndex);
             if (commitMode != CommitMode.NOSYNC) {
                 ff.fsyncAndClose(secondaryFd);
             } else {
@@ -1273,7 +1273,7 @@ public class WalWriter implements TableWriterAPI {
     private void openNewSegment() {
         final int oldSegmentId = segmentId;
         final int newSegmentId = segmentId + 1;
-        final int oldSegmentLockFd = segmentLockFd;
+        final long oldSegmentLockFd = segmentLockFd;
         segmentLockFd = -1;
         final long oldSegmentRows = segmentRowCount;
         try {
@@ -1281,7 +1281,7 @@ public class WalWriter implements TableWriterAPI {
             rowValueIsNotNull.fill(0, columnCount, -1);
             final int segmentPathLen = createSegmentDir(newSegmentId);
             segmentId = newSegmentId;
-            final int dirFd;
+            final long dirFd;
             final int commitMode = configuration.getCommitMode();
             if (Os.isWindows() || commitMode == CommitMode.NOSYNC) {
                 dirFd = -1;
@@ -1328,7 +1328,7 @@ public class WalWriter implements TableWriterAPI {
         }
     }
 
-    private void releaseSegmentLock(int segmentId, int segmentLockFd, long segmentRowCount) {
+    private void releaseSegmentLock(int segmentId, long segmentLockFd, long segmentRowCount) {
         if (ff.close(segmentLockFd)) {
             if (segmentRowCount > 0) {
                 sequencer.notifySegmentClosed(tableToken, lastSeqTxn, walId, segmentId);
@@ -1611,11 +1611,11 @@ public class WalWriter implements TableWriterAPI {
         }
 
         long newSize = rollSink.getDestPrimarySize(srcColumnIndex);
-        int newPrimaryFd = rollSink.getDestPrimaryFd(srcColumnIndex);
+        long newPrimaryFd = rollSink.getDestPrimaryFd(srcColumnIndex);
         MemoryMA destPrimeCol = getDataColumn(destColumnIndex);
         destPrimeCol.switchTo(ff, newPrimaryFd, getDataAppendPageSize(), newSize, isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
 
-        int newSecondaryFd = rollSink.getDestAuxFd(srcColumnIndex);
+        long newSecondaryFd = rollSink.getDestAuxFd(srcColumnIndex);
         if (newSecondaryFd > -1) {
             long secondarySize = rollSink.getDestAuxSize(srcColumnIndex);
             MemoryMA destAuxColumn = getAuxColumn(destColumnIndex);

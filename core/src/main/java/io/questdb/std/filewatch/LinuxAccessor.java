@@ -24,11 +24,43 @@
 
 package io.questdb.std.filewatch;
 
+import io.questdb.std.Files;
+
 public class LinuxAccessor {
     public static final int IN_CLOSE_WRITE;
     public static final int IN_CREATE;
     public static final int IN_MODIFY;
     public static final int IN_MOVED_TO;
+
+    public static int inotifyAddWatch(long fd, long pathPtr, int flags) {
+        return inotifyAddWatch(Files.toOsFd(fd), pathPtr, flags);
+    }
+
+    public static short inotifyRmWatch(long fd, int wd) {
+        return inotifyRmWatch(Files.toOsFd(fd), wd);
+    }
+
+    public static int readEvent(long fd, long buf, int bufSize) {
+        return readEvent(Files.toOsFd(fd), buf, bufSize);
+    }
+
+    public static int readPipe(long fd) {
+        return readPipe(Files.toOsFd(fd));
+    }
+
+    public static int writePipe(long fd) {
+        return writePipe(Files.toOsFd(fd));
+    }
+
+    private static native int inotifyAddWatch(int fd, long pathPtr, int flags);
+
+    private static native short inotifyRmWatch(int fd, int wd);
+
+    private static native int readEvent(int fd, long buf, int bufSize);
+
+    private static native int readPipe(int fd);
+
+    private static native int writePipe(int fd);
 
     static native short getEventFilenameOffset();
 
@@ -44,19 +76,9 @@ public class LinuxAccessor {
 
     static native short getSizeofEvent();
 
-    static native int inotifyAddWatch(int fd, long pathPtr, int flags);
-
     static native int inotifyInit();
 
-    static native short inotifyRmWatch(int fd, int wd);
-
     static native long pipe();
-
-    static native int readEvent(int fd, long buf, int bufSize);
-
-    static native int readPipe(int fd);
-
-    static native int writePipe(int fd);
 
     static {
         IN_CLOSE_WRITE = getINCLOSEWRITE();
