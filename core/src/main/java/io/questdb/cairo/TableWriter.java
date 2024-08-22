@@ -946,7 +946,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     dedupColumnCommitAddresses.setDedupColumnCount(dedupColumnCommitAddresses.getColumnCount() - 1);
                 }
 
-                CairoMetadata.INSTANCE.hydrateTable(tableToken, configuration, LOG, true);
+                CairoMetadata.INSTANCE.hydrateTable(metadata, LOG, true);
             } finally {
                 // clear temp resources
                 convertOperator.finishColumnConversion();
@@ -2332,7 +2332,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         finishColumnPurge();
 
-        CairoMetadata.INSTANCE.hydrateTable(tableToken, configuration, LOG, true);
+        CairoMetadata.INSTANCE.hydrateTable(metadata, LOG, true);
         LOG.info().$("REMOVED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' from ").$substr(pathRootSize, path).$();
     }
 

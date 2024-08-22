@@ -57,18 +57,6 @@ public class CairoTable implements Sinkable {
         this.setTableToken(token);
     }
 
-    public void addColumn(@NotNull CairoColumn newColumn) throws CairoException {
-        final CharSequence columnName = newColumn.getName();
-        final CairoColumn existingColumn = getColumnQuiet(columnName);
-        if (existingColumn != null) {
-            throw CairoException.nonCritical().put("column already exists in table [table=").put(getName()).put(", column=").put(columnName).put("]");
-        }
-        columns.add(newColumn);
-
-        final int denseIndex = columns.size() - 1;
-        columnNameIndexMap.put(columnName, denseIndex);
-    }
-
     public void clear() {
         for (int i = 0, n = columns.size(); i < n; i++) {
             columns.remove(i);
@@ -230,6 +218,19 @@ public class CairoTable implements Sinkable {
             if (i != columns.size() - 1) {
                 sink.put('\n');
             }
+        }
+    }
+
+    public void upsertColumn(@NotNull CairoColumn newColumn) throws CairoException {
+        final CharSequence columnName = newColumn.getName();
+        final CairoColumn existingColumn = getColumnQuiet(columnName);
+        if (existingColumn != null) {
+            int denseIndex = columnNameIndexMap.get(columnName);
+            columns.getAndSetQuick(denseIndex, newColumn);
+        } else {
+            columns.add(newColumn);
+            final int denseIndex = columns.size() - 1;
+            columnNameIndexMap.put(columnName, denseIndex);
         }
     }
 
