@@ -41,7 +41,6 @@ import org.junit.Test;
  * Test RBTree removal cases asserting final tree structure.
  */
 public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
-
     // used in all tests to hide api complexity
     LimitedSizeLongTreeChain chain;
     RecordComparator comparator;
@@ -361,7 +360,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
 
     private void removeRowWithValue(long value) {
         cursor.recordAtValue(left, value);
-        long node = chain.find(left, cursor, placeholder, comparator);
+        int node = chain.find(left, cursor, placeholder, comparator);
         chain.removeAndCache(node);
     }
 

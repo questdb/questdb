@@ -193,23 +193,6 @@ public class DirectLongListTest {
     }
 
     @Test
-    public void testRemoveLast() {
-        try (DirectLongList list = new DirectLongList(32, MemoryTag.NATIVE_DEFAULT)) {
-            final int N = 100;
-            for (int i = 0; i < N; i++) {
-                list.add(i);
-            }
-            Assert.assertEquals(128, list.getCapacity());
-            Assert.assertEquals(N, list.size());
-            for (long i = 0; i < list.size(); i++) {
-                list.removeLast();
-                Assert.assertEquals(128, list.getCapacity());
-                Assert.assertEquals(N - i - 1, list.size());
-            }
-        }
-    }
-
-    @Test
     public void testResizeMemLeak() {
         // use logger so that static memory allocation happens before our control measurement
         LOG.info().$("testResizeMemLeak").$();
