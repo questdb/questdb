@@ -413,10 +413,10 @@ public class CleartextPasswordPgWireAuthenticator implements SocketAuthenticator
         recvBufReadPos += 1 + Integer.BYTES; // first move beyond the msgType and msgLen
 
         long hi = PGConnectionContext.getStringLength(recvBufReadPos, msgLimit, "bad password length");
-        if (verifyPassword(username, recvBufReadPos, (int) (hi - recvBufReadPos))) {
+        authType = verifyPassword(username, recvBufReadPos, (int) (hi - recvBufReadPos));
+        if (authType != AUTH_TYPE_NONE) {
             recvBufReadPos = msgLimit;
             state = State.AUTH_SUCCESS;
-            authType = matcher.getAuthType();
         } else {
             LOG.info().$("bad password for user [user=").$(username).$(']').$();
             prepareErrorResponse("invalid username/password");
@@ -500,7 +500,7 @@ public class CleartextPasswordPgWireAuthenticator implements SocketAuthenticator
     }
 
     // kept protected for ent
-    protected boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
+    protected byte verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
         return matcher.verifyPassword(username, passwordPtr, passwordLen);
     }
 
