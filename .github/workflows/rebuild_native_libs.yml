@@ -1,4 +1,4 @@
-name: Build and Push Release CXX/Rust libraries
+name: Build and Push Release CXX Libraries
 on:
   workflow_dispatch:
 # This workflow is triggered manually from the Actions tab.
@@ -255,7 +255,7 @@ jobs:
           git add core/src/main/bin/linux-aarch64/libjemalloc.so
           git add core/src/main/resources/io/questdb/bin/windows-x86-64/libquestdb.dll
           
-          git commit -m "chore(build): rebuild CXX libraries"
+          git commit -m "Rebuild CXX libraries"
       - name: Check git status after
         run: |
           git status

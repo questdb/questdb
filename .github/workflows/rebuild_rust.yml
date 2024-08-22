@@ -1,4 +1,4 @@
-name: Build Rust libraries
+name: Build and Push Release Rust Libraries
 on:
   workflow_dispatch:
 # This workflow is triggered manually from the Actions tab.
@@ -189,7 +189,7 @@ jobs:
           git add core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdbr.so
           git add core/src/main/resources/io/questdb/bin/windows-x86-64/questdbr.dll
           
-          git commit -m "chore(build): rebuild Rust libraries"
+          git commit -m "Rebuild Rust libraries"
       - name: Check git status after
         run: |
           git status

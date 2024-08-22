@@ -1,4 +1,4 @@
-name: Build Rust Test libraries
+name: Build and Push Rust Test Libraries
 on:
   workflow_dispatch:
 # This workflow is triggered manually from the Actions tab.
@@ -189,7 +189,7 @@ jobs:
           git add core/src/test/resources/io/questdb/bin/linux-aarch64/libqdbsqllogictest.so
           git add core/src/test/resources/io/questdb/bin/windows-x86-64/qdbsqllogictest.dll
           
-          git commit -m "chore(build): rebuild Rust libraries"
+          git commit -m "Rebuild Rust Test libraries"
       - name: Check git status after
         run: |
           git status
