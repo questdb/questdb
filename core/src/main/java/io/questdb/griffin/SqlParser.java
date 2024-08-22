@@ -2204,6 +2204,29 @@ public class SqlParser {
                                 throw SqlException.$(lexer.lastTokenPosition(), "RANGE with offset PRECEDING/FOLLOWING requires exactly one ORDER BY column");
                             }
 
+                            tok = tok(lexer, "'inclusive' 'exclusive' 'right' 'left'");
+                            if(isInclusiveKeyword(tok)) {
+                                model.setBetweenType(1);
+                            } else if(isExclusiveKeyword(tok)) {
+                                model.setBetweenType(2);
+                            } else if(isRightKeyword(tok)) {
+                                tok = tok(lexer, "'open'");
+                                if(isOpenKeyword(tok)) {
+                                    model.setBetweenType(3);
+                                } else {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "'open' expected");
+                                }
+                            } else if(isLeftKeyword(tok)) {
+                                tok = tok(lexer, "'open'");
+                                if(isOpenKeyword(tok)) {
+                                    model.setBetweenType(4);
+                                } else {
+                                    throw SqlException.$(lexer.lastTokenPosition(), "'open' expected");
+                                }
+                            } else {
+                                throw SqlException.$(lexer.lastTokenPosition(), "'inclusive' 'exclusive' 'right' 'left' expected");
+                            }
+
                             tok = tok(lexer, "'exclude' or ')' expected");
 
                             if (isExcludeKeyword(tok)) {

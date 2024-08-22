@@ -742,6 +742,19 @@ public class SqlKeywords {
                 && (tok.charAt(1) | 32) == 'n';
     }
 
+    public static boolean isInclusiveKeyword(CharSequence tok) {
+        return tok.length() == 9
+                && (tok.charAt(0) | 32) == 'i'
+                && (tok.charAt(1) | 32) == 'n'
+                && (tok.charAt(2) | 32) == 'c'
+                && (tok.charAt(3) | 32) == 'l'
+                && (tok.charAt(4) | 32) == 'u'
+                && (tok.charAt(5) | 32) == 's'
+                && (tok.charAt(6) | 32) == 'i'
+                && (tok.charAt(7) | 32) == 'v'
+                && (tok.charAt(8) | 32) == 'e';
+    }
+
     public static boolean isIndexKeyword(CharSequence tok) {
         return tok.length() == 5
                 && (tok.charAt(0) | 32) == 'i'
@@ -1220,6 +1233,14 @@ public class SqlKeywords {
                 && (tok.charAt(1) | 32) == 'n'
                 && (tok.charAt(2) | 32) == 'l'
                 && (tok.charAt(3) | 32) == 'y';
+    }
+
+    public static boolean isOpenKeyword(CharSequence tok) {
+        return tok.length() == 4
+                && (tok.charAt(0) | 32) == 'o'
+                && (tok.charAt(1) | 32) == 'p'
+                && (tok.charAt(2) | 32) == 'e'
+                && (tok.charAt(3) | 32) == 'n';
     }
 
     public static boolean isOrKeyword(CharSequence tok) {
