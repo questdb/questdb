@@ -67,7 +67,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_create_ordered_tree() {
+    public void testCreateOrderedTree() {
         assertTree(
                 "[Black,2]\n" +
                         " L-[Black,1]\n" +
@@ -79,7 +79,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_create_ordered_tree_with_duplicates() {
+    public void testCreateOrderedTreeWithDuplicates() {
         assertTree(
                 "[Black,2]\n" +
                         " L-[Black,1(2)]\n" +
@@ -91,7 +91,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_create_ordered_tree_with_input_in_descending_order() {
+    public void testCreateOrderedTreeWithInputInDescendingOrder() {
         assertTree(
                 "[Black,4]\n" +
                         " L-[Black,2]\n" +
@@ -103,7 +103,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_create_ordered_tree_with_input_in_no_order() {
+    public void testCreateOrderedTreeWithInputInNoOrder() {
         assertTree(
                 "[Black,3]\n" +
                         " L-[Black,2]\n" +
@@ -116,7 +116,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
 
     // sibling is black and its both children are black (?)
     @Test
-    public void test_remove_black_node_with_black_sibling_with_both_children_black() {
+    public void testRemoveBlackNodeWithBlackSiblingWithBothChildrenBlack() {
         assertTree(
                 "[Black,30]\n" +
                         " L-[Black,20]\n" +
@@ -134,7 +134,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
 
     // right left case
     @Test
-    public void test_remove_black_node_with_black_sibling_with_red_left_child() {
+    public void testRemoveBlackNodeWithBlackSiblingWithRedLeftChild() {
         assertTree(
                 "[Black,30]\n" +
                         " L-[Black,20]\n" +
@@ -152,9 +152,9 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
 
     // new test cases
     // current node is double black and not the root; sibling is black and at least one of its children is red
-    // right right case
+    // right-right case
     @Test
-    public void test_remove_black_node_with_black_sibling_with_red_right_child() {
+    public void testRemoveBlackNodeWithBlackSiblingWithRedRightChild() {
         assertTree(
                 "[Black,30]\n" +
                         " L-[Black,20]\n" +
@@ -173,7 +173,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_remove_black_node_with_both_children_and_right_is_not_successor() {
+    public void testRemoveBlackNodeWithBothChildrenAndRightIsNotSuccessor() {
         assertTree(
                 "[Black,1]\n" +
                         " L-[Black,0]\n" +
@@ -195,7 +195,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_remove_black_node_with_both_children_and_right_is_not_successor_but_doesnt_require_rotation() {
+    public void testRemoveBlackNodeWithBothChildrenAndRightIsNotSuccessorButDoesNotRequireRotation() {
         assertTree(
                 "[Black,3]\n" +
                         " L-[Red,1]\n" +
@@ -222,7 +222,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_remove_black_node_with_both_children_and_right_is_not_successor_requires_rotation_todo() {
+    public void testRemoveBlackNodeWithBothChildrenAndRightIsNotSuccessorRequiresRotationTodo() {
         assertTree(
                 "[Black,1]\n" +
                         " L-[Black,0]\n" +
@@ -245,7 +245,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_remove_black_node_with_both_children_and_right_is_successor() {
+    public void testRemoveBlackNodeWithBothChildrenAndRightIsSuccessor() {
         assertTree(
                 "[Black,1]\n" +
                         " L-[Black,0]\n" +
@@ -264,7 +264,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_remove_black_node_with_left_child_only() {
+    public void testRemoveBlackNodeWithLeftChildOnly() {
         assertTree(
                 "[Black,1]\n" +
                         " L-[Black,0]\n" +
@@ -283,7 +283,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_remove_black_node_with_no_children() {
+    public void testRemoveBlackNodeWithNoChildren() {
         assertTree(
                 "[Black,1]\n" +
                         " L-[Red,0]\n" +
@@ -298,7 +298,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_remove_black_node_with_right_child_only() {
+    public void testRemoveBlackNodeWithRightChildOnly() {
         assertTree(
                 "[Black,1]\n" +
                         " L-[Black,0]\n" +
@@ -315,7 +315,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test_remove_red_node_with_both_children_and_right_is_black_successor() {
+    public void testRemoveRedNodeWithBothChildrenAndRightIsBlackSuccessor() {
         assertTree(
                 "[Black,3]\n" +
                         " L-[Red,1]\n" +

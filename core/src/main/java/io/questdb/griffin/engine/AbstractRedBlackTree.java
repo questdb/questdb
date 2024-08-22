@@ -25,51 +25,86 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.Reopenable;
-import io.questdb.std.MemoryPages;
-import io.questdb.std.Misc;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 
+/**
+ * A native memory heap-based red-black tree. Used in ORDER BY factories.
+ */
 public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     protected static final byte BLACK = 0;
-    protected static final byte EMPTY = -1;//empty reference; used to mark leaves/sentinels
+    protected static final long EMPTY = -1; // empty reference; used to mark leaves/sentinels
     // parent is at offset 0
-    protected static final int OFFSET_LEFT = 8;
+    protected static final long OFFSET_LEFT = 8;
     protected static final byte RED = 1;
     // P(8) + L + R + C(1) + REF + LAST_REF
-    private static final int BLOCK_SIZE = 8 + 8 + 8 + 1 + 8 + 8; // 41 (it would be good to align to power of two, but entry would use way too much memory)
-    private static final int OFFSET_COLOUR = 24;
+    private static final long BLOCK_SIZE = 8 + 8 + 8 + 1 + 8 + 8; // 41 (it would be good to align to power of two, but entry would use way too much memory)
+    private static final long OFFSET_COLOUR = 24;
     // offset to last reference in value chain (kept to avoid having to traverse whole chain on each addition)
-    private static final int OFFSET_LAST_REF = 33;
-    private static final int OFFSET_REF = 25;
-    private static final int OFFSET_RIGHT = 16;
-    protected final MemoryPages mem;
+    private static final long OFFSET_LAST_REF = 33;
+    private static final long OFFSET_REF = 25;
+    private static final long OFFSET_RIGHT = 16;
+    private final long initialKeyHeapSize;
+    private final long maxKeyHeapSize;
     protected long root = -1;
+    private long keyHeapLimit;
+    private long keyHeapPos;
+    private long keyHeapSize;
+    private long keyHeapStart;
 
     public AbstractRedBlackTree(long keyPageSize, int keyMaxPages) {
-        assert keyPageSize >= getBlockSize();
-        this.mem = new MemoryPages(keyPageSize, keyMaxPages);
+        assert keyPageSize >= BLOCK_SIZE;
+        keyHeapSize = initialKeyHeapSize = keyPageSize;
+        keyHeapStart = keyHeapPos = Unsafe.malloc(keyHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
+        keyHeapLimit = keyHeapStart + keyHeapSize;
+        maxKeyHeapSize = keyPageSize * keyMaxPages;
     }
 
     @Override
     public void clear() {
         root = -1;
-        this.mem.clear();
+        keyHeapPos = keyHeapStart;
     }
 
     @Override
     public void close() {
         root = -1;
-        Misc.free(mem);
+        if (keyHeapStart != 0) {
+            keyHeapStart = Unsafe.free(keyHeapStart, keyHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
+            keyHeapLimit = keyHeapPos = 0;
+            keyHeapSize = 0;
+        }
     }
 
     @Override
     public void reopen() {
-        mem.reopen();
+        if (keyHeapStart == 0) {
+            keyHeapSize = initialKeyHeapSize;
+            keyHeapStart = keyHeapPos = Unsafe.malloc(keyHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
+            keyHeapLimit = keyHeapStart + keyHeapSize;
+        }
     }
 
     public long size() {
-        return mem.countNumberOf(getBlockSize());
+        return (keyHeapPos - keyHeapStart) / BLOCK_SIZE;
+    }
+
+    private void checkCapacity() {
+        if (keyHeapPos + BLOCK_SIZE > keyHeapLimit) {
+            final long newHeapSize = keyHeapSize << 1;
+            if (newHeapSize > maxKeyHeapSize) {
+                throw LimitOverflowException.instance().put("limit of ").put(maxKeyHeapSize).put(" memory exceeded in RedBlackTree");
+            }
+            long newHeapPos = Unsafe.realloc(keyHeapStart, keyHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
+
+            keyHeapSize = newHeapSize;
+            long delta = newHeapPos - keyHeapStart;
+            keyHeapPos += delta;
+
+            this.keyHeapStart = newHeapPos;
+            this.keyHeapLimit = newHeapPos + newHeapSize;
+        }
     }
 
     private void rotateLeft(long p) {
@@ -116,83 +151,18 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
         }
     }
 
-    protected static byte colorOf(long blockAddress) {
-        return blockAddress == -1 ? BLACK : Unsafe.getUnsafe().getByte(blockAddress + OFFSET_COLOUR);
-    }
-
-    protected static long lastRefOf(long blockAddress) {
-        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + OFFSET_LAST_REF);
-    }
-
-    protected static long leftOf(long blockAddress) {
-        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + OFFSET_LEFT);
-    }
-
-    protected static long parent2Of(long blockAddress) {
-        return parentOf(parentOf(blockAddress));
-    }
-
-    protected static long parentOf(long blockAddress) {
-        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress);
-    }
-
-    protected static long refOf(long blockAddress) {
-        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + OFFSET_REF);
-    }
-
-    //methods below check for -1 to simulate sentinel value and thus simplify insert/remove methods
-    protected static long rightOf(long blockAddress) {
-        return blockAddress == -1 ? -1 : Unsafe.getUnsafe().getLong(blockAddress + OFFSET_RIGHT);
-    }
-
-    protected static void setColor(long blockAddress, byte colour) {
-        Unsafe.getUnsafe().putByte(blockAddress + OFFSET_COLOUR, colour);
-    }
-
-    protected static void setLastRef(long blockAddress, long recRef) {
-        Unsafe.getUnsafe().putLong(blockAddress + OFFSET_LAST_REF, recRef);
-    }
-
-    protected static void setLeft(long blockAddress, long left) {
-        Unsafe.getUnsafe().putLong(blockAddress + OFFSET_LEFT, left);
-    }
-
-    protected static void setParent(long blockAddress, long parent) {
-        Unsafe.getUnsafe().putLong(blockAddress, parent);
-    }
-
-    protected static void setRef(long blockAddress, long recRef) {
-        Unsafe.getUnsafe().putLong(blockAddress + OFFSET_REF, recRef);
-    }
-
-    protected static void setRight(long blockAddress, long right) {
-        Unsafe.getUnsafe().putLong(blockAddress + OFFSET_RIGHT, right);
-    }
-
-    protected static long successor(long current) {
-        long p = rightOf(current);
-        if (p != -1) {
-            long l;
-            while ((l = leftOf(p)) != -1) {
-                p = l;
-            }
-        } else {
-            p = parentOf(current);
-            long ch = current;
-            while (p != -1 && ch == rightOf(p)) {
-                ch = p;
-                p = parentOf(p);
-            }
-        }
-        return p;
-    }
-
     protected long allocateBlock() {
-        long p = mem.allocate(getBlockSize());
-        setLeft(p, -1);
-        setRight(p, -1);
-        setColor(p, BLACK);
-        return p;
+        checkCapacity();
+        long offset = keyHeapPos - keyHeapStart;
+        setLeft(offset, -1);
+        setRight(offset, -1);
+        setColor(offset, BLACK);
+        keyHeapPos += BLOCK_SIZE;
+        return offset;
+    }
+
+    protected byte colorOf(long blockOffset) {
+        return blockOffset == -1 ? BLACK : Unsafe.getUnsafe().getByte(keyHeapStart + blockOffset + OFFSET_COLOUR);
     }
 
     protected long findMaxNode() {
@@ -202,7 +172,6 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
             parent = p;
             p = rightOf(p);
         } while (p > -1);
-
         return parent;
     }
 
@@ -213,7 +182,6 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
             parent = p;
             p = leftOf(p);
         } while (p > -1);
-
         return parent;
     }
 
@@ -225,7 +193,7 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
         boolean isLeftChild = parent != EMPTY && leftOf(parent) == node;
 
         while (node != root && colorOf(node) == BLACK) {
-            if (isLeftChild) {//node is left child of parent
+            if (isLeftChild) { // node is left child of parent
                 long sibling = rightOf(parent);
                 if (colorOf(sibling) == RED) {
                     setColor(sibling, BLACK);
@@ -233,8 +201,7 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
                     rotateLeft(parent);
                     sibling = rightOf(parent);
                 }
-                if (colorOf(leftOf(sibling)) == BLACK &&
-                        colorOf(rightOf(sibling)) == BLACK) {
+                if (colorOf(leftOf(sibling)) == BLACK && colorOf(rightOf(sibling)) == BLACK) {
                     setColor(sibling, RED);
                     node = parent;
                     parent = parentOf(parent);
@@ -255,7 +222,7 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
                     rotateLeft(parent);
                     break;
                 }
-            } else {//node is right child of parent, left/right expressions are reversed
+            } else { // node is right child of parent, left/right expressions are reversed
                 long sibling = leftOf(parent);
                 if (colorOf(sibling) == RED) {
                     setColor(sibling, BLACK);
@@ -263,8 +230,7 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
                     rotateRight(parent);
                     sibling = leftOf(parent);
                 }
-                if (colorOf(leftOf(sibling)) == BLACK &&
-                        colorOf(rightOf(sibling)) == BLACK) {
+                if (colorOf(leftOf(sibling)) == BLACK && colorOf(rightOf(sibling)) == BLACK) {
                     setColor(sibling, RED);
                     node = parent;
                     parent = parentOf(parent);
@@ -288,8 +254,9 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
             }
         }
 
-        if (node != EMPTY)
+        if (node != EMPTY) {
             setColor(node, BLACK);
+        }
     }
 
     protected void fixInsert(long x) {
@@ -339,8 +306,20 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
         setColor(root, BLACK);
     }
 
-    protected int getBlockSize() {
-        return BLOCK_SIZE;
+    protected long lastRefOf(long blockOffset) {
+        return blockOffset == -1 ? -1 : Unsafe.getUnsafe().getLong(keyHeapStart + blockOffset + OFFSET_LAST_REF);
+    }
+
+    protected long leftOf(long blockOffset) {
+        return blockOffset == -1 ? -1 : Unsafe.getUnsafe().getLong(keyHeapStart + blockOffset + OFFSET_LEFT);
+    }
+
+    protected long parent2Of(long blockOffset) {
+        return parentOf(parentOf(blockOffset));
+    }
+
+    protected long parentOf(long blockOffset) {
+        return blockOffset == -1 ? -1 : Unsafe.getUnsafe().getLong(keyHeapStart + blockOffset);
     }
 
     protected void putParent(long value) {
@@ -349,9 +328,12 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
         setParent(root, -1);
     }
 
-    //based on Thomas Cormen's Introduction to Algorithm's
-    protected long remove(long node) {
+    protected long refOf(long blockOffset) {
+        return blockOffset == -1 ? -1 : Unsafe.getUnsafe().getLong(keyHeapStart + blockOffset + OFFSET_REF);
+    }
 
+    // based on Thomas Cormen's Introduction to Algorithm's
+    protected long remove(long node) {
         long nodeToRemove;
         if (leftOf(node) == EMPTY || rightOf(node) == EMPTY) {
             nodeToRemove = node;
@@ -386,5 +368,52 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
         }
 
         return nodeToRemove;
+    }
+
+    // methods below check for -1 to simulate sentinel value and thus simplify insert/remove methods
+    protected long rightOf(long blockOffset) {
+        return blockOffset == -1 ? -1 : Unsafe.getUnsafe().getLong(keyHeapStart + blockOffset + OFFSET_RIGHT);
+    }
+
+    protected void setColor(long blockOffset, byte colour) {
+        Unsafe.getUnsafe().putByte(keyHeapStart + blockOffset + OFFSET_COLOUR, colour);
+    }
+
+    protected void setLastRef(long blockOffset, long recRef) {
+        Unsafe.getUnsafe().putLong(keyHeapStart + blockOffset + OFFSET_LAST_REF, recRef);
+    }
+
+    protected void setLeft(long blockOffset, long left) {
+        Unsafe.getUnsafe().putLong(keyHeapStart + blockOffset + OFFSET_LEFT, left);
+    }
+
+    protected void setParent(long blockOffset, long parent) {
+        Unsafe.getUnsafe().putLong(keyHeapStart + blockOffset, parent);
+    }
+
+    protected void setRef(long blockOffset, long recRef) {
+        Unsafe.getUnsafe().putLong(keyHeapStart + blockOffset + OFFSET_REF, recRef);
+    }
+
+    protected void setRight(long blockOffset, long right) {
+        Unsafe.getUnsafe().putLong(keyHeapStart + blockOffset + OFFSET_RIGHT, right);
+    }
+
+    protected long successor(long current) {
+        long p = rightOf(current);
+        if (p != -1) {
+            long l;
+            while ((l = leftOf(p)) != -1) {
+                p = l;
+            }
+        } else {
+            p = parentOf(current);
+            long ch = current;
+            while (p != -1 && ch == rightOf(p)) {
+                ch = p;
+                p = parentOf(p);
+            }
+        }
+        return p;
     }
 }

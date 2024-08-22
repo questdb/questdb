@@ -111,6 +111,13 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         return capacity >>> 3;
     }
 
+    public void removeLast() {
+        if (pos == address) {
+            return;
+        }
+        pos -= Long.BYTES;
+    }
+
     @Override
     public void reopen() {
         if (address == 0) {
