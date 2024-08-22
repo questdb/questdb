@@ -150,7 +150,7 @@ public class CairoMetadata implements Sinkable {
 
                     column.setPosition((int) (table.getColumnCount() - 1 < 0 ? 0 : table.getColumnCount() - 1));
                     column.setType(columnType);
-                    
+
                     if (column.getType() < 0) {
                         // deleted
                         continue;
