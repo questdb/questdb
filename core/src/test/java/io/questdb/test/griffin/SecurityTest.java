@@ -455,11 +455,13 @@ public class SecurityTest extends AbstractCairoTest {
     @Test
     public void testMemoryResizesWithImplicitGroupBy() throws Exception {
         SqlExecutionContext readOnlyExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                .with(ReadOnlySecurityContext.INSTANCE,
+                .with(
+                        ReadOnlySecurityContext.INSTANCE,
                         bindVariableService,
                         null,
                         -1,
-                        null);
+                        null
+                );
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             ddl("create table tb1 as (select" +
@@ -497,7 +499,7 @@ public class SecurityTest extends AbstractCairoTest {
                 );
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("Maximum number of pages (11) breached"));
+                Assert.assertTrue(ex.toString().contains("memory exceeded in LongTreeChain"));
             }
         });
     }
@@ -777,7 +779,7 @@ public class SecurityTest extends AbstractCairoTest {
                 );
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("Maximum number of pages (2) breached"));
+                Assert.assertTrue(ex.toString().contains("memory exceeded in RedBlackTree"));
             }
         });
     }
@@ -1081,11 +1083,13 @@ public class SecurityTest extends AbstractCairoTest {
     @Test
     public void testTreeResizesWithImplicitGroupBy() throws Exception {
         SqlExecutionContext readOnlyExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                .with(ReadOnlySecurityContext.INSTANCE,
+                .with(
+                        ReadOnlySecurityContext.INSTANCE,
                         bindVariableService,
                         null,
                         -1,
-                        null);
+                        null
+                );
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             ddl("create table tb1 as (select" +
@@ -1117,7 +1121,7 @@ public class SecurityTest extends AbstractCairoTest {
                 );
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("Maximum number of pages (2) breached"));
+                Assert.assertTrue(ex.toString().contains("memory exceeded in RedBlackTree"));
             }
         });
     }
