@@ -150,6 +150,12 @@ public class CairoMetadata implements Sinkable {
 
                     column.setPosition((int) (table.getColumnCount() - 1 < 0 ? 0 : table.getColumnCount() - 1));
                     column.setType(columnType);
+                    
+                    if (column.getType() < 0) {
+                        // deleted
+                        continue;
+                    }
+
                     column.setIsIndexed(TableUtils.isColumnIndexed(metaMem, writerIndex));
                     column.setIndexBlockCapacity(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
                     column.setIsSymbolTableStatic(true);
@@ -252,6 +258,12 @@ public class CairoMetadata implements Sinkable {
 
             column.setName(columnMetadata.getName());
             column.setType(columnMetadata.getType());
+
+            if (column.getType() < 0) {
+                // deleted
+                continue;
+            }
+
             column.setPosition(i);
             column.setIsIndexed(columnMetadata.isIndexed());
             column.setIndexBlockCapacity(columnMetadata.getIndexValueBlockCapacity());
