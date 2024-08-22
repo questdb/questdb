@@ -37,11 +37,11 @@ import java.io.Closeable;
  * <p>
  * For each long value also stores compressed offset for its parent (previous in the chain) value.
  * A compressed offset contains an offset to the address of the parent value in the heap memory
- * compressed to an int. Value addresses are 12 byte aligned.
+ * compressed to an int. Value addresses are 4-byte aligned.
  */
 public class LongChain implements Closeable, Mutable, Reopenable {
     private static final long CHAIN_VALUE_SIZE = 12;
-    private static final long MAX_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) * CHAIN_VALUE_SIZE;
+    private static final long MAX_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 2;
     private final Cursor cursor = new Cursor();
     private final long initialHeapSize;
     private final long maxHeapSize;
@@ -97,11 +97,11 @@ public class LongChain implements Closeable, Mutable, Reopenable {
     }
 
     private static int compressOffset(long rawOffset) {
-        return (int) (rawOffset / CHAIN_VALUE_SIZE);
+        return (int) (rawOffset >> 2);
     }
 
     private static long uncompressOffset(int offset) {
-        return CHAIN_VALUE_SIZE * offset;
+        return ((long) offset) << 2;
     }
 
     private void checkCapacity() {
