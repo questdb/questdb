@@ -33,11 +33,10 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.*;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.eq.EqSymStrFunctionFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -62,7 +61,51 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         if (value.isSymbolTableStatic()) {
             if (pattern.isConstant()) {
                 final CharSequence likeSeq = pattern.getStrA(null);
-                if (likeSeq != null && likeSeq.length() > 0) {
+                int len;
+                if (likeSeq != null && (len = likeSeq.length()) > 0) {
+                    if (countChar(likeSeq, '_') == 0 && countChar(likeSeq, '\\') == 0) {
+                        final int anyCount = countChar(likeSeq, '%');
+                        if (anyCount == 1) {
+                            if (len == 1) {
+                                // LIKE '%' case
+                                final NegatableBooleanFunction notNullFunc = new EqSymStrFunctionFactory.NullCheckFunc(value);
+                                notNullFunc.setNegated();
+                                return notNullFunc;
+                            } else if (likeSeq.charAt(0) == '%') {
+                                // LIKE/ILIKE '%abc' case
+                                final String patternStr = likeSeq.subSequence(1, len).toString();
+                                if (isCaseInsensitive()) {
+                                    return new ConstIEndsWithStaticSymbolTableFunction(value, patternStr);
+                                } else {
+                                    return new ConstEndsWithStaticSymbolTableFunction(value, patternStr);
+                                }
+                            } else if (likeSeq.charAt(len - 1) == '%') {
+                                // LIKE/ILIKE 'abc%' case
+                                final String patternStr = likeSeq.subSequence(0, len - 1).toString();
+                                if (isCaseInsensitive()) {
+                                    return new ConstIStartsWithStaticSymbolTableFunction(value, patternStr);
+                                } else {
+                                    return new ConstStartsWithStaticSymbolTableFunction(value, patternStr);
+                                }
+                            }
+                        } else if (anyCount == 2) {
+                            if (len == 2) {
+                                // LIKE '%%' case
+                                final NegatableBooleanFunction notNullFunc = new EqSymStrFunctionFactory.NullCheckFunc(value);
+                                notNullFunc.setNegated();
+                                return notNullFunc;
+                            } else if (likeSeq.charAt(0) == '%' && likeSeq.charAt(len - 1) == '%') {
+                                // LIKE/ILIKE '%abc%' case
+                                final String patternStr = likeSeq.subSequence(1, len - 1).toString();
+                                if (isCaseInsensitive()) {
+                                    return new ConstIContainsStaticSymbolTableFunction(value, patternStr);
+                                } else {
+                                    return new ConstContainsStaticSymbolTableFunction(value, patternStr);
+                                }
+                            }
+                        }
+                    }
+
                     String p = escapeSpecialChars(likeSeq, null);
                     assert p != null;
                     int flags = Pattern.DOTALL;
@@ -109,6 +152,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         private final Function pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
+        private boolean initialized;
         private String lastPattern = null;
         private Matcher matcher;
 
@@ -120,6 +164,10 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public boolean getBool(Record rec) {
+            if (!initialized) {
+                extractSymbolKeys(value, symbolKeys, matcher);
+                initialized = true;
+            }
             return symbolMatches(value, rec, symbolKeys);
         }
 
@@ -153,7 +201,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
                 lastPattern = null;
                 matcher = null;
             }
-            extractSymbolKeys(value, symbolKeys, matcher);
+            initialized = false;
         }
 
         @Override
@@ -173,10 +221,248 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
     }
 
+    private static class ConstContainsStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
+        private final String pattern;
+        private final IntList symbolKeys = new IntList();
+        private final SymbolFunction value;
+        private boolean initialized;
+
+        public ConstContainsStaticSymbolTableFunction(SymbolFunction value, String pattern) {
+            this.value = value;
+            this.pattern = pattern;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            if (!initialized) {
+                final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
+                assert symbolTable != null;
+                symbolKeys.clear();
+                for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+                    if (Chars.contains(symbolTable.valueOf(i), pattern)) {
+                        symbolKeys.add(i);
+                    }
+                }
+                initialized = true;
+            }
+            return symbolMatches(value, rec, symbolKeys);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            initialized = false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            sink.val(" like ");
+            sink.val('%');
+            sink.val(pattern);
+            sink.val('%');
+        }
+    }
+
+    private static class ConstEndsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
+        private final String pattern;
+        private final IntList symbolKeys = new IntList();
+        private final SymbolFunction value;
+        private boolean initialized;
+
+        public ConstEndsWithStaticSymbolTableFunction(SymbolFunction value, String pattern) {
+            this.value = value;
+            this.pattern = pattern;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            if (!initialized) {
+                final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
+                assert symbolTable != null;
+                symbolKeys.clear();
+                for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+                    if (Chars.endsWith(symbolTable.valueOf(i), pattern)) {
+                        symbolKeys.add(i);
+                    }
+                }
+                initialized = true;
+            }
+            return symbolMatches(value, rec, symbolKeys);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            initialized = false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            sink.val(" like ");
+            sink.val('%');
+            sink.val(pattern);
+        }
+    }
+
+    private static class ConstIContainsStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
+        private final String pattern;
+        private final IntList symbolKeys = new IntList();
+        private final SymbolFunction value;
+        private boolean initialized;
+
+        public ConstIContainsStaticSymbolTableFunction(SymbolFunction value, String pattern) {
+            this.value = value;
+            this.pattern = pattern.toLowerCase();
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            if (!initialized) {
+                final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
+                assert symbolTable != null;
+                symbolKeys.clear();
+                for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+                    if (Chars.containsLowerCase(symbolTable.valueOf(i), pattern)) {
+                        symbolKeys.add(i);
+                    }
+                }
+                initialized = true;
+            }
+            return symbolMatches(value, rec, symbolKeys);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            initialized = false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            sink.val(" ilike ");
+            sink.val('%');
+            sink.val(pattern);
+            sink.val('%');
+        }
+    }
+
+    private static class ConstIEndsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
+        private final String pattern;
+        private final IntList symbolKeys = new IntList();
+        private final SymbolFunction value;
+        private boolean initialized;
+
+        public ConstIEndsWithStaticSymbolTableFunction(SymbolFunction value, String pattern) {
+            this.value = value;
+            this.pattern = pattern.toLowerCase();
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            if (!initialized) {
+                final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
+                assert symbolTable != null;
+                symbolKeys.clear();
+                for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+                    if (Chars.endsWithLowerCase(symbolTable.valueOf(i), pattern)) {
+                        symbolKeys.add(i);
+                    }
+                }
+                initialized = true;
+            }
+            return symbolMatches(value, rec, symbolKeys);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            initialized = false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            sink.val(" ilike ");
+            sink.val('%');
+            sink.val(pattern);
+        }
+    }
+
+    private static class ConstIStartsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
+        private final String pattern;
+        private final IntList symbolKeys = new IntList();
+        private final SymbolFunction value;
+        private boolean initialized;
+
+        public ConstIStartsWithStaticSymbolTableFunction(SymbolFunction value, String pattern) {
+            this.value = value;
+            this.pattern = pattern.toLowerCase();
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            if (!initialized) {
+                final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
+                assert symbolTable != null;
+                symbolKeys.clear();
+                for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+                    if (Chars.startsWithLowerCase(symbolTable.valueOf(i), pattern)) {
+                        symbolKeys.add(i);
+                    }
+                }
+                initialized = true;
+            }
+            return symbolMatches(value, rec, symbolKeys);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            initialized = false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            sink.val(" ilike ");
+            sink.val(pattern);
+            sink.val('%');
+        }
+    }
+
     private static class ConstLikeStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
         private final Matcher matcher;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
+        private boolean initialized;
 
         public ConstLikeStaticSymbolTableFunction(SymbolFunction value, Matcher matcher) {
             this.value = value;
@@ -190,13 +476,17 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
         @Override
         public boolean getBool(Record rec) {
+            if (!initialized) {
+                extractSymbolKeys(value, symbolKeys, matcher);
+                initialized = true;
+            }
             return symbolMatches(value, rec, symbolKeys);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            extractSymbolKeys(value, symbolKeys, matcher);
+            initialized = false;
         }
 
         @Override
@@ -213,6 +503,53 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             if ((matcher.pattern().flags() & Pattern.CASE_INSENSITIVE) != 0) {
                 sink.val(" [case-sensitive]");
             }
+        }
+    }
+
+    private static class ConstStartsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
+        private final String pattern;
+        private final IntList symbolKeys = new IntList();
+        private final SymbolFunction value;
+        private boolean initialized;
+
+        public ConstStartsWithStaticSymbolTableFunction(SymbolFunction value, String pattern) {
+            this.value = value;
+            this.pattern = pattern;
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            if (!initialized) {
+                final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
+                assert symbolTable != null;
+                symbolKeys.clear();
+                for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
+                    if (Chars.startsWith(symbolTable.valueOf(i), pattern)) {
+                        symbolKeys.add(i);
+                    }
+                }
+                initialized = true;
+            }
+            return symbolMatches(value, rec, symbolKeys);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            initialized = false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(value);
+            sink.val(" like ");
+            sink.val(pattern);
+            sink.val('%');
         }
     }
 }
