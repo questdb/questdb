@@ -1039,19 +1039,21 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         final CharSequence intervalEx = predicateContext.inOperationNode.rhs.token;
 
-        if (intervalEx == null) return;
-
-        final LongList intervals = new LongList();
-        IntervalUtils.parseIntervalEx(intervalEx, 1, intervalEx.length() - 1, position, intervals, IntervalOperation.INTERSECT);
+        final LongList intervals = predicateContext.inIntervals;
+        if (intervalEx != null && !SqlKeywords.isNullKeyword(intervalEx)) {
+            IntervalUtils.parseIntervalEx(intervalEx, 1, intervalEx.length() - 1, position, intervals, IntervalOperation.INTERSECT);
+        } else {
+            IntervalUtils.addHiLoInterval(Numbers.LONG_NULL, Numbers.LONG_NULL, IntervalOperation.INTERSECT, intervals);
+        }
         IntervalUtils.applyLastEncodedIntervalEx(intervals);
 
         final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
         final ExpressionNode lhs = predicateContext.inOperationNode.lhs;
 
         int orCount = -1;
-        for (int i = 0; i < intervals.size() / 2; i++) {
-            long lo = IntervalUtils.getEncodedPeriodLo(intervals, i);
-            long hi = IntervalUtils.getEncodedPeriodHi(intervals, i);
+        for (int i = 0; i < intervals.size() / 2; i += 1) {
+            long lo = IntervalUtils.getEncodedPeriodLo(intervals, i * 2);
+            long hi = IntervalUtils.getEncodedPeriodHi(intervals, i * 2);
             putOperand(IMM, I8_TYPE, lo);
             traverseAlgo.traverse(lhs, this);
             putOperator(GE);
@@ -1243,6 +1245,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         private ExpressionNode rootNode;
         private ExpressionNode inOperationNode = null;
         private boolean currentInSerialization = false;
+        private final LongList inIntervals = new LongList();
 
         @Override
         public void clear() {
@@ -1352,6 +1355,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             localTypesObserver.clear();
             currentInSerialization = false;
             inOperationNode = null;
+            inIntervals.clear();
         }
 
         private void updateType(int position, int columnTypeTag) throws SqlException {

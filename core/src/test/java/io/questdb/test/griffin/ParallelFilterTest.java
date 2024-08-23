@@ -815,35 +815,22 @@ public class ParallelFilterTest extends AbstractCairoTest {
         TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     ddl(compiler, "CREATE TABLE tab (\n" +
                             "  ts TIMESTAMP," +
+                            "  preciseTs TIMESTAMP," +
                             "  type INT," +
                             "  value SYMBOL) timestamp (ts) PARTITION BY DAY;", sqlExecutionContext);
-                    insert(compiler, "insert into tab select (x * 1000 * 1000 * 60)::timestamp, x%10, 't' || (x%10) from long_sequence(10000)", sqlExecutionContext);
+                    insert(compiler, "insert into tab select (x * 1000 * 1000 * 60)::timestamp, (x * 1000 * 1000 * 60)::timestamp, x%10, 't' || (x%10) from long_sequence(10000)", sqlExecutionContext);
 
                     TestUtils.assertSql(
                             engine,
                             sqlExecutionContext,
-                            "select * from tab where ts in '1970-01-01T00:00:00;3m;1d;5'",
+                            "select * from tab where preciseTs in '1970-01-01T00:00:00;3m;1d;5' and value = 't3' limit 10",
                             sink,
-                            "ts\ttype\tvalue\n" +
-                                    "1970-01-01T00:01:00.000000Z\t1\tt1\n" +
-                                    "1970-01-01T00:02:00.000000Z\t2\tt2\n" +
-                                    "1970-01-01T00:03:00.000000Z\t3\tt3\n" +
-                                    "1970-01-02T00:00:00.000000Z\t0\tt0\n" +
-                                    "1970-01-02T00:01:00.000000Z\t1\tt1\n" +
-                                    "1970-01-02T00:02:00.000000Z\t2\tt2\n" +
-                                    "1970-01-02T00:03:00.000000Z\t3\tt3\n" +
-                                    "1970-01-03T00:00:00.000000Z\t0\tt0\n" +
-                                    "1970-01-03T00:01:00.000000Z\t1\tt1\n" +
-                                    "1970-01-03T00:02:00.000000Z\t2\tt2\n" +
-                                    "1970-01-03T00:03:00.000000Z\t3\tt3\n" +
-                                    "1970-01-04T00:00:00.000000Z\t0\tt0\n" +
-                                    "1970-01-04T00:01:00.000000Z\t1\tt1\n" +
-                                    "1970-01-04T00:02:00.000000Z\t2\tt2\n" +
-                                    "1970-01-04T00:03:00.000000Z\t3\tt3\n" +
-                                    "1970-01-05T00:00:00.000000Z\t0\tt0\n" +
-                                    "1970-01-05T00:01:00.000000Z\t1\tt1\n" +
-                                    "1970-01-05T00:02:00.000000Z\t2\tt2\n" +
-                                    "1970-01-05T00:03:00.000000Z\t3\tt3\n"
+                                    "ts\tpreciseTs\ttype\tvalue\n" +
+                                    "1970-01-01T00:03:00.000000Z\t1970-01-01T00:03:00.000000Z\t3\tt3\n" +
+                                    "1970-01-02T00:03:00.000000Z\t1970-01-02T00:03:00.000000Z\t3\tt3\n" +
+                                    "1970-01-03T00:03:00.000000Z\t1970-01-03T00:03:00.000000Z\t3\tt3\n" +
+                                    "1970-01-04T00:03:00.000000Z\t1970-01-04T00:03:00.000000Z\t3\tt3\n" +
+                                    "1970-01-05T00:03:00.000000Z\t1970-01-05T00:03:00.000000Z\t3\tt3\n"
                     );
                 },
                 configuration,
