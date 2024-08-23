@@ -58,7 +58,7 @@ steps:
     displayName: "Install Rust coverage dependencies"
     condition: |
       and(
-        eq(variables['testset'], 'coverage'),
+        startsWith(variables['testset'], 'coverage'),
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
       )
 
