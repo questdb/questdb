@@ -875,7 +875,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (SqlKeywords.isInKeyword(token)) {
             if (type == ExpressionNode.FUNCTION) {
                 serializeIn();
-            } else if (type == ExpressionNode.SET_OPERATION) {
+            } else if (type == ExpressionNode.SET_OPERATION && isInTimestampPredicate()) {
                 serializeInTimestampRange(position);
             }
             return;
@@ -1063,6 +1063,16 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         for (int i = 0; i < orCount; ++i) {
             putOperator(OR);
         }
+    }
+
+    private boolean isInTimestampPredicate() throws SqlException
+    {
+        // visit inOperationNode to get expression type
+        predicateContext.onNodeVisited(predicateContext.inOperationNode.rhs);
+        predicateContext.onNodeVisited(predicateContext.inOperationNode.lhs);
+
+        // check predicate type is timestamp
+        return predicateContext.type == PredicateType.TIMESTAMP;
     }
 
     private enum PredicateType {
