@@ -27,82 +27,41 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
-public class OrderByTest extends AbstractCairoTest {
+import java.util.Arrays;
+import java.util.Collection;
 
-    @Test
-    public void testOrderByDateColumnAscMixedValuesRadixSortDisabled() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_ENABLED, false);
-        testOrderByDateColumnAscMixedValues();
+// Tests quick and radix sort-based factories
+@RunWith(Parameterized.class)
+public class OrderBySortTest extends AbstractCairoTest {
+    private final SortMode sortMode;
+    private final SortType sortType;
+
+    public OrderBySortTest(SortMode sortMode, SortType sortType) {
+        this.sortMode = sortMode;
+        this.sortType = sortType;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {SortMode.SORT_ENABLED, SortType.MIXED_SORT},
+                {SortMode.SORT_ENABLED, SortType.RADIX_SORT_ONLY},
+                {SortMode.DISABLED, SortType.MIXED_SORT},
+        });
+    }
+
+    @Override
+    public void setUp() {
+        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, sortMode == SortMode.SORT_ENABLED);
+        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_THRESHOLD, sortType == SortType.RADIX_SORT_ONLY ? 0 : 600);
+        super.setUp();
     }
 
     @Test
-    public void testOrderByDateColumnAscMixedValuesRadixSortEnabled() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_ENABLED, true);
-        testOrderByDateColumnAscMixedValues();
-    }
-
-    @Test
-    public void testOrderByDateColumnDescMixedValuesRadixSortDisabled() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_ENABLED, false);
-        testOrderByDateColumnDescMixedValues();
-    }
-
-    @Test
-    public void testOrderByDateColumnDescMixedValuesRadixSortEnabled() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_ENABLED, true);
-        testOrderByDateColumnDescMixedValues();
-    }
-
-    @Test
-    public void testOrderByLongColumnAscMixedValuesRadixSortDisabled() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_ENABLED, false);
-        testOrderByLongColumnAscMixedValues();
-    }
-
-    @Test
-    public void testOrderByLongColumnAscMixedValuesRadixSortEnabled() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_ENABLED, true);
-        testOrderByLongColumnAscMixedValues();
-    }
-
-    @Test
-    public void testOrderByLongColumnDescMixedValuesRadixSortDisabled() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_ENABLED, false);
-        testOrderByLongColumnDescMixedValues();
-    }
-
-    @Test
-    public void testOrderByLongColumnDescMixedValuesRadixSortEnabled() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_ENABLED, true);
-        testOrderByLongColumnDescMixedValues();
-    }
-
-    @Test
-    public void testOrderByTimestampColumnAscMixedValuesRadixSortDisabled() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_ENABLED, false);
-        testOrderByTimestampColumnAscMixedValues();
-    }
-
-    @Test
-    public void testOrderByTimestampColumnAscMixedValuesRadixSortEnabled() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_ENABLED, true);
-        testOrderByTimestampColumnAscMixedValues();
-    }
-
-    @Test
-    public void testOrderByTimestampColumnDescMixedValuesRadixSortDisabled() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_ENABLED, false);
-        testOrderByTimestampColumnDescMixedValues();
-    }
-
-    @Test
-    public void testOrderByTimestampColumnDescMixedValuesRadixSortEnabled() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_ENABLED, true);
-        testOrderByTimestampColumnDescMixedValues();
-    }
-
-    private void testOrderByDateColumnAscMixedValues() throws Exception {
+    public void testOrderByDateColumnAscMixedValues() throws Exception {
         assertQuery(
                 "a\n" +
                         "\n" +
@@ -146,7 +105,8 @@ public class OrderByTest extends AbstractCairoTest {
         );
     }
 
-    private void testOrderByDateColumnDescMixedValues() throws Exception {
+    @Test
+    public void testOrderByDateColumnDescMixedValues() throws Exception {
         assertQuery(
                 "a\n" +
                         "1970-01-01T00:00:00.009Z\n" +
@@ -190,7 +150,8 @@ public class OrderByTest extends AbstractCairoTest {
         );
     }
 
-    private void testOrderByLongColumnAscMixedValues() throws Exception {
+    @Test
+    public void testOrderByLongColumnAscMixedValues() throws Exception {
         assertQuery(
                 "a\n" +
                         "null\n" +
@@ -234,7 +195,8 @@ public class OrderByTest extends AbstractCairoTest {
         );
     }
 
-    private void testOrderByLongColumnDescMixedValues() throws Exception {
+    @Test
+    public void testOrderByLongColumnDescMixedValues() throws Exception {
         assertQuery(
                 "a\n" +
                         "9\n" +
@@ -278,7 +240,8 @@ public class OrderByTest extends AbstractCairoTest {
         );
     }
 
-    private void testOrderByTimestampColumnAscMixedValues() throws Exception {
+    @Test
+    public void testOrderByTimestampColumnAscMixedValues() throws Exception {
         assertQuery(
                 "a\n" +
                         "\n" +
@@ -322,7 +285,8 @@ public class OrderByTest extends AbstractCairoTest {
         );
     }
 
-    private void testOrderByTimestampColumnDescMixedValues() throws Exception {
+    @Test
+    public void testOrderByTimestampColumnDescMixedValues() throws Exception {
         assertQuery(
                 "a\n" +
                         "1970-01-01T00:00:00.000009Z\n" +
@@ -364,5 +328,13 @@ public class OrderByTest extends AbstractCairoTest {
                 true,
                 true
         );
+    }
+
+    public enum SortMode {
+        SORT_ENABLED, DISABLED
+    }
+
+    public enum SortType {
+        MIXED_SORT, RADIX_SORT_ONLY
     }
 }

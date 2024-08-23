@@ -35,6 +35,7 @@ import io.questdb.std.Vect;
 
 class LongSortedLightRecordCursor implements DelegatingRecordCursor {
     private final int columnIndex;
+    private final long radixSortThreshold;
     private final Cursor rowIdCursor;
     private final DirectLongList valueRowIdMem; // holds <value, rowId> pairs
     private final DirectLongList valueRowIdMemCpy; // used in radix sort
@@ -47,6 +48,7 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
     public LongSortedLightRecordCursor(CairoConfiguration configuration, int columnIndex, boolean ascOrder) {
         try {
             this.columnIndex = columnIndex;
+            radixSortThreshold = configuration.getSqlOrderByRadixSortThreshold();
             valueRowIdMem = new DirectLongList(configuration.getSqlSortLightValuePageSize() / 16, MemoryTag.NATIVE_DEFAULT);
             valueRowIdMemCpy = new DirectLongList(configuration.getSqlSortLightValuePageSize() / 16, MemoryTag.NATIVE_DEFAULT);
             rowIdCursor = ascOrder ? new FwdCursor() : new BwdCursor();
@@ -136,17 +138,24 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
         // first, copy all values to the buffer
         while (base.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
-            // radix sort assumes unsigned 64-bit integers,
+            // later sort assumes unsigned 64-bit integers,
             // so we flip the highest bit to get the correct order
             valueRowIdMem.add(baseRecord.getLong(columnIndex) ^ Long.MIN_VALUE);
             valueRowIdMem.add(baseRecord.getRowId());
         }
         // now do the actual sort
-        if (valueRowIdMem.size() > 0) {
-            valueRowIdMemCpy.reopen();
-            valueRowIdMemCpy.setCapacity(valueRowIdMem.size());
-            Vect.radixSortLongIndexAscInPlace(valueRowIdMem.getAddress(), valueRowIdMem.size() >>> 1, valueRowIdMemCpy.getAddress());
-            valueRowIdMemCpy.close();
+        final long size = valueRowIdMem.size();
+        if (size > 0) {
+            if (size > radixSortThreshold) {
+                // radix sort
+                valueRowIdMemCpy.reopen();
+                valueRowIdMemCpy.setCapacity(valueRowIdMem.size());
+                Vect.radixSortLongIndexAscInPlace(valueRowIdMem.getAddress(), valueRowIdMem.size() >>> 1, valueRowIdMemCpy.getAddress());
+                valueRowIdMemCpy.close();
+            } else {
+                // quick sort
+                Vect.quickSortLongIndexAscInPlace(valueRowIdMem.getAddress(), valueRowIdMem.size() >>> 1);
+            }
         }
         // we're ready to go
         rowIdCursor.toTop();
