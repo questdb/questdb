@@ -36,7 +36,6 @@ import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
 
@@ -97,6 +96,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
     private final PredicateContext predicateContext = new PredicateContext();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
+    private final PostOrderTreeTraversalAlgo inPredicateTraverseAlgo = new PostOrderTreeTraversalAlgo();
     private ObjList<Function> bindVarFunctions;
     private final LongObjHashMap.LongObjConsumer<ExpressionNode> backfillNodeConsumer = this::backfillNode;
     private SqlExecutionContext executionContext;
@@ -182,7 +182,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * @throws SqlException thrown when IR serialization failed.
      */
     public int serialize(ExpressionNode node, boolean scalar, boolean debug, boolean nullChecks) throws SqlException {
-        traverseAlgo.traverse(node, this);
+        inPredicateTraverseAlgo.traverse(node, this);
         putOperator(RET);
 
         ensureOnlyVarSizeHeaderChecks();
@@ -1013,18 +1013,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         predicateContext.currentInSerialization = true;
 
         final ObjList<ExpressionNode> args = predicateContext.inOperationNode.args;
-        final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
 
         if (args.size() < 3) {
-            traverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
-            traverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
+            inPredicateTraverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
+            inPredicateTraverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
             putOperator(EQ);
         }
 
         int orCount = -1;
         for (int i = 0; i < predicateContext.inOperationNode.args.size() - 1; ++i) {
-            traverseAlgo.traverse(args.get(i), this);
-            traverseAlgo.traverse(args.getLast(), this);
+            inPredicateTraverseAlgo.traverse(args.get(i), this);
+            inPredicateTraverseAlgo.traverse(args.getLast(), this);
             putOperator(EQ);
             orCount++;
         }
@@ -1043,7 +1042,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final LongList intervals = predicateContext.inIntervals;
         IntervalUtils.parseAndApplyIntervalEx(intervalEx, intervals, position);
 
-        final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
         final ExpressionNode lhs = predicateContext.inOperationNode.lhs;
 
         int orCount = -1;
@@ -1051,10 +1049,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             long lo = IntervalUtils.getEncodedPeriodLo(intervals, i * 2);
             long hi = IntervalUtils.getEncodedPeriodHi(intervals, i * 2);
             putOperand(IMM, I8_TYPE, lo);
-            traverseAlgo.traverse(lhs, this);
+            inPredicateTraverseAlgo.traverse(lhs, this);
             putOperator(GE);
             putOperand(IMM, I8_TYPE, hi);
-            traverseAlgo.traverse(lhs, this);
+            inPredicateTraverseAlgo.traverse(lhs, this);
             putOperator(LE);
             putOperator(AND);
             orCount++;
