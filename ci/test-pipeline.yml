@@ -106,11 +106,6 @@ stages:
             fetchDepth: 1
             lfs: false
             submodules: false
-          - task: Cache@2
-            inputs:
-              key: '"questdb_main" | "maven"'
-              restoreKeys: |
-              path: $(MAVEN_CACHE_FOLDER)
           - download: current
             artifact: jacoco-coverage
           - download: current
