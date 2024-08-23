@@ -24,19 +24,14 @@
 
 package io.questdb.test.sqllogictest;
 
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Misc;
+import io.questdb.std.*;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.Sqllogictest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
@@ -55,6 +50,8 @@ import static org.junit.Assert.assertNotNull;
 public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
     private static String TEST_DIR_NAME;
     private final String testFile;
+    private static short pgPort;
+    private static TestServerMain serverMain;
 
     public AbstractSqllogicTestRunner(String testFile) {
         this.testFile = testFile;
@@ -74,22 +71,48 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
         }
     }
 
+    @AfterClass
+    public static void tearDownUpStatic() {
+        AbstractBootstrapTest.tearDownStatic();
+        Misc.free(serverMain);
+    }
+
+    @Before
+    public void setUp() {
+        super.setUp();
+
+        try (Path path = new Path()) {
+            if (serverMain == null) {
+                pgPort = (short) (10000 + TestUtils.generateRandom(null).nextInt(1000));
+                String testResourcePath = getTestResourcePath();
+                path.of(testResourcePath).concat("test").concat(TEST_DIR_NAME);
+
+                serverMain = startWithEnvVariables(
+                        PG_NET_BIND_TO.getEnvVarName(), "0.0.0.0:" + pgPort,
+                        CAIRO_SQL_COPY_ROOT.getEnvVarName(), testResourcePath
+                );
+                serverMain.start();
+            } else {
+                serverMain.reset();
+            }
+        }
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        LOG.info().$("Finished test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
+        Path p = Path.getThreadLocal(root).concat("db");
+        TestUtils.removeTestPath(root);
+    }
+
     @Test
     public void test() {
-        short pgPort = 6465;
-
         try (Path path = new Path()) {
             String testResourcePath = getTestResourcePath();
             path.of(testResourcePath).concat("test").concat(TEST_DIR_NAME).concat(testFile);
             Assert.assertTrue(Misc.getThreadLocalUtf8Sink().put(path).toString(), FilesFacadeImpl.INSTANCE.exists(path.$()));
 
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    PG_NET_BIND_TO.getEnvVarName(), "0.0.0.0:" + pgPort,
-                    CAIRO_SQL_COPY_ROOT.getEnvVarName(), testResourcePath
-            )) {
-                serverMain.start();
-                Sqllogictest.run(pgPort, path.$().ptr());
-            }
+            Sqllogictest.run(pgPort, path.$().ptr());
         }
     }
 

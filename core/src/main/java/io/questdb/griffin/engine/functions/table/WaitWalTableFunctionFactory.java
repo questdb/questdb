@@ -49,17 +49,16 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final CharSequence tableName = args.getQuick(0).getStrA(null);
-        TableToken tt = sqlExecutionContext.getCairoEngine().verifyTableName(tableName);
-        final SeqTxnTracker tracker = sqlExecutionContext.getCairoEngine().getTableSequencerAPI().getTxnTracker(tt);
-        return new WaitWFunction(tracker);
+        return new WaitWFunction(tableName);
     }
 
     private static class WaitWFunction extends BooleanFunction implements ScalarFunction {
-        private final SeqTxnTracker seqTxnTracker;
+        private final CharSequence tableName;
+        private SeqTxnTracker seqTxnTracker;
         private long seqTxn;
 
-        public WaitWFunction(SeqTxnTracker tracker) {
-            this.seqTxnTracker = tracker;
+        public WaitWFunction(CharSequence tableName) {
+            this.tableName = tableName;
         }
 
         @Override
@@ -72,6 +71,8 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            TableToken tt = executionContext.getCairoEngine().verifyTableName(tableName);
+            seqTxnTracker = executionContext.getCairoEngine().getTableSequencerAPI().getTxnTracker(tt);
             seqTxn = seqTxnTracker.getSeqTxn();
             super.init(symbolTableSource, executionContext);
         }
