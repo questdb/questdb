@@ -9,18 +9,18 @@ jobs:
           os: Linux
           jdk: "1.11"
           testset: "coverage"
-          includeTests: "**/griffin/**"
+          includeTests: "**/griffin/engine/table/parquet/**"
           javadoc_step: ""
           javadoc_profile: ""
-    #    linux-cairo:
-    #      imageName: "ubuntu-latest"
-    #      poolName: "Azure Pipelines"
-    #      os: Linux
-    #      jdk: "1.11"
-    #      testset: "coverage"
-    #      includeTests: "**/cairo/**"
-    #      javadoc_step: ""
-    #      javadoc_profile: ""
+        linux-cairo:
+          imageName: "ubuntu-latest"
+          poolName: "Azure Pipelines"
+          os: Linux
+          jdk: "1.11"
+          testset: "coverage"
+          includeTests: "**/cairo/*"
+          javadoc_step: ""
+          javadoc_profile: ""
     #    linux-other:
     #      imageName: "ubuntu-latest"
     #      poolName: "Azure Pipelines"
