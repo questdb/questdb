@@ -74,7 +74,7 @@ steps:
     displayName: "Cache ~/.cargo/registry"
     condition: |
       and(
-        eq(variables['testset'], 'coverage'),
+        startsWith(variables['testset'], 'coverage'),
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
       )
 
@@ -117,7 +117,7 @@ steps:
       )
   - bash: echo "##vso[task.setvariable variable=LLVM_PROFILE_FILE]questdbr-junit.profraw"
     displayName: "LLVM_PROFILE_FILE=questdbr-junit.profraw"
-    condition: eq(variables['testset'], 'coverage')
+    condition: startsWith(variables['testset'], 'coverage')
   - task: Maven@3
     displayName: "Run tests with Coverage"
     inputs:
@@ -138,7 +138,7 @@ steps:
     timeoutInMinutes: 55
     condition: |
       and(
-        eq(variables['testset'], 'coverage'),
+        startsWith(variables['testset'], 'coverage'),
         or( 
             eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
             eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
@@ -218,7 +218,7 @@ steps:
     displayName: "Generate Rust coverage report"
     condition: |
       and(
-        eq(variables['testset'], 'coverage'),
+        startsWith(variables['testset'], 'coverage'),
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
       )
 
@@ -226,7 +226,7 @@ steps:
     displayName: "Upload Java coverage report"
     condition: |
       and(
-        eq(variables['testset'], 'coverage'),
+        startsWith(variables['testset'], 'coverage'),
         eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
         eq(variables['System.PullRequest.IsFork'], 'false')
       )
@@ -237,7 +237,7 @@ steps:
     displayName: "Upload Rust coverage report"
     condition: |
       and(
-        eq(variables['testset'], 'coverage'),
+        startsWith(variables['testset'], 'coverage'),
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
         eq(variables['System.PullRequest.IsFork'], 'false')
       )
