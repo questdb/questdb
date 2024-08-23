@@ -33,9 +33,12 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.eq.EqStrFunctionFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -99,16 +102,14 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             final CharSequence likeSeq = pattern.getStrA(null);
             int len;
             if (likeSeq != null && (len = likeSeq.length()) > 0) {
-                int oneCount = countChar(likeSeq, '_');
-                if (oneCount == 0) {
-                    if (likeSeq.charAt(len - 1) == '\\') {
-                        throw SqlException.parserErr(len - 1, likeSeq, "LIKE pattern must not end with escape character");
-                    }
-
-                    int anyCount = countChar(likeSeq, '%');
+                if (countChar(likeSeq, '_') == 0 && countChar(likeSeq, '\\') == 0) {
+                    final int anyCount = countChar(likeSeq, '%');
                     if (anyCount == 1) {
                         if (len == 1) {
-                            return BooleanConstant.TRUE; // LIKE '%' case
+                            // LIKE '%' case
+                            final NegatableBooleanFunction notNullFunc = new EqStrFunctionFactory.NullCheckFunc(value);
+                            notNullFunc.setNegated();
+                            return notNullFunc;
                         } else if (likeSeq.charAt(0) == '%') {
                             // LIKE/ILIKE '%abc' case
                             final String patternStr = likeSeq.subSequence(1, len).toString();
@@ -128,7 +129,10 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
                         }
                     } else if (anyCount == 2) {
                         if (len == 2) {
-                            return BooleanConstant.TRUE; // LIKE '%%' case
+                            // LIKE '%%' case
+                            final NegatableBooleanFunction notNullFunc = new EqStrFunctionFactory.NullCheckFunc(value);
+                            notNullFunc.setNegated();
+                            return notNullFunc;
                         } else if (likeSeq.charAt(0) == '%' && likeSeq.charAt(len - 1) == '%') {
                             // LIKE/ILIKE '%abc%' case
                             final String patternStr = likeSeq.subSequence(1, len - 1).toString();
@@ -176,7 +180,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
 
     protected abstract boolean isCaseInsensitive();
 
-    static class BindLikeStrFunction extends BooleanFunction implements UnaryFunction {
+    static class BindLikeStrFunction extends BooleanFunction implements BinaryFunction {
         private final boolean caseInsensitive;
         private final Function pattern;
         private final Function value;
@@ -190,11 +194,6 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
 
         @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
         public boolean getBool(Record rec) {
             if (matcher != null) {
                 CharSequence cs = value.getStrA(rec);
@@ -204,9 +203,18 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
 
         @Override
+        public Function getLeft() {
+            return value;
+        }
+
+        @Override
+        public Function getRight() {
+            return pattern;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            value.init(symbolTableSource, executionContext);
-            pattern.init(symbolTableSource, executionContext);
+            BinaryFunction.super.init(symbolTableSource, executionContext);
             // this is bind variable, we can use it as constant
             final CharSequence patternValue = pattern.getStrA(null);
             if (patternValue != null && patternValue.length() > 0) {
@@ -217,8 +225,8 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
                         flags |= Pattern.CASE_INSENSITIVE;
                         p = p.toLowerCase();
                     }
-                    this.matcher = Pattern.compile(p, flags).matcher("");
-                    this.lastPattern = p;
+                    matcher = Pattern.compile(p, flags).matcher("");
+                    lastPattern = p;
                 }
             } else {
                 lastPattern = null;

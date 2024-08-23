@@ -50,10 +50,10 @@ public class LogFactory implements Closeable {
     public static final String CONFIG_SYSTEM_PROPERTY = "out";
     public static final String DEBUG_TRIGGER = "ebug";
     public static final String DEBUG_TRIGGER_ENV = "QDB_DEBUG";
+    // name of default logging configuration file (in jar and in $root/conf/ dir)
     public static final String DEFAULT_CONFIG_NAME = "log.conf";
     // placeholder that can be used in log.conf to point to $root/log/ dir
     public static final String LOG_DIR_VAR = "${log.dir}";
-    // name of default logging configuration file (in jar and in $root/conf/ dir)
     private static final String DEFAULT_CONFIG = "/io/questdb/site/conf/" + DEFAULT_CONFIG_NAME;
     private static final int DEFAULT_LOG_LEVEL = LogLevel.INFO | LogLevel.ERROR | LogLevel.CRITICAL | LogLevel.ADVISORY;
     private static final int DEFAULT_MSG_SIZE = 4 * 1024;
@@ -326,23 +326,13 @@ public class LogFactory implements Closeable {
         }
 
         boolean initialized = false;
-        // prevent creating blank log dir from unit tests
-        String logDir = ".";
         if (rootDir != null && DEFAULT_CONFIG.equals(conf)) {
-            logDir = Paths.get(rootDir, "log").toAbsolutePath().toString();
-            File logDirFile = new File(logDir);
-            if (!logDirFile.exists() && logDirFile.mkdir()) {
-                System.err.printf("Created log directory: %s%n", logDir);
-            }
-
             String logPath = Paths.get(rootDir, "conf", DEFAULT_CONFIG_NAME).toAbsolutePath().toString();
             File f = new File(logPath);
             if (f.isFile() && f.canRead()) {
                 System.err.printf("Reading log configuration from %s%n", logPath);
                 try (FileInputStream fis = new FileInputStream(logPath)) {
-                    Properties properties = new Properties();
-                    properties.load(fis);
-                    configureFromProperties(properties, logDir);
+                    configure(fis, rootDir);
                     initialized = true;
                 } catch (IOException e) {
                     throw new LogError("Cannot read " + logPath, e);
@@ -354,17 +344,13 @@ public class LogFactory implements Closeable {
             // in this order of initialization specifying -Dout might end up using internal jar resources ...
             try (InputStream is = LogFactory.class.getResourceAsStream(conf)) {
                 if (is != null) {
-                    Properties properties = new Properties();
-                    properties.load(is);
-                    configureFromProperties(properties, logDir);
+                    configure(is, rootDir);
                     System.err.println("Log configuration loaded from default internal file.");
                 } else {
                     File f = new File(conf);
                     if (f.canRead()) {
                         try (FileInputStream fis = new FileInputStream(f)) {
-                            Properties properties = new Properties();
-                            properties.load(fis);
-                            configureFromProperties(properties, logDir);
+                            configure(fis, rootDir);
                             System.err.printf("Log configuration loaded from: %s%n", conf);
                         }
                     } else {
@@ -437,7 +423,7 @@ public class LogFactory implements Closeable {
     }
 
     @SuppressWarnings("rawtypes")
-    private static LogWriterConfig createWriter(final Properties properties, String writerName, String logDir) {
+    private static LogWriterConfig createWriter(final Properties properties, String writerName) {
         final String writer = "w." + writerName + '.';
         final String clazz = getProperty(properties, writer + "class");
         final String levelStr = getProperty(properties, writer + "level");
@@ -499,7 +485,6 @@ public class LogFactory implements Closeable {
                 for (String n : properties.stringPropertyNames()) {
                     if (n.startsWith(writer)) {
                         String p = n.substring(writer.length());
-
                         if (reserved.contains(p)) {
                             continue;
                         }
@@ -507,12 +492,7 @@ public class LogFactory implements Closeable {
                         try {
                             Field f = cl.getDeclaredField(p);
                             if (f.getType() == String.class) {
-
                                 String value = getProperty(properties, n);
-                                if (logDir != null && value.contains(LOG_DIR_VAR)) {
-                                    value = value.replace(LOG_DIR_VAR, logDir);
-                                }
-
                                 Unsafe.getUnsafe().putObject(w1, Unsafe.getUnsafe().objectFieldOffset(f), value);
                             }
                         } catch (Exception e) {
@@ -561,6 +541,39 @@ public class LogFactory implements Closeable {
         }
     }
 
+    private void configure(InputStream fis, String rootDir) throws IOException {
+        Properties properties = new Properties();
+        properties.load(fis);
+
+        // QDB_LOG_LOG_DIR env variable can be used to override log directory
+        String logDir = getProperty(properties, "log.dir");
+        if (logDir == null) {
+            if (rootDir != null) {
+                logDir = Paths.get(rootDir, "log").toAbsolutePath().toString();
+            } else {
+                logDir = ".";
+            }
+        }
+        boolean usesLogDirVar = false;
+        for (String n : properties.stringPropertyNames()) {
+            String value = getProperty(properties, n);
+            if (value.contains(LOG_DIR_VAR)) {
+                usesLogDirVar = true;
+                value = value.replace(LOG_DIR_VAR, logDir);
+                properties.put(n, value);
+            }
+        }
+
+        if (usesLogDirVar) {
+            File logDirFile = new File(logDir);
+            if (!logDirFile.exists() && logDirFile.mkdirs()) {
+                System.err.printf("Created log directory: %s%n", logDir);
+            }
+        }
+
+        configureFromProperties(properties);
+    }
+
     private void configureDefaultWriter() {
         int level = DEFAULT_LOG_LEVEL;
         if (isForcedDebug()) {
@@ -570,7 +583,7 @@ public class LogFactory implements Closeable {
         bind();
     }
 
-    private void configureFromProperties(Properties properties, String logDir) {
+    private void configureFromProperties(Properties properties) {
         String writers = getProperty(properties, "writers");
 
         if (writers == null) {
@@ -597,7 +610,7 @@ public class LogFactory implements Closeable {
         }
 
         for (String w : writers.split(",")) {
-            LogWriterConfig conf = createWriter(properties, w.trim(), logDir);
+            LogWriterConfig conf = createWriter(properties, w.trim());
             if (conf != null) {
                 add(conf);
             }
@@ -931,11 +944,6 @@ public class LogFactory implements Closeable {
         }
 
         @Override
-        public LogRecord $uuid(long lo, long hi) {
-            return this;
-        }
-
-        @Override
         public LogRecord $(@Nullable Sinkable x) {
             return this;
         }
@@ -966,12 +974,22 @@ public class LogFactory implements Closeable {
         }
 
         @Override
+        public LogRecord $substr(int from, @Nullable DirectUtf8Sequence sequence) {
+            return this;
+        }
+
+        @Override
         public LogRecord $ts(long x) {
             return this;
         }
 
         @Override
         public LogRecord $utf8(long lo, long hi) {
+            return this;
+        }
+
+        @Override
+        public LogRecord $uuid(long lo, long hi) {
             return this;
         }
 

@@ -59,6 +59,7 @@ import static io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory.
 public class Bootstrap {
 
     public static final String CONFIG_FILE = "/server.conf";
+    public static final String CONTAINERIZED_SYSTEM_PROPERTY = "containerized";
     public static final String SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION = "--use-default-log-factory-configuration";
     private static final String LOG_NAME = "server-main";
     private static final String PUBLIC_VERSION_TXT = "version.txt";
@@ -100,9 +101,8 @@ public class Bootstrap {
         }
 
         // before we set up the logger, we need to copy the conf file
-        final byte[] buffer = new byte[1024 * 1024];
         try {
-            copyConfResource(rootDirectory, false, buffer, "conf/log.conf", null);
+            copyLogConfResource(new byte[1024 * 1024]);
         } catch (IOException e) {
             throw new BootstrapException("Could not extract log configuration file");
         }
@@ -367,7 +367,11 @@ public class Bootstrap {
     }
 
     private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
-        File out = new File(dir, res);
+        copyConfResource(dir, force, buffer, res, res, log);
+    }
+
+    private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, String dest, Log log) throws IOException {
+        File out = new File(dir, dest);
         try (InputStream is = ServerMain.class.getResourceAsStream("/io/questdb/site/" + res)) {
             if (is != null) {
                 copyInputStream(force, buffer, out, is, log);
@@ -439,7 +443,7 @@ public class Bootstrap {
     private static void verifyFileOpts(Path path, CairoConfiguration cairoConfiguration) {
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         path.of(cairoConfiguration.getRoot()).concat("_verify_").put(cairoConfiguration.getRandom().nextPositiveInt()).put(".d").$();
-        int fd = ff.openRW(path.$(), cairoConfiguration.getWriterFileOpenOpts());
+        long fd = ff.openRW(path.$(), cairoConfiguration.getWriterFileOpenOpts());
         try {
             if (fd > -1) {
                 long mem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -453,6 +457,14 @@ public class Bootstrap {
             ff.close(fd);
         }
         ff.remove(path.$());
+    }
+
+    private void copyLogConfResource(byte[] buffer) throws IOException {
+        if (Chars.equalsIgnoreCaseNc("false", System.getProperty(CONTAINERIZED_SYSTEM_PROPERTY))) {
+            copyConfResource(rootDirectory, false, buffer, "conf/non_containerized_log.conf", "conf/log.conf", null);
+        } else {
+            copyConfResource(rootDirectory, false, buffer, "conf/log.conf", null);
+        }
     }
 
     private void createHelloFile(String helloMsg) {
@@ -480,7 +492,7 @@ public class Bootstrap {
             }
         }
         copyConfResource(rootDirectory, false, buffer, "conf/server.conf", log);
-        copyConfResource(rootDirectory, false, buffer, "conf/log.conf", log);
+        copyLogConfResource(buffer);
     }
 
     private void extractSite0(String publicDir, byte[] buffer, String thisVersion) throws IOException {
@@ -525,7 +537,8 @@ public class Bootstrap {
         try (Path path = new Path()) {
             verifyFileSystem(path, cairoConfig.getRoot(), "db", true);
             verifyFileSystem(path, cairoConfig.getBackupRoot(), "backup", true);
-            verifyFileSystem(path, cairoConfig.getSnapshotRoot(), "snapshot", true);
+            verifyFileSystem(path, cairoConfig.getCheckpointRoot(), TableUtils.CHECKPOINT_DIRECTORY, true);
+            verifyFileSystem(path, cairoConfig.getLegacyCheckpointRoot(), TableUtils.LEGACY_CHECKPOINT_DIRECTORY, true);
             verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input", false);
             verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker", true);
             verifyFileOpts(path, cairoConfig);
@@ -607,9 +620,9 @@ public class Bootstrap {
         path.seekZ();
         LogRecord rec = log.advisoryW().$(" - ").$(kind).$(" root: [path=").$(rootDir).$(", magic=0x");
         if (fsStatus < 0 || (fsStatus == 0 && Os.type == Os.DARWIN && Os.arch == Os.ARCH_AARCH64)) {
-            rec.$hex(-fsStatus).$("] -> SUPPORTED").$();
+            rec.$hex(-fsStatus).$(", fs=").$(path).$("] -> SUPPORTED").$();
         } else {
-            rec.$hex(fsStatus).$("] -> UNSUPPORTED (SYSTEM COULD BE UNSTABLE)").$();
+            rec.$hex(fsStatus).$(", fs=").$(path).$("] -> UNSUPPORTED (SYSTEM COULD BE UNSTABLE)").$();
         }
         if (failOnNfs && fsStatus == Files.NFS_MAGIC) {
             throw new BootstrapException("Error: Unsupported Filesystem Detected. " + Misc.EOL

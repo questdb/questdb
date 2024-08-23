@@ -50,10 +50,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testCast2AsValidColumnNameTouchFunction() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table xyz(time timestamp, cast2 geohash(8c)) timestamp(time) partition by DAY;";
-            ddl(createStmt);
-            //insert
+            ddl("create table xyz(time timestamp, cast2 geohash(8c)) timestamp(time) partition by DAY;");
             insert("INSERT INTO xyz VALUES(1609459199000000, #u33d8b12)");
             String expected = "touch\n{\"data_pages\": 2, \"index_key_pages\":0, \"index_values_pages\": 0}\n";
             String query = "select touch(select time, cast2 from xyz);";
@@ -65,10 +62,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testCastAsValidColumnNameSelectTest() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table xyz(time timestamp, \"cast\" geohash(8c)) timestamp(time) partition by DAY;";
-            ddl(createStmt);
-            //insert
+            ddl("create table xyz(time timestamp, \"cast\" geohash(8c)) timestamp(time) partition by DAY;");
             insert("INSERT INTO xyz VALUES(1609459199000000, #u33d8b12)");
             String expected = "time\tcast\n" +
                     "2020-12-31T23:59:59.000000Z\tu33d8b12\n";
@@ -97,10 +91,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testEqualityTimestampFormatYearAndMonthNegativeTest() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -120,10 +111,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testEqualityTimestampFormatYearAndMonthPositiveTest() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -140,10 +128,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testEqualityTimestampFormatYearOnlyNegativeTest() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -159,10 +144,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testEqualityTimestampFormatYearOnlyPositiveTest() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -179,10 +161,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testEqualsToTimestampFormatYearMonthDay() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -199,10 +178,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testEqualsToTimestampFormatYearMonthDayHour() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -219,10 +195,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testEqualsToTimestampFormatYearMonthDayHourMinute() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -239,10 +212,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testEqualsToTimestampFormatYearMonthDayHourMinuteSecond() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -259,10 +229,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testEqualsToTimestampWithMicrosecond() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000001)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000001Z\n";
@@ -288,10 +255,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testLMoreThanOrEqualsToTimestampFormatYearOnlyPositiveTest1() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -308,10 +272,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testLMoreThanTimestampFormatYearOnlyPositiveTest1() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -328,10 +289,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testLessThanOrEqualsToTimestampFormatYearOnlyNegativeTest1() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -347,10 +305,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testLessThanOrEqualsToTimestampFormatYearOnlyNegativeTest2() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -366,10 +321,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testLessThanOrEqualsToTimestampFormatYearOnlyPositiveTest1() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -386,10 +338,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testLessThanOrEqualsToTimestampFormatYearOnlyPositiveTest2() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -406,10 +355,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testLessThanTimestampFormatYearOnlyNegativeTest1() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -425,10 +371,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testLessThanTimestampFormatYearOnlyNegativeTest2() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -444,10 +387,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testLessThanTimestampFormatYearOnlyPositiveTest1() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -464,10 +404,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testLessThanTimestampFormatYearOnlyPositiveTest2() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -484,10 +421,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testMinOnTimestampEmptyResutlSetIsNull() throws Exception {
         assertMemoryLeak(() -> {
-            // create table
-            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            ddl(createStmt);
-
+            ddl("create table tt (dts timestamp, nts timestamp) timestamp(dts)");
             // insert same values to dts (designated) as nts (non-designated) timestamp
             insert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
@@ -502,10 +436,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testMoreThanOrEqualsToTimestampFormatYearOnlyNegativeTest1() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -521,10 +452,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testMoreThanOrEqualsToTimestampFormatYearOnlyNegativeTest2() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -540,10 +468,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testMoreThanOrEqualsToTimestampFormatYearOnlyPositiveTest2() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -560,10 +485,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testMoreThanTimestampFormatYearOnlyNegativeTest1() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -579,10 +501,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testMoreThanTimestampFormatYearOnlyNegativeTest2() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -598,9 +517,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testMoreThanTimestampFormatYearOnlyPositiveTest2() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             //insert
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
@@ -620,7 +537,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
         currentMicros = 0;
         assertMemoryLeak(() -> {
             // Create table
-            // One hour step timestamps from epoch for 32 then skip 48 etc for 10 iterations
+            // One-hour step timestamps from epoch for 32 then skip 48 etc for 10 iterations
             final int count = 32;
             final int skip = 48;
             final int iterations = 10;
@@ -645,7 +562,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
             }
             final long end = start;
 
-            // Search with 3 hour window every 22 hours
+            // Search with 3-hour window every 22 hours
             int min = Integer.MAX_VALUE;
             int max = Integer.MIN_VALUE;
             for (currentMicros = 0; currentMicros < end; currentMicros += 22 * hour) {
@@ -667,10 +584,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     public void testNowIsSameForAllQueryParts() throws Exception {
         currentMicros = 0;
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "now1\tnow2\tsymbol\ttimestamp\n" +
                     "1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -689,8 +603,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     public void testNowPerformsBinarySearchOnTimestamp() throws Exception {
         currentMicros = 0;
         assertMemoryLeak(() -> {
-            //create table
-            // One hour step timestamps from epoch for 2000 steps
+            // One-hour step timestamps from epoch for 2000 steps
             final int count = 200;
             String createStmt = "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + ")) timestamp(ts) partition by DAY";
             SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'.000000Z'");
@@ -764,33 +677,60 @@ public class TimestampQueryTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampDifferentThanFixedValue() throws Exception {
-        assertQuery("t\n" +
-                "1970-01-01T00:00:01.000000Z\n" +
-                "1970-01-01T00:00:02.000000Z\n", "select t from x where t != to_timestamp('1970-01-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ", "create table x as (select timestamp_sequence(0, 1000000) t from long_sequence(3)) timestamp(t)", "t", null, null, true, true, false);
+        assertQuery(
+                "t\n" +
+                        "1970-01-01T00:00:01.000000Z\n" +
+                        "1970-01-01T00:00:02.000000Z\n",
+                "select t from x where t != to_timestamp('1970-01-01:00:00:00', 'yyyy-MM-dd:HH:mm:ss') ",
+                "create table x as (select timestamp_sequence(0, 1000000) t from long_sequence(3)) timestamp(t)",
+                "t",
+                null,
+                null,
+                true,
+                true,
+                false
+        );
     }
 
     @Test
     public void testTimestampDifferentThanNonFixedValue() throws Exception {
-        assertQuery("t\n" +
-                "1970-01-01T00:00:00.000000Z\n" +
-                "1970-01-01T00:00:01.000000Z\n", "select t from x where t != to_timestamp('201' || rnd_long(0,9,0),'yyyy')", "create table x as (select timestamp_sequence(0, 1000000) t from long_sequence(2)) timestamp(t)", "t", null, null, true, false, false);
+        assertQuery(
+                "t\n" +
+                        "1970-01-01T00:00:00.000000Z\n" +
+                        "1970-01-01T00:00:01.000000Z\n",
+                "select t from x where t != to_timestamp('201' || rnd_long(0,9,0),'yyyy')",
+                "create table x as (select timestamp_sequence(0, 1000000) t from long_sequence(2)) timestamp(t)",
+                "t",
+                null,
+                null,
+                true,
+                false,
+                false
+        );
     }
 
     @Test
     public void testTimestampInDay1orDay2() throws Exception {
-        assertQuery("min\tmax\n\t\n", "select min(nts), max(nts) from tt where nts IN '2020-01-01' or nts IN '2020-01-02'", "create table tt (dts timestamp, nts timestamp) timestamp(dts)", null, "insert into tt " +
-                "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                "from long_sequence(48L)", "min\tmax\n" +
-                "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n", false, true, false);
+        assertQuery(
+                "min\tmax\n\t\n",
+                "select min(nts), max(nts) from tt where nts IN '2020-01-01' or nts IN '2020-01-02'",
+                "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
+                null,
+                "insert into tt " +
+                        "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                        "from long_sequence(48L)",
+                "min\tmax\n" +
+                        "2020-01-01T00:00:00.000000Z\t2020-01-02T23:00:00.000000Z\n",
+                false,
+                true,
+                false
+        );
     }
 
     @Test
     public void testTimestampIntervalPartitionDay() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert as select
+            ddl("create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
                     Timestamps.DAY_MICROS + ") FROM long_sequence(5)");
@@ -813,10 +753,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testTimestampIntervalPartitionMonth() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by MONTH";
-            ddl(createStmt);
-            //insert as select
+            ddl("create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by MONTH");
             insert("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
                     Timestamps.DAY_MICROS * 30 + ") FROM long_sequence(5)");
@@ -839,10 +776,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testTimestampIntervalPartitionWeek() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by WEEK";
-            ddl(createStmt);
-            //insert as select
+            ddl("create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by WEEK");
             insert("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
                     Timestamps.WEEK_MICROS + ") FROM long_sequence(5)");
@@ -865,10 +799,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testTimestampIntervalPartitionYear() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by YEAR";
-            ddl(createStmt);
-            //insert as select
+            ddl("create table interval_test(seq_num long, timestamp timestamp) timestamp(timestamp) partition by YEAR");
             insert("insert into interval_test select x, timestamp_sequence(" +
                     "'2022-11-19T00:00:00', " +
                     Timestamps.DAY_MICROS * 365 + ") FROM long_sequence(5)");
@@ -890,38 +821,55 @@ public class TimestampQueryTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampMin() throws Exception {
-        assertQuery("nts\tmin\n" +
-                "nts\t\n", "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'", "create table tt (dts timestamp, nts timestamp) timestamp(dts)", null, "insert into tt " +
-                "select timestamp_sequence(1577836800000000L, 10L), timestamp_sequence(1577836800000000L, 10L) " +
-                "from long_sequence(2L)", "nts\tmin\n" +
-                "nts\t2020-01-01T00:00:00.000010Z\n", false, true, false);
+        assertQuery(
+                "nts\tmin\n" +
+                        "nts\t\n",
+                "select 'nts', min(nts) from tt where nts > '2020-01-01T00:00:00.000000Z'",
+                "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
+                null,
+                "insert into tt " +
+                        "select timestamp_sequence(1577836800000000L, 10L), timestamp_sequence(1577836800000000L, 10L) " +
+                        "from long_sequence(2L)",
+                "nts\tmin\n" +
+                        "nts\t2020-01-01T00:00:00.000010Z\n",
+                false,
+                true,
+                false
+        );
     }
 
     @Test
     public void testTimestampOpSymbolColumns() throws Exception {
-        assertQuery("a\tk\n" +
-                "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\n" +
-                "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\n", "select a, k from x where k < cast(a as timestamp)", "create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)", "k", null, null, true, false, false);
+        assertQuery(
+                "a\tk\n" +
+                        "1970-01-01T00:00:00.040000Z\t1970-01-01T00:00:00.030000Z\n" +
+                        "1970-01-01T00:00:00.050000Z\t1970-01-01T00:00:00.040000Z\n",
+                "select a, k from x where k < cast(a as timestamp)",
+                "create table x as (select cast(concat('1970-01-01T00:00:00.0', (case when x > 3 then x else x - 1 end), '0000Z') as symbol) a, timestamp_sequence(0, 10000) k from long_sequence(5)) timestamp(k)",
+                "k",
+                null,
+                null,
+                true,
+                false,
+                false
+        );
     }
 
     @Test
     public void testTimestampParseWithYearMonthDayTHourMinuteSecondAndIncompleteMillisTimeZone() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             String query = "select * from ob_mem_snapshot";
             printSqlResult(expected, query, "timestamp", true, true);
-            //2 millisec characters
+            // 2 ms characters
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12-31T23:59:59.00Z'";
             printSqlResult(expected, query, "timestamp", true, true);
-            //1 millisec character
+            // 1 ms character
             expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
             query = "SELECT * FROM ob_mem_snapshot where timestamp IN '2020-12-31T23:59:59.0Z'";
@@ -933,10 +881,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testTimestampParseWithYearMonthDayTHourMinuteSecondTimeZone() throws Exception {
         assertMemoryLeak(() -> {
-            //create table
-            String createStmt = "create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY";
-            ddl(createStmt);
-            //insert
+            ddl("create table ob_mem_snapshot (symbol int,  me_seq_num long,  timestamp timestamp) timestamp(timestamp) partition by DAY");
             insert("INSERT INTO ob_mem_snapshot  VALUES(1, 1, 1609459199000000)");
             String expected = "symbol\tme_seq_num\ttimestamp\n" +
                     "1\t1\t2020-12-31T23:59:59.000000Z\n";
@@ -951,19 +896,26 @@ public class TimestampQueryTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampStringComparison() throws Exception {
-        assertQuery("min\tmax\n\t\n", "select min(nts), max(nts) from tt where nts = '2020-01-01'", "create table tt (dts timestamp, nts timestamp) timestamp(dts)", null, "insert into tt " +
-                "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                "from long_sequence(48L)", "min\tmax\n" +
-                "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n", false, true, false);
+        assertQuery(
+                "min\tmax\n\t\n",
+                "select min(nts), max(nts) from tt where nts = '2020-01-01'",
+                "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
+                null,
+                "insert into tt " +
+                        "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                        "from long_sequence(48L)",
+                "min\tmax\n" +
+                        "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n",
+                false,
+                true,
+                false
+        );
     }
 
     @Test
     public void testTimestampStringComparisonBetween() throws Exception {
         assertMemoryLeak(() -> {
-            // create table
-            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            ddl(createStmt);
-
+            ddl("create table tt (dts timestamp, nts timestamp) timestamp(dts)");
             // insert same values to dts (designated) as nts (non-designated) timestamp
             insert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
@@ -1131,10 +1083,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testTimestampStringComparisonBetweenInvalidValue() throws Exception {
         assertMemoryLeak(() -> {
-            // create table
-            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            ddl(createStmt);
-
+            ddl("create table tt (dts timestamp, nts timestamp) timestamp(dts)");
             // insert same values to dts (designated) as nts (non-designated) timestamp
             insert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
@@ -1152,10 +1101,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testTimestampStringComparisonInString() throws Exception {
         assertMemoryLeak(() -> {
-            // create table
-            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            ddl(createStmt);
-
+            ddl("create table tt (dts timestamp, nts timestamp) timestamp(dts)");
             // insert same values to dts (designated) as nts (non-designated) timestamp
             insert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
@@ -1224,10 +1170,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testTimestampStringComparisonInVarchar() throws Exception {
         assertMemoryLeak(() -> {
-            // create table
-            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            ddl(createStmt);
-
+            ddl("create table tt (dts timestamp, nts timestamp) timestamp(dts)");
             // insert same values to dts (designated) as nts (non-designated) timestamp
             insert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
@@ -1293,27 +1236,21 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testTimestampStringComparisonInvalidValue() throws Exception {
         assertMemoryLeak(() -> {
-            // create table
-            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            ddl(createStmt);
-
+            ddl("create table tt (dts timestamp, nts timestamp) timestamp(dts)");
             // insert same values to dts (designated) as nts (non-designated) timestamp
             insert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
                     "from long_sequence(48L)");
 
             assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts > 'invalid'");
-            assertTimestampTtFailedQuery("cannot compare STRING with type DOUBLE", "select min(nts), max(nts) from tt where '2020-01-01' in ( NaN)");
+            assertTimestampTtFailedQuery("cannot compare STRING with type DOUBLE", "select min(nts), max(nts) from tt where '2020-01-01' in (0.34)");
         });
     }
 
     @Test
     public void testTimestampStringComparisonNonConst() throws Exception {
         assertMemoryLeak(() -> {
-            // create table
-            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            ddl(createStmt);
-
+            ddl("create table tt (dts timestamp, nts timestamp) timestamp(dts)");
             // insert same values to dts (designated) as nts (non-designated) timestamp
             insert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
@@ -1330,10 +1267,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testTimestampStringComparisonWithString() throws Exception {
         assertMemoryLeak(() -> {
-            // create table
-            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            ddl(createStmt);
-
+            ddl("create table tt (dts timestamp, nts timestamp) timestamp(dts)");
             // insert same values to dts (designated) as nts (non-designated) timestamp
             insert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
@@ -1376,25 +1310,42 @@ public class TimestampQueryTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampStringDateAdd() throws Exception {
-        assertQuery("dateadd\n" +
-                "2020-01-02T00:00:00.000000Z\n", "select dateadd('d', 1, '2020-01-01')", null, null, null, null, true, true, false);
+        assertQuery(
+                "dateadd\n" +
+                        "2020-01-02T00:00:00.000000Z\n",
+                "select dateadd('d', 1, '2020-01-01')",
+                null,
+                null,
+                null,
+                null,
+                true,
+                true,
+                false
+        );
     }
 
     @Test
     public void testTimestampSymbolComparison() throws Exception {
-        assertQuery("min\tmax\n\t\n", "select min(nts), max(nts) from tt where nts = cast('2020-01-01' as symbol)", "create table tt (dts timestamp, nts timestamp) timestamp(dts)", null, "insert into tt " +
-                "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
-                "from long_sequence(48L)", "min\tmax\n" +
-                "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n", false, true, false);
+        assertQuery(
+                "min\tmax\n\t\n",
+                "select min(nts), max(nts) from tt where nts = cast('2020-01-01' as symbol)",
+                "create table tt (dts timestamp, nts timestamp) timestamp(dts)",
+                null,
+                "insert into tt " +
+                        "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
+                        "from long_sequence(48L)",
+                "min\tmax\n" +
+                        "2020-01-01T00:00:00.000000Z\t2020-01-01T00:00:00.000000Z\n",
+                false,
+                true,
+                false
+        );
     }
 
     @Test
     public void testTimestampSymbolComparisonBetweenInvalidValue() throws Exception {
         assertMemoryLeak(() -> {
-            // create table
-            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            ddl(createStmt);
-
+            ddl("create table tt (dts timestamp, nts timestamp) timestamp(dts)");
             // insert same values to dts (designated) as nts (non-designated) timestamp
             insert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
@@ -1412,31 +1363,29 @@ public class TimestampQueryTest extends AbstractCairoTest {
     @Test
     public void testTimestampSymbolComparisonInvalidValue() throws Exception {
         assertMemoryLeak(() -> {
-            // create table
-            String createStmt = "create table tt (dts timestamp, nts timestamp) timestamp(dts)";
-            ddl(createStmt);
-
+            ddl("create table tt (dts timestamp, nts timestamp) timestamp(dts)");
             // insert same values to dts (designated) as nts (non-designated) timestamp
             insert("insert into tt " +
                     "select timestamp_sequence(1577836800000000L, 60*60*1000000L), timestamp_sequence(1577836800000000L, 60*60*1000000L) " +
                     "from long_sequence(48L)");
 
             assertTimestampTtFailedQuery("Invalid date", "select min(nts), max(nts) from tt where nts > cast('invalid' as symbol)");
-            assertTimestampTtFailedQuery("STRING constant expected", "select min(nts), max(nts) from tt where cast('2020-01-01' as symbol) in (NaN)");
+            assertTimestampTtFailedQuery("STRING constant expected", "select min(nts), max(nts) from tt where cast('2020-01-01' as symbol) in (3.14)");
         });
     }
 
     @Test
     public void testTimestampSymbolConversion() throws Exception {
         assertMemoryLeak(() -> {
-            TableModel m = new TableModel(configuration, "tt", PartitionBy.DAY);
-            m.timestamp("dts")
+            TableModel m = new TableModel(configuration, "tt", PartitionBy.DAY)
+                    .timestamp("dts")
                     .col("ts", ColumnType.TIMESTAMP);
+
             createPopulateTable(m, 31, "2021-03-14", 31);
             String expected = "dts\tts\n" +
                     "2021-04-02T23:59:59.354820Z\t2021-04-02T23:59:59.354820Z\n";
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     expected,
                     "tt where dts > cast('2021-04-02T13:45:49.207Z' as symbol) and dts < cast('2021-04-03 13:45:49.207' as symbol)",
                     "dts",
@@ -1444,7 +1393,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
                     true
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     expected,
                     "tt where ts > cast('2021-04-02T13:45:49.207Z' as symbol) and ts < cast('2021-04-03 13:45:49.207' as symbol)",
                     "dts",
@@ -1456,8 +1405,18 @@ public class TimestampQueryTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampSymbolDateAdd() throws Exception {
-        assertQuery("dateadd\n" +
-                "2020-01-02T00:00:00.000000Z\n", "select dateadd('d', 1, cast('2020-01-01' as symbol))", null, null, null, null, true, true, false);
+        assertQuery(
+                "dateadd\n" +
+                        "2020-01-02T00:00:00.000000Z\n",
+                "select dateadd('d', 1, cast('2020-01-01' as symbol))",
+                null,
+                null,
+                null,
+                null,
+                true,
+                true,
+                false
+        );
     }
 
     private void assertQueryWithConditions(String query, String expected, String columnName) throws SqlException {
@@ -1480,7 +1439,7 @@ public class TimestampQueryTest extends AbstractCairoTest {
     }
 
     private void assertTimestampTtFailedQuery0(String sql, String contains) throws Exception {
-        assertException(sql, -1, contains);
+        assertExceptionNoLeakCheck(sql, -1, contains);
     }
 
     private void assertTimestampTtQuery(String expected, String query) throws SqlException {

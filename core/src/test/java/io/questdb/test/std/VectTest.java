@@ -39,7 +39,7 @@ import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
-import static io.questdb.cairo.AbstractIntervalDataFrameCursor.SCAN_UP;
+import static io.questdb.cairo.AbstractIntervalPartitionFrameCursor.SCAN_UP;
 import static io.questdb.cairo.BinarySearch.SCAN_DOWN;
 
 public class VectTest {

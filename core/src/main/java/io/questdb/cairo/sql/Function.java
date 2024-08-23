@@ -34,7 +34,6 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
@@ -65,6 +64,21 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     ) throws SqlException {
         if (args != null) {
             init(args, symbolTableSource, executionContext);
+        }
+    }
+
+    static void initNcFunctions(
+            ObjList<? extends Function> args,
+            SymbolTableSource symbolTableSource,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (args != null) {
+            for (int i = 0, n = args.size(); i < n; i++) {
+                final Function arg = args.getQuiet(i);
+                if (arg != null) {
+                    arg.init(symbolTableSource, executionContext);
+                }
+            }
         }
     }
 
@@ -126,7 +140,8 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     }
 
     /**
-     * Returns function name or symbol, e.g. concat or + .
+     * @return function name or symbol, e.g. concat or + .
+     * r=
      */
     default String getName() {
         return getClass().getName();
@@ -140,10 +155,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     RecordCursorFactory getRecordCursorFactory();
 
     short getShort(Record rec);
-
-    void getStr(Record rec, Utf16Sink utf16Sink);
-
-    void getStr(Record rec, Utf16Sink sink, int arrayIndex);
 
     CharSequence getStrA(Record rec);
 
@@ -179,9 +190,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     /**
      * Returns true if function is constant, i.e. its value does not require
      * any input from the record.
-     * <p>
-     * Constant functions can evaluate by passing a null record to {@link #getStr(Record, Utf16Sink)}
-     * or other methods. This often happens inside FunctionFactory at query planning stage.
      *
      * @return true if function is constant
      * @see #isRuntimeConstant()

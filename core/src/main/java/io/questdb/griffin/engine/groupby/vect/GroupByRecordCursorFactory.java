@@ -42,23 +42,22 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Worker;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.tasks.VectorAggregateTask;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
-
     private final static Log LOG = LogFactory.getLog(GroupByRecordCursorFactory.class);
-
     private final static int ROSTI_MINIMIZED_SIZE = 16; // 16 is the minimum size usable on arm
     private final RecordCursorFactory base;
     private final RostiRecordCursor cursor;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final ObjectPool<VectorAggregateEntry> entryPool;
+    private final PageFrameAddressCache frameAddressCache;
+    private final ObjList<PageFrameMemoryPool> frameMemoryPools; // per worker pools
     private final int keyColumnIndex;
     private final AtomicInteger oomCounter = new AtomicInteger();
     private final long[] pRosti;
@@ -93,6 +92,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             // functions[n].type == columnTypes[n+1]
 
             this.base = base;
+            this.frameAddressCache = new PageFrameAddressCache(configuration);
             perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
             sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
             workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, workerCount);
@@ -160,6 +160,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             } else {
                 cursor = new RostiRecordCursor(pRosti, columnSkewIndex, null);
             }
+
+            this.frameMemoryPools = new ObjList<>(workerCount);
+            for (int i = 0; i < workerCount; i++) {
+                frameMemoryPools.add(new PageFrameMemoryPool());
+            }
         } catch (Throwable th) {
             close();
             throw th;
@@ -183,7 +188,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             vafList.getQuick(i).clear();
         }
         final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
-        return cursor.of(pageFrameCursor, executionContext.getMessageBus(), executionContext.getCircuitBreaker());
+        return cursor.of(
+                base.getMetadata(),
+                pageFrameCursor,
+                executionContext.getMessageBus(),
+                executionContext.getCircuitBreaker()
+        );
     }
 
     @Override
@@ -196,7 +206,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         sink.type("GroupBy");
         sink.meta("vectorized").val(true);
         sink.meta("workers").val(workerCount);
-        sink.attr("keys").val("[").putBaseColumnNameNoRemap(keyColumnIndex).val("]");
+        sink.attr("keys").val("[").putBaseColumnName(keyColumnIndex).val("]");
         sink.optAttr("values", vafList, true);
         sink.child(base);
     }
@@ -233,7 +243,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        Misc.free(base);
+        Misc.freeObjListAndKeepObjects(frameMemoryPools);
         Misc.freeObjList(vafList);
         for (int i = 0, n = pRosti.length; i < n; i++) {
             if (pRosti[i] != 0) {
@@ -241,6 +251,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 pRosti[i] = 0;
             }
         }
+        Misc.free(base);
     }
 
     private class RostiRecordCursor implements RecordCursor {
@@ -252,9 +263,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         private long count;
         private long ctrl;
         private long ctrlStart;
+        private int frameCount;
+        private PageFrameCursor frameCursor;
         private boolean isRostiBuilt;
         private long pRostiBig;
-        private PageFrameCursor pageFrameCursor;
         private RostiRecord recordB;
         private long shift;
         private long size;
@@ -282,7 +294,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void close() {
-            pageFrameCursor = Misc.free(pageFrameCursor);
+            frameAddressCache.clear();
+            frameCursor = Misc.free(frameCursor);
             raf.reset(pRostiBig, ROSTI_MINIMIZED_SIZE);
         }
 
@@ -301,7 +314,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            return pageFrameCursor.getSymbolTable(symbolTableSkewIndex.getQuick(columnIndex));
+            return frameCursor.getSymbolTable(symbolTableSkewIndex.getQuick(columnIndex));
         }
 
         @Override
@@ -326,13 +339,23 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
-            return pageFrameCursor.newSymbolTable(symbolTableSkewIndex.getQuick(columnIndex));
+            return frameCursor.newSymbolTable(symbolTableSkewIndex.getQuick(columnIndex));
         }
 
-        public RostiRecordCursor of(PageFrameCursor pageFrameCursor, MessageBus bus, SqlExecutionCircuitBreaker circuitBreaker) {
-            this.pageFrameCursor = pageFrameCursor;
+        public RostiRecordCursor of(
+                RecordMetadata metadata,
+                PageFrameCursor pageFrameCursor,
+                MessageBus bus,
+                SqlExecutionCircuitBreaker circuitBreaker
+        ) {
+            this.frameCursor = pageFrameCursor;
             this.bus = bus;
             this.circuitBreaker = circuitBreaker;
+            frameAddressCache.of(metadata);
+            for (int i = 0; i < workerCount; i++) {
+                frameMemoryPools.getQuick(i).of(frameAddressCache);
+            }
+            frameCount = 0;
             isRostiBuilt = false;
             return this;
         }
@@ -384,26 +407,17 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             try {
                 PageFrame frame;
-                while ((frame = pageFrameCursor.next()) != null) {
-                    final long keyAddress = frame.getPageAddress(keyColumnIndex);
-                    for (int i = 0; i < vafCount; i++) {
-                        final VectorAggregateFunction vaf = vafList.getQuick(i);
+                while ((frame = frameCursor.next()) != null) {
+                    frameAddressCache.add(frameCount++, frame);
+                }
+
+                for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+                    final long frameRowCount = frameAddressCache.getFrameSize(frameIndex);
+                    for (int vafIndex = 0; vafIndex < vafCount; vafIndex++) {
+                        final VectorAggregateFunction vaf = vafList.getQuick(vafIndex);
                         // when column index = -1 we assume that vector function does not have value
                         // argument, and it can only derive count via memory size
-                        final int columnIndex = vaf.getColumnIndex();
-                        // for functions like `count()`, that do not have arguments we are required to provide
-                        // count of rows in table in a form of "pageSize >> shr". Since `vaf` doesn't provide column
-                        // this code used column 0. Assumption here that column 0 is fixed size.
-                        // This assumption only holds because our aggressive algorithm for "top down columns", e.g.
-                        // the algorithm that forces page frame to provide only columns required by the select. At the time
-                        // of writing this code there is no way to return variable length column out of non-keyed aggregation
-                        // query. This might change if we introduce something like `first(string)`. When this happens we will
-                        // need to rethink our way of computing size for the count. This would be either type checking column
-                        // 0 and working out size differently or finding any fixed-size column and using that.
-                        final long valueAddress = columnIndex > -1 ? frame.getPageAddress(columnIndex) : 0;
-                        final int pageColIndex = columnIndex > -1 ? columnIndex : 0;
-                        final int columnSizeShr = frame.getColumnShiftBits(pageColIndex);
-                        final long valueAddressSize = frame.getPageSize(pageColIndex);
+                        final int valueColumnIndex = vaf.getColumnIndex();
 
                         while (true) {
                             long cursor = pubSeq.next();
@@ -411,21 +425,20 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                 circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
 
                                 if (workStealingStrategy.shouldSteal(mergedCount)) {
-                                    // acquire the slot and DIY the func
-                                    final int slot = perWorkerLocks.acquireSlot(workerId, circuitBreaker);
-                                    try {
-                                        if (keyAddress == 0) {
-                                            vaf.aggregate(valueAddress, valueAddressSize, columnSizeShr, slot);
-                                        } else {
-                                            long oldSize = Rosti.getAllocMemory(pRosti[slot]);
-                                            if (!vaf.aggregate(pRosti[slot], keyAddress, valueAddress, valueAddressSize, columnSizeShr, slot)) {
-                                                oomCounter.incrementAndGet();
-                                            }
-                                            raf.updateMemoryUsage(pRosti[slot], oldSize);
-                                        }
-                                    } finally {
-                                        perWorkerLocks.releaseSlot(slot);
-                                    }
+                                    VectorAggregateEntry.aggregateUnsafe(
+                                            workerId,
+                                            oomCounter,
+                                            frameIndex,
+                                            frameRowCount,
+                                            keyColumnIndex,
+                                            valueColumnIndex,
+                                            pRosti,
+                                            frameMemoryPools,
+                                            raf,
+                                            vaf,
+                                            perWorkerLocks,
+                                            circuitBreaker
+                                    );
                                     ownCount++;
                                     total++;
                                     mergedCount = doneLatch.getCount();
@@ -434,37 +447,21 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                 mergedCount = doneLatch.getCount();
                             } else {
                                 final VectorAggregateEntry entry = entryPool.next();
-                                if (keyAddress == 0) {
-                                    entry.of(
-                                            vaf,
-                                            null,
-                                            0,
-                                            valueAddress,
-                                            valueAddressSize,
-                                            columnSizeShr,
-                                            startedCounter,
-                                            doneLatch,
-                                            oomCounter,
-                                            null,
-                                            perWorkerLocks,
-                                            sharedCircuitBreaker
-                                    );
-                                } else {
-                                    entry.of(
-                                            vaf,
-                                            pRosti,
-                                            keyAddress,
-                                            valueAddress,
-                                            valueAddressSize,
-                                            columnSizeShr,
-                                            startedCounter,
-                                            doneLatch,
-                                            oomCounter,
-                                            raf,
-                                            perWorkerLocks,
-                                            sharedCircuitBreaker
-                                    );
-                                }
+                                entry.of(
+                                        frameIndex,
+                                        frameRowCount,
+                                        keyColumnIndex,
+                                        valueColumnIndex,
+                                        vaf,
+                                        pRosti,
+                                        frameMemoryPools,
+                                        startedCounter,
+                                        doneLatch,
+                                        oomCounter,
+                                        raf,
+                                        perWorkerLocks,
+                                        sharedCircuitBreaker
+                                );
                                 queue.get(cursor).entry = entry;
                                 pubSeq.done(cursor);
                                 queuedCount++;
@@ -479,6 +476,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 throw e;
             } catch (Throwable e) {
                 sharedCircuitBreaker.cancel();
+                // Release page frame memory.
+                Misc.freeObjListAndKeepObjects(frameMemoryPools);
                 throw e;
             } finally {
                 // all done? great start consuming the queue we just published
@@ -501,11 +500,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         sharedCircuitBreaker,
                         workStealingStrategy
                 );
-                // we can't reallocate rosti until tasks are complete because some other thread could be using it
+                // We can't reallocate rosti until tasks are complete because some other thread could be using it.
                 if (sharedCircuitBreaker.checkIfTripped()) {
                     resetRostiMemorySize();
                 }
             }
+
+            // Release page frame memory.
+            Misc.freeObjListAndKeepObjects(frameMemoryPools);
 
             if (oomCounter.get() > 0) {
                 resetRostiMemorySize();
@@ -673,10 +675,6 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             }
 
             @Override
-            public void getStr(int col, Utf16Sink utf16Sink) {
-            }
-
-            @Override
             public CharSequence getStrA(int col) {
                 return null;
             }
@@ -693,12 +691,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             @Override
             public CharSequence getSymA(int col) {
-                return pageFrameCursor.getSymbolTable(symbolTableSkewIndex.getQuick(col)).valueOf(getInt(col));
+                return frameCursor.getSymbolTable(symbolTableSkewIndex.getQuick(col)).valueOf(getInt(col));
             }
 
             @Override
             public CharSequence getSymB(int col) {
-                return pageFrameCursor.getSymbolTable(symbolTableSkewIndex.getQuick(col)).valueBOf(getInt(col));
+                return frameCursor.getSymbolTable(symbolTableSkewIndex.getQuick(col)).valueBOf(getInt(col));
             }
 
             @Override

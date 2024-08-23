@@ -33,10 +33,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.VarcharFunction;
+import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.*;
-import io.questdb.std.str.DirectUtf16Sink;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.*;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.regex.Matcher;
 
@@ -45,6 +46,44 @@ import java.util.regex.Matcher;
  * It exploits the ability of a varchar column to return a CharSequence view of the sequence.
  */
 public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctionFactory {
+    private static final int INITIAL_SINK_CAPACITY = 16;
+
+    /**
+     * Returns true if the input pattern can operate on a UTF-16 view of a UTF-8 string,
+     * i.e. it only cares about ASCII chars.
+     */
+    public static boolean canSkipUtf8Decoding(CharSequence pattern) {
+        for (int i = 0, n = pattern.length(); i < n; i++) {
+            // Check for non-ASCII chars.
+            if (pattern.charAt(i) > 127) {
+                return false;
+            }
+            // Filter out class character closes with all quantifiers, but ']+'.
+            // That's because classes like '[^0-9]' match single non-digit char while
+            // for UTF-16 view each non-ASCII char is interpreted as multiple chars.
+            if (pattern.charAt(i) == ']' && (i == n - 1 || pattern.charAt(i + 1) != '+')) {
+                return false;
+            }
+            // Filter out everything that involves digits/letters/words/etc.
+            if (pattern.charAt(i) == '\\' && i < n - 1) {
+                switch (pattern.charAt(i + 1)) {
+                    case 'x': // a hexadecimal char literal
+                    case 'D': // a non-digit
+                    case 'd': // a digit
+                    case 'B': // a non-word boundary
+                    case 'b': // a word boundary
+                    case 'S': // a non-whitespace character
+                    case 's': // a whitespace character
+                    case 'W': // a non-word character
+                    case 'w': // a word character
+                    case 'p': // \p{Lower} (a lower-case alphabetic char) and such
+                        return false;
+                }
+            }
+        }
+        return true;
+    }
+
     @Override
     public String getSignature() {
         return "regexp_replace(ØSS)";
@@ -68,33 +107,227 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         if (!pattern.isRuntimeConstant() && !replacement.isRuntimeConstant()) {
             final CharSequence patternStr = pattern.getStrA(null);
             if (patternStr == null) {
-                throw SqlException.$(patternPos, "NULL regex");
+                return VarcharConstant.NULL;
             }
             CharSequence replacementStr = replacement.getStrA(null);
             if (replacementStr == null) {
-                throw SqlException.$(replacementPos, "NULL replacement");
+                return VarcharConstant.NULL;
             }
             // Optimize for patterns like "^https?://(?:www\.)?([^/]+)/.*$" and replacements like "$1".
-            if (patternStr.length() > 2 && patternStr.charAt(0) == '^' && patternStr.charAt(patternStr.length() - 1) == '$'
-                    && replacementStr.length() > 1 && replacementStr.charAt(0) == '$') {
+            if (
+                    patternStr.length() > 2
+                            && patternStr.charAt(0) == '^'
+                            && patternStr.charAt(patternStr.length() - 1) == '$'
+                            && replacementStr.length() > 1
+                            && replacementStr.charAt(0) == '$'
+            ) {
                 final Matcher matcher = RegexUtils.createMatcher(pattern, patternPos);
+                if (matcher == null) {
+                    return VarcharConstant.NULL;
+                }
                 try {
                     final int group = Numbers.parseInt(replacementStr, 1, replacementStr.length());
                     if (group > matcher.groupCount()) {
-                        throw SqlException.$(replacementPos, "No group ").put(group);
+                        throw SqlException.$(replacementPos, "no group ").put(group);
                     }
-                    return new SingleGroupFunc(value, matcher, Chars.toString(replacementStr), group, position);
+                    if (canSkipUtf8Decoding(patternStr)) {
+                        return new SingleGroupAsciiFunc(value, matcher, Chars.toString(replacementStr), group, position);
+                    } else {
+                        return new SingleGroupFunc(value, matcher, Chars.toString(replacementStr), group, position);
+                    }
                 } catch (NumericException ignore) {
                 }
             }
         }
 
         final int maxLength = configuration.getStrFunctionMaxBufferLength();
-        return new Func(value, pattern, patternPos, replacement, replacementPos, maxLength, position);
+        return new RegexpReplaceStrFunction(value, pattern, patternPos, replacement, maxLength, position);
     }
 
+    private static class DirectAsciiStringView implements CharSequence, DirectUtf8Sequence {
+        private boolean ascii;
+        private long ptr;
+        private int size;
+        private boolean stable;
+
+        @Override
+        public @NotNull CharSequence asAsciiCharSequence() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public byte byteAt(int i) {
+            return Unsafe.getUnsafe().getByte(ptr + i);
+        }
+
+        @Override
+        public char charAt(int i) {
+            return (char) Unsafe.getUnsafe().getByte(ptr + i);
+        }
+
+        @Override
+        public boolean isAscii() {
+            return ascii;
+        }
+
+        @Override
+        public boolean isStable() {
+            return stable;
+        }
+
+        @Override
+        public int length() {
+            return size;
+        }
+
+        public DirectAsciiStringView of(long ptr, int size, boolean ascii, boolean stable) {
+            this.ptr = ptr;
+            this.size = size;
+            this.ascii = ascii;
+            this.stable = stable;
+            return this;
+        }
+
+        @Override
+        public long ptr() {
+            return ptr;
+        }
+
+        @Override
+        public int size() {
+            return size;
+        }
+
+        @Override
+        public @NotNull CharSequence subSequence(int start, int end) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public @NotNull String toString() {
+            return Utf8s.stringFromUtf8Bytes(this);
+        }
+    }
+
+    /**
+     * Optimization for single group replacements. Avoids litter generated by
+     * {@link Matcher#appendReplacement(StringBuilder, String)} by returning a substring of
+     * the original varchar.
+     * <p>
+     * Should be used only for patterns that can operate on a UTF-16 view of a UTF-8 string,
+     * i.e. patterns that only care about ASCII chars. In other cases, {@link SingleGroupFunc}
+     * should be used since it decodes UTF-8 to UTF-16.
+     * <p>
+     * Example:
+     * ^https?://(?:www\.)?([^/]+)/.*$
+     */
+    private static class SingleGroupAsciiFunc extends VarcharFunction implements UnaryFunction {
+        private final int functionPos;
+        private final int group;
+        private final Matcher matcher;
+        private final String replacement;
+        private final DirectUtf8Sink utf8SinkA;
+        private final DirectUtf8Sink utf8SinkB;
+        private final Function value;
+        private final DirectAsciiStringView viewA = new DirectAsciiStringView();
+        private final DirectAsciiStringView viewB = new DirectAsciiStringView();
+
+        public SingleGroupAsciiFunc(Function value, Matcher matcher, String replacement, int group, int functionPos) {
+            try {
+                this.value = value;
+                this.matcher = matcher;
+                this.replacement = replacement;
+                this.group = group;
+                this.functionPos = functionPos;
+                this.utf8SinkA = new DirectUtf8Sink(INITIAL_SINK_CAPACITY);
+                this.utf8SinkB = new DirectUtf8Sink(INITIAL_SINK_CAPACITY);
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
+        }
+
+        @Override
+        public void close() {
+            UnaryFunction.super.close();
+            Misc.free(utf8SinkA);
+            Misc.free(utf8SinkB);
+        }
+
+        @Override
+        public Function getArg() {
+            return value;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            return getVarchar(rec, utf8SinkA, viewA);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            return getVarchar(rec, utf8SinkB, viewB);
+        }
+
+        @Override
+        public boolean isConstant() {
+            return false;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        @Override
+        public boolean isRuntimeConstant() {
+            return false;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("regexp_replace(").val(value).val(',').val(matcher.pattern().toString()).val(',').val(replacement).val(')');
+        }
+
+        private Utf8Sequence getVarchar(Record rec, DirectUtf8Sink utf8Sink, DirectAsciiStringView view) {
+            Utf8Sequence us = value.getVarcharA(rec);
+            if (us == null) {
+                return null;
+            }
+
+            if (us.ptr() != -1) {
+                view.of(us.ptr(), us.size(), us.isAscii(), us.isStable());
+            } else {
+                utf8Sink.clear();
+                utf8Sink.put(us);
+                view.of(utf8Sink.ptr(), utf8Sink.size(), utf8Sink.isAscii(), false);
+            }
+
+            matcher.reset(view);
+            try {
+                if (!matcher.find()) {
+                    return view;
+                }
+                final int start = matcher.start(group);
+                final int end = matcher.end(group);
+                long ptr = view.ptr() + start;
+                int size = end - start;
+                // If the string is non-ASCII, we need to recalculate
+                // the ASCII flag for the matched substring.
+                boolean ascii = view.isAscii() || Utf8s.isAscii(ptr, size);
+                return view.of(ptr, size, ascii, view.isStable());
+            } catch (Exception e) {
+                throw CairoException.nonCritical().put("regexp_replace failed [position=").put(functionPos).put(", ex=").put(e.getMessage()).put(']');
+            }
+        }
+    }
+
+    /**
+     * Optimization for single group replacements. Avoids litter generated by
+     * {@link Matcher#appendReplacement(StringBuilder, String)} by returning a substring of
+     * the original varchar.
+     */
     private static class SingleGroupFunc extends StrFunction implements UnaryFunction {
-        private static final int INITIAL_SINK_CAPACITY = 16;
         private final int functionPos;
         private final int group;
         private final Matcher matcher;
@@ -188,4 +421,3 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         }
     }
 }
-

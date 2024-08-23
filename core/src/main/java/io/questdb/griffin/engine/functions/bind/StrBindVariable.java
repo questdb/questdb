@@ -33,34 +33,19 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
 public class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
-    private final int floatScale;
     private final StringSink utf16Sink = new StringSink();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private boolean isNull = true;
-
-    public StrBindVariable(int floatScale) {
-        this.floatScale = floatScale;
-    }
 
     @Override
     public void clear() {
         isNull = true;
         utf16Sink.clear();
         utf8Sink.clear();
-    }
-
-    @Override
-    public void getStr(Record rec, Utf16Sink utf16Sink) {
-        if (isNull) {
-            utf16Sink.put((CharSequence) null);
-        } else {
-            utf16Sink.put(this.utf16Sink);
-        }
     }
 
     @Override
@@ -202,9 +187,9 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
         isNull = Numbers.isNull(value);
         if (!isNull) {
             utf16Sink.clear();
-            utf16Sink.put(value, floatScale);
+            utf16Sink.put(value);
             utf8Sink.clear();
-            utf8Sink.put(value, floatScale);
+            utf8Sink.put(value);
         }
     }
 

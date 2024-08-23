@@ -52,18 +52,7 @@ public class CountStrGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final Function arg = args.getQuick(0);
-        if (arg.isConstant()) {
-            CharSequence val = arg.getStrA(null);
-            // NULL expression would lead to zero matched rows, so it makes
-            // no sense to support it until we support count(expression).
-            if (val == null) {
-                throw SqlException.$(argPositions.getQuick(0), "NULL is not allowed");
-            }
-            return new CountLongConstGroupByFunction();
-        } else {
-            return new CountStrGroupByFunction(arg);
-        }
-
+        // we are rewriting `select count(const)` -> `select count()`, except for when const is "null"
+        return new CountStrGroupByFunction(args.getQuick(0));
     }
 }

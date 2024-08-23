@@ -101,7 +101,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
             // Check logging is ok. This test reproduces logging failure because of exception in the middle of logging.
             // The result can be that this loop never finishes.
-            for(int i = 0; i < 1025; i++) {
+            for (int i = 0; i < 1025; i++) {
                 LOG.infoW().$("test").$();
             }
         });
@@ -243,15 +243,15 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             ff = new TestFilesFacadeImpl() {
 
                 @Override
-                public boolean allocate(int fd, long size) {
+                public boolean allocate(long fd, long size) {
                     if (this.fd == fd) {
                         throw new RuntimeException("TEST ERROR");
                     }
                     return super.allocate(fd, size);
                 }
 
-                public int openRW(LPSZ name, long opts) {
-                    int fd = super.openRW(name, opts);
+                public long openRW(LPSZ name, long opts) {
+                    long fd = super.openRW(name, opts);
                     if (Utf8s.endsWithAscii(name, "completed.d")) {
                         this.fd = fd;
                     }

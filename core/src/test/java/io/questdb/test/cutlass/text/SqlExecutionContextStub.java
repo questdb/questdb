@@ -102,7 +102,7 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public int getRequestFd() {
+    public long getRequestFd() {
         return 0;
     }
 
@@ -169,7 +169,6 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void setCancelledFlag(AtomicBoolean cancelled) {
-
     }
 
     @Override

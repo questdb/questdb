@@ -50,7 +50,7 @@ public class RadiansDoubleFunctionFactoryTest extends AbstractFunctionFactoryTes
         call(45).andAssert(Math.PI / 4, DELTA);
         call(90).andAssert(Math.PI / 2, DELTA);
         call(180).andAssert(Math.PI, DELTA);
-        call(360).andAssert(2* Math.PI, DELTA);
+        call(360).andAssert(2 * Math.PI, DELTA);
     }
 
     @Test

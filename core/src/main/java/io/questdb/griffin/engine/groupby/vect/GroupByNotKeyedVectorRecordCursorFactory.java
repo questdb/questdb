@@ -44,15 +44,16 @@ import io.questdb.tasks.VectorAggregateTask;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCursorFactory {
-
     private static final Log LOG = LogFactory.getLog(GroupByNotKeyedVectorRecordCursorFactory.class);
     private final RecordCursorFactory base;
     private final GroupByNotKeyedVectorRecordCursor cursor;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final ObjectPool<VectorAggregateEntry> entryPool;
+    private final PageFrameAddressCache frameAddressCache;
+    private final ObjList<PageFrameMemoryPool> frameMemoryPools; // per worker pools
     private final PerWorkerLocks perWorkerLocks; // used to protect VAF's internal slots
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker;
     private final AtomicInteger startedCounter = new AtomicInteger();
@@ -70,15 +71,20 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         super(metadata);
         try {
             this.base = base;
+            this.frameAddressCache = new PageFrameAddressCache(configuration);
             this.entryPool = new ObjectPool<>(VectorAggregateEntry::new, configuration.getGroupByPoolCapacity());
             this.vafList = new ObjList<>(vafList.size());
             this.vafList.addAll(vafList);
             this.cursor = new GroupByNotKeyedVectorRecordCursor(this.vafList);
+            this.workerCount = workerCount;
             this.perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
             this.sharedCircuitBreaker = new AtomicBooleanCircuitBreaker();
             this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, workerCount);
             this.workStealingStrategy.of(startedCounter);
-            this.workerCount = workerCount;
+            this.frameMemoryPools = new ObjList<>(workerCount);
+            for (int i = 0; i < workerCount; i++) {
+                frameMemoryPools.add(new PageFrameMemoryPool());
+            }
         } catch (Throwable th) {
             close();
             throw th;
@@ -96,8 +102,13 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         for (int i = 0, n = vafList.size(); i < n; i++) {
             vafList.getQuick(i).clear();
         }
-        final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
-        return cursor.of(pageFrameCursor, executionContext.getMessageBus(), executionContext.getCircuitBreaker());
+        final PageFrameCursor frameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
+        return cursor.of(
+                base.getMetadata(),
+                frameCursor,
+                executionContext.getMessageBus(),
+                executionContext.getCircuitBreaker()
+        );
     }
 
     @Override
@@ -158,6 +169,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
     @Override
     protected void _close() {
+        Misc.freeObjListAndKeepObjects(frameMemoryPools);
         Misc.freeObjList(vafList);
         Misc.free(base);
     }
@@ -168,7 +180,8 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
         private MessageBus bus;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private int countDown = 1;
-        private PageFrameCursor pageFrameCursor;
+        private int frameCount;
+        private PageFrameCursor frameCursor;
 
         public GroupByNotKeyedVectorRecordCursor(ObjList<? extends Function> functions) {
             this.recordA = new VirtualRecordNoRowid(functions);
@@ -184,7 +197,8 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
         @Override
         public void close() {
-            pageFrameCursor = Misc.free(pageFrameCursor);
+            frameAddressCache.clear();
+            frameCursor = Misc.free(frameCursor);
         }
 
         @Override
@@ -201,10 +215,20 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
             return countDown-- > 0;
         }
 
-        public GroupByNotKeyedVectorRecordCursor of(PageFrameCursor pageFrameCursor, MessageBus bus, SqlExecutionCircuitBreaker circuitBreaker) {
-            this.pageFrameCursor = pageFrameCursor;
+        public GroupByNotKeyedVectorRecordCursor of(
+                RecordMetadata metadata,
+                PageFrameCursor frameCursor,
+                MessageBus bus,
+                SqlExecutionCircuitBreaker circuitBreaker
+        ) {
+            this.frameCursor = frameCursor;
             this.bus = bus;
             this.circuitBreaker = circuitBreaker;
+            frameAddressCache.of(metadata);
+            for (int i = 0; i < workerCount; i++) {
+                frameMemoryPools.getQuick(i).of(frameAddressCache);
+            }
+            frameCount = 0;
             areFunctionsBuilt = false;
             toTop();
             return this;
@@ -249,22 +273,15 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
 
             try {
                 PageFrame frame;
-                while ((frame = pageFrameCursor.next()) != null) {
-                    for (int i = 0; i < vafCount; i++) {
-                        final VectorAggregateFunction vaf = vafList.getQuick(i);
+                while ((frame = frameCursor.next()) != null) {
+                    frameAddressCache.add(frameCount++, frame);
+                }
+
+                for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+                    final long frameRowCount = frameAddressCache.getFrameSize(frameIndex);
+                    for (int vafIndex = 0; vafIndex < vafCount; vafIndex++) {
+                        final VectorAggregateFunction vaf = vafList.getQuick(vafIndex);
                         final int columnIndex = vaf.getColumnIndex();
-                        // for functions like `count()`, that do not have arguments we are required to provide
-                        // count of rows in table in a form of "pageSize >> shr". Since `vaf` doesn't provide column
-                        // this code used column 0. Assumption here that column 0 is fixed size.
-                        // This assumption only holds because our aggressive algorithm for "top down columns", e.g.
-                        // the algorithm that forces page frame to provide only columns required by the select. At the time
-                        // of writing this code there is no way to return variable length column out of non-keyed aggregation
-                        // query. This might change if we introduce something like `first(string)`. When this happens we will
-                        // need to rethink our way of computing size for the count. This would be either type checking column
-                        // 0 and working out size differently or finding any fixed-size column and using that.
-                        final long pageAddress = columnIndex > -1 ? frame.getPageAddress(columnIndex) : 0;
-                        final long pageSize = columnIndex > -1 ? frame.getPageSize(columnIndex) : frame.getPageSize(0);
-                        final int colSizeShr = columnIndex > -1 ? frame.getColumnShiftBits(columnIndex) : frame.getColumnShiftBits(0);
 
                         while (true) {
                             long cursor = pubSeq.next();
@@ -272,15 +289,20 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                                 circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
 
                                 if (workStealingStrategy.shouldSteal(mergedCount)) {
-                                    // acquire the slot and DIY the func
-                                    // vaf need to know which column it is hitting in the frame and will need to
-                                    // aggregate between frames until done
-                                    final int slot = perWorkerLocks.acquireSlot(workerId, circuitBreaker);
-                                    try {
-                                        vaf.aggregate(pageAddress, pageSize, colSizeShr, slot);
-                                    } finally {
-                                        perWorkerLocks.releaseSlot(slot);
-                                    }
+                                    VectorAggregateEntry.aggregateUnsafe(
+                                            workerId,
+                                            null,
+                                            frameIndex,
+                                            frameRowCount,
+                                            -1,
+                                            columnIndex,
+                                            null,
+                                            frameMemoryPools,
+                                            null,
+                                            vaf,
+                                            perWorkerLocks,
+                                            circuitBreaker
+                                    );
                                     ownCount++;
                                     total++;
                                     mergedCount = doneLatch.getCount();
@@ -290,12 +312,13 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                             } else {
                                 final VectorAggregateEntry entry = entryPool.next();
                                 entry.of(
+                                        frameIndex,
+                                        frameRowCount,
+                                        -1,
+                                        columnIndex,
                                         vaf,
                                         null, // null pRosti means that we do not need keyed aggregation
-                                        0,
-                                        pageAddress,
-                                        pageSize,
-                                        colSizeShr,
+                                        frameMemoryPools,
                                         startedCounter,
                                         doneLatch,
                                         null,
@@ -319,6 +342,8 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                 throw e;
             } catch (Throwable e) {
                 sharedCircuitBreaker.cancel();
+                // Release page frame memory.
+                Misc.freeObjListAndKeepObjects(frameMemoryPools);
                 throw e;
             } finally {
                 // all done? great start consuming the queue we just published
@@ -338,6 +363,9 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
                         workStealingStrategy
                 );
             }
+
+            // Release page frame memory.
+            Misc.freeObjListAndKeepObjects(frameMemoryPools);
 
             toTop();
 

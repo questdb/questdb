@@ -69,88 +69,6 @@ public class SplitPartFunctionFactory implements FunctionFactory {
         return new SplitPartFunction(strFunc, delimiterFunc, indexFunc, indexPosition);
     }
 
-    private static abstract class AbstractSplitPartFunction extends StrFunction implements TernaryFunction {
-        protected final Function delimiterFunc;
-        protected final Function indexFunc;
-        protected final Function strFunc;
-        private final int indexPosition;
-        private final StringSink sinkA = new StringSink();
-        private final StringSink sinkB = new StringSink();
-
-        public AbstractSplitPartFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
-            this.strFunc = strFunc;
-            this.delimiterFunc = delimiterFunc;
-            this.indexFunc = indexFunc;
-            this.indexPosition = indexPosition;
-        }
-
-        @Override
-        public final Function getCenter() {
-            return delimiterFunc;
-        }
-
-        @Override
-        public final Function getLeft() {
-            return strFunc;
-        }
-
-        @Override
-        public String getName() {
-            return "split_part";
-        }
-
-        @Override
-        public final Function getRight() {
-            return indexFunc;
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            CharSequence str = strFunc.getStrA(rec);
-            CharSequence delimiter = delimiterFunc.getStrA(rec);
-            int index = getIndex(rec);
-            if (str == null || delimiter == null || index == Numbers.INT_NULL) {
-                return;
-            }
-            splitToSink(utf16Sink, index, str, delimiter);
-        }
-
-        @Override
-        public CharSequence getStrA(Record rec) {
-            return getStrWithClear(rec, sinkA);
-        }
-
-        @Override
-        public CharSequence getStrB(Record rec) {
-            return getStrWithClear(rec, sinkB);
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            TernaryFunction.super.init(symbolTableSource, executionContext);
-            if (indexFunc.isRuntimeConstant()) {
-                int index = indexFunc.getInt(null);
-                if (index == 0) {
-                    throw SqlException.$(indexPosition, "field position must not be zero");
-                }
-            }
-        }
-
-        private StringSink getStrWithClear(Record rec, StringSink sink) {
-            sink.clear();
-            CharSequence str = strFunc.getStrA(rec);
-            CharSequence delimiter = delimiterFunc.getStrA(rec);
-            int index = getIndex(rec);
-            if (str == null || delimiter == null || index == Numbers.INT_NULL) {
-                return null;
-            }
-            splitToSink(sink, index, str, delimiter);
-            return sink;
-        }
-
-        abstract int getIndex(Record rec);
-    }
-
     private static void splitToSink(Utf16Sink sink, int index, CharSequence str, CharSequence delimiter) {
         if (index == 0) {
             return;
@@ -194,11 +112,92 @@ public class SplitPartFunctionFactory implements FunctionFactory {
         sink.put(str, start, end);
     }
 
+    private static abstract class AbstractSplitPartFunction extends StrFunction implements TernaryFunction {
+        protected final Function delimiterFunc;
+        protected final Function indexFunc;
+        protected final Function strFunc;
+        private final int indexPosition;
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        public AbstractSplitPartFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
+            this.strFunc = strFunc;
+            this.delimiterFunc = delimiterFunc;
+            this.indexFunc = indexFunc;
+            this.indexPosition = indexPosition;
+        }
+
+        @Override
+        public final Function getCenter() {
+            return delimiterFunc;
+        }
+
+        @Override
+        public final Function getLeft() {
+            return strFunc;
+        }
+
+        @Override
+        public String getName() {
+            return "split_part";
+        }
+
+        @Override
+        public final Function getRight() {
+            return indexFunc;
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            return getStrWithClear(rec, sinkA);
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            return getStrWithClear(rec, sinkB);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            TernaryFunction.super.init(symbolTableSource, executionContext);
+            if (indexFunc.isRuntimeConstant()) {
+                int index = indexFunc.getInt(null);
+                if (index == 0) {
+                    throw SqlException.$(indexPosition, "field position must not be zero");
+                }
+            }
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
+        private StringSink getStrWithClear(Record rec, StringSink sink) {
+            sink.clear();
+            CharSequence str = strFunc.getStrA(rec);
+            CharSequence delimiter = delimiterFunc.getStrA(rec);
+            int index = getIndex(rec);
+            if (str == null || delimiter == null || index == Numbers.INT_NULL) {
+                return null;
+            }
+            splitToSink(sink, index, str, delimiter);
+            return sink;
+        }
+
+        abstract int getIndex(Record rec);
+    }
+
     private static class SplitPartConstIndexFunction extends AbstractSplitPartFunction {
         private final int index;
 
-        public SplitPartConstIndexFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition,
-                                           int index) {
+        public SplitPartConstIndexFunction(
+                Function strFunc,
+                Function delimiterFunc,
+                Function indexFunc,
+                int indexPosition,
+                int index
+        ) {
             super(strFunc, delimiterFunc, indexFunc, indexPosition);
             this.index = index;
         }
@@ -210,7 +209,13 @@ public class SplitPartFunctionFactory implements FunctionFactory {
     }
 
     private static class SplitPartFunction extends AbstractSplitPartFunction implements TernaryFunction {
-        public SplitPartFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
+
+        public SplitPartFunction(
+                Function strFunc,
+                Function delimiterFunc,
+                Function indexFunc,
+                int indexPosition
+        ) {
             super(strFunc, delimiterFunc, indexFunc, indexPosition);
         }
 

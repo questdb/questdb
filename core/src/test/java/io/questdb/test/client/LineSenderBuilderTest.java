@@ -360,7 +360,7 @@ public class LineSenderBuilderTest extends AbstractLineTcpReceiverTest {
         authKeyId = AUTH_KEY_ID1;
         nf = new NetworkFacadeImpl() {
             @Override
-            public int recvRaw(int fd, long buffer, int bufferLen) {
+            public int recvRaw(long fd, long buffer, int bufferLen) {
                 // force server to fail to receive userId and this disconnect
                 // mid-authentication
                 return -1;

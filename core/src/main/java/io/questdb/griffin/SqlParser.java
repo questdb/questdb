@@ -1166,6 +1166,8 @@ public class SqlParser {
                     showKind = QueryModel.SHOW_PARAMETERS;
                 } else if (SqlKeywords.isServerVersionKeyword(tok)) {
                     showKind = QueryModel.SHOW_SERVER_VERSION;
+                } else if (SqlKeywords.isServerVersionNumKeyword(tok)) {
+                    showKind = QueryModel.SHOW_SERVER_VERSION_NUM;
                 } else {
                     showKind = sqlParserCallback.parseShowSql(lexer, model, tok, expressionNodePool);
                 }
@@ -1176,7 +1178,7 @@ public class SqlParser {
                         .put("'TABLES', 'COLUMNS FROM <tab>', 'PARTITIONS FROM <tab>', ")
                         .put("'TRANSACTION ISOLATION LEVEL', 'transaction_isolation', ")
                         .put("'max_identifier_length', 'standard_conforming_strings', ")
-                        .put("'parameters', 'server_version', ")
+                        .put("'parameters', 'server_version', 'server_version_num', ")
                         .put("'search_path', 'datestyle', or 'time zone'");
             } else {
                 model.setShowKind(showKind);
@@ -1439,6 +1441,26 @@ public class SqlParser {
             expectSample(lexer, model, sqlParserCallback);
             tok = optTok(lexer);
 
+            ExpressionNode fromNode = null, toNode = null;
+            // support `SAMPLE BY 5m FROM foo TO bah`
+            if (tok != null && isFromKeyword(tok)) {
+                fromNode = expr(lexer, model, sqlParserCallback);
+                if (fromNode == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'timestamp' expression expected");
+                }
+                tok = optTok(lexer);
+            }
+
+            if (tok != null && isToKeyword(tok)) {
+                toNode = expr(lexer, model, sqlParserCallback);
+                if (toNode == null) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'timestamp' expression expected");
+                }
+                tok = optTok(lexer);
+            }
+
+            model.setSampleByFromTo(fromNode, toNode);
+
             if (tok != null && isFillKeyword(tok)) {
                 expectTok(lexer, '(');
                 do {
@@ -1484,6 +1506,11 @@ public class SqlParser {
                     }
                 } else if (isFirstKeyword(tok)) {
                     expectObservation(lexer);
+
+                    if (model.getSampleByTo() != null || model.getSampleByFrom() != null) {
+                        throw SqlException.$(lexer.getPosition(), "ALIGN TO FIRST OBSERVATION is incompatible with FROM-TO");
+                    }
+
                     model.setSampleByTimezoneName(null);
                     model.setSampleByOffset(null);
                     tok = optTok(lexer);

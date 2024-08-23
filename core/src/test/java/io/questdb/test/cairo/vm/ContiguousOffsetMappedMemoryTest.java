@@ -79,12 +79,12 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
                 ) {
                     FilesFacade ff = new TestFilesFacadeImpl() {
                         @Override
-                        public long length(int fd) {
+                        public long length(long fd) {
                             return -1;
                         }
 
                         @Override
-                        public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+                        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                             return -1;
                         }
                     };
@@ -113,13 +113,14 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
                     // Failed to remap
                     ff = new TestFilesFacadeImpl() {
                         @Override
-                        public long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+                        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
                             return -1;
                         }
                     };
 
                     memoryROffset.ofOffset(ff, path.$(), Files.PAGE_SIZE - 10, 2 * Files.PAGE_SIZE + 10, MemoryTag.NATIVE_DEFAULT);
                     try {
+                        memoryROffset.map();
                         memoryROffset.growToFileSize();
                         Assert.fail();
                     } catch (CairoException ex) {
@@ -130,7 +131,7 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
                     // Cannot get length to grow to file size
                     ff = new TestFilesFacadeImpl() {
                         @Override
-                        public long length(int fd) {
+                        public long length(long fd) {
                             return -1;
                         }
                     };
@@ -250,7 +251,7 @@ public class ContiguousOffsetMappedMemoryTest extends AbstractTest {
         } else {
             System.out.println("Created file " + path.$());
         }
-        int fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+        long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
         Assert.assertTrue(fd > 0);
 
         try (

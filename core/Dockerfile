@@ -1,3 +1,5 @@
+ARG base_image=debian:bookworm-slim
+
 FROM debian:bookworm
 ARG tag_name
 
@@ -5,7 +7,7 @@ ENV GOSU_VERSION=1.14
 ENV JDK_VERSION=17.0.11.9-1
 
 RUN apt-get update \
-  && apt-get install --no-install-recommends git curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip -y
+    && apt-get install --no-install-recommends git curl wget gnupg2 ca-certificates lsb-release software-properties-common unzip -y
 
 RUN wget -O - https://apt.corretto.aws/corretto.key | gpg --dearmor -o /usr/share/keyrings/corretto-keyring.gpg && \
     echo "deb [signed-by=/usr/share/keyrings/corretto-keyring.gpg] https://apt.corretto.aws stable main" | tee /etc/apt/sources.list.d/corretto.list && \
@@ -42,7 +44,8 @@ RUN dpkgArch="$(dpkg --print-architecture | awk -F- '{ print $NF }')"; \
     ./gosu --version && \
     ./gosu nobody true
 
-FROM debian:bookworm-slim
+FROM ${base_image}
+ARG tag_name
 
 WORKDIR /app
 
@@ -51,6 +54,20 @@ COPY --from=0 /build/questdb/core/target/gosu /usr/local/bin/gosu
 
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
+
+# Add license information
+RUN mkdir /licenses
+COPY LICENSE.txt /licenses
+
+LABEL name=QuestDB \
+    vendor=QuestDB \
+    summary="Provides the latest release of QuestDB" \
+    description="QuestDB is an open source time-series database for fast ingest and SQL queries" \
+    version=${tag_name:-master} \
+    release=${tag_name:-master} \
+    maintainer=QuestDB \
+    url="https://github.com/questdb/questdb"
+
 
 # Create questdb user and group
 RUN groupadd -g 10001 questdb && \

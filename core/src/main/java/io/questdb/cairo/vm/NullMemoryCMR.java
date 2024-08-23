@@ -51,7 +51,7 @@ public class NullMemoryCMR implements MemoryCMR {
     }
 
     @Override
-    public int detachFdClose() {
+    public long detachFdClose() {
         return -1;
     }
 
@@ -100,7 +100,7 @@ public class NullMemoryCMR implements MemoryCMR {
     }
 
     @Override
-    public int getFd() {
+    public long getFd() {
         return -1;
     }
 
@@ -135,6 +135,16 @@ public class NullMemoryCMR implements MemoryCMR {
 
     public long getLong128Lo() {
         return Numbers.LONG_NULL;
+    }
+
+    @Override
+    public void getLong256(long offset, Long256Acceptor sink) {
+        sink.setAll(
+                Long256Impl.NULL_LONG256.getLong0(),
+                Long256Impl.NULL_LONG256.getLong1(),
+                Long256Impl.NULL_LONG256.getLong2(),
+                Long256Impl.NULL_LONG256.getLong3()
+        );
     }
 
     @Override

@@ -32,7 +32,7 @@ import static io.questdb.cliutil.CmdUtils.runColumnRebuild;
 import static io.questdb.cliutil.RebuildColumnCommandArgs.parseCommandArgs;
 
 public class RecoverVarIndex {
-    public static void main(String[] args)  {
+    public static void main(String[] args) {
         LogFactory.enableGuaranteedLogging();
         RebuildColumnCommandArgs params = parseCommandArgs(args, RecoverVarIndex.class.getName());
         if (params == null) {

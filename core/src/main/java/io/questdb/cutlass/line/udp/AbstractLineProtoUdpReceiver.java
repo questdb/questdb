@@ -49,7 +49,7 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final SOCountDownLatch started = new SOCountDownLatch(1);
     protected int commitRate;
-    protected int fd;
+    protected long fd;
     protected long totalCount = 0;
 
     public AbstractLineProtoUdpReceiver(

@@ -223,7 +223,8 @@ public class AggregateTest extends AbstractCairoTest {
             testAggregations(aggregateFunctions, aggregateColTypes);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument for function: first");
+            Assert.assertEquals(7, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "there is no matching function `first` with the argument types: (BINARY)");
         }
     }
 
@@ -321,7 +322,7 @@ public class AggregateTest extends AbstractCairoTest {
                                 "    GroupBy vectorized: true workers: 1\n" +
                                 "      keys: [account_uuid]\n" +
                                 "      values: [sum(requests)]\n" +
-                                "        DataFrame\n" +
+                                "        PageFrame\n" +
                                 "            Row forward scan\n" +
                                 "            Interval forward scan on: records\n" +
                                 "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n"
@@ -369,7 +370,7 @@ public class AggregateTest extends AbstractCairoTest {
                         "      keys: [org_uuid,account_uuid]\n" +
                         "      values: [sum(price)]\n" +
                         "      filter: null\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Interval forward scan on: records\n" +
                         "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n";
@@ -379,7 +380,7 @@ public class AggregateTest extends AbstractCairoTest {
                         "    GroupBy vectorized: false\n" +
                         "      keys: [org_uuid,account_uuid]\n" +
                         "      values: [sum(price)]\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Interval forward scan on: records\n" +
                         "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n";

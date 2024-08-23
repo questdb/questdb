@@ -49,7 +49,7 @@ public class ColumnPurgeOperator implements Closeable {
     private final int updateCompleteColumnWriterIndex;
     private long longBytes;
     private int pathTableLen;
-    private int purgeLogPartitionFd = -1;
+    private long purgeLogPartitionFd = -1;
     private long purgeLogPartitionTimestamp = Long.MAX_VALUE;
     private TxReader txReader;
     private TxnScoreboard txnScoreboard;
@@ -363,7 +363,7 @@ public class ColumnPurgeOperator implements Closeable {
 
     private int readTableId(Path path) {
         final int INVALID_TABLE_ID = Integer.MIN_VALUE;
-        int fd = ff.openRO(path.trimTo(pathTableLen).concat(TableUtils.META_FILE_NAME).$());
+        long fd = ff.openRO(path.trimTo(pathTableLen).concat(TableUtils.META_FILE_NAME).$());
         if (fd < 0) {
             return INVALID_TABLE_ID;
         }

@@ -23,6 +23,13 @@ stages:
     jobs:
       - template: templates/check-changes-job.yml
 
+  - stage: RustTestAndLint
+    displayName: "Rust Test and Lint"
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - template: rust-test-and-lint.yaml
+
   - stage: SelfHostedRunGriffin
     displayName: "SelfHosted Griffin tests"
     condition: eq(variables['System.PullRequest.IsFork'], 'false')
@@ -59,6 +66,13 @@ stages:
     jobs:
       - template: templates/hosted-cover-jobs.yml
 
+  - stage: JavaCodeFormatting
+    displayName: "Check Java Code Formatting with IntelliJ"
+    dependsOn:
+      - CheckChanges
+    jobs:
+      - template: templates/java-code-formatting-intellij.yml
+
   - stage: HostedRunCompatTestsBranches
     displayName: "Hosted Running CLI util and compat tests"
     dependsOn:
@@ -77,7 +91,7 @@ stages:
         pool:
           vmImage: "ubuntu-latest"
         variables:
-          SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_changes.SOURCE_CODE_CHANGED']]
+          SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
           CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
           COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
         condition: |

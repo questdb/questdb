@@ -203,7 +203,7 @@ public class FuzzRunner {
         TableReader rdr1 = getReader(tableName);
         TableReader rdr2 = getReader(tableName);
         try (
-                O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, engine.getSnapshotAgent(), 1)
+                O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)
         ) {
             int transactionSize = transactions.size();
             Rnd rnd = new Rnd();
@@ -286,9 +286,15 @@ public class FuzzRunner {
             if (reader.size() > 0) {
                 TableReaderMetadata metadata = reader.getMetadata();
                 for (int columnIndex = 0; columnIndex < metadata.getColumnCount(); columnIndex++) {
-                    if (ColumnType.isSymbol(metadata.getColumnType(columnIndex))
-                            && metadata.isColumnIndexed(columnIndex)) {
-                        checkIndexRandomValueScan(tableNameNoWal, tableNameWal, rnd, reader.size(), metadata.getColumnName(columnIndex));
+                    if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isColumnIndexed(columnIndex)) {
+                        checkIndexRandomValueScan(
+                                tableNameNoWal,
+                                tableNameWal,
+                                rnd,
+                                reader.size(),
+                                metadata.getColumnName(columnIndex),
+                                metadata.getColumnName(metadata.getTimestampIndex())
+                        );
                     }
                 }
             }
@@ -466,17 +472,27 @@ public class FuzzRunner {
         applyManyWalParallel(tablesTransactions, applyRnd, tableName, false, true);
     }
 
-    private void checkIndexRandomValueScan(String expectedTableName, String actualTableName, Rnd rnd, long recordCount, String columnName) throws SqlException {
+    private void checkIndexRandomValueScan(
+            String expectedTableName,
+            String actualTableName,
+            Rnd rnd,
+            long recordCount,
+            String symbolColumnName,
+            String tsColumnName
+    ) throws SqlException {
         long randomRow = rnd.nextLong(recordCount);
         sink.clear();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            TestUtils.printSql(compiler, sqlExecutionContext, "select \"" + columnName + "\" as a from " + expectedTableName + " limit " + randomRow + ", 1", sink);
+            TestUtils.printSql(compiler, sqlExecutionContext, "select \"" + symbolColumnName + "\" as a from " + expectedTableName + " limit " + randomRow + ", 1", sink);
             String prefix = "a\n";
             String randomValue = sink.length() > prefix.length() + 2 ? sink.subSequence(prefix.length(), sink.length() - 1).toString() : null;
-            String indexedWhereClause = " where \"" + columnName + "\" = " + (randomValue == null ? "null" : "'" + randomValue + "'");
+            String indexedWhereClause = " where \"" + symbolColumnName + "\" = " + (randomValue == null ? "null" : "'" + randomValue + "'");
             LOG.info().$("checking random index with filter: ").$(indexedWhereClause).I$();
             String limit = ""; // For debugging
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedTableName + indexedWhereClause + limit, actualTableName + indexedWhereClause + limit, LOG);
+            // Now let's do backward order assertion
+            String orderBy = " order by " + tsColumnName + " desc";
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedTableName + indexedWhereClause + orderBy + limit, actualTableName + indexedWhereClause + orderBy + limit, LOG);
         }
     }
 
@@ -598,7 +614,7 @@ public class FuzzRunner {
 
     private void drainWalQueue(Rnd applyRnd, String tableName) {
         try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 1, 1);
-             O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, engine.getSnapshotAgent(), 1);
+             O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1);
              TableReader rdr1 = getReaderHandleTableDropped(tableName);
              TableReader rdr2 = getReaderHandleTableDropped(tableName)
         ) {
@@ -676,7 +692,7 @@ public class FuzzRunner {
     private void runPurgePartitionJob(AtomicInteger done, AtomicInteger forceReaderReload, ConcurrentLinkedQueue<Throwable> errors, Rnd runRnd, String tableNameBase, int tableCount, boolean multiTable) {
         ObjList<TableReader> readers = new ObjList<>();
         try {
-            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, engine.getSnapshotAgent(), 1)) {
+            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
                 int forceReloadNum = forceReaderReload.get();
                 for (int i = 0; i < tableCount; i++) {
                     String tableNameWal = multiTable ? getWalParallelApplyTableName(tableNameBase, i) : tableNameBase;

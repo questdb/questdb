@@ -32,7 +32,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf16Sink;
 
 public class CastDoubleToStrFunctionFactory implements FunctionFactory {
 
@@ -60,14 +59,6 @@ public class CastDoubleToStrFunctionFactory implements FunctionFactory {
         public Func(Function arg, int scale) {
             super(arg);
             this.scale = scale;
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            final double value = arg.getDouble(rec);
-            if (Numbers.isFinite(value)) {
-                utf16Sink.put(value, scale);
-            }
         }
 
         @Override

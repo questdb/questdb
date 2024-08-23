@@ -24,20 +24,56 @@
 
 package io.questdb.cairo.wal.seq;
 
+import io.questdb.cairo.ErrorTag;
+import io.questdb.cairo.wal.O3JobParallelismRegulator;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import org.jetbrains.annotations.TestOnly;
 
-public class SeqTxnTracker {
-    private static final long SEQ_TXN_OFFSET;
-    private static final long SUSPENDED_STATE_OFFSET;
-    private static final long WRITER_TXN_OFFSET;
+public class SeqTxnTracker implements O3JobParallelismRegulator {
+    private static final Log LOG = LogFactory.getLog(SeqTxnTracker.class);
+    private static final long SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
+    private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
+    private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
+    private volatile String errorMessage = "";
+    private volatile ErrorTag errorTag = ErrorTag.NONE;
+    private int maxRecordedInflightPartitions = 1;
+    // positive int: holds max parallelism
+    // negative int: holds backoff counter
+    private int memoryPressureRegulationValue = Integer.MAX_VALUE;
     @SuppressWarnings("FieldMayBeFinal")
     private volatile long seqTxn = -1;
     // -1 suspended
     // 0 unknown
     // 1 not suspended
     private volatile int suspendedState = 0;
+    private long walBackoffUntil = -1;
     private volatile long writerTxn = -1;
+
+    public String getErrorMessage() {
+        return errorMessage;
+    }
+
+    public ErrorTag getErrorTag() {
+        return errorTag;
+    }
+
+    public int getMaxO3MergeParallelism() {
+        return Math.max(1, memoryPressureRegulationValue);
+    }
+
+    public int getMemoryPressureLevel() {
+        if (memoryPressureRegulationValue == Integer.MAX_VALUE) {
+            return 0;
+        }
+        if (memoryPressureRegulationValue < 0) {
+            return 2;
+        }
+        return 1;
+    }
 
     @TestOnly
     public long getSeqTxn() {
@@ -47,6 +83,30 @@ public class SeqTxnTracker {
     @TestOnly
     public long getWriterTxn() {
         return writerTxn;
+    }
+
+    public void hadEnoughMemory(CharSequence tableName, Rnd rnd) {
+        maxRecordedInflightPartitions = 1;
+        walBackoffUntil = -1;
+        if (memoryPressureRegulationValue == Integer.MAX_VALUE) {
+            // already at max parallelism, can't go more optimistic
+            return;
+        }
+        if (memoryPressureRegulationValue < 0) {
+            // was in backoff, go back to parallelism = 1
+            memoryPressureRegulationValue = 1;
+            LOG.info().$("Memory pressure easing off, removing backoff [table=").$(tableName).I$();
+            return;
+        }
+        if (rnd.nextInt(4) == 0) { // 25% chance to double parallelism
+            int beforeDoubling = memoryPressureRegulationValue;
+            memoryPressureRegulationValue *= 2;
+            if (memoryPressureRegulationValue < beforeDoubling) {
+                // overflow
+                memoryPressureRegulationValue = Integer.MAX_VALUE;
+            }
+        }
+        LOG.info().$("Memory pressure easing off [table=").$(tableName).$(", maxParallelism=").$(memoryPressureRegulationValue).I$();
     }
 
     public boolean initTxns(long newWriterTxn, long newSeqTxn, boolean isSuspended) {
@@ -88,7 +148,7 @@ public class SeqTxnTracker {
         while (newSeqTxn > stxn && !Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
             stxn = seqTxn;
         }
-        return writerTxn < seqTxn && suspendedState > 0;
+        return writerTxn < seqTxn && suspendedState > 0 && MicrosecondClockImpl.INSTANCE.getTicks() > walBackoffUntil;
     }
 
     public boolean notifyOnCommit(long newSeqTxn) {
@@ -108,17 +168,64 @@ public class SeqTxnTracker {
         return (stxn < 1 || writerTxn == (newSeqTxn - 1)) && suspendedState >= 0;
     }
 
-    public void setSuspended() {
+    /**
+     * Applies anti-OOM measures if possible, either by reducing job parallelism, or applying backoff.<br>
+     * If it was possible to apply more measures, returns true → the operation can retry.<br>
+     * If all measures were exhausted, returns false → the operation should now fail.
+     */
+    public boolean onOutOfMemory(long nowMicros, CharSequence tableName, Rnd rnd) {
+        if (maxRecordedInflightPartitions == 1) {
+            // There was no parallelism
+            if (memoryPressureRegulationValue <= -5) {
+                // Maximum backoff already tried => fail
+                walBackoffUntil = -1;
+                return false;
+            }
+            if (memoryPressureRegulationValue > 0) {
+                // Switch from reducing parallelism to backoff
+                memoryPressureRegulationValue = -1;
+            } else {
+                // Increase backoff counter
+                memoryPressureRegulationValue--;
+            }
+            int delayMicros = rnd.nextInt(4_000_000);
+            LOG.info().$("Memory pressure is high [table=").$(tableName).$(", backoffCounter=").$(-memoryPressureRegulationValue).$(", delay=").$(delayMicros).$(" us]").$();
+            walBackoffUntil = nowMicros + delayMicros;
+            return true;
+        }
+        // There was some parallelism, halve max parallelism
+        walBackoffUntil = -1;
+        memoryPressureRegulationValue = maxRecordedInflightPartitions / 2;
+        maxRecordedInflightPartitions = 1;
+        LOG.info().$("Memory pressure is high [table=").$(tableName).$(", maxParallelism=").$(memoryPressureRegulationValue).I$();
+
+        return true;
+    }
+
+    public void setSuspended(ErrorTag errorTag, String errorMessage) {
+        this.errorTag = errorTag;
+        this.errorMessage = errorMessage;
+
+        // should be the last one to be set
+        // to make sure error details are available for read when the table is suspended
         this.suspendedState = -1;
     }
 
     public void setUnsuspended() {
+        // should be the first one to be set
+        // no error details should be read when table is not suspended
         this.suspendedState = 1;
+
+        this.errorTag = ErrorTag.NONE;
+        this.errorMessage = "";
     }
 
-    static {
-        SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
-        WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
-        SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
+    public boolean shouldBackOffDueToMemoryPressure(long nowMicros) {
+        return nowMicros < walBackoffUntil;
+    }
+
+    @Override
+    public void updateInflightPartitions(int count) {
+        maxRecordedInflightPartitions = Math.max(maxRecordedInflightPartitions, count);
     }
 }

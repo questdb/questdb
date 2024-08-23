@@ -71,7 +71,7 @@ public interface MemoryCR extends MemoryC, MemoryR {
         return Unsafe.getUnsafe().getDouble(addressOf(offset));
     }
 
-    int getFd();
+    long getFd();
 
     default float getFloat(long offset) {
         assert addressOf(offset + Float.BYTES) > 0;
@@ -145,6 +145,9 @@ public interface MemoryCR extends MemoryC, MemoryR {
 
     default boolean isFileBased() {
         return false;
+    }
+
+    default void map() {
     }
 
     class ByteSequenceView implements BinarySequence, Mutable {

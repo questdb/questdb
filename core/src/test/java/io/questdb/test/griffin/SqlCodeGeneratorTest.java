@@ -869,7 +869,10 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " timestamp_sequence(0, 100000000000) k" +
                         " from" +
                         " long_sequence(20)" +
-                        ") timestamp(k) partition by DAY", null, true, true
+                        ") timestamp(k) partition by DAY",
+                null,
+                true,
+                true
         );
     }
 
@@ -900,36 +903,34 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testEqGeoHashWhenOtherIsStr1() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(4);
-                    assertQueryNoLeakCheck(
-                            "time\tuuid\thash\n" +
-                                    "2021-05-10T23:59:59.439000Z\tbbb\tewef\n",
-                            "select * from pos where hash = 'ewef'",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
+        assertMemoryLeak(() -> {
+            createGeoHashTable(4);
+            assertQueryNoLeakCheck(
+                    "time\tuuid\thash\n" +
+                            "2021-05-10T23:59:59.439000Z\tbbb\tewef\n",
+                    "select * from pos where hash = 'ewef'",
+                    "time",
+                    true,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testEqGeoHashWhenOtherIsStr2() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(4);
-                    assertQueryNoLeakCheck(
-                            "time\tuuid\thash\n" +
-                                    "2021-05-10T23:59:59.439000Z\tbbb\tewef\n",
-                            "select * from pos where 'ewef' = hash",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
+        assertMemoryLeak(() -> {
+            createGeoHashTable(4);
+            assertQueryNoLeakCheck(
+                    "time\tuuid\thash\n" +
+                            "2021-05-10T23:59:59.439000Z\tbbb\tewef\n",
+                    "select * from pos where 'ewef' = hash",
+                    "time",
+                    true,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
@@ -1270,33 +1271,31 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select * from x where b in (select list('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and test_match()",
-                    "create table x as " +
-                            "(" +
-                            "select" +
-                            " rnd_double(0)*100 a," +
-                            " rnd_symbol(5,4,4,1) b," +
-                            " timestamp_sequence(0, 100000000000) k" +
-                            " from" +
-                            " long_sequence(20)" +
-                            "),index(b) timestamp(k) partition by DAY",
-                    "k",
-                    "insert into x select * from (" +
-                            "select" +
-                            " rnd_double(0)*100," +
-                            " 'ABC'," +
-                            " to_timestamp('1971', 'yyyy') t" +
-                            " from long_sequence(1)" +
-                            ") timestamp(t)",
-                    expected +
-                            "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n",
-                    true
-            );
-            Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
-        });
+        assertQuery(
+                expected,
+                "select * from x where b in (select list('RXGZ', 'HYRX', null, 'ABC') a from long_sequence(10)) and test_match()",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "),index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " rnd_double(0)*100," +
+                        " 'ABC'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                expected +
+                        "56.594291398612405\tABC\t1971-01-01T00:00:00.000000Z\n",
+                true
+        );
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -1577,45 +1576,43 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testFilterOnValuesAndFilter() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    "a\tb\tk\n" +
-                            "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
-                            "32.881769076795045\t\t1970-01-01T01:23:20.000000Z\n" +
-                            "12.026122412833129\tHYRX\t1970-01-01T02:30:00.000000Z\n" +
-                            "26.922103479744898\t\t1970-01-01T03:03:20.000000Z\n" +
-                            "49.00510449885239\tPEHN\t1970-01-01T04:10:00.000000Z\n" +
-                            "45.6344569609078\t\t1970-01-01T05:00:00.000000Z\n" +
-                            "40.455469747939254\t\t1970-01-01T05:16:40.000000Z\n",
-                    "select * from x o where o.b in ('HYRX','PEHN', null) and a < 50 and test_match()",
-                    "create table x as (" +
-                            "select" +
-                            " rnd_double(0)*100 a," +
-                            " rnd_symbol(5,4,4,1) b," +
-                            " timestamp_sequence(0, 1000000000) k" +
-                            " from long_sequence(20)" +
-                            ")," +
-                            " index(b)",
-                    null,
-                    "insert into x (a,b)" +
-                            " select" +
-                            " rnd_double(0)*100," +
-                            " rnd_symbol(5,4,4,1)" +
-                            " from" +
-                            " long_sequence(10)",
-                    "a\tb\tk\n" +
-                            "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
-                            "32.881769076795045\t\t1970-01-01T01:23:20.000000Z\n" +
-                            "12.026122412833129\tHYRX\t1970-01-01T02:30:00.000000Z\n" +
-                            "26.922103479744898\t\t1970-01-01T03:03:20.000000Z\n" +
-                            "49.00510449885239\tPEHN\t1970-01-01T04:10:00.000000Z\n" +
-                            "45.6344569609078\t\t1970-01-01T05:00:00.000000Z\n" +
-                            "40.455469747939254\t\t1970-01-01T05:16:40.000000Z\n" +
-                            "44.80468966861358\t\t\n",
-                    true
-            );
-            Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
-        });
+        assertQuery(
+                "a\tb\tk\n" +
+                        "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                        "32.881769076795045\t\t1970-01-01T01:23:20.000000Z\n" +
+                        "12.026122412833129\tHYRX\t1970-01-01T02:30:00.000000Z\n" +
+                        "26.922103479744898\t\t1970-01-01T03:03:20.000000Z\n" +
+                        "49.00510449885239\tPEHN\t1970-01-01T04:10:00.000000Z\n" +
+                        "45.6344569609078\t\t1970-01-01T05:00:00.000000Z\n" +
+                        "40.455469747939254\t\t1970-01-01T05:16:40.000000Z\n",
+                "select * from x o where o.b in ('HYRX','PEHN', null) and a < 50 and test_match()",
+                "create table x as (" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 1000000000) k" +
+                        " from long_sequence(20)" +
+                        ")," +
+                        " index(b)",
+                null,
+                "insert into x (a,b)" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " rnd_symbol(5,4,4,1)" +
+                        " from" +
+                        " long_sequence(10)",
+                "a\tb\tk\n" +
+                        "11.427984775756228\t\t1970-01-01T00:00:00.000000Z\n" +
+                        "32.881769076795045\t\t1970-01-01T01:23:20.000000Z\n" +
+                        "12.026122412833129\tHYRX\t1970-01-01T02:30:00.000000Z\n" +
+                        "26.922103479744898\t\t1970-01-01T03:03:20.000000Z\n" +
+                        "49.00510449885239\tPEHN\t1970-01-01T04:10:00.000000Z\n" +
+                        "45.6344569609078\t\t1970-01-01T05:00:00.000000Z\n" +
+                        "40.455469747939254\t\t1970-01-01T05:16:40.000000Z\n" +
+                        "44.80468966861358\t\t\n",
+                true
+        );
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -1691,23 +1688,21 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         final String expected = "a\tb\n" +
                 "52.98405941762054\tHYRX\n" +
                 "72.30015763133606\tHYRX\n";
-        assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    expected,
-                    "select * from x where b = 'HYRX' and a > 41 and test_match()",
-                    "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,0) b from long_sequence(20)), index(b)",
-                    null,
-                    "insert into x select" +
-                            " rnd_double(0)*100," +
-                            " 'HYRX'" +
-                            " from long_sequence(2)",
-                    expected +
-                            "75.88175403454873\tHYRX\n" +
-                            "57.78947915182423\tHYRX\n",
-                    true
-            );
-            Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
-        });
+        assertQuery(
+                expected,
+                "select * from x where b = 'HYRX' and a > 41 and test_match()",
+                "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,0) b from long_sequence(20)), index(b)",
+                null,
+                "insert into x select" +
+                        " rnd_double(0)*100," +
+                        " 'HYRX'" +
+                        " from long_sequence(2)",
+                expected +
+                        "75.88175403454873\tHYRX\n" +
+                        "57.78947915182423\tHYRX\n",
+                true
+        );
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -2282,55 +2277,75 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAll() throws Exception {
-        assertQuery("a\tb\tk\n" +
-                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
-                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", "select * from x latest on k partition by b", "create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from long_sequence(20)" +
-                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                " select" +
-                " rnd_double(0)*100," +
-                " 'VTJW'," +
-                " to_timestamp('2019', 'yyyy') t" +
-                " from long_sequence(1)" +
-                ") timestamp (t)", "a\tb\tk\n" +
-                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
+        assertQuery(
+                "a\tb\tk\n" +
+                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
+                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n",
+                "select * from x latest on k partition by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'," +
+                        " to_timestamp('2019', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "a\tb\tk\n" +
+                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                false
+        );
     }
 
     @Test
     public void testLatestByAllBool() throws Exception {
-        assertQuery("a\tb\tk\n" +
-                "97.55263540567968\ttrue\t1970-01-20T16:13:20.000000Z\n" +
-                "37.62501709498378\tfalse\t1970-01-22T23:46:40.000000Z\n", "select * from x latest on k partition by b", "create table x as " +
-                "(" +
-                "select * from" +
-                "(" +
-                " select" +
-                " rnd_double(0)*100 a," +
-                " rnd_boolean() b," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from long_sequence(20) " +
-                ")" +
-                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                " select" +
-                " rnd_double(0)*100," +
-                " false," +
-                " to_timestamp('2019', 'yyyy') t" +
-                " from long_sequence(1)" +
-                ") timestamp (t)", "a\tb\tk\n" +
-                "97.55263540567968\ttrue\t1970-01-20T16:13:20.000000Z\n" +
-                "24.59345277606021\tfalse\t2019-01-01T00:00:00.000000Z\n", true, true, false);
+        assertQuery(
+                "a\tb\tk\n" +
+                        "97.55263540567968\ttrue\t1970-01-20T16:13:20.000000Z\n" +
+                        "37.62501709498378\tfalse\t1970-01-22T23:46:40.000000Z\n",
+                "select * from x latest on k partition by b",
+                "create table x as " +
+                        "(" +
+                        "select * from" +
+                        "(" +
+                        " select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_boolean() b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20) " +
+                        ")" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " false," +
+                        " to_timestamp('2019', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "a\tb\tk\n" +
+                        "97.55263540567968\ttrue\t1970-01-20T16:13:20.000000Z\n" +
+                        "24.59345277606021\tfalse\t2019-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                false
+        );
     }
 
     @Test
@@ -2341,26 +2356,36 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertQuery(expected, "select * from x where 6 < 10 latest on k partition by b", "create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from" +
-                " long_sequence(20)" +
-                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                " select" +
-                " rnd_double(0)*100," +
-                " 'VTJW'," +
-                " to_timestamp('2019', 'yyyy') t" +
-                " from long_sequence(1)" +
-                ") timestamp (t)", "a\tb\tk\n" +
-                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
+        assertQuery(
+                expected,
+                "select * from x where 6 < 10 latest on k partition by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'," +
+                        " to_timestamp('2019', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "a\tb\tk\n" +
+                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                false
+        );
     }
 
     @Test
@@ -2370,25 +2395,35 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertQuery(expected, "select * from x where a > 40 latest on k partition by b", "create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from" +
-                " long_sequence(20)" +
-                ") timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                " select" +
-                " rnd_double(0)*100," +
-                " 'VTJW'," +
-                " to_timestamp('2019', 'yyyy') t" +
-                " from long_sequence(1)" +
-                ") timestamp (t)", "a\tb\tk\n" +
-                "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
-                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
+        assertQuery(
+                expected,
+                "select * from x where a > 40 latest on k partition by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        ") timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'," +
+                        " to_timestamp('2019', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "a\tb\tk\n" +
+                        "97.71103146051203\tHYRX\t1970-01-07T22:40:00.000000Z\n" +
+                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                false
+        );
     }
 
     @Test
@@ -2399,26 +2434,36 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertQuery(expected, "select * from x latest on k partition by b", "create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from" +
-                " long_sequence(20)" +
-                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                " select" +
-                " rnd_double(0)*100," +
-                " 'VTJW'," +
-                " to_timestamp('2019', 'yyyy') t" +
-                " from long_sequence(1)" +
-                ") timestamp (t)", "a\tb\tk\n" +
-                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
+        assertQuery(
+                expected,
+                "select * from x latest on k partition by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'," +
+                        " to_timestamp('2019', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "a\tb\tk\n" +
+                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                false
+        );
     }
 
     @Test
@@ -2429,25 +2474,35 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "48.820511018586934\tVTJW\t1970-01-12T13:46:40.000000Z\n" +
                 "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n";
-        assertQuery(expected, "select * from x where 5 > 2 latest on k partition by b", "create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from long_sequence(20)" +
-                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                " select" +
-                " rnd_double(0)*100," +
-                " 'VTJW'," +
-                " to_timestamp('2019', 'yyyy') t" +
-                " from long_sequence(1)" +
-                ") timestamp (t)", "a\tb\tk\n" +
-                "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
-                "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
-                "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
-                "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
-                "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n", true, true, false);
+        assertQuery(
+                expected,
+                "select * from x where 5 > 2 latest on k partition by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'," +
+                        " to_timestamp('2019', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "a\tb\tk\n" +
+                        "23.90529010846525\tRXGZ\t1970-01-03T07:33:20.000000Z\n" +
+                        "12.026122412833129\tHYRX\t1970-01-11T10:00:00.000000Z\n" +
+                        "49.00510449885239\tPEHN\t1970-01-18T08:40:00.000000Z\n" +
+                        "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n" +
+                        "56.594291398612405\tVTJW\t2019-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                false
+        );
     }
 
     @Test
@@ -2457,30 +2512,40 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
                 "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
                 "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
-        assertQuery(expected, "select * from (select a,k,b from x latest on k partition by b) where a > 40", "create table x as " +
-                "(" +
-                "select" +
-                " timestamp_sequence(0, 100000000000) k," +
-                " rnd_double(0)*100 a1," +
-                " rnd_double(0)*100 a2," +
-                " rnd_double(0)*100 a3," +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b" +
-                " from long_sequence(20)" +
-                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                " select" +
-                " to_timestamp('2019', 'yyyy') t," +
-                " rnd_double(0)*100," +
-                " rnd_double(0)*100," +
-                " rnd_double(0)*100," +
-                " 46.578761277152225," +
-                " 'VTJW'" +
-                " from long_sequence(1)" +
-                ") timestamp (t)", "a\tk\tb\n" +
-                "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
-                "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
-                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
-                "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n", true, false, false);
+        assertQuery(
+                expected,
+                "select * from (select a,k,b from x latest on k partition by b) where a > 40",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " timestamp_sequence(0, 100000000000) k," +
+                        " rnd_double(0)*100 a1," +
+                        " rnd_double(0)*100 a2," +
+                        " rnd_double(0)*100 a3," +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b" +
+                        " from long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " to_timestamp('2019', 'yyyy') t," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " 46.578761277152225," +
+                        " 'VTJW'" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "a\tk\tb\n" +
+                        "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                        "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                        "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
+                        "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n",
+                true,
+                false,
+                false
+        );
     }
 
     @Test
@@ -2491,55 +2556,75 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
                 "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
                 "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
-        assertQuery(expected, "select a,k,b from x where a > 40 latest on k partition by b", "create table x as " +
-                "(" +
-                "select" +
-                " timestamp_sequence(0, 100000000000) k," +
-                " rnd_double(0)*100 a1," +
-                " rnd_double(0)*100 a2," +
-                " rnd_double(0)*100 a3," +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b" +
-                " from long_sequence(20)" +
-                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                " select" +
-                " to_timestamp('2019', 'yyyy') t," +
-                " rnd_double(0)*100," +
-                " rnd_double(0)*100," +
-                " rnd_double(0)*100," +
-                " 46.578761277152225," +
-                " 'VTJW'" +
-                " from long_sequence(1)" +
-                ") timestamp (t)", "a\tk\tb\n" +
-                "95.40069089049732\t1970-01-11T10:00:00.000000Z\tHYRX\n" +
-                "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
-                "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
-                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
-                "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n", true, true, false);
+        assertQuery(
+                expected,
+                "select a,k,b from x where a > 40 latest on k partition by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " timestamp_sequence(0, 100000000000) k," +
+                        " rnd_double(0)*100 a1," +
+                        " rnd_double(0)*100 a2," +
+                        " rnd_double(0)*100 a3," +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b" +
+                        " from long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " to_timestamp('2019', 'yyyy') t," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " 46.578761277152225," +
+                        " 'VTJW'" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "a\tk\tb\n" +
+                        "95.40069089049732\t1970-01-11T10:00:00.000000Z\tHYRX\n" +
+                        "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                        "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                        "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
+                        "46.578761277152225\t2019-01-01T00:00:00.000000Z\tVTJW\n",
+                true,
+                true,
+                false
+        );
     }
 
     @Test
     public void testLatestByAllIndexedFilterBySymbol() throws Exception {
         final String expected = "a\tb\tc\tk\n" +
                 "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n";
-        assertQuery(expected, "select * from x where c = 'SXUX' latest on k partition by b", "create table x as " +
-                "(" +
-                "select" +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b," +
-                " rnd_symbol(5,4,4,1) c," +
-                " timestamp_sequence(0, 100000000000) k" +
-                " from long_sequence(20)" +
-                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                " select" +
-                " rnd_double(0)*100," +
-                " 'VTJW'," +
-                " 'SXUX'," +
-                " to_timestamp('2019', 'yyyy') t" +
-                " from long_sequence(1)" +
-                ") timestamp (t)", "a\tb\tc\tk\n" +
-                "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n" +
-                "94.41658975532606\tVTJW\tSXUX\t2019-01-01T00:00:00.000000Z\n", true, true, false);
+        assertQuery(
+                expected,
+                "select * from x where c = 'SXUX' latest on k partition by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " rnd_symbol(5,4,4,1) c," +
+                        " timestamp_sequence(0, 100000000000) k" +
+                        " from long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'," +
+                        " 'SXUX'," +
+                        " to_timestamp('2019', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "a\tb\tc\tk\n" +
+                        "67.52509547112409\tCPSW\tSXUX\t1970-01-21T20:00:00.000000Z\n" +
+                        "94.41658975532606\tVTJW\tSXUX\t2019-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                false
+        );
     }
 
     @Test
@@ -2566,662 +2651,631 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByAllIndexedFilteredMultiplePartitions() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    ddl("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY");
-                    // insert three partitions
-                    insert(
-                            "insert into trips select " +
-                                    "rnd_int(), " +
-                                    "rnd_symbol('KK','ZZ', 'TT'), " +
-                                    "timestamp_sequence(0, 100000L) " +
-                                    "from long_sequence(1000)"
-                    );
+        assertMemoryLeak(() -> {
+            ddl("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY");
+            // insert three partitions
+            insert(
+                    "insert into trips select " +
+                            "rnd_int(), " +
+                            "rnd_symbol('KK','ZZ', 'TT'), " +
+                            "timestamp_sequence(0, 100000L) " +
+                            "from long_sequence(1000)"
+            );
 
-                    // cast('1970-01-02' as timestamp) produces incorrect timestamp
-                    insert(
-                            "insert into trips select " +
-                                    "rnd_int(), " +
-                                    "rnd_symbol('DD','QQ', 'TT'), " +
-                                    "timestamp_sequence(to_timestamp('1970-01-02', 'yyyy-MM-dd'), 100000L) " +
-                                    "from long_sequence(1000)"
-                    );
+            // cast('1970-01-02' as timestamp) produces incorrect timestamp
+            insert(
+                    "insert into trips select " +
+                            "rnd_int(), " +
+                            "rnd_symbol('DD','QQ', 'TT'), " +
+                            "timestamp_sequence(to_timestamp('1970-01-02', 'yyyy-MM-dd'), 100000L) " +
+                            "from long_sequence(1000)"
+            );
 
-                    insert(
-                            "insert into trips select " +
-                                    "rnd_int(), " +
-                                    "rnd_symbol('PP','QQ', 'CC'), " +
-                                    "timestamp_sequence(to_timestamp('1970-01-03', 'yyyy-MM-dd'), 100000L) " +
-                                    "from long_sequence(1000)"
-                    );
+            insert(
+                    "insert into trips select " +
+                            "rnd_int(), " +
+                            "rnd_symbol('PP','QQ', 'CC'), " +
+                            "timestamp_sequence(to_timestamp('1970-01-03', 'yyyy-MM-dd'), 100000L) " +
+                            "from long_sequence(1000)"
+            );
 
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "trips where id > 0 latest on ts partition by vendor order by ts",
-                            sink,
-                            "id\tvendor\tts\n" +
-                                    "1878619626\tKK\t1970-01-01T00:01:39.200000Z\n" +
-                                    "666152026\tZZ\t1970-01-01T00:01:39.500000Z\n" +
-                                    "1093218218\tTT\t1970-01-02T00:01:37.700000Z\n" +
-                                    "371958898\tDD\t1970-01-02T00:01:39.900000Z\n" +
-                                    "1699760758\tPP\t1970-01-03T00:01:39.100000Z\n" +
-                                    "415357759\tCC\t1970-01-03T00:01:39.200000Z\n" +
-                                    "1176091947\tQQ\t1970-01-03T00:01:39.400000Z\n"
-                    );
-                }
-        );
+            TestUtils.assertSql(
+                    engine,
+                    sqlExecutionContext,
+                    "trips where id > 0 latest on ts partition by vendor order by ts",
+                    sink,
+                    "id\tvendor\tts\n" +
+                            "1878619626\tKK\t1970-01-01T00:01:39.200000Z\n" +
+                            "666152026\tZZ\t1970-01-01T00:01:39.500000Z\n" +
+                            "1093218218\tTT\t1970-01-02T00:01:37.700000Z\n" +
+                            "371958898\tDD\t1970-01-02T00:01:39.900000Z\n" +
+                            "1699760758\tPP\t1970-01-03T00:01:39.100000Z\n" +
+                            "415357759\tCC\t1970-01-03T00:01:39.200000Z\n" +
+                            "1176091947\tQQ\t1970-01-03T00:01:39.400000Z\n"
+            );
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHash1c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(1);
-                    assertQueryNoLeakCheck(
-                            "time\tuuid\thash\n" +
-                                    "2021-05-10T23:59:59.150000Z\tXXX\tf\n" +
-                                    "2021-05-11T00:00:00.083000Z\tYYY\tz\n" +
-                                    "2021-05-12T00:00:00.186000Z\tZZZ\tv\n",
-                            "select * from pos where hash within(#f, #z, #v) latest on time partition by uuid",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
+        assertMemoryLeak(() -> {
+            createGeoHashTable(1);
+            assertQueryNoLeakCheck(
+                    "time\tuuid\thash\n" +
+                            "2021-05-10T23:59:59.150000Z\tXXX\tf\n" +
+                            "2021-05-11T00:00:00.083000Z\tYYY\tz\n" +
+                            "2021-05-12T00:00:00.186000Z\tZZZ\tv\n",
+                    "select * from pos where hash within(#f, #z, #v) latest on time partition by uuid",
+                    "time",
+                    true,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHash2c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    assertQueryNoLeakCheck(
-                            "time\tuuid\thash\n" +
-                                    "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
-                                    "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
-                                    "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
-                            "select * from pos where hash within(#f9, #z3, #ve) latest on time partition by uuid",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
+        assertMemoryLeak(() -> {
+            createGeoHashTable(2);
+            assertQueryNoLeakCheck(
+                    "time\tuuid\thash\n" +
+                            "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
+                            "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
+                            "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
+                    "select * from pos where hash within(#f9, #z3, #ve) latest on time partition by uuid",
+                    "time",
+                    true,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHash2cFn() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    assertQueryNoLeakCheck(
-                            "time\tuuid\thash\n" +
-                                    "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
-                                    "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
-                                    "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
-                            "select * from pos where hash within(make_geohash(-62, 53.4, 10), #z3, #ve) latest on time partition by uuid",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
+        assertMemoryLeak(() -> {
+            createGeoHashTable(2);
+            assertQueryNoLeakCheck(
+                    "time\tuuid\thash\n" +
+                            "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
+                            "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
+                            "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
+                    "select * from pos where hash within(make_geohash(-62, 53.4, 10), #z3, #ve) latest on time partition by uuid",
+                    "time",
+                    true,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHash4c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(4);
-                    assertQueryNoLeakCheck(
-                            "time\tuuid\thash\n" +
-                                    "2021-05-10T23:59:59.150000Z\tXXX\tf91t\n" +
-                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31w\n" +
-                                    "2021-05-12T00:00:00.186000Z\tZZZ\tvepe\n",
-                            "select * from pos where hash within(#f91, #z31w, #vepe) latest on time partition by uuid",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
+        assertMemoryLeak(() -> {
+            createGeoHashTable(4);
+            assertQueryNoLeakCheck(
+                    "time\tuuid\thash\n" +
+                            "2021-05-10T23:59:59.150000Z\tXXX\tf91t\n" +
+                            "2021-05-11T00:00:00.083000Z\tYYY\tz31w\n" +
+                            "2021-05-12T00:00:00.186000Z\tZZZ\tvepe\n",
+                    "select * from pos where hash within(#f91, #z31w, #vepe) latest on time partition by uuid",
+                    "time",
+                    true,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHash8c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(8);
-                    assertQueryNoLeakCheck(
-                            "time\tuuid\thash\n" +
-                                    "2021-05-10T23:59:59.150000Z\tXXX\tf91t48s7\n" +
-                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\n" +
-                                    "2021-05-12T00:00:00.186000Z\tZZZ\tvepe7h62\n",
-                            "select * from pos where hash within(#f91, #z31w, #vepe7h) latest on time partition by uuid",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
+        assertMemoryLeak(() -> {
+            createGeoHashTable(8);
+            assertQueryNoLeakCheck(
+                    "time\tuuid\thash\n" +
+                            "2021-05-10T23:59:59.150000Z\tXXX\tf91t48s7\n" +
+                            "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\n" +
+                            "2021-05-12T00:00:00.186000Z\tZZZ\tvepe7h62\n",
+                    "select * from pos where hash within(#f91, #z31w, #vepe7h) latest on time partition by uuid",
+                    "time",
+                    true,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHashExcludeLongPrefix() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    try {
-                        assertQueryNoLeakCheck(
-                                "",
-                                "select * from pos where hash within(#f9, #z3, #vepe7h) latest on time partition by uuid",
-                                "time",
-                                true,
-                                true,
-                                true
-                        );
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "prefix precision mismatch");
-                    }
-                });
+        assertMemoryLeak(() -> {
+            createGeoHashTable(2);
+            try {
+                assertQueryNoLeakCheck(
+                        "",
+                        "select * from pos where hash within(#f9, #z3, #vepe7h) latest on time partition by uuid",
+                        "time",
+                        true,
+                        true,
+                        true
+                );
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "prefix precision mismatch");
+            }
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHashFnNonConst() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    ddl(
-                            "create table x as (" +
-                                    "select" +
-                                    " rnd_symbol(113, 4, 4, 2) s," +
-                                    " timestamp_sequence(500000000000L,100000000L) ts," +
-                                    " (rnd_double()*360.0 - 180.0) lon, " +
-                                    " (rnd_double()*180.0 - 90.0) lat, " +
-                                    " rnd_geohash(40) geo8" +
-                                    " from long_sequence(1000)" +
-                                    "), index(s) timestamp (ts) partition by DAY"
-                    );
-                    try {
-                        assertQueryNoLeakCheck(
-                                "time\tuuid\thash\n",
-                                "select * from x where geo8 within(make_geohash(lon, lat, 40), #z3, #vegg) latest on ts partition by s",
-                                "ts",
-                                true,
-                                true,
-                                true
-                        );
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash const function expected");
-                    }
-                });
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table x as (" +
+                            "select" +
+                            " rnd_symbol(113, 4, 4, 2) s," +
+                            " timestamp_sequence(500000000000L,100000000L) ts," +
+                            " (rnd_double()*360.0 - 180.0) lon, " +
+                            " (rnd_double()*180.0 - 90.0) lat, " +
+                            " rnd_geohash(40) geo8" +
+                            " from long_sequence(1000)" +
+                            "), index(s) timestamp (ts) partition by DAY"
+            );
+            try {
+                assertQueryNoLeakCheck(
+                        "time\tuuid\thash\n",
+                        "select * from x where geo8 within(make_geohash(lon, lat, 40), #z3, #vegg) latest on ts partition by s",
+                        "ts",
+                        true,
+                        true,
+                        true
+                );
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash const function expected");
+            }
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHashLiteralExpected() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    try {
-                        assertQueryNoLeakCheck(
-                                "time\tuuid\thash\n" +
-                                        "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
-                                        "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
-                                        "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
-                                "select * from pos where hash within('z3', #z3, #ve) latest on time partition by uuid",
-                                "time",
-                                true,
-                                true,
-                                true
-                        );
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash literal expected");
-                    }
-                });
+        assertMemoryLeak(() -> {
+            createGeoHashTable(2);
+            try {
+                assertQueryNoLeakCheck(
+                        "time\tuuid\thash\n" +
+                                "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
+                                "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
+                                "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
+                        "select * from pos where hash within('z3', #z3, #ve) latest on time partition by uuid",
+                        "time",
+                        true,
+                        true,
+                        true
+                );
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash literal expected");
+            }
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHashOutOfRangeFn() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    try {
-                        assertQueryNoLeakCheck(
-                                "time\tuuid\thash\n" +
-                                        "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
-                                        "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
-                                        "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
-                                "select * from pos where hash within(make_geohash(-620.0, 53.4, 10), #z3, #ve) latest on time partition by uuid",
-                                "time",
-                                true,
-                                true,
-                                true
-                        );
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "longitude must be in [-180.0..180.0] range");
-                    }
-                });
+        assertMemoryLeak(() -> {
+            createGeoHashTable(2);
+            try {
+                assertQueryNoLeakCheck(
+                        "time\tuuid\thash\n" +
+                                "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
+                                "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
+                                "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
+                        "select * from pos where hash within(make_geohash(-620.0, 53.4, 10), #z3, #ve) latest on time partition by uuid",
+                        "time",
+                        true,
+                        true,
+                        true
+                );
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "longitude must be in [-180.0..180.0] range");
+            }
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHashRnd1c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createRndGeoHashTable();
-                    assertQueryNoLeakCheck(
-                            "geo1\tts\n" +
-                                    "x\t1970-01-17T21:43:20.000000Z\n" +
-                                    "x\t1970-01-18T02:38:20.000000Z\n" +
-                                    "y\t1970-01-18T03:03:20.000000Z\n" +
-                                    "x\t1970-01-18T03:06:40.000000Z\n" +
-                                    "y\t1970-01-18T05:53:20.000000Z\n" +
-                                    "y\t1970-01-18T07:41:40.000000Z\n" +
-                                    "y\t1970-01-18T08:18:20.000000Z\n" +
-                                    "z\t1970-01-18T08:35:00.000000Z\n",
-                            "select geo1, ts from x where geo1 within(#x, #y, #z) latest on ts partition by s",
-                            "ts",
-                            true,
-                            true,
-                            true
-                    );
-                });
+        assertMemoryLeak(() -> {
+            createRndGeoHashTable();
+            assertQueryNoLeakCheck(
+                    "geo1\tts\n" +
+                            "x\t1970-01-17T21:43:20.000000Z\n" +
+                            "x\t1970-01-18T02:38:20.000000Z\n" +
+                            "y\t1970-01-18T03:03:20.000000Z\n" +
+                            "x\t1970-01-18T03:06:40.000000Z\n" +
+                            "y\t1970-01-18T05:53:20.000000Z\n" +
+                            "y\t1970-01-18T07:41:40.000000Z\n" +
+                            "y\t1970-01-18T08:18:20.000000Z\n" +
+                            "z\t1970-01-18T08:35:00.000000Z\n",
+                    "select geo1, ts from x where geo1 within(#x, #y, #z) latest on ts partition by s",
+                    "ts",
+                    true,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHashRnd2c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createRndGeoHashTable();
-                    assertQueryNoLeakCheck(
-                            "geo2\tts\n" +
-                                    "z7g\t1970-01-17T18:45:00.000000Z\n" +
-                                    "xzu\t1970-01-17T21:06:40.000000Z\n" +
-                                    "yyg\t1970-01-18T01:36:40.000000Z\n" +
-                                    "yds\t1970-01-18T01:56:40.000000Z\n" +
-                                    "yjx\t1970-01-18T05:03:20.000000Z\n" +
-                                    "ymx\t1970-01-18T05:53:20.000000Z\n" +
-                                    "y8x\t1970-01-18T06:45:00.000000Z\n" +
-                                    "y25\t1970-01-18T06:48:20.000000Z\n" +
-                                    "yvh\t1970-01-18T06:55:00.000000Z\n" +
-                                    "y1n\t1970-01-18T07:28:20.000000Z\n" +
-                                    "zs4\t1970-01-18T08:03:20.000000Z\n",
-                            "select geo2, ts from x where geo2 within(#x, #y, #z) latest on ts partition by s",
-                            "ts",
-                            true,
-                            true,
-                            true
-                    );
-                });
+        assertMemoryLeak(() -> {
+            createRndGeoHashTable();
+            assertQueryNoLeakCheck(
+                    "geo2\tts\n" +
+                            "z7g\t1970-01-17T18:45:00.000000Z\n" +
+                            "xzu\t1970-01-17T21:06:40.000000Z\n" +
+                            "yyg\t1970-01-18T01:36:40.000000Z\n" +
+                            "yds\t1970-01-18T01:56:40.000000Z\n" +
+                            "yjx\t1970-01-18T05:03:20.000000Z\n" +
+                            "ymx\t1970-01-18T05:53:20.000000Z\n" +
+                            "y8x\t1970-01-18T06:45:00.000000Z\n" +
+                            "y25\t1970-01-18T06:48:20.000000Z\n" +
+                            "yvh\t1970-01-18T06:55:00.000000Z\n" +
+                            "y1n\t1970-01-18T07:28:20.000000Z\n" +
+                            "zs4\t1970-01-18T08:03:20.000000Z\n",
+                    "select geo2, ts from x where geo2 within(#x, #y, #z) latest on ts partition by s",
+                    "ts",
+                    true,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHashRnd4c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createRndGeoHashTable();
-                    assertQueryNoLeakCheck(
-                            "geo4\tts\n" +
-                                    "zd4gu\t1970-01-17T20:06:40.000000Z\n" +
-                                    "xwnjg\t1970-01-18T01:36:40.000000Z\n" +
-                                    "yv6gp\t1970-01-18T02:48:20.000000Z\n" +
-                                    "z4wbx\t1970-01-18T05:51:40.000000Z\n" +
-                                    "zejr0\t1970-01-18T06:43:20.000000Z\n" +
-                                    "ybsge\t1970-01-18T06:45:00.000000Z\n" +
-                                    "zdhfv\t1970-01-18T06:53:20.000000Z\n" +
-                                    "z4t7w\t1970-01-18T07:45:00.000000Z\n" +
-                                    "xxusm\t1970-01-18T07:55:00.000000Z\n" +
-                                    "x1dse\t1970-01-18T08:18:20.000000Z\n" +
-                                    "zmt6j\t1970-01-18T08:38:20.000000Z\n",
-                            "select geo4, ts from x where geo4 within(#x, #y, #z) latest on ts partition by s",
-                            "ts",
-                            true,
-                            true,
-                            true
-                    );
-                });
+        assertMemoryLeak(() -> {
+            createRndGeoHashTable();
+            assertQueryNoLeakCheck(
+                    "geo4\tts\n" +
+                            "zd4gu\t1970-01-17T20:06:40.000000Z\n" +
+                            "xwnjg\t1970-01-18T01:36:40.000000Z\n" +
+                            "yv6gp\t1970-01-18T02:48:20.000000Z\n" +
+                            "z4wbx\t1970-01-18T05:51:40.000000Z\n" +
+                            "zejr0\t1970-01-18T06:43:20.000000Z\n" +
+                            "ybsge\t1970-01-18T06:45:00.000000Z\n" +
+                            "zdhfv\t1970-01-18T06:53:20.000000Z\n" +
+                            "z4t7w\t1970-01-18T07:45:00.000000Z\n" +
+                            "xxusm\t1970-01-18T07:55:00.000000Z\n" +
+                            "x1dse\t1970-01-18T08:18:20.000000Z\n" +
+                            "zmt6j\t1970-01-18T08:38:20.000000Z\n",
+                    "select geo4, ts from x where geo4 within(#x, #y, #z) latest on ts partition by s",
+                    "ts",
+                    true,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHashRnd6Bits() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createRndGeoHashBitsTable();
-                    assertQueryNoLeakCheck(
-                            "bits7\tts\n" +
-                                    "1111111\t1970-01-16T21:43:20.000000Z\n" +
-                                    "1111111\t1970-01-18T00:50:00.000000Z\n" +
-                                    "1111111\t1970-01-18T00:55:00.000000Z\n" +
-                                    "1111110\t1970-01-18T05:11:40.000000Z\n" +
-                                    "1111110\t1970-01-18T07:10:00.000000Z\n" +
-                                    "1111110\t1970-01-18T08:20:00.000000Z\n" +
-                                    "1111111\t1970-01-18T08:28:20.000000Z\n",
-                            "select bits7, ts from x where bits7 within(##111111) latest on ts partition by s",
-                            "ts",
-                            true,
-                            true,
-                            true
-                    );
-                });
+        assertMemoryLeak(() -> {
+            createRndGeoHashBitsTable();
+            assertQueryNoLeakCheck(
+                    "bits7\tts\n" +
+                            "1111111\t1970-01-16T21:43:20.000000Z\n" +
+                            "1111111\t1970-01-18T00:50:00.000000Z\n" +
+                            "1111111\t1970-01-18T00:55:00.000000Z\n" +
+                            "1111110\t1970-01-18T05:11:40.000000Z\n" +
+                            "1111110\t1970-01-18T07:10:00.000000Z\n" +
+                            "1111110\t1970-01-18T08:20:00.000000Z\n" +
+                            "1111111\t1970-01-18T08:28:20.000000Z\n",
+                    "select bits7, ts from x where bits7 within(##111111) latest on ts partition by s",
+                    "ts",
+                    true,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHashRnd8c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createRndGeoHashTable();
-                    assertQueryNoLeakCheck(
-                            "geo4\tts\n" +
-                                    "yv6gp\t1970-01-18T02:48:20.000000Z\n" +
-                                    "z4wbx\t1970-01-18T05:51:40.000000Z\n" +
-                                    "ybsge\t1970-01-18T06:45:00.000000Z\n" +
-                                    "z4t7w\t1970-01-18T07:45:00.000000Z\n" +
-                                    "xxusm\t1970-01-18T07:55:00.000000Z\n",
-                            "select geo4, ts from x where geo4 within(#xx, #y, #z4) latest on ts partition by s",
-                            "ts",
-                            true,
-                            true,
-                            true
-                    );
-                });
+        assertMemoryLeak(() -> {
+            createRndGeoHashTable();
+            assertQueryNoLeakCheck(
+                    "geo4\tts\n" +
+                            "yv6gp\t1970-01-18T02:48:20.000000Z\n" +
+                            "z4wbx\t1970-01-18T05:51:40.000000Z\n" +
+                            "ybsge\t1970-01-18T06:45:00.000000Z\n" +
+                            "z4t7w\t1970-01-18T07:45:00.000000Z\n" +
+                            "xxusm\t1970-01-18T07:55:00.000000Z\n",
+                    "select geo4, ts from x where geo4 within(#xx, #y, #z4) latest on ts partition by s",
+                    "ts",
+                    true,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHashRndLongBitsMask() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createRndGeoHashBitsTable();
-                    assertQueryNoLeakCheck(
-                            "i\ts\tts\tbits3\tbits7\tbits9\n" +
-                                    "9384\tYFFD\t1970-01-17T15:31:40.000000Z\t101\t1110000\t101111011\n" +
-                                    "9397\tMXUK\t1970-01-17T15:53:20.000000Z\t100\t1110001\t110001111\n",
-                            "select * from x where bits7 within(#wt/5) latest on ts partition by s",//(##11100)",
-                            "ts",
-                            true,
-                            true,
-                            true
-                    );
-                });
+        assertMemoryLeak(() -> {
+            createRndGeoHashBitsTable();
+            assertQueryNoLeakCheck(
+                    "i\ts\tts\tbits3\tbits7\tbits9\n" +
+                            "9384\tYFFD\t1970-01-17T15:31:40.000000Z\t101\t1110000\t101111011\n" +
+                            "9397\tMXUK\t1970-01-17T15:53:20.000000Z\t100\t1110001\t110001111\n",
+                    "select * from x where bits7 within(#wt/5) latest on ts partition by s",//(##11100)",
+                    "ts",
+                    true,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHashRndLongBitsPrefix() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createRndGeoHashBitsTable();
-                    try {
-                        assertQueryNoLeakCheck(
-                                "",
-                                "select * from x where bits3 within(##111111) latest on ts partition by s",
-                                "ts",
-                                true,
-                                true,
-                                true
-                        );
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "prefix precision mismatch");
-                    }
+        assertMemoryLeak(() -> {
+            createRndGeoHashBitsTable();
+            try {
+                assertQueryNoLeakCheck(
+                        "",
+                        "select * from x where bits3 within(##111111) latest on ts partition by s",
+                        "ts",
+                        true,
+                        true,
+                        true
+                );
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "prefix precision mismatch");
+            }
 
-                });
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHashStrCast() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    assertQueryNoLeakCheck(
-                            "time\tuuid\thash\n" +
-                                    "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
-                                    "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
-                                    "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
-                            "select * from pos where hash within(cast('f9' as geohash(2c)), #z3, #ve) latest on time partition by uuid",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
+        assertMemoryLeak(() -> {
+            createGeoHashTable(2);
+            assertQueryNoLeakCheck(
+                    "time\tuuid\thash\n" +
+                            "2021-05-10T23:59:59.150000Z\tXXX\tf9\n" +
+                            "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
+                            "2021-05-12T00:00:00.186000Z\tZZZ\tve\n",
+                    "select * from pos where hash within(cast('f9' as geohash(2c)), #z3, #ve) latest on time partition by uuid",
+                    "time",
+                    true,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHashTimeRange1c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(1);
-                    assertQueryNoLeakCheck(
-                            "time\tuuid\thash\n" +
-                                    "2021-05-11T00:00:00.083000Z\tYYY\tz\n" +
-                                    "2021-05-11T00:00:00.111000Z\tddd\tb\n",
-                            "select * from pos where time in '2021-05-11' and hash within (#z, #b) latest on time partition by uuid",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
+        assertMemoryLeak(() -> {
+            createGeoHashTable(1);
+            assertQueryNoLeakCheck(
+                    "time\tuuid\thash\n" +
+                            "2021-05-11T00:00:00.083000Z\tYYY\tz\n" +
+                            "2021-05-11T00:00:00.111000Z\tddd\tb\n",
+                    "select * from pos where time in '2021-05-11' and hash within (#z, #b) latest on time partition by uuid",
+                    "time",
+                    true,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHashTimeRange2c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    assertQueryNoLeakCheck(
-                            "time\tuuid\thash\n" +
-                                    "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
-                                    "2021-05-11T00:00:00.111000Z\tddd\tbc\n",
-                            "select * from pos where time in '2021-05-11' and hash within (#z, #b) latest on time partition by uuid",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
+        assertMemoryLeak(() -> {
+            createGeoHashTable(2);
+            assertQueryNoLeakCheck(
+                    "time\tuuid\thash\n" +
+                            "2021-05-11T00:00:00.083000Z\tYYY\tz3\n" +
+                            "2021-05-11T00:00:00.111000Z\tddd\tbc\n",
+                    "select * from pos where time in '2021-05-11' and hash within (#z, #b) latest on time partition by uuid",
+                    "time",
+                    true,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHashTimeRange4c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(4);
-                    assertQueryNoLeakCheck(
-                            "time\tuuid\thash\n" +
-                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31w\n" +
-                                    "2021-05-11T00:00:00.111000Z\tddd\tbcnk\n",
-                            "select * from pos where time in '2021-05-11' and hash within (#z, #b) latest on time partition by uuid",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
+        assertMemoryLeak(() -> {
+            createGeoHashTable(4);
+            assertQueryNoLeakCheck(
+                    "time\tuuid\thash\n" +
+                            "2021-05-11T00:00:00.083000Z\tYYY\tz31w\n" +
+                            "2021-05-11T00:00:00.111000Z\tddd\tbcnk\n",
+                    "select * from pos where time in '2021-05-11' and hash within (#z, #b) latest on time partition by uuid",
+                    "time",
+                    true,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHashTimeRange8c() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(8);
-                    assertQueryNoLeakCheck(
-                            "time\tuuid\thash\n" +
-                                    "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\n",
-                            "select * from pos where time in '2021-05-11' and hash within (#z31, #bbx) latest on time partition by uuid",
-                            "time",
-                            true,
-                            true,
-                            true
-                    );
-                });
+        assertMemoryLeak(() -> {
+            createGeoHashTable(8);
+            assertQueryNoLeakCheck(
+                    "time\tuuid\thash\n" +
+                            "2021-05-11T00:00:00.083000Z\tYYY\tz31wzd5w\n",
+                    "select * from pos where time in '2021-05-11' and hash within (#z31, #bbx) latest on time partition by uuid",
+                    "time",
+                    true,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHashWithinColumnNotLiteral() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    try {
-                        assertQueryNoLeakCheck(
-                                "",
-                                "select * from pos where 'hash' within(#f9) latest on time partition by uuid",
-                                "time",
-                                true,
-                                true,
-                                true
-                        );
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "unexpected token [");
-                    }
-                });
+        assertMemoryLeak(() -> {
+            createGeoHashTable(2);
+            try {
+                assertQueryNoLeakCheck(
+                        "",
+                        "select * from pos where 'hash' within(#f9) latest on time partition by uuid",
+                        "time",
+                        true,
+                        true,
+                        true
+                );
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "unexpected token [");
+            }
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHashWithinColumnWrongType() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    try {
-                        assertQueryNoLeakCheck(
-                                "",
-                                "select * from pos where uuid within(#f9) latest on time partition by uuid",
-                                "time",
-                                true,
-                                true,
-                                true
-                        );
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash column type expected");
-                    }
-                });
+        assertMemoryLeak(() -> {
+            createGeoHashTable(2);
+            try {
+                assertQueryNoLeakCheck(
+                        "",
+                        "select * from pos where uuid within(#f9) latest on time partition by uuid",
+                        "time",
+                        true,
+                        true,
+                        true
+                );
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash column type expected");
+            }
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHashWithinEmpty() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    try {
-                        assertQueryNoLeakCheck(
-                                "",
-                                "select * from pos where hash within() latest on time partition by uuid",
-                                "time",
-                                true,
-                                true,
-                                true
-                        );
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "too few arguments for 'within'");
-                    }
-                });
+        assertMemoryLeak(() -> {
+            createGeoHashTable(2);
+            try {
+                assertQueryNoLeakCheck(
+                        "",
+                        "select * from pos where hash within() latest on time partition by uuid",
+                        "time",
+                        true,
+                        true,
+                        true
+                );
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "too few arguments for 'within'");
+            }
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHashWithinNullArg() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    try {
-                        assertQueryNoLeakCheck(
-                                "",
-                                "select * from pos where hash within(#f9, #z3, null) latest on time partition by uuid",
-                                "time",
-                                true,
-                                true,
-                                true
-                        );
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash value expected");
-                    }
-                });
+        assertMemoryLeak(() -> {
+            createGeoHashTable(2);
+            try {
+                assertQueryNoLeakCheck(
+                        "",
+                        "select * from pos where hash within(#f9, #z3, null) latest on time partition by uuid",
+                        "time",
+                        true,
+                        true,
+                        true
+                );
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "GeoHash value expected");
+            }
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHashWithinOr() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    try {
-                        assertQueryNoLeakCheck(
-                                "",
-                                "select * from pos where hash within(#f9) or hash within(#z3) latest on time partition by uuid",
-                                "time",
-                                true,
-                                true,
-                                true
-                        );
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "Multiple 'within' expressions not supported");
-                    }
-                });
+        assertMemoryLeak(() -> {
+            createGeoHashTable(2);
+            try {
+                assertQueryNoLeakCheck(
+                        "",
+                        "select * from pos where hash within(#f9) or hash within(#z3) latest on time partition by uuid",
+                        "time",
+                        true,
+                        true,
+                        true
+                );
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "Multiple 'within' expressions not supported");
+            }
+        });
     }
 
     @Test
     public void testLatestByAllIndexedGeoHashWithinWrongCast() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    createGeoHashTable(2);
-                    try {
-                        assertQueryNoLeakCheck(
-                                "",
-                                "select * from pos where hash within(cast('f91t' as geohash(4c)), #z3, null) latest on time partition by uuid",
-                                "time",
-                                true,
-                                true,
-                                true
-                        );
-                    } catch (SqlException ex) {
-                        TestUtils.assertContains(ex.getFlyweightMessage(), "prefix precision mismatch");
-                    }
-                });
+        assertMemoryLeak(() -> {
+            createGeoHashTable(2);
+            try {
+                assertQueryNoLeakCheck(
+                        "",
+                        "select * from pos where hash within(cast('f91t' as geohash(4c)), #z3, null) latest on time partition by uuid",
+                        "time",
+                        true,
+                        true,
+                        true
+                );
+            } catch (SqlException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "prefix precision mismatch");
+            }
+        });
     }
 
     @Test
     public void testLatestByAllIndexedListMultiplePartitions() throws Exception {
-        assertMemoryLeak(
-                () -> {
-                    ddl("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY");
-                    // insert three partitions
-                    insert(
-                            "insert into trips select " +
-                                    "rnd_int(), " +
-                                    "rnd_symbol('KK','ZZ', 'TT'), " +
-                                    "timestamp_sequence(0, 100000L) " +
-                                    "from long_sequence(1000)"
-                    );
+        assertMemoryLeak(() -> {
+            ddl("create table trips(id int, vendor symbol index, ts timestamp) timestamp(ts) partition by DAY");
+            // insert three partitions
+            insert(
+                    "insert into trips select " +
+                            "rnd_int(), " +
+                            "rnd_symbol('KK','ZZ', 'TT'), " +
+                            "timestamp_sequence(0, 100000L) " +
+                            "from long_sequence(1000)"
+            );
 
-                    // cast('1970-01-02' as timestamp) produces incorrect timestamp
-                    insert(
-                            "insert into trips select " +
-                                    "rnd_int(), " +
-                                    "rnd_symbol('DD','QQ', 'TT'), " +
-                                    "timestamp_sequence(to_timestamp('1970-01-02', 'yyyy-MM-dd'), 100000L) " +
-                                    "from long_sequence(1000)"
-                    );
+            // cast('1970-01-02' as timestamp) produces incorrect timestamp
+            insert(
+                    "insert into trips select " +
+                            "rnd_int(), " +
+                            "rnd_symbol('DD','QQ', 'TT'), " +
+                            "timestamp_sequence(to_timestamp('1970-01-02', 'yyyy-MM-dd'), 100000L) " +
+                            "from long_sequence(1000)"
+            );
 
-                    insert(
-                            "insert into trips select " +
-                                    "rnd_int(), " +
-                                    "rnd_symbol('PP','QQ', 'CC'), " +
-                                    "timestamp_sequence(to_timestamp('1970-01-03', 'yyyy-MM-dd'), 100000L) " +
-                                    "from long_sequence(1000)"
-                    );
+            insert(
+                    "insert into trips select " +
+                            "rnd_int(), " +
+                            "rnd_symbol('PP','QQ', 'CC'), " +
+                            "timestamp_sequence(to_timestamp('1970-01-03', 'yyyy-MM-dd'), 100000L) " +
+                            "from long_sequence(1000)"
+            );
 
-                    TestUtils.assertSql(
-                            engine,
-                            sqlExecutionContext,
-                            "trips where vendor in ('KK', 'ZZ', 'TT', 'DD', 'PP', 'QQ', 'CC') latest on ts partition by vendor order by ts",
-                            sink,
-                            "id\tvendor\tts\n" +
-                                    "-1243990650\tZZ\t1970-01-01T00:01:39.900000Z\n" +
-                                    "1878619626\tKK\t1970-01-01T00:01:39.200000Z\n" +
-                                    "371958898\tDD\t1970-01-02T00:01:39.900000Z\n" +
-                                    "-774731115\tTT\t1970-01-02T00:01:39.800000Z\n" +
-                                    "-1808277542\tCC\t1970-01-03T00:01:39.900000Z\n" +
-                                    "-610460127\tQQ\t1970-01-03T00:01:39.500000Z\n" +
-                                    "1699760758\tPP\t1970-01-03T00:01:39.100000Z\n"
-                    );
-                }
-        );
+            TestUtils.assertSql(
+                    engine,
+                    sqlExecutionContext,
+                    "trips where vendor in ('KK', 'ZZ', 'TT', 'DD', 'PP', 'QQ', 'CC') latest on ts partition by vendor order by ts",
+                    sink,
+                    "id\tvendor\tts\n" +
+                            "-1243990650\tZZ\t1970-01-01T00:01:39.900000Z\n" +
+                            "1878619626\tKK\t1970-01-01T00:01:39.200000Z\n" +
+                            "371958898\tDD\t1970-01-02T00:01:39.900000Z\n" +
+                            "-774731115\tTT\t1970-01-02T00:01:39.800000Z\n" +
+                            "-1808277542\tCC\t1970-01-03T00:01:39.900000Z\n" +
+                            "-610460127\tQQ\t1970-01-03T00:01:39.500000Z\n" +
+                            "1699760758\tPP\t1970-01-03T00:01:39.100000Z\n"
+            );
+        });
     }
 
     @Test
@@ -3233,33 +3287,43 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
                 "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
                 "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n";
-        assertQuery(expected, "select a,k,b from x latest on k partition by b", "create table x as " +
-                "(" +
-                "select" +
-                " timestamp_sequence(0, 100000000000) k," +
-                " rnd_double(0)*100 a1," +
-                " rnd_double(0)*100 a2," +
-                " rnd_double(0)*100 a3," +
-                " rnd_double(0)*100 a," +
-                " rnd_symbol(5,4,4,1) b" +
-                " from" +
-                " long_sequence(20)" +
-                "), index(b) timestamp(k) partition by DAY", "k", "insert into x select * from (" +
-                " select" +
-                " to_timestamp('2019', 'yyyy') t," +
-                " rnd_double(0)*100," +
-                " rnd_double(0)*100," +
-                " rnd_double(0)*100," +
-                " rnd_double(0)*100," +
-                " 'VTJW'" +
-                " from long_sequence(1)" +
-                ") timestamp (t)", "a\tk\tb\n" +
-                "2.6836863013701473\t1970-01-13T17:33:20.000000Z\tHYRX\n" +
-                "9.76683471072458\t1970-01-14T21:20:00.000000Z\tPEHN\n" +
-                "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
-                "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
-                "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
-                "6.578761277152223\t2019-01-01T00:00:00.000000Z\tVTJW\n", true, true, false);
+        assertQuery(
+                expected,
+                "select a,k,b from x latest on k partition by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " timestamp_sequence(0, 100000000000) k," +
+                        " rnd_double(0)*100 a1," +
+                        " rnd_double(0)*100 a2," +
+                        " rnd_double(0)*100 a3," +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b" +
+                        " from" +
+                        " long_sequence(20)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        " select" +
+                        " to_timestamp('2019', 'yyyy') t," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " rnd_double(0)*100," +
+                        " 'VTJW'" +
+                        " from long_sequence(1)" +
+                        ") timestamp (t)",
+                "a\tk\tb\n" +
+                        "2.6836863013701473\t1970-01-13T17:33:20.000000Z\tHYRX\n" +
+                        "9.76683471072458\t1970-01-14T21:20:00.000000Z\tPEHN\n" +
+                        "51.85631921367574\t1970-01-19T12:26:40.000000Z\tCPSW\n" +
+                        "50.25890936351257\t1970-01-20T16:13:20.000000Z\tRXGZ\n" +
+                        "72.604681060764\t1970-01-22T23:46:40.000000Z\t\n" +
+                        "6.578761277152223\t2019-01-01T00:00:00.000000Z\tVTJW\n",
+                true,
+                true,
+                false
+        );
     }
 
     @Test
@@ -3608,7 +3672,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     if (Utf8s.endsWithAscii(name, "b.d")) {
                         return -1;
                     }
@@ -4274,38 +4338,36 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testLatestByMissingKeyValuesIndexedFiltered() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertMemoryLeak(() -> {
-            assertQuery(
-                    "a\tb\tk\n" +
-                            "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n",
-                    "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b",
-                    "create table x as " +
-                            "(" +
-                            "select" +
-                            " rnd_double(0)*100 a," +
-                            " rnd_symbol(5,4,4,1) b," +
-                            " timestamp_sequence(0, 10000000000) k" +
-                            " from" +
-                            " long_sequence(300)" +
-                            "), index(b) timestamp(k) partition by DAY",
-                    "k",
-                    "insert into x select * from (" +
-                            "select" +
-                            " 88.1," +
-                            " 'XYZ'," +
-                            " to_timestamp('1971', 'yyyy') t" +
-                            " from long_sequence(1)" +
-                            ") timestamp(t)",
-                    "a\tb\tk\n" +
-                            "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n" +
-                            "88.1\tXYZ\t1971-01-01T00:00:00.000000Z\n",
-                    true,
-                    true,
-                    false
-            );
-            // good
-            Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
-        });
+        assertQuery(
+                "a\tb\tk\n" +
+                        "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n",
+                "select * from x where b in ('XYZ', 'HYRX') and a > 30 and test_match() latest on k partition by b",
+                "create table x as " +
+                        "(" +
+                        "select" +
+                        " rnd_double(0)*100 a," +
+                        " rnd_symbol(5,4,4,1) b," +
+                        " timestamp_sequence(0, 10000000000) k" +
+                        " from" +
+                        " long_sequence(300)" +
+                        "), index(b) timestamp(k) partition by DAY",
+                "k",
+                "insert into x select * from (" +
+                        "select" +
+                        " 88.1," +
+                        " 'XYZ'," +
+                        " to_timestamp('1971', 'yyyy') t" +
+                        " from long_sequence(1)" +
+                        ") timestamp(t)",
+                "a\tb\tk\n" +
+                        "54.55175324785665\tHYRX\t1970-02-02T07:00:00.000000Z\n" +
+                        "88.1\tXYZ\t1971-01-01T00:00:00.000000Z\n",
+                true,
+                true,
+                false
+        );
+        // good
+        Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
     }
 
     @Test
@@ -6768,11 +6830,11 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     "select min(x), sym timestamp from test1 sample by 15s align to first observation order by min",
                     "Sort\n" +
                             "  keys: [min]\n" +
-                            "    SampleBy\n" +
+                            "    Sample By\n" +
                             "      keys: [timestamp]\n" +
                             "      values: [min(x)]\n" +
                             "        SelectedRecord\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: test1\n"
             );
@@ -6787,7 +6849,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             "          values: [min(x)]\n" +
                             "          filter: null\n" +
                             "            SelectedRecord\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: test1\n"
             );

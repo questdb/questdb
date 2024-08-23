@@ -124,11 +124,6 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            getStrWithoutClear(rec, utf16Sink);
-        }
-
-        @Override
         public CharSequence getStrA(Record rec) {
             return getStrWithClear(rec, sinkA);
         }
@@ -147,6 +142,11 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
                     throw SqlException.$(indexPosition, "field position must not be zero");
                 }
             }
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Nullable
@@ -184,7 +184,7 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
                 if (end == -1) {
                     end = str.length();
                 }
-            } else {    // if index is negative, returns index-from-last field
+            } else { // if index is negative, returns index-from-last field
                 if (index == -1) {
                     end = str.length();
                 } else {
@@ -215,8 +215,14 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
         private final char delimiter;
         private final int index;
 
-        public SplitPartConstDelimiterConstIndexFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition,
-                                                         char delimiter, int index) {
+        public SplitPartConstDelimiterConstIndexFunction(
+                Function strFunc,
+                Function delimiterFunc,
+                Function indexFunc,
+                int indexPosition,
+                char delimiter,
+                int index
+        ) {
             super(strFunc, delimiterFunc, indexFunc, indexPosition);
             this.delimiter = delimiter;
             this.index = index;
@@ -236,8 +242,13 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
     private static class SplitPartConstDelimiterFunction extends AbstractSplitPartFunction {
         private final char delimiter;
 
-        public SplitPartConstDelimiterFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition,
-                                               char delimiter) {
+        public SplitPartConstDelimiterFunction(
+                Function strFunc,
+                Function delimiterFunc,
+                Function indexFunc,
+                int indexPosition,
+                char delimiter
+        ) {
             super(strFunc, delimiterFunc, indexFunc, indexPosition);
             this.delimiter = delimiter;
         }
@@ -256,8 +267,13 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
     private static class SplitPartConstIndexFunction extends AbstractSplitPartFunction {
         private final int index;
 
-        public SplitPartConstIndexFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition,
-                                           int index) {
+        public SplitPartConstIndexFunction(
+                Function strFunc,
+                Function delimiterFunc,
+                Function indexFunc,
+                int indexPosition,
+                int index
+        ) {
             super(strFunc, delimiterFunc, indexFunc, indexPosition);
             this.index = index;
         }
@@ -274,7 +290,13 @@ public class SplitPartCharFunctionFactory implements FunctionFactory {
     }
 
     private static class SplitPartFunction extends AbstractSplitPartFunction implements TernaryFunction {
-        public SplitPartFunction(Function strFunc, Function delimiterFunc, Function indexFunc, int indexPosition) {
+
+        public SplitPartFunction(
+                Function strFunc,
+                Function delimiterFunc,
+                Function indexFunc,
+                int indexPosition
+        ) {
             super(strFunc, delimiterFunc, indexFunc, indexPosition);
         }
 

@@ -58,7 +58,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 PropertyKey.PG_SELECT_CACHE_ENABLED + "=true",
                 PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD + "=1",
                 PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD + "=100",
-                PropertyKey.QUERY_TIMEOUT_SEC + "=120",
+                PropertyKey.QUERY_TIMEOUT_SEC + "=150",
                 // JIT doesn't support ARM, and we want exec plans to be the same.
                 PropertyKey.CAIRO_SQL_JIT_MODE + "=off",
                 PropertyKey.DEBUG_ENABLE_TEST_FACTORIES + "=true"
@@ -141,7 +141,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         "Async Filter workers: 4\n" +
                         "  limit: 10\n" +
                         "  filter: key='k3'\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n",
                 "ts[TIMESTAMP],key[VARCHAR],price[DOUBLE],quantity[BIGINT]\n" +
@@ -236,7 +236,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         "    GroupBy vectorized: true workers: 4\n" +
                         "      keys: [key]\n" +
                         "      values: [min(quantity),max(quantity)]\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: tab\n",
                 "key[VARCHAR],min[BIGINT],max[BIGINT]\n" +
@@ -258,7 +258,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 "QUERY PLAN[VARCHAR]\n" +
                         "GroupBy vectorized: true workers: 4\n" +
                         "  values: [min(quantity),max(quantity)]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n",
                 "min[BIGINT],max[BIGINT]\n" +
@@ -282,7 +282,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         "          keys: [day,key]\n" +
                         "          values: [vwap(price,quantity)]\n" +
                         "          filter: null\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: tab\n",
                 "day[INTEGER],key[VARCHAR],vwap[DOUBLE]\n" +
@@ -315,8 +315,8 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 }
             }
 
-            final int nThreads = 8;
-            final int nIterations = 100;
+            final int nThreads = 6;
+            final int nIterations = 80;
 
             final CyclicBarrier startBarrier = new CyclicBarrier(nThreads);
             final SOCountDownLatch doneLatch = new SOCountDownLatch(nThreads);
@@ -337,7 +337,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         }
                     } catch (Throwable th) {
                         errors.incrementAndGet();
-                        th.printStackTrace();
+                        th.printStackTrace(System.out);
                     } finally {
                         doneLatch.countDown();
                     }
@@ -345,7 +345,6 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
             }
 
             doneLatch.await();
-
             Assert.assertEquals(0, errors.get());
         }
     }

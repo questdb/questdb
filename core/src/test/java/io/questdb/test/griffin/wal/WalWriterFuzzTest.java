@@ -26,9 +26,11 @@ package io.questdb.test.griffin.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -107,6 +109,15 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testInOrderSmallTxns() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        fuzzer.setFuzzCounts(false, 20000, 20000, 20, 10, 20, rnd.nextInt(10), 5, 2);
+        setFuzzProperties(rnd);
+        node1.setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, -1);
+        runFuzz(rnd);
+    }
+
+    @Test
     public void testSimpleDataTransaction() throws Exception {
         Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(0, 0.2, 0.1, 0, 0, 0, 0, 1.0, 0.01, 0.01, 0.0, 0);
@@ -154,6 +165,27 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25, 1.0, 0.01, 0.01, 0.0, 0.25);
         setFuzzCounts(false, 50_000, 100, 20, 1000, 1000, 100, 5);
+        setFuzzProperties(rnd);
+        runFuzz(rnd);
+    }
+
+    @Test
+    public void testWalMetadataAddDeleteColumnHeavy() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        setFuzzProbabilities(0.05, 0.2, 0.1, 0, 0.25, 1, 0, 1.0, 0.01, 0.01, 0.0, 0.0);
+        setFuzzCounts(rnd.nextBoolean(), 50_000, 100, 20, 1000, 1000, 100, 5);
+        setFuzzProperties(rnd);
+        runFuzz(rnd);
+    }
+
+
+    @Test
+    public void testWalMetadataChangeHeavyManyPartitions() throws Exception {
+        // Too many partitions cause OSX to fail with file limit error
+        Assume.assumeTrue(!Os.isOSX());
+        Rnd rnd = generateRandom(LOG);
+        setFuzzProbabilities(0.05, 0.2, 0.1, 0.005, 0.25, 0.25, 0.25, 1.0, 0.01, 0.01, 0.0, 0.25);
+        setFuzzCounts(rnd.nextBoolean(), rnd.nextInt(50_000) + 1000, rnd.nextInt(100), 20, 1000, 1000, rnd.nextInt(100), rnd.nextInt(400) + 1);
         setFuzzProperties(rnd);
         runFuzz(rnd);
     }

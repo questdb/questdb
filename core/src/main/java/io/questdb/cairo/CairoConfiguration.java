@@ -96,6 +96,9 @@ public interface CairoConfiguration {
     boolean getCairoSqlLegacyOperatorPrecedence();
 
     @NotNull
+    CharSequence getCheckpointRoot(); // same as root/../.checkpoint
+
+    @NotNull
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 
     int getColumnCastModelPoolCapacity();
@@ -212,6 +215,9 @@ public interface CairoConfiguration {
     int getInsertModelPoolCapacity();
 
     int getLatestByQueueCapacity();
+
+    @NotNull
+    CharSequence getLegacyCheckpointRoot(); // same as root/../snapshot
 
     int getMaxCrashFiles();
 
@@ -343,20 +349,15 @@ public interface CairoConfiguration {
 
     long getSequencerCheckInterval();
 
-    boolean getSimulateCrashEnabled();
-
     /**
      * Returns database instance id. The instance id is used by the snapshot recovery mechanism:
-     * on database start the id is compared with the id stored in a snapshot, if any. If the ids
+     * on database start the id is compared with the id stored in the checkpoint, if any. If the ids
      * are different, snapshot recovery is being triggered.
      *
      * @return instance id.
      */
     @NotNull
     CharSequence getSnapshotInstanceId();
-
-    @NotNull
-    CharSequence getSnapshotRoot(); // same as root/../snapshot
 
     long getSpinLockTimeout();
 
@@ -516,6 +517,8 @@ public interface CairoConfiguration {
 
     long getWalEventAppendPageSize();
 
+    double getWalLagRowsMultiplier();
+
     long getWalMaxLagSize();
 
     int getWalMaxLagTxnCount();
@@ -546,8 +549,6 @@ public interface CairoConfiguration {
      */
     long getWalSegmentRolloverSize();
 
-    double getWalSquashUncommittedRowsMultiplier();
-
     int getWalTxnNotificationQueueCapacity();
 
     int getWalWriterPoolMaxSegments();
@@ -570,6 +571,15 @@ public interface CairoConfiguration {
 
     int getWriterTickRowsCountMod();
 
+    /**
+     * A flag to enable/disable checkpoint recovery mechanism. Defaults to {@code true}.
+     *
+     * @return enable/disable flag for recovering from the checkpoint
+     */
+    boolean isCheckpointRecoveryEnabled();
+
+    boolean isDevModeEnabled();
+
     boolean isGroupByPresizeEnabled();
 
     boolean isIOURingEnabled();
@@ -581,13 +591,6 @@ public interface CairoConfiguration {
     boolean isParallelIndexingEnabled();
 
     boolean isReadOnlyInstance();
-
-    /**
-     * A flag to enable/disable snapshot recovery mechanism. Defaults to {@code true}.
-     *
-     * @return enable/disable snapshot recovery flag
-     */
-    boolean isSnapshotRecoveryEnabled();
 
     boolean isSqlJitDebugEnabled();
 

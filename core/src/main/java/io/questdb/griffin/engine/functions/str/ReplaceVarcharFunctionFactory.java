@@ -161,15 +161,14 @@ public class ReplaceVarcharFunctionFactory implements FunctionFactory {
     }
 
     private static class Func extends VarcharFunction implements TernaryFunction {
-
         private final Function lookFor;
         private final int maxSize;
         private final Function replaceWith;
-        private final Utf8StringSink sink = new Utf8StringSink();
+        private final Utf8StringSink sinkA = new Utf8StringSink();
         private final Utf8StringSink sinkB = new Utf8StringSink();
         private final Function value;
 
-        Func(Function value, Function lookFor, Function replaceWith, int maxSize) {
+        public Func(Function value, Function lookFor, Function replaceWith, int maxSize) {
             this.value = value;
             this.lookFor = lookFor;
             this.replaceWith = replaceWith;
@@ -195,8 +194,8 @@ public class ReplaceVarcharFunctionFactory implements FunctionFactory {
         public Utf8Sequence getVarcharA(Record rec) {
             final Utf8Sequence value = this.value.getVarcharA(rec);
             if (value != null) {
-                sink.clear();
-                return replace(value, lookFor.getVarcharA(rec), replaceWith.getVarcharA(rec), sink, maxSize);
+                sinkA.clear();
+                return replace(value, lookFor.getVarcharA(rec), replaceWith.getVarcharA(rec), sinkA, maxSize);
             }
             return null;
         }

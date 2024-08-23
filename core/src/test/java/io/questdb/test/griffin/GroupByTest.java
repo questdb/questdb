@@ -46,7 +46,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "Async Group By workers: 1\n" +
                             "  keys: [l,s]\n" +
                             "  filter: null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
             );
@@ -61,7 +61,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "    Async Group By workers: 1\n" +
                             "      keys: [l,s]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
@@ -229,7 +229,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "      keys: [column]\n" +
                             "      values: [count(*)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
@@ -261,7 +261,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "  keys: [case]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
             );
@@ -295,7 +295,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "      keys: [column]\n" +
                             "      values: [count(*)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
@@ -329,7 +329,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "      keys: [x]\n" +
                             "      values: [avg(y),min(y),avg(x)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
@@ -364,7 +364,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "      keys: [x]\n" +
                             "      values: [avg(y)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
@@ -393,7 +393,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "      keys: [x]\n" +
                             "      values: [avg(y),min(y)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
@@ -422,7 +422,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "      keys: [column,x]\n" +
                             "      values: [avg(y),min(y)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
@@ -472,7 +472,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "      keys: [date_report]\n" +
                             "      values: [count(*)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: dat\n"
             );
@@ -505,7 +505,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "      keys: [date_report]\n" +
                             "      values: [count(*)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: dat\n"
             );
@@ -539,7 +539,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "      keys: [date_report]\n" +
                             "      values: [count(*)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: dat\n"
             );
@@ -575,7 +575,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "          keys: [date_report]\n" +
                             "          values: [count(*)]\n" +
                             "          filter: null\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: dat\n"
             );
@@ -613,7 +613,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "          keys: [date_report,dateadd]\n" +
                             "          values: [count(*)]\n" +
                             "          filter: null\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: dat\n"
             );
@@ -651,7 +651,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "          keys: [date_report]\n" +
                             "          values: [count(*)]\n" +
                             "          filter: null\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: dat\n"
             );
@@ -698,11 +698,11 @@ public class GroupByTest extends AbstractCairoTest {
                             "            SelectedRecord\n" +
                             "                Hash Join Light\n" +
                             "                  condition: details.x=ordr.x\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: ord\n" +
                             "                    Hash\n" +
-                            "                        DataFrame\n" +
+                            "                        PageFrame\n" +
                             "                            Row forward scan\n" +
                             "                            Frame forward scan on: det\n"
             );
@@ -955,7 +955,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "    Async Group By workers: 1\n" +
                             "      keys: [l,s,column,column1]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
@@ -1163,7 +1163,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "      keys: [s,max]\n" +
                             "      values: [max(l)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
@@ -1229,11 +1229,11 @@ public class GroupByTest extends AbstractCairoTest {
                             "                SelectedRecord\n" +
                             "                    Hash Join Light\n" +
                             "                      condition: t2.y=t1.y\n" +
-                            "                        DataFrame\n" +
+                            "                        PageFrame\n" +
                             "                            Row forward scan\n" +
                             "                            Frame forward scan on: t1\n" +
                             "                        Hash\n" +
-                            "                            DataFrame\n" +
+                            "                            PageFrame\n" +
                             "                                Row forward scan\n" +
                             "                                Frame forward scan on: t2\n"
             );
@@ -1268,18 +1268,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "    GroupBy vectorized: false\n" +
                             "      keys: [x,case,x1]\n" +
                             "      values: [max(y)]\n" +
-                            "        VirtualRecord\n" +
-                            "          functions: [x,y,case([1<x,30*x,20*x1]),x1]\n" +
-                            "            SelectedRecord\n" +
-                            "                Hash Join Light\n" +
-                            "                  condition: t2.y=t1.y\n" +
-                            "                    DataFrame\n" +
+                            "        SelectedRecord\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: t2.y=t1.y\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: t1\n" +
+                            "                Hash\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
-                            "                        Frame forward scan on: t1\n" +
-                            "                    Hash\n" +
-                            "                        DataFrame\n" +
-                            "                            Row forward scan\n" +
-                            "                            Frame forward scan on: t2\n"
+                            "                        Frame forward scan on: t2\n"
             );
 
             assertQueryNoLeakCheck(
@@ -1315,18 +1313,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "        GroupBy vectorized: false\n" +
                             "          keys: [x,x1,dateadd]\n" +
                             "          values: [max(y)]\n" +
-                            "            VirtualRecord\n" +
-                            "              functions: [x,y,x1,dateadd('d',1677628800000000,x)]\n" +
-                            "                SelectedRecord\n" +
-                            "                    Hash Join Light\n" +
-                            "                      condition: t2.y=t1.y\n" +
-                            "                        DataFrame\n" +
+                            "            SelectedRecord\n" +
+                            "                Hash Join Light\n" +
+                            "                  condition: t2.y=t1.y\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: t1\n" +
+                            "                    Hash\n" +
+                            "                        PageFrame\n" +
                             "                            Row forward scan\n" +
-                            "                            Frame forward scan on: t1\n" +
-                            "                        Hash\n" +
-                            "                            DataFrame\n" +
-                            "                                Row forward scan\n" +
-                            "                                Frame forward scan on: t2\n"
+                            "                            Frame forward scan on: t2\n"
             );
 
             assertQueryNoLeakCheck(
@@ -1362,18 +1358,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "        GroupBy vectorized: false\n" +
                             "          keys: [x,dateadd,x1]\n" +
                             "          values: [max(y)]\n" +
-                            "            VirtualRecord\n" +
-                            "              functions: [x,y,dateadd('d',1677628800000000,x),x1]\n" +
-                            "                SelectedRecord\n" +
-                            "                    Hash Join Light\n" +
-                            "                      condition: t2.y=t1.y\n" +
-                            "                        DataFrame\n" +
+                            "            SelectedRecord\n" +
+                            "                Hash Join Light\n" +
+                            "                  condition: t2.y=t1.y\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: t1\n" +
+                            "                    Hash\n" +
+                            "                        PageFrame\n" +
                             "                            Row forward scan\n" +
-                            "                            Frame forward scan on: t1\n" +
-                            "                        Hash\n" +
-                            "                            DataFrame\n" +
-                            "                                Row forward scan\n" +
-                            "                                Frame forward scan on: t2\n"
+                            "                            Frame forward scan on: t2\n"
             );
 
             assertQueryNoLeakCheck(
@@ -1457,18 +1451,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "        GroupBy vectorized: false\n" +
                             "          keys: [dim_ap_temperature__category,fact_table__date_time_day]\n" +
                             "          values: [avg(radiation),avg(energy_power)]\n" +
-                            "            VirtualRecord\n" +
-                            "              functions: [dim_ap_temperature__category,timestamp_floor('day',to_utc(date_time,1)),radiation,energy_power]\n" +
-                            "                SelectedRecord\n" +
-                            "                    Hash Outer Join Light\n" +
-                            "                      condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
-                            "                        DataFrame\n" +
+                            "            SelectedRecord\n" +
+                            "                Hash Outer Join Light\n" +
+                            "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: fact_table\n" +
+                            "                    Hash\n" +
+                            "                        PageFrame\n" +
                             "                            Row forward scan\n" +
-                            "                            Frame forward scan on: fact_table\n" +
-                            "                        Hash\n" +
-                            "                            DataFrame\n" +
-                            "                                Row forward scan\n" +
-                            "                                Frame forward scan on: dim_apTemperature\n"
+                            "                            Frame forward scan on: dim_apTemperature\n"
             );
 
             // With no aliases in GROUP BY clause - 1
@@ -1497,18 +1489,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "        GroupBy vectorized: false\n" +
                             "          keys: [category,timestamp_floor]\n" +
                             "          values: [avg(radiation),avg(energy_power)]\n" +
-                            "            VirtualRecord\n" +
-                            "              functions: [category,timestamp_floor('day',to_utc(date_time,1)),radiation,energy_power]\n" +
-                            "                SelectedRecord\n" +
-                            "                    Hash Outer Join Light\n" +
-                            "                      condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
-                            "                        DataFrame\n" +
+                            "            SelectedRecord\n" +
+                            "                Hash Outer Join Light\n" +
+                            "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: fact_table\n" +
+                            "                    Hash\n" +
+                            "                        PageFrame\n" +
                             "                            Row forward scan\n" +
-                            "                            Frame forward scan on: fact_table\n" +
-                            "                        Hash\n" +
-                            "                            DataFrame\n" +
-                            "                                Row forward scan\n" +
-                            "                                Frame forward scan on: dim_apTemperature\n"
+                            "                            Frame forward scan on: dim_apTemperature\n"
             );
 
             // With no aliases in GROUP BY clause - 2
@@ -1537,18 +1527,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "        GroupBy vectorized: false\n" +
                             "          keys: [category,timestamp_floor]\n" +
                             "          values: [avg(radiation),avg(energy_power)]\n" +
-                            "            VirtualRecord\n" +
-                            "              functions: [category,timestamp_floor('day',to_utc(date_time,1)),radiation,energy_power]\n" +
-                            "                SelectedRecord\n" +
-                            "                    Hash Outer Join Light\n" +
-                            "                      condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
-                            "                        DataFrame\n" +
+                            "            SelectedRecord\n" +
+                            "                Hash Outer Join Light\n" +
+                            "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: fact_table\n" +
+                            "                    Hash\n" +
+                            "                        PageFrame\n" +
                             "                            Row forward scan\n" +
-                            "                            Frame forward scan on: fact_table\n" +
-                            "                        Hash\n" +
-                            "                            DataFrame\n" +
-                            "                                Row forward scan\n" +
-                            "                                Frame forward scan on: dim_apTemperature\n"
+                            "                            Frame forward scan on: dim_apTemperature\n"
             );
 
             // Without GROUP BY clause
@@ -1572,18 +1560,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "    GroupBy vectorized: false\n" +
                             "      keys: [dim_ap_temperature__category,fact_table__date_time_day]\n" +
                             "      values: [avg(radiation),avg(energy_power)]\n" +
-                            "        VirtualRecord\n" +
-                            "          functions: [dim_ap_temperature__category,timestamp_floor('day',to_utc(date_time,1)),radiation,energy_power]\n" +
-                            "            SelectedRecord\n" +
-                            "                Hash Outer Join Light\n" +
-                            "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
-                            "                    DataFrame\n" +
+                            "        SelectedRecord\n" +
+                            "            Hash Outer Join Light\n" +
+                            "              condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Frame forward scan on: fact_table\n" +
+                            "                Hash\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
-                            "                        Frame forward scan on: fact_table\n" +
-                            "                    Hash\n" +
-                            "                        DataFrame\n" +
-                            "                            Row forward scan\n" +
-                            "                            Frame forward scan on: dim_apTemperature\n"
+                            "                        Frame forward scan on: dim_apTemperature\n"
             );
         });
     }
@@ -1604,7 +1590,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "    Async Group By workers: 1\n" +
                             "      keys: [l,s]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
@@ -1703,11 +1689,9 @@ public class GroupByTest extends AbstractCairoTest {
                     "GroupBy vectorized: false\n" +
                             "  keys: [concat]\n" +
                             "  values: [sum(l)]\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [concat(['_',s2,'_']),l]\n" +
-                            "        LatestByDeferredListValuesFiltered\n" +
-                            "          filter: s2 in [d]\n" +
-                            "            Frame backward scan on: t\n"
+                            "    LatestByDeferredListValuesFiltered\n" +
+                            "      filter: s2 in [d]\n" +
+                            "        Frame backward scan on: t\n"
             );
             assertQueryNoLeakCheck(
                     "concat\tsum\n" +
@@ -1737,7 +1721,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "  keys: [a,b,z]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: a=1\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n"
             );
@@ -1816,11 +1800,11 @@ public class GroupByTest extends AbstractCairoTest {
                             "                          keys: [i]\n" +
                             "                          values: [max(ts)]\n" +
                             "                          filter: null\n" +
-                            "                            DataFrame\n" +
+                            "                            PageFrame\n" +
                             "                                Row forward scan\n" +
                             "                                Frame forward scan on: tab\n" +
                             "                        Hash\n" +
-                            "                            DataFrame\n" +
+                            "                            PageFrame\n" +
                             "                                Row forward scan\n" +
                             "                                Frame forward scan on: tab\n"
             );
@@ -1859,7 +1843,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "        Limit lo: -100\n" +
                             "            Window\n" +
                             "              functions: [avg(j) over (partition by [i] range between 80000 preceding and current row),sum(j) over (partition by [i] range between 80000 preceding and current row),first_value(j) over (partition by [i] range between 80000 preceding and current row)]\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n"
             );
@@ -1884,7 +1868,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "  keys: [a,b,z]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: a=1\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n"
             );
@@ -1917,7 +1901,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "  keys: [a,B,z]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: a=1\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n"
             );
@@ -1951,7 +1935,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "      keys: [a,b,c]\n" +
                             "      values: [count(*)]\n" +
                             "      filter: a=1\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n"
             );
@@ -1983,7 +1967,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "  keys: [a,b,c]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: a=1\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n"
             );
@@ -2001,7 +1985,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testLiftAliasesFromInnerSelect4() throws Exception {
         // Check that if a select-choose node is elided by the factory, the WHERE condition can
-        // be retrieved from the inner DataFrame.
+        // be retrieved from the inner PartitionFrame.
         assertMemoryLeak(() -> {
             ddl("create table trades as (" +
                     "select" +
@@ -2126,7 +2110,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "        SelectedRecord\n" +
                             "            Async JIT Filter workers: 1\n" +
                             "              filter: (seller='sf' or buyer='sf')\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: trades\n"
             );
@@ -2157,7 +2141,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "              keys: [a,z,b]\n" +
                             "              values: [sum(b),count(*)]\n" +
                             "              filter: a=1\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: x\n"
             );
@@ -2206,7 +2190,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "          keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst]\n" +
                             "          values: [count(*)]\n" +
                             "          filter: (CounterID=62 and IsRefresh=0)\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Interval forward scan on: hits\n" +
                             "                  intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n"
@@ -2228,7 +2212,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "          keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL]\n" +
                             "          values: [count(*)]\n" +
                             "          filter: (CounterID=62 and IsRefresh=0)\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Interval forward scan on: hits\n" +
                             "                  intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n"
@@ -2249,7 +2233,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "          keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,URL,cat]\n" +
                             "          values: [count(*)]\n" +
                             "          filter: (CounterID=62 and IsRefresh=0)\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Interval forward scan on: hits\n" +
                             "                  intervals: [(\"2013-07-01T00:00:00.000000Z\",\"2013-07-31T23:59:59.000000Z\")]\n"
@@ -2284,7 +2268,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "          keys: [k1,key2]\n" +
                             "          values: [count(*)]\n" +
                             "          filter: null\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: t\n"
             );
@@ -2316,7 +2300,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "          keys: [key]\n" +
                             "          values: [count(*)]\n" +
                             "          filter: null\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: t\n"
             );
@@ -2345,18 +2329,16 @@ public class GroupByTest extends AbstractCairoTest {
                             "        GroupBy vectorized: false\n" +
                             "          keys: [x,dateadd,x1]\n" +
                             "          values: [max(y)]\n" +
-                            "            VirtualRecord\n" +
-                            "              functions: [x,y,dateadd('d',1677628800000000,x),x1]\n" +
-                            "                SelectedRecord\n" +
-                            "                    Hash Join Light\n" +
-                            "                      condition: t2.y=t1.y\n" +
-                            "                        DataFrame\n" +
+                            "            SelectedRecord\n" +
+                            "                Hash Join Light\n" +
+                            "                  condition: t2.y=t1.y\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: t1\n" +
+                            "                    Hash\n" +
+                            "                        PageFrame\n" +
                             "                            Row forward scan\n" +
-                            "                            Frame forward scan on: t1\n" +
-                            "                        Hash\n" +
-                            "                            DataFrame\n" +
-                            "                                Row forward scan\n" +
-                            "                                Frame forward scan on: t2\n"
+                            "                            Frame forward scan on: t2\n"
             );
 
             assertQueryNoLeakCheck(
@@ -2512,8 +2494,8 @@ public class GroupByTest extends AbstractCairoTest {
                             "          functions: [created]\n" +
                             "            Async JIT Group By workers: 1\n" +
                             "              keys: [created]\n" +
-                            "              filter: created!=null\n" +
-                            "                DataFrame\n" +
+                            "              filter: null!=created\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n"
             );
@@ -2554,8 +2536,8 @@ public class GroupByTest extends AbstractCairoTest {
                             "          functions: [dateadd('h',1,created)]\n" +
                             "            Async JIT Group By workers: 1\n" +
                             "              keys: [created]\n" +
-                            "              filter: created!=null\n" +
-                            "                DataFrame\n" +
+                            "              filter: null!=created\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n"
             );
@@ -2594,8 +2576,8 @@ public class GroupByTest extends AbstractCairoTest {
                             "      keys: created\n" +
                             "        Async JIT Group By workers: 1\n" +
                             "          keys: [created]\n" +
-                            "          filter: created!=null\n" +
-                            "            DataFrame\n" +
+                            "          filter: null!=created\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tab\n"
             );
@@ -2632,14 +2614,13 @@ public class GroupByTest extends AbstractCairoTest {
                             "  keys: [hour, sym]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [sym,hour,avgBid]\n" +
-                            "        GroupBy vectorized: false\n" +
+                            "        Async Group By workers: 1\n" +
                             "          keys: [sym,hour]\n" +
                             "          values: [avg(bid)]\n" +
-                            "            VirtualRecord\n" +
-                            "              functions: [sym,hour(ts),bid]\n" +
-                            "                DataFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: x\n"
+                            "          filter: null\n" +
+                            "            PageFrame\n" +
+                            "                Row forward scan\n" +
+                            "                Frame forward scan on: x\n"
             );
             assertQueryNoLeakCheck(
                     "sym\thour\tavgBid\n" +
@@ -2696,7 +2677,7 @@ public class GroupByTest extends AbstractCairoTest {
                             "        GroupBy vectorized: true workers: 1\n" +
                             "          keys: [category]\n" +
                             "          values: [sum(sum),sum(count)]\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: avg\n"
             );

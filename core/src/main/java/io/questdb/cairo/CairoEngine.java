@@ -67,10 +67,12 @@ public class CairoEngine implements Closeable, WriterSource {
     public static final String REASON_BUSY_READER = "busyReader";
     public static final String REASON_BUSY_SEQUENCER_METADATA_POOL = "busySequencerMetaPool";
     public static final String REASON_BUSY_TABLE_READER_METADATA_POOL = "busyTableReaderMetaPool";
-    public static final String REASON_SNAPSHOT_IN_PROGRESS = "snapshotInProgress";
+    public static final String REASON_CHECKPOINT_IN_PROGRESS = "checkpointInProgress";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
+    private static final int MAX_SLEEP_MILLIS = 250;
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
+    private final DatabaseCheckpointAgent checkpointAgent;
     private final CopyContext copyContext;
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final EngineMaintenanceJob engineMaintenanceJob;
@@ -81,7 +83,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private final ReaderPool readerPool;
     private final SqlExecutionContext rootExecutionContext;
     private final SequencerMetadataPool sequencerMetadataPool;
-    private final DatabaseSnapshotAgentImpl snapshotAgent;
     private final SqlCompilerPool sqlCompilerPool;
     private final TableFlagResolver tableFlagResolver;
     private final IDGenerator tableIdGenerator;
@@ -126,14 +127,13 @@ public class CairoEngine implements Closeable, WriterSource {
             this.telemetry = new Telemetry<>(TelemetryTask.TELEMETRY, configuration);
             this.telemetryWal = new Telemetry<>(TelemetryWalTask.WAL_TELEMETRY, configuration);
             this.tableIdGenerator = new IDGenerator(configuration, TableUtils.TAB_INDEX_FILE_NAME);
-            this.snapshotAgent = new DatabaseSnapshotAgentImpl(this);
+            this.checkpointAgent = new DatabaseCheckpointAgent(this);
             this.queryRegistry = new QueryRegistry(configuration);
             this.rootExecutionContext = new SqlExecutionContextImpl(this, 1)
                     .with(AllowAllSecurityContext.INSTANCE);
 
             tableIdGenerator.open();
-            // Recover snapshot, if necessary.
-            snapshotAgent.recoverSnapshot();
+            checkpointRecover();
 
             // Migrate database files.
             EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
@@ -152,11 +152,6 @@ public class CairoEngine implements Closeable, WriterSource {
     public static void compile(SqlCompiler compiler, CharSequence sql, SqlExecutionContext sqlExecutionContext) throws SqlException {
         CompiledQuery cq = compiler.compile(sql, sqlExecutionContext);
         switch (cq.getType()) {
-            default:
-                try (OperationFuture future = cq.execute(null)) {
-                    future.await();
-                }
-                break;
             case INSERT:
             case INSERT_AS_SELECT:
                 final InsertOperation insertOperation = cq.getInsertOperation();
@@ -173,6 +168,11 @@ public class CairoEngine implements Closeable, WriterSource {
                 break;
             case SELECT:
                 throw SqlException.$(0, "use select()");
+            default:
+                try (OperationFuture future = cq.execute(null)) {
+                    future.await();
+                }
+                break;
         }
     }
 
@@ -184,17 +184,17 @@ public class CairoEngine implements Closeable, WriterSource {
     ) throws SqlException {
         CompiledQuery cc = compiler.compile(ddl, sqlExecutionContext);
         switch (cc.getType()) {
-            default:
-                try (OperationFuture future = cc.execute(eventSubSeq)) {
-                    future.await();
-                }
-                break;
             case INSERT:
                 throw SqlException.$(0, "use insert()");
             case DROP:
                 throw SqlException.$(0, "use drop()");
             case SELECT:
                 throw SqlException.$(0, "use select()");
+            default:
+                try (OperationFuture future = cc.execute(eventSubSeq)) {
+                    future.await();
+                }
+                break;
         }
     }
 
@@ -249,7 +249,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 try {
                     tableToken = verifyTableName(tableName);
                 } catch (CairoException ex) {
-                    Os.sleep(sleep *= 2);
+                    Os.sleep(sleep);
+                    sleep = Math.min(MAX_SLEEP_MILLIS, sleep * 2);
                     continue;
                 }
             }
@@ -265,15 +266,34 @@ public class CairoEngine implements Closeable, WriterSource {
                 if (isSuspended) {
                     throw CairoException.nonCritical().put("table is suspended [tableName=").put(tableName).put(']');
                 }
-                Os.sleep(sleep *= 2);
+                Os.sleep(sleep);
+                sleep = Math.min(MAX_SLEEP_MILLIS, sleep * 2);
             }
         }
-        throw CairoException.nonCritical().put("txn timed out [table=").put(tableName).put(", expectedTxn=").put(seqTxn).put(", writerTxn=").put(writerTxn);
+        throw CairoException.nonCritical()
+                .put("txn timed out [table=").put(tableName)
+                .put(", expectedTxn=").put(seqTxn)
+                .put(", writerTxn=").put(writerTxn);
+    }
+
+    public void checkpointCreate(SqlExecutionContext executionContext) throws SqlException {
+        checkpointAgent.checkpointCreate(executionContext);
+    }
+
+    /**
+     * Recovers database from checkpoint after restoring data from a snapshot.
+     */
+    public final void checkpointRecover() {
+        checkpointAgent.recover();
+    }
+
+    public void checkpointRelease() throws SqlException {
+        checkpointAgent.checkpointRelease();
     }
 
     @TestOnly
     public boolean clear() {
-        snapshotAgent.clear();
+        checkpointAgent.clear();
         messageBus.clear();
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
@@ -298,7 +318,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(telemetry);
         Misc.free(telemetryWal);
         Misc.free(tableNameRegistry);
-        Misc.free(snapshotAgent);
+        Misc.free(checkpointAgent);
     }
 
     @TestOnly
@@ -314,10 +334,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void compile(CharSequence sql) throws SqlException {
         compile(sql, rootExecutionContext);
-    }
-
-    public void completeSnapshot() throws SqlException {
-        snapshotAgent.completeSnapshot();
     }
 
     public @NotNull TableToken createTable(
@@ -424,7 +440,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 DefaultLifecycleManager.INSTANCE,
                 backupDirName,
                 getDdlListener(tableToken),
-                snapshotAgent,
+                checkpointAgent,
                 Metrics.disabled()
         );
     }
@@ -437,6 +453,10 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public int getBusyWriterCount() {
         return writerPool.getBusyCount();
+    }
+
+    public DatabaseCheckpointStatus getCheckpointStatus() {
+        return checkpointAgent;
     }
 
     public long getCommandCorrelationId() {
@@ -581,10 +601,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 sequencerMetadataPool.get(tableToken),
                 desiredVersion
         );
-    }
-
-    public DatabaseSnapshotAgent getSnapshotAgent() {
-        return snapshotAgent;
     }
 
     public SqlCompiler getSqlCompiler() {
@@ -800,11 +816,11 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.reload(convertedTables);
     }
 
-    public String lockAll(TableToken tableToken, String lockReason, boolean ignoreSnapshots) {
+    public String lockAll(TableToken tableToken, String lockReason, boolean ignoreInProgressCheckpoint) {
         assert null != lockReason;
-        if (!ignoreSnapshots && snapshotAgent.isInProgress()) {
-            // prevent reader locking while a snapshot is ongoing
-            return REASON_SNAPSHOT_IN_PROGRESS;
+        if (!ignoreInProgressCheckpoint && checkpointAgent.isInProgress()) {
+            // prevent reader locking before checkpoint is released
+            return REASON_CHECKPOINT_IN_PROGRESS;
         }
         // busy metadata is same as busy reader from user perspective
         String lockedReason;
@@ -839,8 +855,8 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public boolean lockReadersAndMetadata(TableToken tableToken) {
-        if (snapshotAgent.isInProgress()) {
-            // prevent reader locking while a snapshot is ongoing
+        if (checkpointAgent.isInProgress()) {
+            // prevent reader locking before checkpoint is released
             return false;
         }
         if (readerPool.lock(tableToken)) {
@@ -854,8 +870,8 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public boolean lockReadersByTableToken(TableToken tableToken) {
-        if (snapshotAgent.isInProgress()) {
-            // prevent reader locking while a snapshot is ongoing
+        if (checkpointAgent.isInProgress()) {
+            // prevent reader locking before checkpoint is released
             return false;
         }
         return readerPool.lock(tableToken);
@@ -889,7 +905,16 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.dropTable(tableToken);
     }
 
-    public void notifyWalTxnCommitted(@NotNull TableToken tableToken) {
+    /**
+     * Publishes notification of table transaction to the queue. The intent is to notify Apply2WalJob that
+     * there are WAL files to be merged into the table. Notification can fail if the queue is full, in
+     * which case it will have to be republished from a persisted storage. However, this method does not
+     * care about that.
+     *
+     * @param tableToken table token of the table that has to be processed by the Apply2WalJob
+     * @return true if the message was successfully put on the queue and false otherwise.
+     */
+    public boolean notifyWalTxnCommitted(@NotNull TableToken tableToken) {
         final Sequence pubSeq = messageBus.getWalTxnNotificationPubSequence();
         while (true) {
             long cursor = pubSeq.next();
@@ -897,14 +922,14 @@ public class CairoEngine implements Closeable, WriterSource {
                 WalTxnNotificationTask task = messageBus.getWalTxnNotificationQueue().get(cursor);
                 task.of(tableToken);
                 pubSeq.done(cursor);
-                return;
+                return true;
             } else if (cursor == -1L) {
                 LOG.info().$("cannot publish WAL notifications, queue is full [current=").$(pubSeq.current())
                         .$(", table=").utf8(tableToken.getDirName())
                         .I$();
                 // queue overflow, throw away notification and notify a job to rescan all tables
                 notifyWalTxnRepublisher(tableToken);
-                return;
+                return false;
             }
         }
     }
@@ -912,10 +937,6 @@ public class CairoEngine implements Closeable, WriterSource {
     public void notifyWalTxnRepublisher(TableToken tableToken) {
         tableSequencerAPI.notifyCommitReadable(tableToken, -1);
         unpublishedWalTxnCount.incrementAndGet();
-    }
-
-    public void prepareSnapshot(SqlExecutionContext executionContext) throws SqlException {
-        snapshotAgent.prepareSnapshot(executionContext);
     }
 
     public void print(CharSequence sql, MutableCharSink<?> sink) throws SqlException {
@@ -934,10 +955,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void reconcileTableNameRegistryState() {
         tableNameRegistry.reconcile();
-    }
-
-    public void recoverSnapshot() {
-        snapshotAgent.recoverSnapshot();
     }
 
     public void registerTableToken(TableToken tableToken) {
@@ -1137,7 +1154,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
-        this.snapshotAgent.setWalPurgeJobRunLock(walPurgeJobRunLock);
+        this.checkpointAgent.setWalPurgeJobRunLock(walPurgeJobRunLock);
     }
 
     public void unLockTableCreate(TableToken tableToken) {

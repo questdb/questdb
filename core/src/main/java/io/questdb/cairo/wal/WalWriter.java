@@ -75,7 +75,8 @@ public class WalWriter implements TableWriterAPI {
     private final int mkDirMode;
     private final ObjList<Runnable> nullSetters;
     private final Path path;
-    private final int rootLen;
+    private final int pathRootSize;
+    private final int pathSize;
     private final RowImpl row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
     private final TableSequencerAPI sequencer;
@@ -102,14 +103,14 @@ public class WalWriter implements TableWriterAPI {
     private boolean open;
     private boolean rollSegmentOnNextRow = false;
     private int segmentId = -1;
-    private int segmentLockFd = -1;
+    private long segmentLockFd = -1;
     private long segmentRowCount = -1;
     private TableToken tableToken;
     private TxReader txReader;
     private long txnMaxTimestamp = -1;
     private long txnMinTimestamp = Long.MAX_VALUE;
     private boolean txnOutOfOrder = false;
-    private int walLockFd = -1;
+    private long walLockFd = -1;
 
     public WalWriter(
             CairoConfiguration configuration,
@@ -130,8 +131,10 @@ public class WalWriter implements TableWriterAPI {
         final int walId = tableSequencerAPI.getNextWalId(tableToken);
         this.walName = WAL_NAME_BASE + walId;
         this.walId = walId;
-        this.path = new Path().of(configuration.getRoot()).concat(tableToken).concat(walName);
-        this.rootLen = path.size();
+        this.path = new Path().of(configuration.getRoot());
+        this.pathRootSize = path.size();
+        this.path.concat(tableToken).concat(walName);
+        this.pathSize = path.size();
         this.metrics = metrics;
         this.open = true;
         this.symbolMapMem = Vm.getMARInstance(configuration.getCommitMode());
@@ -269,11 +272,11 @@ public class WalWriter implements TableWriterAPI {
                     sync(commitMode);
                 }
                 final long seqTxn = getSequencerTxn();
-                LOG.info().$("committed data block [wal=").$(path).$(Files.SEPARATOR).$(segmentId)
+                LOG.info().$("committed data block [wal=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
                         .$(", segmentTxn=").$(lastSegmentTxn)
                         .$(", seqTxn=").$(seqTxn)
                         .$(", rowLo=").$(currentTxnStartRowNum).$(", roHi=").$(segmentRowCount)
-                        .$(", minTimestamp=").$ts(txnMinTimestamp).$(", maxTimestamp=").$ts(txnMaxTimestamp).I$();
+                        .$(", minTs=").$ts(txnMinTimestamp).$(", maxTs=").$ts(txnMaxTimestamp).I$();
                 resetDataTxnProperties();
                 mayRollSegmentOnNextRow();
                 metrics.walMetrics().addRowsWritten(rowsToCommit);
@@ -483,11 +486,11 @@ public class WalWriter implements TableWriterAPI {
                         .put(", walId=").put(walId)
                         .put(", segmentId=").put(newSegmentId).put(']');
             }
-            final int oldSegmentLockFd = segmentLockFd;
+            final long oldSegmentLockFd = segmentLockFd;
             segmentLockFd = -1;
             try {
                 createSegmentDir(newSegmentId);
-                path.trimTo(rootLen);
+                path.trimTo(pathSize);
                 SegmentColumnRollSink columnRollSink = createSegmentColumnRollSink();
                 rowValueIsNotNull.fill(0, columnCount, -1);
 
@@ -518,6 +521,7 @@ public class WalWriter implements TableWriterAPI {
 
                     final int commitMode = configuration.getCommitMode();
                     for (int columnIndex = 0; columnIndex < columnsToRoll; columnIndex++) {
+                        columnRollSink.nextColumn();
                         final int columnType = metadata.getColumnType(columnIndex);
                         if (columnType > 0) {
                             final MemoryMA primaryColumn = getDataColumn(columnIndex);
@@ -557,7 +561,6 @@ public class WalWriter implements TableWriterAPI {
                         } else {
                             rowValueIsNotNull.setQuick(columnIndex, COLUMN_DELETED_NULL_FLAG);
                         }
-                        columnRollSink.nextColumn();
                     }
                 } catch (Throwable e) {
                     closeSegmentSwitchFiles(columnRollSink);
@@ -701,11 +704,11 @@ public class WalWriter implements TableWriterAPI {
         return columnIndex * 2;
     }
 
-    private int acquireSegmentLock() {
+    private long acquireSegmentLock() {
         final int segmentPathLen = path.size();
         try {
             lockName(path);
-            final int segmentLockFd = TableUtils.lock(ff, path.$());
+            final long segmentLockFd = TableUtils.lock(ff, path.$());
             if (segmentLockFd == -1) {
                 path.trimTo(segmentPathLen);
                 throw CairoException.critical(ff.errno()).put("Cannot lock wal segment: ").put(path);
@@ -871,14 +874,14 @@ public class WalWriter implements TableWriterAPI {
     private void closeSegmentSwitchFiles(SegmentColumnRollSink newColumnFiles) {
         int commitMode = configuration.getCommitMode();
         for (int columnIndex = 0, n = newColumnFiles.count(); columnIndex < n; columnIndex++) {
-            final int primaryFd = newColumnFiles.getDestPrimaryFd(columnIndex);
+            final long primaryFd = newColumnFiles.getDestPrimaryFd(columnIndex);
             if (commitMode != CommitMode.NOSYNC) {
                 ff.fsyncAndClose(primaryFd);
             } else {
                 ff.close(primaryFd);
             }
 
-            final int secondaryFd = newColumnFiles.getDestAuxFd(columnIndex);
+            final long secondaryFd = newColumnFiles.getDestAuxFd(columnIndex);
             if (commitMode != CommitMode.NOSYNC) {
                 ff.fsyncAndClose(secondaryFd);
             } else {
@@ -936,7 +939,7 @@ public class WalWriter implements TableWriterAPI {
         tempPath.of(configuration.getRoot()).concat(tableToken);
         int tempPathTripLen = tempPath.size();
 
-        path.trimTo(rootLen);
+        path.trimTo(pathSize);
         TableUtils.offsetFileName(tempPath, columnName, columnNameTxn);
         TableUtils.offsetFileName(path, columnName, COLUMN_NAME_TXN_NONE);
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
@@ -950,7 +953,7 @@ public class WalWriter implements TableWriterAPI {
         }
 
         tempPath.trimTo(tempPathTripLen);
-        path.trimTo(rootLen);
+        path.trimTo(pathSize);
         TableUtils.charFileName(tempPath, columnName, columnNameTxn);
         TableUtils.charFileName(path, columnName, COLUMN_NAME_TXN_NONE);
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
@@ -959,13 +962,13 @@ public class WalWriter implements TableWriterAPI {
                     .$(", to=").$(path)
                     .$(", errno=").$(ff.errno())
                     .I$();
-            removeSymbolFiles(path, rootLen, columnName);
+            removeSymbolFiles(path, pathSize, columnName);
             configureEmptySymbol(columnWriterIndex);
             return;
         }
 
         tempPath.trimTo(tempPathTripLen);
-        path.trimTo(rootLen);
+        path.trimTo(pathSize);
         BitmapIndexUtils.keyFileName(tempPath, columnName, columnNameTxn);
         BitmapIndexUtils.keyFileName(path, columnName, COLUMN_NAME_TXN_NONE);
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
@@ -974,13 +977,13 @@ public class WalWriter implements TableWriterAPI {
                     .$(", to=").$(path)
                     .$(", errno=").$(ff.errno())
                     .I$();
-            removeSymbolFiles(path, rootLen, columnName);
+            removeSymbolFiles(path, pathSize, columnName);
             configureEmptySymbol(columnWriterIndex);
             return;
         }
 
         tempPath.trimTo(tempPathTripLen);
-        path.trimTo(rootLen);
+        path.trimTo(pathSize);
         BitmapIndexUtils.valueFileName(tempPath, columnName, columnNameTxn);
         BitmapIndexUtils.valueFileName(path, columnName, COLUMN_NAME_TXN_NONE);
         if (-1 == ff.hardLink(tempPath.$(), path.$())) {
@@ -989,12 +992,12 @@ public class WalWriter implements TableWriterAPI {
                     .$(", to=").$(path)
                     .$(", errno=").$(ff.errno())
                     .I$();
-            removeSymbolFiles(path, rootLen, columnName);
+            removeSymbolFiles(path, pathSize, columnName);
             configureEmptySymbol(columnWriterIndex);
             return;
         }
 
-        path.trimTo(rootLen);
+        path.trimTo(pathSize);
         SymbolMapReader symbolMapReader = new SymbolMapReaderImpl(
                 configuration,
                 path,
@@ -1096,7 +1099,7 @@ public class WalWriter implements TableWriterAPI {
     }
 
     private int createSegmentDir(int segmentId) {
-        path.trimTo(rootLen);
+        path.trimTo(pathSize);
         path.slash().put(segmentId);
         final int segmentPathLen = path.size();
         segmentLockFd = acquireSegmentLock();
@@ -1198,11 +1201,11 @@ public class WalWriter implements TableWriterAPI {
             lockName(path);
             walLockFd = TableUtils.lock(ff, path.$());
         } finally {
-            path.trimTo(rootLen);
+            path.trimTo(pathSize);
         }
 
         if (walLockFd == -1) {
-            throw CairoException.critical(ff.errno()).put("Cannot lock table: ").put(path.$());
+            throw CairoException.critical(ff.errno()).put("cannot lock table: ").put(path.$());
         }
     }
 
@@ -1270,7 +1273,7 @@ public class WalWriter implements TableWriterAPI {
     private void openNewSegment() {
         final int oldSegmentId = segmentId;
         final int newSegmentId = segmentId + 1;
-        final int oldSegmentLockFd = segmentLockFd;
+        final long oldSegmentLockFd = segmentLockFd;
         segmentLockFd = -1;
         final long oldSegmentRows = segmentRowCount;
         try {
@@ -1278,7 +1281,7 @@ public class WalWriter implements TableWriterAPI {
             rowValueIsNotNull.fill(0, columnCount, -1);
             final int segmentPathLen = createSegmentDir(newSegmentId);
             segmentId = newSegmentId;
-            final int dirFd;
+            final long dirFd;
             final int commitMode = configuration.getCommitMode();
             if (Os.isWindows() || commitMode == CommitMode.NOSYNC) {
                 dirFd = -1;
@@ -1316,16 +1319,16 @@ public class WalWriter implements TableWriterAPI {
                 ff.fsyncAndClose(dirFd);
             }
             lastSegmentTxn = 0;
-            LOG.info().$("opened WAL segment [path='").$(path).$('\'').I$();
+            LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path).$('\'').I$();
         } finally {
             if (oldSegmentLockFd > -1) {
                 releaseSegmentLock(oldSegmentId, oldSegmentLockFd, oldSegmentRows);
             }
-            path.trimTo(rootLen);
+            path.trimTo(pathSize);
         }
     }
 
-    private void releaseSegmentLock(int segmentId, int segmentLockFd, long segmentRowCount) {
+    private void releaseSegmentLock(int segmentId, long segmentLockFd, long segmentRowCount) {
         if (ff.close(segmentLockFd)) {
             if (segmentRowCount > 0) {
                 sequencer.notifySegmentClosed(tableToken, lastSeqTxn, walId, segmentId);
@@ -1334,9 +1337,9 @@ public class WalWriter implements TableWriterAPI {
                         .$(", fd=").$(segmentLockFd)
                         .$(']').$();
             } else {
-                path.trimTo(rootLen).slash().put(segmentId);
+                path.trimTo(pathSize).slash().put(segmentId);
                 walDirectoryPolicy.rollbackDirectory(path);
-                path.trimTo(rootLen);
+                path.trimTo(pathSize);
             }
         } else {
             LOG.error()
@@ -1392,11 +1395,11 @@ public class WalWriter implements TableWriterAPI {
         initialSymbolCounts.set(index, -1);
         localSymbolIds.set(index, 0);
         symbolMapNullFlags.set(index, false);
-        removeSymbolFiles(path, rootLen, metadata.getColumnName(index));
+        removeSymbolFiles(path, pathSize, metadata.getColumnName(index));
     }
 
     private void renameColumnFiles(int columnType, CharSequence columnName, CharSequence newName) {
-        path.trimTo(rootLen).slash().put(segmentId);
+        path.trimTo(pathSize).slash().put(segmentId);
         final Path tempPath = Path.PATH.get().of(path);
 
         if (ColumnType.isVarSize(columnType)) {
@@ -1458,7 +1461,7 @@ public class WalWriter implements TableWriterAPI {
             // In this case we DO NOT roll back the last record in the events file.
             events.rollback();
         }
-        path.trimTo(rootLen).slash().put(newSegmentId);
+        path.trimTo(pathSize).slash().put(newSegmentId);
         events.openEventFile(path, path.size(), isTruncateFilesOnClose(), tableToken.isSystem());
         if (isCommittingData) {
             // When current transaction is not a data transaction but a column add transaction
@@ -1608,11 +1611,11 @@ public class WalWriter implements TableWriterAPI {
         }
 
         long newSize = rollSink.getDestPrimarySize(srcColumnIndex);
-        int newPrimaryFd = rollSink.getDestPrimaryFd(srcColumnIndex);
+        long newPrimaryFd = rollSink.getDestPrimaryFd(srcColumnIndex);
         MemoryMA destPrimeCol = getDataColumn(destColumnIndex);
         destPrimeCol.switchTo(ff, newPrimaryFd, getDataAppendPageSize(), newSize, isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
 
-        int newSecondaryFd = rollSink.getDestAuxFd(srcColumnIndex);
+        long newSecondaryFd = rollSink.getDestAuxFd(srcColumnIndex);
         if (newSecondaryFd > -1) {
             long secondarySize = rollSink.getDestAuxSize(srcColumnIndex);
             MemoryMA destAuxColumn = getAuxColumn(destColumnIndex);
@@ -1884,11 +1887,11 @@ public class WalWriter implements TableWriterAPI {
                     if (!rollSegmentOnNextRow) {
                         // this means we have rolled uncommitted rows to a new segment already
                         // we should switch metadata to this new segment
-                        path.trimTo(rootLen).slash().put(segmentId);
+                        path.trimTo(pathSize).slash().put(segmentId);
                         // this will close old _meta file and create the new one
                         metadata.switchTo(path, path.size(), isTruncateFilesOnClose());
                         openColumnFiles(columnName, columnType, columnIndex, path.size());
-                        path.trimTo(rootLen);
+                        path.trimTo(pathSize);
                     }
 
                     // if we did not have to roll uncommitted rows to a new segment
@@ -1901,14 +1904,14 @@ public class WalWriter implements TableWriterAPI {
                     if (securityContext != null) {
                         ddlListener.onColumnAdded(securityContext, metadata.getTableToken(), columnName);
                     }
-                    LOG.info().$("added column to WAL [path=").$(path).$(", columnName=").utf8(columnName).$(", type=").$(ColumnType.nameOf(columnType)).I$();
+                    LOG.info().$("added column to WAL [path=").$substr(pathRootSize, path).$(", columnName=").utf8(columnName).$(", type=").$(ColumnType.nameOf(columnType)).I$();
                 } else {
                     throw CairoException.critical(0).put("column '").put(columnName)
                             .put("' was added, cannot apply commit because of concurrent table definition change");
                 }
             } else {
                 if (metadata.getColumnType(columnIndex) == columnType) {
-                    LOG.info().$("column has already been added by another WAL [path=").$(path).$(", columnName=").utf8(columnName).I$();
+                    LOG.info().$("column has already been added by another WAL [path=").$substr(pathRootSize, path).$(", columnName=").utf8(columnName).I$();
                 } else {
                     throw CairoException.nonCritical().put("column '").put(columnName).put("' already exists");
                 }
@@ -1938,13 +1941,13 @@ public class WalWriter implements TableWriterAPI {
 
                         if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
                             metadata.changeColumnType(columnName, newType);
-                            path.trimTo(rootLen).slash().put(segmentId);
+                            path.trimTo(pathSize).slash().put(segmentId);
 
                             markColumnRemoved(existingColumnIndex, existingColumnType);
                             if (!rollSegmentOnNextRow) {
                                 // this means we have rolled uncommitted rows to a new segment already
                                 // we should switch metadata to this new segment
-                                path.trimTo(rootLen).slash().put(segmentId);
+                                path.trimTo(pathSize).slash().put(segmentId);
                                 // this will close old _meta file and create the new one
                                 metadata.switchTo(path, path.size(), isTruncateFilesOnClose());
 
@@ -1957,7 +1960,7 @@ public class WalWriter implements TableWriterAPI {
                                 // if we did not have to roll uncommitted rows to a new segment
                                 // remove .i files when converting var type to fixed
                                 if (ColumnType.isVarSize(existingColumnType) && !ColumnType.isVarSize(newType)) {
-                                    path.trimTo(rootLen).slash().put(segmentId);
+                                    path.trimTo(pathSize).slash().put(segmentId);
                                     LPSZ lpsz = iFile(path, columnName);
                                     if (ff.exists(lpsz)) {
                                         ff.remove(lpsz);
@@ -1968,7 +1971,7 @@ public class WalWriter implements TableWriterAPI {
                             if (securityContext != null) {
                                 ddlListener.onColumnTypeChanged(securityContext, metadata.getTableToken(), columnName, existingColumnType, newType);
                             }
-                            path.trimTo(rootLen);
+                            path.trimTo(pathSize);
                         } else {
                             throw CairoException.critical(0).put("column '").put(columnName)
                                     .put("' was removed, cannot apply commit because of concurrent table definition change");
@@ -2022,7 +2025,7 @@ public class WalWriter implements TableWriterAPI {
                         if (!rollSegmentOnNextRow) {
                             // this means we have rolled uncommitted rows to a new segment already
                             // we should switch metadata to this new segment
-                            path.trimTo(rootLen).slash().put(segmentId);
+                            path.trimTo(pathSize).slash().put(segmentId);
                             // this will close old _meta file and create the new one
                             metadata.switchTo(path, path.size(), isTruncateFilesOnClose());
                         }
@@ -2031,8 +2034,8 @@ public class WalWriter implements TableWriterAPI {
                         // as part of rolling to a new segment
 
                         markColumnRemoved(index, type);
-                        path.trimTo(rootLen);
-                        LOG.info().$("removed column from WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId)
+                        path.trimTo(pathSize);
+                        LOG.info().$("removed column from WAL [path=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
                                 .$(", columnName=").utf8(columnName).I$();
                     } else {
                         throw CairoException.critical(0).put("column '").put(columnName)
@@ -2071,7 +2074,7 @@ public class WalWriter implements TableWriterAPI {
                         if (!rollSegmentOnNextRow) {
                             // this means we have rolled uncommitted rows to a new segment already
                             // we should switch metadata to this new segment
-                            path.trimTo(rootLen).slash().put(segmentId);
+                            path.trimTo(pathSize).slash().put(segmentId);
                             // this will close old _meta file and create the new one
                             metadata.switchTo(path, path.size(), isTruncateFilesOnClose());
                             renameColumnFiles(columnType, columnName, newColumnName);
@@ -2084,8 +2087,8 @@ public class WalWriter implements TableWriterAPI {
                             ddlListener.onColumnRenamed(securityContext, metadata.getTableToken(), columnName, newColumnName);
                         }
 
-                        path.trimTo(rootLen);
-                        LOG.info().$("renamed column in WAL [path=").$(path).$(Files.SEPARATOR).$(segmentId)
+                        path.trimTo(pathSize);
+                        LOG.info().$("renamed column in WAL [path=").$substr(pathRootSize, path).$(Files.SEPARATOR).$(segmentId)
                                 .$(", columnName=").utf8(columnName).$(", newColumnName=").utf8(newColumnName).I$();
                     } else {
                         throw CairoException.critical(0).put("column '").put(columnName)

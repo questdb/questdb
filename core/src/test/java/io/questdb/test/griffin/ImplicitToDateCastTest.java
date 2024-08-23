@@ -24,9 +24,7 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
-import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -35,21 +33,18 @@ import org.junit.Test;
 public class ImplicitToDateCastTest extends AbstractCairoTest {
 
     @Test
-    public void testImplicitNonConstSymbolExpressionToDateConversionFails() throws Exception {
+    public void testImplicitNonConstSymbolExpressionToDateConversion() throws Exception {
         assertMemoryLeak(() -> {
             // we do not want to support general implicit conversion of symbol to date, implicit conversions symbol -> date are reserved for literals
-            try {
-                assertQuery("cust_id\tts\n" +
-                                "abc\t2022-03-23T00:00:00.000000Z\n",
-                        "select * from balances where date = rnd_symbol('2022-03-23')",
-                        "CREATE TABLE balances as (" +
-                                "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as date) as date from long_sequence(1) " +
-                                ");",
-                        null, true, false);
-                Assert.fail("Exception should be thrown");
-            } catch (SqlException e) {
-                Assert.assertEquals(e.getMessage(), "[34] unexpected argument for function: =. expected args: (STRING,STRING). actual args: (DATE,SYMBOL)");
-            }
+            ddl(
+                    "CREATE TABLE balances as (" +
+                            "select cast('abc' as symbol) as cust_id, cast('2022-03-23' as date) as date from long_sequence(1) " +
+                            ");"
+            );
+            assertSql("cust_id\tdate\n" +
+                            "abc\t2022-03-23T00:00:00.000Z\n",
+                    "select * from balances where date = '2022-03-23'::symbol"
+            );
         });
     }
 

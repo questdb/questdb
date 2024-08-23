@@ -344,6 +344,6 @@ final class UnorderedVarcharMapRecord implements MapRecord {
         long size = UnorderedVarcharMap.unpackSize(packedHashSizeFlags);
         long ptrWithUnstableFlag = Unsafe.getUnsafe().getLong(address + Long.BYTES);
         long ptr = ptrWithUnstableFlag & UnorderedVarcharMap.PTR_MASK;
-        return us.of(ptr, ptr + size, isAscii, ptr == ptrWithUnstableFlag);
+        return us.of(ptr, ptr + size, isAscii);
     }
 }

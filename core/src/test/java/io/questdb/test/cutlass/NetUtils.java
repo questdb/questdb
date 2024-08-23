@@ -41,7 +41,7 @@ public class NetUtils {
             CharSequence ipv4Address,
             int port
     ) {
-        int clientFd = nf.socketTcp(true);
+        long clientFd = nf.socketTcp(true);
         long sockAddress = nf.sockaddr(Net.parseIPv4(ipv4Address), port);
         TestUtils.assertConnect(clientFd, sockAddress);
 

@@ -195,7 +195,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 rows.add(record.getRowId());
             }
 
-            final Record rec = cursor.getRecordB();
+            final Record rec = cursor.getRecord();
             CursorPrinter.println(metadata, sink);
             for (int i = 0, n = rows.size(); i < n; i++) {
                 cursor.recordAt(rec, rows.getQuick(i));
@@ -464,6 +464,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         memoryUsage = -1;
         forEachNode(QuestDBTestNode::setUpGriffin);
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
+        // 30% chance to enable paranoia checking FD mode
+        Files.PARANOIA_FD_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
     }
 
     @After
@@ -914,6 +916,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static void assertExceptionNoLeakCheck(CharSequence sql, int errorPos, CharSequence contains, boolean fullFatJoins) throws Exception {
+        Assert.assertNotNull(contains);
+        Assert.assertTrue("provide matching text", contains.length() > 0);
         try {
             assertExceptionNoLeakCheck(sql, sqlExecutionContext, fullFatJoins);
         } catch (Throwable e) {
@@ -955,7 +959,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void assertMemoryLeak(long limitMiB, TestUtils.LeakProneCode code) throws Exception {
         engine.clear();
-        long lim = Unsafe.getMemUsed() + limitMiB * 1024 * 1024;
+        long lim = Unsafe.getRssMemUsed() + limitMiB * 1024 * 1024;
         Unsafe.setRssMemLimit(lim);
         try {
             assertMemoryLeak(AbstractCairoTest.ff, code);
@@ -1183,7 +1187,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
             while (cursor.hasNext()) {
                 long ts = record.getTimestamp(index);
                 if ((isAscending && timestamp > ts) || (!isAscending && timestamp < ts)) {
-
                     StringSink error = new StringSink();
                     error.put("record # ").put(c).put(" should have ").put(isAscending ? "bigger" : "smaller").put(" (or equal) timestamp than the row before. Values prior=");
                     TimestampFormatUtils.appendDateTimeUSec(error, timestamp);
@@ -1225,7 +1228,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static boolean couldObtainLock(Path path) {
-        final int lockFd = TableUtils.lock(TestFilesFacadeImpl.INSTANCE, path.$(), false);
+        final long lockFd = TableUtils.lock(TestFilesFacadeImpl.INSTANCE, path.$(), false);
         if (lockFd != -1L) {
             TestFilesFacadeImpl.INSTANCE.close(lockFd);
             return true;  // Could lock/unlock.
@@ -1349,6 +1352,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void insert(SqlCompiler compiler, CharSequence insertSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
         CairoEngine.insert(compiler, insertSql, sqlExecutionContext);
+    }
+
+    protected static QuestDBTestNode newNode(int nodeId, String root) {
+        return newNode(root, true, nodeId, new Overrides(), getEngineFactory(), getConfigurationFactory());
     }
 
     protected static QuestDBTestNode newNode(int nodeId) {

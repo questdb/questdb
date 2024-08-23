@@ -368,7 +368,7 @@ public class LogAlertSocketWriterTest {
             }
             try (Path path = new Path()) {
                 path.put(fileName).$();
-                int fd = ff.openAppend(path.$());
+                long fd = ff.openAppend(path.$());
                 ff.truncate(fd, 0);
                 ff.append(fd, buffPtr, bytes.length);
                 ff.close(fd);
@@ -414,7 +414,7 @@ public class LogAlertSocketWriterTest {
             final int buffSize = fileContent.length() * 4;
             final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
             Path path = new Path();
-            int fd = -1;
+            long fd = -1;
             try {
                 final byte[] bytes = fileContent.getBytes(Files.UTF_8);
                 final int len = bytes.length;
@@ -447,7 +447,7 @@ public class LogAlertSocketWriterTest {
     private static void withLogAlertSocketWriter(Consumer<LogAlertSocketWriter> consumer) throws Exception {
         final NetworkFacade nf = new NetworkFacadeImpl() {
             @Override
-            public int connect(int fd, long pSockaddr) {
+            public int connect(long fd, long pSockaddr) {
                 return -1;
             }
         };

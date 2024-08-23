@@ -35,13 +35,13 @@ import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.fuzz.FuzzInsertOperation;
 import io.questdb.test.fuzz.FuzzStableInsertOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -50,7 +50,6 @@ import java.util.stream.Collectors;
 
 import static io.questdb.test.tools.TestUtils.assertEquals;
 
-@Ignore
 public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
@@ -481,11 +480,15 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String tableNameWal
     ) throws SqlException {
         Log log = LOG;
-        try (RecordCursorFactory factory = select(tableNameNoWal);
-             RecordCursorFactory factoryPreview = select(tableNameNoWal)) {
+        try (
+                RecordCursorFactory factory = select(tableNameNoWal);
+                RecordCursorFactory factoryPreview = select(tableNameNoWal)
+        ) {
             try (RecordCursorFactory factory2 = select(tableNameWal)) {
-                try (RecordCursor cursor1 = factory.getCursor(sqlExecutionContext);
-                     RecordCursor previewCursor = factoryPreview.getCursor(sqlExecutionContext)) {
+                try (
+                        RecordCursor cursor1 = factory.getCursor(sqlExecutionContext);
+                        RecordCursor previewCursor = factoryPreview.getCursor(sqlExecutionContext)
+                ) {
                     try (
                             RecordCursor dedupWrapper = new DedupCursor(factory.getMetadata(), cursor1, previewCursor, upsertKeyNames);
                             RecordCursor actualCursor = factory2.getCursor(sqlExecutionContext)
@@ -849,8 +852,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             foundSymbols = new boolean[symbols.length];
         }
 
-        try (TableReader rdr = getReader(tableName)) {
-            TableReaderRecordCursor cursor = rdr.getCursor();
+        try (
+                TableReader reader = getReader(tableName);
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
             Record rec = cursor.getRecord();
             AssertionError fail = null;
             int dups = existingDups;

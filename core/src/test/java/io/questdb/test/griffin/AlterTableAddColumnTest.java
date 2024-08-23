@@ -648,7 +648,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
     @Test
     public void testExpectActionKeyword() throws Exception {
-        assertFailure("alter table x", 13, "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash' expected");
+        assertFailure("alter table x", 13, AlterTableUtils.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
     }
 
     @Test
@@ -667,20 +667,25 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testQueryVarcharAboveColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select x id, from long_sequence(3))");
+            ddl("alter table x add column a_varchar varchar");
+            insert("insert into x values (4, 'added-1'), (5, 'added-2')");
+            assertQuery("a_varchar\n\n\n\nadded-1\nadded-2\n",
+                    "select a_varchar from x", null, null, true, true);
+        });
+    }
+
+    @Test
     public void testTableDoesNotExist() throws Exception {
         assertFailure("alter table y", 12, "table does not exist [table=y]");
     }
 
     private void assertFailure(String sql, int position, String message) throws Exception {
         assertMemoryLeak(() -> {
-            try {
-                createX();
-                ddl(sql, sqlExecutionContext);
-                Assert.fail();
-            } catch (SqlException e) {
-                Assert.assertEquals(position, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), message);
-            }
+            createX();
+            assertExceptionNoLeakCheck(sql, position, message);
         });
     }
 

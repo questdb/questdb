@@ -69,7 +69,7 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                 // wait for the row count
                 try (RecordCursorFactory rfc = serverMain.getEngine().select("select count() from y", sqlExecutionContext)) {
                     while (true) {
-                        try (RecordCursor cursor = rfc.getCursor(sqlExecutionContext)){
+                        try (RecordCursor cursor = rfc.getCursor(sqlExecutionContext)) {
                             Record rec = cursor.getRecord();
                             if (cursor.hasNext()) {
                                 if (rec.getLong(0) == 2) {
@@ -87,9 +87,9 @@ public class ServerMainCleanStartupTest extends AbstractBootstrapTest {
                         sqlExecutionContext,
                         "select * from wal_tables order by 1",
                         sink,
-                        "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\n" +
-                                "x\tfalse\t0\t0\t0\n" +
-                                "y\tfalse\t2\t0\t2\n"
+                        "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                                "x\tfalse\t0\t0\t0\t\t\t0\n" +
+                                "y\tfalse\t2\t0\t2\t\t\t0\n"
                 );
 
 

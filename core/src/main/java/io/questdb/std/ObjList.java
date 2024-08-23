@@ -60,9 +60,6 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         this.buffer = (T[]) new Object[Math.max(capacity, DEFAULT_ARRAY_SIZE)];
     }
 
-    /**
-     * {@inheritDoc}
-     */
     public void add(T value) {
         checkCapacity(pos + 1);
         buffer[pos++] = value;
@@ -95,9 +92,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         }
     }
 
-    /**
-     * {@inheritDoc}
-     */
+    @Override
     public void clear() {
         if (pos > 0) {
             Arrays.fill(buffer, null);
@@ -138,9 +133,6 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         pos = Math.max(pos, capacity);
     }
 
-    /**
-     * {@inheritDoc}
-     */
     @Override
     public T get(int index) {
         if (index < pos) {
@@ -172,7 +164,7 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
     /**
      * Returns element at the specified position. This method does not do
      * bounds check and may cause memory corruption if index is out of bounds.
-     * Instead the responsibility to check bounds is placed on application code,
+     * Instead, the responsibility to check bounds is placed on application code,
      * which is often the case anyway, for example in indexed for() loop.
      *
      * @param index of the element
@@ -286,15 +278,15 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         buffer[index] = value;
     }
 
-    public void setAll(int capacity, T value) {
-        checkCapacity(capacity);
-        pos = capacity;
+    public void setAll(int count, T value) {
+        checkCapacity(count);
+        pos = count;
         Arrays.fill(buffer, value);
     }
 
-    public void setPos(int capacity) {
-        checkCapacity(capacity);
-        pos = capacity;
+    public void setPos(int newPos) {
+        checkCapacity(newPos);
+        pos = newPos;
     }
 
     public void setQuick(int index, T value) {

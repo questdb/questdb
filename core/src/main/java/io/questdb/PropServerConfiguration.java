@@ -68,10 +68,10 @@ import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.str;
 
 public class PropServerConfiguration implements ServerConfiguration {
 
+    public static final String ACL_ENABLED = "acl.enabled";
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
-    public static final String SNAPSHOT_DIRECTORY = "snapshot";
     public static final String TMP_DIRECTORY = "tmp";
     private static final String RELEASE_TYPE = "release.type";
     private static final String RELEASE_VERSION = "release.version";
@@ -106,6 +106,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean cairoSqlLegacyOperatorPrecedence;
     private final long cairoTableRegistryAutoReloadFrequency;
     private final int cairoTableRegistryCompactionThreshold;
+    private final boolean checkpointRecoveryEnabled;
+    private final String checkpointRoot;
     private final PropSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new PropSqlExecutionCircuitBreakerConfiguration();
     private final int circuitBreakerThrottle;
     private final int columnIndexerQueueCapacity;
@@ -127,6 +129,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean defaultSymbolCacheFlag;
     private final int defaultSymbolCapacity;
     private final int detachedMkdirMode;
+    private final boolean devModeEnabled;
     private final boolean enableTestFactories;
     private final int fileOperationRetryCount;
     private final FilesFacade filesFacade;
@@ -179,6 +182,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int jsonCacheSize;
     private final String keepAliveHeader;
     private final int latestByQueueCapacity;
+    private final String legacyCheckpointRoot;
     private final boolean lineHttpEnabled;
     private final CharSequence lineHttpPingVersion;
     private final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = new PropLineHttpProcessorConfiguration();
@@ -240,6 +244,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PropPGWireDispatcherConfiguration propPGWireDispatcherConfiguration = new PropPGWireDispatcherConfiguration();
     private final String publicDirectory;
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
+    private final int queryCacheEventQueueCapacity;
     private final long queryTimeout;
     private final int readerPoolMaxSegments;
     private final int repeatMigrationFromVersion;
@@ -261,10 +266,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sharedWorkerSleepThreshold;
     private final long sharedWorkerSleepTimeout;
     private final long sharedWorkerYieldThreshold;
-    private final boolean simulateCrashEnabled;
     private final String snapshotInstanceId;
-    private final boolean snapshotRecoveryEnabled;
-    private final String snapshotRoot;
     private final long spinLockTimeout;
     private final int sqlAsOfJoinLookahead;
     private final int sqlBindVariablePoolSize;
@@ -516,7 +518,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private long pgWorkerNapThreshold;
     private long pgWorkerSleepThreshold;
     private long pgWorkerYieldThreshold;
-    private final int queryCacheEventQueueCapacity;
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitUsBeforeReload;
 
@@ -639,32 +640,44 @@ public class PropServerConfiguration implements ServerConfiguration {
         if (new File(this.dbDirectory).isAbsolute()) {
             this.root = this.dbDirectory;
             this.confRoot = rootSubdir(this.root, CONFIG_DIRECTORY); // ../conf
-            this.snapshotRoot = rootSubdir(this.root, SNAPSHOT_DIRECTORY); // ../snapshot
+            this.checkpointRoot = rootSubdir(this.root, TableUtils.CHECKPOINT_DIRECTORY); // ../.checkpoint
+            this.legacyCheckpointRoot = rootSubdir(this.root, TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
             tmpRoot = rootSubdir(this.root, TMP_DIRECTORY); // ../tmp
         } else {
             this.root = new File(root, this.dbDirectory).getAbsolutePath();
             this.confRoot = new File(root, CONFIG_DIRECTORY).getAbsolutePath();
-            this.snapshotRoot = new File(root, SNAPSHOT_DIRECTORY).getAbsolutePath();
+            this.checkpointRoot = new File(root, TableUtils.CHECKPOINT_DIRECTORY).getAbsolutePath();
+            this.legacyCheckpointRoot = new File(root, TableUtils.LEGACY_CHECKPOINT_DIRECTORY).getAbsolutePath();
             tmpRoot = new File(root, TMP_DIRECTORY).getAbsolutePath();
         }
 
         this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, TableUtils.ATTACHABLE_DIR_MARKER);
         this.cairoAttachPartitionCopy = getBoolean(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_COPY, false);
 
-        this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
-        this.snapshotRecoveryEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED, true);
-        this.simulateCrashEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SIMULATE_CRASH_ENABLED, false);
+        this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "");
+        this.checkpointRecoveryEnabled = getBoolean(
+                properties,
+                env,
+                PropertyKey.CAIRO_LEGACY_SNAPSHOT_RECOVERY_ENABLED,
+                getBoolean(
+                        properties,
+                        env,
+                        PropertyKey.CAIRO_CHECKPOINT_RECOVERY_ENABLED,
+                        true
+                )
+        );
+        this.devModeEnabled = getBoolean(properties, env, PropertyKey.DEV_MODE_ENABLED, false);
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuUsed = 0;
         int cpuSpare = 0;
         int cpuIoWorkers = 0;
-        int cpuWalApplyWorkers = 2;
+        int cpuWalApplyWorkers = 1;
 
         if (cpuAvailable > 8) {
-            cpuWalApplyWorkers = 3;
+            cpuWalApplyWorkers = 2;
         } else if (cpuAvailable > 16) {
-            cpuWalApplyWorkers = 4;
+            cpuWalApplyWorkers = 2;
             cpuSpare = 1;
             // tested on 4/32/48 core servers
             cpuIoWorkers = cpuAvailable / 2;
@@ -680,7 +693,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             volumeDefinitions.of(getString(properties, env, PropertyKey.CAIRO_VOLUMES, null), path, root);
             ff.mkdirs(path.of(this.root).slash(), this.mkdirMode);
             path.of(this.root).concat(TableUtils.TAB_INDEX_FILE_NAME);
-            final int tableIndexFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
+            final long tableIndexFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
             final long fileSize = ff.length(tableIndexFd);
             if (fileSize < Long.BYTES) {
                 if (!ff.allocate(tableIndexFd, Files.PAGE_SIZE)) {
@@ -839,7 +852,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (loadAdditionalConfigurations && httpServerEnabled) {
                 this.jsonQueryConnectionCheckFrequency = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY, 1_000_000);
                 this.jsonQueryFloatScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE, 4);
+                if (jsonQueryFloatScale > Numbers.MAX_FLOAT_SCALE) {
+                    throw new ServerConfigurationException(PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE.getPropertyPath() + " cannot be greater than " + Numbers.MAX_FLOAT_SCALE);
+                }
                 this.jsonQueryDoubleScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE, 12);
+                if (jsonQueryDoubleScale > Numbers.MAX_DOUBLE_SCALE) {
+                    throw new ServerConfigurationException(PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE.getPropertyPath() + " cannot be greater than " + Numbers.MAX_DOUBLE_SCALE);
+                }
                 String httpBindTo = getString(properties, env, PropertyKey.HTTP_BIND_TO, "0.0.0.0:9000");
                 parseBindTo(properties, env, PropertyKey.HTTP_NET_BIND_TO, httpBindTo, (a, p) -> {
                     httpNetBindIPv4Address = a;
@@ -1011,7 +1030,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlSampleByDefaultAlignment = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_DEFAULT_ALIGNMENT_CALENDAR, true);
 
             this.sqlDoubleToStrCastScale = getInt(properties, env, PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE, 12);
+            if (sqlDoubleToStrCastScale > Numbers.MAX_DOUBLE_SCALE) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE.getPropertyPath() + " cannot be greater than " + Numbers.MAX_DOUBLE_SCALE);
+            }
             this.sqlFloatToStrCastScale = getInt(properties, env, PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE, 4);
+            if (sqlFloatToStrCastScale > Numbers.MAX_FLOAT_SCALE) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE.getPropertyPath() + " cannot be greater than " + Numbers.MAX_FLOAT_SCALE);
+            }
+
             this.sqlGroupByMapCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_MAP_CAPACITY, 1024);
             this.sqlGroupByAllocatorChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_DEFAULT_CHUNK_SIZE, 128 * 1024);
             this.sqlGroupByAllocatorMaxChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE, 4 * Numbers.SIZE_1GB);
@@ -1076,7 +1102,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (pathEquals(root, this.cairoSqlCopyWorkRoot)
                     || pathEquals(this.root, this.cairoSqlCopyWorkRoot)
                     || pathEquals(this.confRoot, this.cairoSqlCopyWorkRoot)
-                    || pathEquals(this.snapshotRoot, this.cairoSqlCopyWorkRoot)) {
+                    || pathEquals(this.checkpointRoot, this.cairoSqlCopyWorkRoot)) {
                 throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + " can't point to root, data, conf or snapshot dirs. ");
             }
 
@@ -1579,7 +1605,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     protected int getIntPercentage(
-            Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int defaultValue
+            Properties properties,
+            @Nullable Map<String, String> env,
+            ConfigPropertyKey key,
+            int defaultValue
     ) throws ServerConfigurationException {
         int percentage = getInt(properties, env, key, defaultValue);
         if (percentage < 0 || percentage > 100) {
@@ -2042,6 +2071,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public @NotNull CharSequence getCheckpointRoot() {
+            return checkpointRoot;
+        }
+
+        @Override
         public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
             return circuitBreakerConfiguration;
         }
@@ -2300,6 +2334,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public @NotNull CharSequence getLegacyCheckpointRoot() {
+            return legacyCheckpointRoot;
+        }
+
+        @Override
         public int getMaxCrashFiles() {
             return cairoMaxCrashFiles;
         }
@@ -2495,18 +2534,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean getSimulateCrashEnabled() {
-            return simulateCrashEnabled;
-        }
-
-        @Override
         public @NotNull CharSequence getSnapshotInstanceId() {
             return snapshotInstanceId;
-        }
-
-        @Override
-        public @NotNull CharSequence getSnapshotRoot() {
-            return snapshotRoot;
         }
 
         @Override
@@ -2879,6 +2908,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public double getWalLagRowsMultiplier() {
+            return walSquashUncommittedRowsMultiplier;
+        }
+
+        @Override
         public long getWalMaxLagSize() {
             return walMaxLagSize;
         }
@@ -2916,11 +2950,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalSegmentRolloverSize() {
             return walSegmentRolloverSize;
-        }
-
-        @Override
-        public double getWalSquashUncommittedRowsMultiplier() {
-            return walSquashUncommittedRowsMultiplier;
         }
 
         @Override
@@ -2979,6 +3008,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isCheckpointRecoveryEnabled() {
+            return checkpointRecoveryEnabled;
+        }
+
+        @Override
+        public boolean isDevModeEnabled() {
+            return devModeEnabled;
+        }
+
+        @Override
         public boolean isGroupByPresizeEnabled() {
             return cairoGroupByPresizeEnabled;
         }
@@ -3006,11 +3045,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isReadOnlyInstance() {
             return isReadOnlyInstance;
-        }
-
-        @Override
-        public boolean isSnapshotRecoveryEnabled() {
-            return snapshotRecoveryEnabled;
         }
 
         @Override
@@ -3061,7 +3095,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
             settings.put(RELEASE_TYPE, str(getReleaseType()));
             settings.put(RELEASE_VERSION, str(getBuildInformation().getSwVersion()));
-            settings.put("acl.enabled", Boolean.toString(!Chars.empty(httpUsername)));
+            settings.put(ACL_ENABLED, Boolean.toString(!Chars.empty(httpUsername)));
         }
     }
 

@@ -29,6 +29,7 @@ import io.questdb.PropServerConfiguration;
 import io.questdb.TelemetryOrigin;
 import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.*;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
@@ -548,19 +549,32 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final SecurityContext securityContext = executionContext.getSecurityContext();
 
         try (TableRecordMetadata tableMetadata = executionContext.getMetadataForWrite(tableToken)) {
-            final String expectedTokenDescription = "'add', 'alter', 'attach', 'detach', 'drop', 'resume', 'rename', 'set' or 'squash'";
-            tok = expectToken(lexer, expectedTokenDescription);
+            tok = expectToken(lexer, AlterTableUtils.ALTER_TABLE_EXPECTED_TOKEN_DESCR);
 
             if (SqlKeywords.isAddKeyword(tok)) {
                 securityContext.authorizeAlterTableAddColumn(tableToken);
                 alterTableAddColumn(executionContext.getSecurityContext(), tableNamePosition, tableToken, tableMetadata);
+            } else if (SqlKeywords.isConvertKeyword(tok)) {
+                tok = expectToken(lexer, "'partition'");
+                if (!SqlKeywords.isPartitionKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
+                }
+                tok = expectToken(lexer, "'to'");
+                if (!SqlKeywords.isToKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'to' expected");
+                }
+                tok = expectToken(lexer, "'parquet'");
+                if (!SqlKeywords.isParquetKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'parquet' expected");
+                }
+                alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.CONVERT, executionContext);
             } else if (SqlKeywords.isDropKeyword(tok)) {
                 tok = expectToken(lexer, "'column' or 'partition'");
                 if (SqlKeywords.isColumnKeyword(tok)) {
                     alterTableDropColumn(executionContext.getSecurityContext(), tableNamePosition, tableToken, tableMetadata);
                 } else if (SqlKeywords.isPartitionKeyword(tok)) {
                     securityContext.authorizeAlterTableDropPartition(tableToken);
-                    alterTableDropDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DROP, executionContext);
+                    alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DROP, executionContext);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'column' or 'partition' expected");
                 }
@@ -575,7 +589,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tok = expectToken(lexer, "'partition'");
                 if (SqlKeywords.isPartitionKeyword(tok)) {
                     securityContext.authorizeAlterTableAttachPartition(tableToken);
-                    alterTableDropDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.ATTACH, executionContext);
+                    alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.ATTACH, executionContext);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
                 }
@@ -583,7 +597,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tok = expectToken(lexer, "'partition'");
                 if (SqlKeywords.isPartitionKeyword(tok)) {
                     securityContext.authorizeAlterTableDetachPartition(tableToken);
-                    alterTableDropDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DETACH, executionContext);
+                    alterTableDropConvertDetachOrAttachPartition(tableMetadata, tableToken, PartitionAction.DETACH, executionContext);
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
                 }
@@ -718,7 +732,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
                 }
 
-                tok = SqlUtil.fetchNext(lexer); // optional from part
+                tok = SqlUtil.fetchNext(lexer); // optional FROM part
                 long fromTxn = -1;
                 if (tok != null && !Chars.equals(tok, ';')) {
                     if (SqlKeywords.isFromKeyword(tok)) {
@@ -741,6 +755,51 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
                 securityContext.authorizeResumeWal(tableToken);
                 alterTableResume(tableNamePosition, tableToken, fromTxn, executionContext);
+            } else if (SqlKeywords.isSuspendKeyword(tok)) {
+                tok = expectToken(lexer, "'wal'");
+                if (!SqlKeywords.isWalKeyword(tok)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'wal' expected");
+                }
+                if (!engine.isWalTable(tableToken)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), tableToken.getTableName()).put(" is not a WAL table.");
+                }
+                if (!configuration.isDevModeEnabled()) {
+                    throw SqlException.$(0, "Cannot suspend table, database is not in dev mode");
+                }
+
+                ErrorTag errorTag = ErrorTag.NONE;
+                String errorMessage = "";
+
+                tok = SqlUtil.fetchNext(lexer); // optional WITH part
+                if (tok != null && !Chars.equals(tok, ';')) {
+                    if (SqlKeywords.isWithKeyword(tok)) {
+                        tok = expectToken(lexer, "error code/tag");
+                        final CharSequence errorCodeOrTagValue = GenericLexer.unquote(tok).toString();
+                        try {
+                            final int errorCode = Numbers.parseInt(errorCodeOrTagValue);
+                            errorTag = ErrorTag.resolveTag(errorCode);
+                        } catch (NumericException e) {
+                            try {
+                                errorTag = ErrorTag.resolveTag(errorCodeOrTagValue);
+                            } catch (CairoException cairoException) {
+                                throw SqlException.$(lexer.lastTokenPosition(), "invalid value [value=").put(errorCodeOrTagValue).put(']');
+                            }
+                        }
+                        final CharSequence comma = expectToken(lexer, "','");
+                        if (!Chars.equals(comma, ',')) {
+                            throw SqlException.position(lexer.getPosition()).put("',' expected");
+                        }
+                        tok = expectToken(lexer, "error message");
+                        errorMessage = GenericLexer.unquote(tok).toString();
+                        tok = SqlUtil.fetchNext(lexer);
+                        if (tok != null && !Chars.equals(tok, ';')) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [token=").put(tok).put(']');
+                        }
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "'with' expected");
+                    }
+                }
+                alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
             } else if (SqlKeywords.isSquashKeyword(tok)) {
                 securityContext.authorizeAlterTableDropPartition(tableToken);
                 tok = expectToken(lexer, "'partitions'");
@@ -765,7 +824,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     alterTableDedupEnable(tableNamePosition, tableToken, tableMetadata, lexer);
                 }
             } else {
-                throw SqlException.$(lexer.lastTokenPosition(), expectedTokenDescription).put(" expected");
+                throw SqlException.$(lexer.lastTokenPosition(), AlterTableUtils.ALTER_TABLE_EXPECTED_TOKEN_DESCR).put(" expected");
             }
         } catch (CairoException e) {
             LOG.info().$("could not alter table [table=").$(tableToken.getTableName())
@@ -862,10 +921,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // This may remove deduplication from the column since var len columns don't support deduplication.
             // Check for it.
             try (TableReader reader = executionContext.getReader(tableToken)) {
-                if (reader.getMetadata().isDedupKey(columnIndex)) {
-                    throw SqlException.$(lexer.lastTokenPosition(), "cannot change type of deduplicated key column '").put(columnName)
-                            .put("' to variable size type '").put(ColumnType.nameOf(newColumnType))
-                            .put("', deduplication is only supported for fixed size types");
+                TableReaderMetadata meta = reader.getMetadata();
+                for (int ci = 0, n = meta.getColumnCount(); ci < n; ci++) {
+                    if (meta.getWriterIndex(ci) == columnIndex) {
+                        if (meta.isDedupKey(ci)) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "cannot change type of deduplicated key column '").put(columnName)
+                                    .put("' to variable size type '").put(ColumnType.nameOf(newColumnType))
+                                    .put("', deduplication is only supported for fixed size types");
+                        }
+                    }
                 }
             }
         }
@@ -1089,7 +1153,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
-    private void alterTableDropDetachOrAttachPartition(
+    private void alterTableDropConvertDetachOrAttachPartition(
             TableRecordMetadata tableMetadata,
             TableToken tableToken,
             int action,
@@ -1108,7 +1172,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             final CharSequence tok = expectToken(lexer, "'list' or 'where'");
             if (SqlKeywords.isListKeyword(tok)) {
-                alterTableDropDetachOrAttachPartitionByList(tableMetadata, tableToken, reader, pos, action);
+                alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, reader, pos, action);
             } else if (SqlKeywords.isWhereKeyword(tok)) {
                 AlterOperationBuilder alterOperationBuilder;
                 switch (action) {
@@ -1118,8 +1182,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     case PartitionAction.DETACH:
                         alterOperationBuilder = this.alterOperationBuilder.ofDetachPartition(pos, tableToken, tableMetadata.getTableId());
                         break;
+                    case PartitionAction.CONVERT:
+                        alterOperationBuilder = this.alterOperationBuilder.ofConvertPartition(pos, tableToken, tableMetadata.getTableId());
+                        break;
                     default:
-                        throw SqlException.$(pos, "WHERE clause can only be used with command DROP PARTITION, or DETACH PARTITION");
+                        throw SqlException.$(pos, "WHERE clause can only be used with command DROP PARTITION, DETACH PARTITION or CONVERT PARTITION");
                 }
 
                 final int functionPosition = lexer.getPosition();
@@ -1161,7 +1228,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void alterTableDropDetachOrAttachPartitionByList(
+    private void alterTableDropConvertDetachOrAttachPartitionByList(
             TableRecordMetadata tableMetadata,
             TableToken tableToken,
             @Nullable TableReader reader,
@@ -1170,6 +1237,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     ) throws SqlException {
         final AlterOperationBuilder alterOperationBuilder;
         switch (action) {
+            case PartitionAction.CONVERT:
+                alterOperationBuilder = this.alterOperationBuilder.ofConvertPartition(pos, tableToken, tableMetadata.getTableId());
+                break;
             case PartitionAction.DROP:
                 alterOperationBuilder = this.alterOperationBuilder.ofDropPartition(pos, tableToken, tableMetadata.getTableId());
                 break;
@@ -1293,7 +1363,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void alterTableResume(int tableNamePosition, TableToken tableToken, long resumeFromTxn, SqlExecutionContext executionContext) {
         try {
-
             engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn);
             executionContext.storeTelemetry(TelemetrySystemEvent.WAL_APPLY_RESUME, TelemetryOrigin.WAL_APPLY);
             compiledQuery.ofTableResume();
@@ -1354,6 +1423,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    private void alterTableSuspend(int tableNamePosition, TableToken tableToken, ErrorTag errorTag, String errorMessage, SqlExecutionContext executionContext) {
+        try {
+            engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
+            executionContext.storeTelemetry(TelemetrySystemEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
+            compiledQuery.ofTableSuspend();
+        } catch (CairoException ex) {
+            LOG.critical().$("table suspend failed [table=").$(tableToken)
+                    .$(", error=").$(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
+            ex.position(tableNamePosition);
+            throw ex;
+        }
+    }
+
     private CharSequence authorizeInsertForCopy(SecurityContext securityContext, CopyModel model) {
         final CharSequence tableName = GenericLexer.unquote(model.getTarget().token);
         final TableToken tt = engine.getTableTokenIfExists(tableName);
@@ -1394,6 +1478,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void compileBegin(SqlExecutionContext executionContext) {
         compiledQuery.ofBegin();
+    }
+
+    private void compileCheckpoint(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getSecurityContext().authorizeDatabaseSnapshot();
+        CharSequence tok = expectToken(lexer, "'create' or 'release'");
+
+        if (SqlKeywords.isCreateKeyword(tok)) {
+            engine.checkpointCreate(executionContext);
+            compiledQuery.ofCheckpointCreate();
+        } else if (Chars.equalsLowerCaseAscii(tok, "release")) {
+            engine.checkpointRelease();
+            compiledQuery.ofCheckpointRelease();
+        } else {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'create' or 'release' expected");
+        }
     }
 
     private void compileCommit(SqlExecutionContext executionContext) {
@@ -1529,7 +1628,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         -1,
                         this.sqlText,
                         executionContext,
-                        beginNanos
+                        beginNanos,
+                        false
                 );
                 throw e;
             }
@@ -1540,13 +1640,28 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (executor == null || compiledQuery.getType() == CompiledQuery.NONE) {
             compileUsingModel(executionContext, beginNanos);
         } else {
-            QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos);
+            QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos, false);
         }
         final short type = compiledQuery.getType();
         if ((type == CompiledQuery.ALTER || type == CompiledQuery.UPDATE) && !executionContext.isWalApplication()) {
             compiledQuery.withSqlStatement(Chars.toString(sqlText));
         }
         compiledQuery.withContext(executionContext);
+    }
+
+    private void compileLegacyCheckpoint(SqlExecutionContext executionContext) throws SqlException {
+        executionContext.getSecurityContext().authorizeDatabaseSnapshot();
+        CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
+
+        if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
+            engine.checkpointCreate(executionContext);
+            compiledQuery.ofCheckpointCreate();
+        } else if (Chars.equalsLowerCaseAscii(tok, "complete")) {
+            engine.checkpointRelease();
+            compiledQuery.ofCheckpointRelease();
+        } else {
+            throw SqlException.position(lexer.lastTokenPosition()).put("'prepare' or 'complete' expected");
+        }
     }
 
     private void compileRollback(SqlExecutionContext executionContext) {
@@ -1580,43 +1695,43 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     break;
                 case ExecutionModel.CREATE_TABLE:
                     sqlId = queryRegistry.register(sqlText, executionContext);
-                    QueryProgress.logStart(sqlId, sqlText, executionContext);
+                    QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     createTableWithRetries(executionModel, executionContext);
-                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
                     break;
                 case ExecutionModel.COPY:
-                    QueryProgress.logStart(sqlId, sqlText, executionContext);
+                    QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     copy(executionContext, (CopyModel) executionModel);
-                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
                     break;
                 case ExecutionModel.RENAME_TABLE:
                     sqlId = queryRegistry.register(sqlText, executionContext);
-                    QueryProgress.logStart(sqlId, sqlText, executionContext);
+                    QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     final RenameTableModel rtm = (RenameTableModel) executionModel;
                     engine.rename(executionContext.getSecurityContext(), path, mem, GenericLexer.unquote(rtm.getFrom().token), renamePath, GenericLexer.unquote(rtm.getTo().token));
                     compiledQuery.ofRenameTable();
                     break;
                 case ExecutionModel.UPDATE:
-                    QueryProgress.logStart(sqlId, sqlText, executionContext);
+                    QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     final QueryModel updateQueryModel = (QueryModel) executionModel;
                     TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
                     try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
                         final UpdateOperation updateOperation = generateUpdate(updateQueryModel, executionContext, metadata);
                         compiledQuery.ofUpdate(updateOperation);
                     }
-                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
                     // update is delayed until operation execution (for non-wal tables) or pushed to wal job completely
                     break;
                 case ExecutionModel.EXPLAIN:
                     sqlId = queryRegistry.register(sqlText, executionContext);
-                    QueryProgress.logStart(sqlId, sqlText, executionContext);
+                    QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     compiledQuery.ofExplain(generateExplain((ExplainModel) executionModel, executionContext));
-                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
                     break;
                 default:
                     final InsertModel insertModel = (InsertModel) executionModel;
+                    QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     if (insertModel.getQueryModel() != null) {
-                        QueryProgress.logStart(sqlId, sqlText, executionContext);
                         sqlId = queryRegistry.register(sqlText, executionContext);
                         executeWithRetries(
                                 insertAsSelectMethod,
@@ -1625,11 +1740,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 executionContext
                         );
                     } else {
-                        QueryProgress.logStart(sqlId, sqlText, executionContext);
                         insert(executionModel, executionContext);
                         compiledQuery.getInsertOperation().setInsertSql(sqlText);
                     }
-                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
                     break;
             }
 
@@ -1654,7 +1768,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     sqlId,
                     sqlText,
                     executionContext,
-                    beginNanos
+                    beginNanos,
+                    false
             );
             throw e;
         }
@@ -1737,7 +1852,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return rowCount;
     }
 
-    //returns number of copied rows
+    // returns number of copied rows
     private long copyOrderedBatched0(
             TableWriterAPI writer,
             RecordCursor cursor,
@@ -1760,7 +1875,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 deadline = rowCount + batchSize;
             }
         }
-
         return rowCount;
     }
 
@@ -1816,9 +1930,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return rowCount;
     }
 
-    /*
-     * Returns number of copied rows.
-     */
+    // returns number of copied rows
     private long copyTableData(
             RecordCursor cursor,
             RecordMetadata metadata,
@@ -1858,15 +1970,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try {
             if (!isWalEnabled) {
                 writerAPI = writer = new TableWriter(
-                        configuration,
+                        engine.getConfiguration(),
                         tableToken,
-                        messageBus,
+                        engine.getMessageBus(),
                         null,
                         false,
                         DefaultLifecycleManager.INSTANCE,
-                        configuration.getRoot(),
+                        engine.getConfiguration().getRoot(),
                         engine.getDdlListener(tableToken),
-                        getEngine().getSnapshotAgent(),
+                        engine.getCheckpointStatus(),
                         engine.getMetrics()
                 );
             } else {
@@ -2718,21 +2830,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofRepair();
     }
 
-    private void snapshotDatabase(SqlExecutionContext executionContext) throws SqlException {
-        executionContext.getSecurityContext().authorizeDatabaseSnapshot();
-        CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
-
-        if (Chars.equalsLowerCaseAscii(tok, "prepare")) {
-            engine.prepareSnapshot(executionContext);
-            compiledQuery.ofSnapshotPrepare();
-        } else if (Chars.equalsLowerCaseAscii(tok, "complete")) {
-            engine.completeSnapshot();
-            compiledQuery.ofSnapshotComplete();
-        } else {
-            throw SqlException.position(lexer.lastTokenPosition()).put("'prepare' or 'complete' expected");
-        }
-    }
-
     private TableToken tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
         if (executionContext.getTableStatus(path, tableName) != TableUtils.TABLE_EXISTS) {
             throw SqlException.tableDoesNotExist(position, tableName);
@@ -2907,7 +3004,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // the only reason why columns cannot be found at this stage is
             // concurrent table modification of table structure
             if (index == -1) {
-                // Cast isn't going to go away when we re-parse SQL. We must make this
+                // Cast isn't going to go away when we reparse SQL. We must make this
                 // permanent error
                 throw SqlException.invalidColumn(ccm.getColumnNamePos(), columnName);
             }
@@ -2936,6 +3033,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             assert index > -1 : "wtf? " + columnName;
             if (!ColumnType.isSymbol(metadata.getColumnType(index)) && model.isIndexed(i)) {
                 throw SqlException.$(0, "indexes are supported only for SYMBOL columns: ").put(columnName);
+            }
+
+            if (ColumnType.isNull(metadata.getColumnType(index))) {
+                throw SqlException.$(0, "cannot create NULL-type column, please use type cast, e.g. ").put(columnName).put("::").put("type");
             }
         }
 
@@ -3073,7 +3174,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final KeywordBasedExecutor dropStatement = dropStmtCompiler::executorSelector;
         final KeywordBasedExecutor sqlBackup = backupAgent::sqlBackup;
         final KeywordBasedExecutor vacuumTable = this::vacuum;
-        final KeywordBasedExecutor snapshotDatabase = this::snapshotDatabase;
+        final KeywordBasedExecutor compileCheckpoint = this::compileCheckpoint;
+        final KeywordBasedExecutor compileLegacyCheckpoint = this::compileLegacyCheckpoint;
         final KeywordBasedExecutor compileDeallocate = this::compileDeallocate;
         final KeywordBasedExecutor cancelQuery = this::cancelQuery;
 
@@ -3085,13 +3187,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         keywordBasedExecutors.put("commit", compileCommit);
         keywordBasedExecutors.put("rollback", compileRollback);
         keywordBasedExecutors.put("discard", compileSet);
-        keywordBasedExecutors.put("close", compileSet); //no-op
-        keywordBasedExecutors.put("unlisten", compileSet);  //no-op
-        keywordBasedExecutors.put("reset", compileSet);  //no-op
+        keywordBasedExecutors.put("close", compileSet); // no-op
+        keywordBasedExecutors.put("unlisten", compileSet); // no-op
+        keywordBasedExecutors.put("reset", compileSet); // no-op
         keywordBasedExecutors.put("drop", dropStatement);
         keywordBasedExecutors.put("backup", sqlBackup);
         keywordBasedExecutors.put("vacuum", vacuumTable);
-        keywordBasedExecutors.put("snapshot", snapshotDatabase);
+        keywordBasedExecutors.put("checkpoint", compileCheckpoint);
+        keywordBasedExecutors.put("snapshot", compileLegacyCheckpoint);
         keywordBasedExecutors.put("deallocate", compileDeallocate);
         keywordBasedExecutors.put("cancel", cancelQuery);
     }
@@ -3141,6 +3244,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     public final static class PartitionAction {
         public static final int ATTACH = 2;
+        public static final int CONVERT = 4;
         public static final int DETACH = 3;
         public static final int DROP = 1;
     }
@@ -3307,12 +3411,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             Misc.free(dstPath);
         }
 
-        private void backupTable(@NotNull TableToken tableToken) {
+        private void backupTable(@NotNull TableToken tableToken, SqlExecutionContext executionContext) throws SqlException {
             LOG.info().$("starting backup of ").$(tableToken).$();
 
             // the table is copied to a TMP folder and then this folder is moved to the final destination (dstPath)
-            if (null == cachedBackupTmpRoot) {
-                if (null == configuration.getBackupRoot()) {
+            if (cachedBackupTmpRoot == null) {
+                if (configuration.getBackupRoot() == null) {
                     throw CairoException.nonCritical()
                             .put("backup is disabled, server.conf property 'cairo.sql.backup.root' is not set");
                 }
@@ -3437,9 +3541,26 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             );
                             tableBackupRowCopiedCache.put(srcPath, recordToRowCopier);
                         }
-                        RecordCursor cursor = reader.getCursor();
-                        //statement/query timeout value  is most likely too small for backup operation
-                        copyTableData(cursor, reader.getMetadata(), backupWriter, writerMetadata, recordToRowCopier, configuration.getCreateTableModelBatchSize(), configuration.getO3MaxLag(), SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+
+                        sink.clear();
+                        sink.put('\'').put(tableName).put('\'');
+                        try (
+                                SqlExecutionContext allowAllContext = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE);
+                                RecordCursorFactory factory = engine.select(sink, allowAllContext);
+                                RecordCursor cursor = factory.getCursor(allowAllContext)
+                        ) {
+                            // statement/query timeout value is most likely too small for backup operation
+                            copyTableData(
+                                    cursor,
+                                    factory.getMetadata(),
+                                    backupWriter,
+                                    writerMetadata,
+                                    recordToRowCopier,
+                                    configuration.getCreateTableModelBatchSize(),
+                                    configuration.getO3MaxLag(),
+                                    SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER
+                            );
+                        }
                         backupWriter.commit();
                     }
                 } // release reader lock
@@ -3515,7 +3636,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.position(lexer.lastTokenPosition()).put("expected 'table' or 'database'");
         }
 
-        private void sqlDatabaseBackup(SqlExecutionContext executionContext) {
+        private void sqlDatabaseBackup(SqlExecutionContext executionContext) throws SqlException {
             mkBackupDstRoot();
             mkBackupDstDir(configuration.getDbDirectory(), "could not create backup [db dir=");
 
@@ -3523,7 +3644,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             engine.getTableTokens(tableTokenBucket, false);
             executionContext.getSecurityContext().authorizeTableBackup(tableTokens);
             for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
-                backupTable(tableTokenBucket.get(i));
+                backupTable(tableTokenBucket.get(i), executionContext);
             }
 
             srcPath.of(configuration.getRoot()).$();
@@ -3585,7 +3706,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executionContext.getSecurityContext().authorizeTableBackup(tableTokens);
 
                 for (int i = 0, n = tableTokens.size(); i < n; i++) {
-                    backupTable(tableTokens.get(i));
+                    backupTable(tableTokens.get(i), executionContext);
                 }
                 compiledQuery.ofBackupTable();
             } finally {

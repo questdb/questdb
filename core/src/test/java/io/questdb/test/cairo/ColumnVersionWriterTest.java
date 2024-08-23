@@ -298,15 +298,15 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
             ) {
                 CVStringTable.setupColumnVersionWriter(w,
                         "     pts  colIdx  colTxn  colTop\n" +
-                        "       0       2      -1      10\n" +
-                        "       0       3      -1      10\n" +
-                        "       0       5      -1      10\n" +
-                        "       1       0      -1      10\n" +
-                        "       1       2      -1      10\n" +
-                        "       2       2      -1      10\n" +
-                        "       2      11      -1      10\n" +
-                        "       2      15      -1      10\n" +
-                        "       3       0      -1      10\n"
+                                "       0       2      -1      10\n" +
+                                "       0       3      -1      10\n" +
+                                "       0       5      -1      10\n" +
+                                "       1       0      -1      10\n" +
+                                "       1       2      -1      10\n" +
+                                "       2       2      -1      10\n" +
+                                "       2      11      -1      10\n" +
+                                "       2      15      -1      10\n" +
+                                "       3       0      -1      10\n"
                 );
 
                 w.commit();
@@ -315,12 +315,12 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
 
                 String expected =
                         "     pts  colIdx  colTxn  colTop\n" +
-                        "       1       0      -1      10\n" +
-                        "       1       2      -1      10\n" +
-                        "       2       2      -1      10\n" +
-                        "       2      11      -1      10\n" +
-                        "       2      15      -1      10\n" +
-                        "       3       0      -1      10\n";
+                                "       1       0      -1      10\n" +
+                                "       1       2      -1      10\n" +
+                                "       2       2      -1      10\n" +
+                                "       2      11      -1      10\n" +
+                                "       2      15      -1      10\n" +
+                                "       3       0      -1      10\n";
 
                 TestUtils.assertEquals(expected, CVStringTable.asTable(w.getCachedColumnVersionList()));
                 r.readSafe(configuration.getMillisecondClock(), 1);

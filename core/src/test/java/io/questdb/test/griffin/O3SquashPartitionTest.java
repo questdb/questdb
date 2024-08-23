@@ -509,7 +509,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         AtomicLong failToCopyLen = new AtomicLong();
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public long copyData(int srcFd, int destFd, long offsetSrc, long destOffset, long length) {
+            public long copyData(long srcFd, long destFd, long offsetSrc, long destOffset, long length) {
                 long result = super.copyData(srcFd, destFd, offsetSrc, destOffset, length);
                 if (length == failToCopyLen.get()) {
                     return failToCopyLen.get() - 1;

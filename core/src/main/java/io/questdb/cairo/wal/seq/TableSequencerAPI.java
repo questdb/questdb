@@ -132,7 +132,7 @@ public class TableSequencerAPI implements QuietCloseable {
                         // metadata and log concurrently as we read the values. It's ok since we iterate
                         // through the WAL tables periodically, so eventually we should see the updates.
                         path.of(root).concat(tableToken.getDirName()).concat(SEQ_DIR);
-                        int fdTxn = TableUtils.openRO(ff, path, TXNLOG_FILE_NAME, LOG);
+                        long fdTxn = TableUtils.openRO(ff, path, TXNLOG_FILE_NAME, LOG);
                         lastTxn = ff.readNonNegativeLong(fdTxn, TableTransactionLogFile.MAX_TXN_OFFSET_64); // does not throw
                         ff.close(fdTxn);
                     } else {
@@ -432,11 +432,11 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public void suspendTable(final TableToken tableToken) {
+    public void suspendTable(final TableToken tableToken, ErrorTag errorTag, String errorMessage) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
                 sequencer.suspendTable();
-                getSeqTxnTracker(tableToken).setSuspended();
+                getSeqTxnTracker(tableToken).setSuspended(errorTag, errorMessage);
             } finally {
                 sequencer.unlockWrite();
             }

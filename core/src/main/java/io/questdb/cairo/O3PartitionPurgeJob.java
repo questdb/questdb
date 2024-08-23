@@ -50,15 +50,13 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     private final Utf8StringSink[] fileNameSinks;
     private final AtomicBoolean halted = new AtomicBoolean(false);
     private final ObjList<DirectLongList> partitionList;
-    private final DatabaseSnapshotAgent snapshotAgent;
     private final ObjList<TxReader> txnReaders;
     private final ObjList<TxnScoreboard> txnScoreboards;
 
-    public O3PartitionPurgeJob(CairoEngine engine, DatabaseSnapshotAgent snapshotAgent, int workerCount) {
+    public O3PartitionPurgeJob(CairoEngine engine, int workerCount) {
         super(engine.getMessageBus().getO3PurgeDiscoveryQueue(), engine.getMessageBus().getO3PurgeDiscoverySubSeq());
         try {
             this.engine = engine;
-            this.snapshotAgent = snapshotAgent;
             this.configuration = engine.getMessageBus().getConfiguration();
             this.fileNameSinks = new Utf8StringSink[workerCount];
             this.partitionList = new ObjList<>(workerCount);
@@ -264,10 +262,10 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 // nameTxn can be deleted
                 // -1 here is to compensate +1 added when partition version parsed from folder name
                 // See comments of why +1 added there in parsePartitionDateVersion()
-                purgePartition(tableToken, ff, path, "purging dropped partition directory [path=");
+                purgePartition(tableToken, ff, path, tableRootLen - tableToken.getDirNameUtf8().size() - 1, "purging dropped partition directory [path=");
                 lastTxn = nameTxn;
             } else {
-                LOG.info().$("cannot purge partition directory, locked for reading [path=").$(path).I$();
+                LOG.debug().$("cannot purge partition directory, locked for reading [path=").$substr(tableRootLen - tableToken.getDirNameUtf8().size() - 1, path).I$();
                 break;
             }
         }
@@ -352,21 +350,20 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     // previousNameVersion can be deleted
                     // -1 here is to compensate +1 added when partition version parsed from folder name
                     // See comments of why +1 added there in parsePartitionDateVersion()
-                    LOG.info().$("purging overwritten partition directory [path=").$(path).I$();
-                    purgePartition(tableToken, ff, path, "purging overwritten partition directory [path=");
+                    purgePartition(tableToken, ff, path, tableRootLen - tableToken.getDirNameUtf8().size() - 1, "purging overwritten partition directory [path=");
                 } else {
-                    LOG.info().$("cannot purge overwritten partition directory, locked for reading [path=").$(path).I$();
+                    LOG.info().$("cannot purge overwritten partition directory, locked for reading path=").$substr(tableRootLen - tableToken.getDirNameUtf8().size() - 1, path).I$();
                 }
             }
         }
     }
 
-    private void purgePartition(TableToken tableToken, FilesFacade ff, Path path, String message) {
+    private void purgePartition(TableToken tableToken, FilesFacade ff, Path path, int pathFrom, String message) {
         if (engine.lockTableCreate(tableToken)) {
             try {
                 TableToken lastToken = engine.getUpdatedTableToken(tableToken);
                 if (lastToken == tableToken) {
-                    LOG.info().$(message).$(path).I$();
+                    LOG.info().$(message).$substr(pathFrom, path).I$();
                     ff.unlinkOrRemove(path, LOG);
                 } else {
                     // table is dropped and recreated since we started processing it.
@@ -385,8 +382,8 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
     @Override
     protected boolean canRun() {
-        // No deletion must happen while a snapshot is in-flight.
-        return !snapshotAgent.isInProgress();
+        // disable purge job while database checkpoint is in progress
+        return !engine.getCheckpointStatus().isInProgress();
     }
 
     @Override

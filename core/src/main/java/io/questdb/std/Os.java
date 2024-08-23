@@ -39,7 +39,7 @@ import java.util.concurrent.locks.LockSupport;
 
 public final class Os {
     public static final int ARCH_AARCH64 = 1;
-    public static final int ARCH_AMD64 = 2;
+    public static final int ARCH_X86_64 = 2;
     public static final int DARWIN = 1;
     public static final int FREEBSD = 4;
     public static final int LINUX = 2;
@@ -102,7 +102,7 @@ public final class Os {
     public static byte[] generateKerberosToken(CharSequence spn) throws KerberosException {
         // We use Path as a LPSZ sink here.
         try (Path sink = new Path().of(spn)) {
-            final long struct = generateKrbToken(sink.ptr());
+            final long struct = generateKrbToken(sink.$().ptr());
             int status = Unsafe.getUnsafe().getInt(struct);
             int bufLen = Unsafe.getUnsafe().getInt(struct + 4);
             long ptoken = Unsafe.getUnsafe().getLong(struct + 8);
@@ -174,6 +174,34 @@ public final class Os {
         return type == Os.WINDOWS;
     }
 
+    public static void loadLib(String lib, @NotNull InputStream libStream) {
+        try {
+            File tempLib = null;
+            try {
+                int dot = lib.indexOf('.');
+                tempLib = File.createTempFile(lib.substring(0, dot), lib.substring(dot));
+                // copy to tempLib
+                try (FileOutputStream out = new FileOutputStream(tempLib)) {
+                    byte[] buf = new byte[4096];
+                    while (true) {
+                        int read = libStream.read(buf);
+                        if (read == -1) {
+                            break;
+                        }
+                        out.write(buf, 0, read);
+                    }
+                } finally {
+                    tempLib.deleteOnExit();
+                }
+                System.load(tempLib.getAbsolutePath());
+            } catch (IOException e) {
+                throw new FatalError("Internal error: cannot unpack " + tempLib, e);
+            }
+        } finally {
+            Misc.free(libStream);
+        }
+    }
+
     public static native long malloc(long size);
 
     public static void park() {
@@ -229,34 +257,6 @@ public final class Os {
         loadLib(lib, is);
     }
 
-    private static void loadLib(String lib, @NotNull InputStream libStream) {
-        try {
-            File tempLib = null;
-            try {
-                int dot = lib.indexOf('.');
-                tempLib = File.createTempFile(lib.substring(0, dot), lib.substring(dot));
-                // copy to tempLib
-                try (FileOutputStream out = new FileOutputStream(tempLib)) {
-                    byte[] buf = new byte[4096];
-                    while (true) {
-                        int read = libStream.read(buf);
-                        if (read == -1) {
-                            break;
-                        }
-                        out.write(buf, 0, read);
-                    }
-                } finally {
-                    tempLib.deleteOnExit();
-                }
-                System.load(tempLib.getAbsolutePath());
-            } catch (IOException e) {
-                throw new FatalError("Internal error: cannot unpack " + tempLib, e);
-            }
-        } finally {
-            Misc.free(libStream);
-        }
-    }
-
     private static native int setCurrentThreadAffinity0(int cpu);
 
     static {
@@ -264,8 +264,8 @@ public final class Os {
             arch = ARCH_AARCH64;
             archName = "aarch64";
         } else {
-            arch = ARCH_AMD64;
-            archName = "amd64";
+            arch = ARCH_X86_64;
+            archName = "x86-64";
         }
 
         if ("64".equals(System.getProperty("sun.arch.data.model"))) {
