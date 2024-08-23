@@ -67,7 +67,7 @@ inline VarcharDataView read_varchar(int64_t offset, const void * column_data, co
         return VarcharDataView{aux_inlined_data->chars, &aux_inlined_data->chars[MIN_INLINE_CHARS], (int32_t) size};
     }
     const int32_t size = aux_data->header >> HEADER_FLAGS_WIDTH;
-    const uint64_t data_offset = aux_data->offset_lo | ((uint64_t) aux_data->offset_lo) << 16;
+    const uint64_t data_offset = aux_data->offset_lo | ((uint64_t) aux_data->offset_hi) << 16;
     const uint8_t *data = &reinterpret_cast<const uint8_t *>(column_var_data)[data_offset];
     return VarcharDataView{aux_data->chars, &data[MIN_INLINE_CHARS], size};
 }
@@ -119,11 +119,11 @@ public:
 class MergeVarcharColumnComparer : dedup_column {
 public:
     inline int operator()(int64_t col_index, int64_t index_index) const {
-        const VarcharDataView &l_val = col_index >= dedup_column::column_top
+        const VarcharDataView l_val = col_index >= dedup_column::column_top
                                        ? read_varchar(col_index, this->column_data, this->column_var_data)
                                        : NULL_VARCHAR_VIEW;
 
-        const VarcharDataView &r_val = read_varchar(index_index, this->o3_data, this->o3_var_data);
+        const VarcharDataView r_val = read_varchar(index_index, this->o3_data, this->o3_var_data);
 
         return compare(l_val, r_val);
     }

@@ -809,55 +809,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             for (int i = 0; i < metadata.getColumnCount(); i++) {
                 int columnType = metadata.getColumnType(i);
                 if (columnType > 0 && metadata.isDedupKey(i) && i != metadata.getTimestampIndex()) {
-                    final int columnSize = ColumnType.sizeOf(columnType);
+
+                    final int columnSize = !ColumnType.isVarSize(columnType) ? ColumnType.sizeOf(columnType) : -1;
                     final long columnTop = tableWriter.getColumnTop(partitionTimestamp, i, mergeDataHi + 1);
                     CharSequence columnName = metadata.getColumnName(i);
                     long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, i);
-                    final long fd;
-                    final long fixMapSize, fixMappedAddress;
-                    final long varMapSize, varMappedAddress;
 
-                    if (columnTop < mergeDataLo + 1) {
-                        if (!ColumnType.isVarSize(columnType)) {
-                            TableUtils.setSinkForPartition(tableRootPath.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, srcNameTxn);
-                            fd = TableUtils.openRO(ff, TableUtils.dFile(tableRootPath, columnName, columnNameTxn), LOG);
-
-                            fixMapSize = (mergeDataHi + 1 - columnTop) * columnSize;
-                            fixMappedAddress = TableUtils.mapAppendColumnBuffer(
-                                    ff,
-                                    fd,
-                                    0,
-                                    fixMapSize,
-                                    false,
-                                    mapMemTag
-                            );
-                        } else {
-                            long mapRows = mergeDataHi + 1 - columnTop;
-                            ColumnTypeDriver driver = ColumnType.getDriver(columnType);
-                            fixMapSize = driver.getAuxVectorSize(mapRows);
-
-                            TableUtils.setSinkForPartition(tableRootPath.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, srcNameTxn);
-                            fd = TableUtils.openRO(ff, TableUtils.iFile(tableRootPath, columnName, columnNameTxn), LOG);
-                            fixMappedAddress = TableUtils.mapAppendColumnBuffer(
-                                    ff,
-                                    fd,
-                                    0,
-                                    fixMapSize,
-                                    false,
-                                    mapMemTag
-                            );
-
-
-
-                        }
-                    } else {
-                        // column is all nulls because of column top
-                        fd = -1;
-                        fixMapSize = 0;
-                        fixMappedAddress = 0;
-                    }
-
-                    final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
                     long addr = dedupCommitAddresses.setColValues(
                             dedupColSinkAddr,
                             dedupColumnIndex,
@@ -865,14 +822,98 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             columnSize,
                             columnTop
                     );
-                    dedupCommitAddresses.setColAddressValues(addr, fixMappedAddress - columnTop * columnSize);
-                    dedupCommitAddresses.setO3DataAddressValues(addr, oooColAddress);
-                    dedupCommitAddresses.setReservedValuesSet1(
-                            addr,
-                            fixMappedAddress,
-                            fixMapSize,
-                            fd
-                    );
+
+                    if (columnTop < mergeDataLo + 1) {
+                        if (columnSize > 0) {
+                            // Fixed length column
+                            TableUtils.setSinkForPartition(tableRootPath.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, srcNameTxn);
+                            long fd = TableUtils.openRO(ff, TableUtils.dFile(tableRootPath, columnName, columnNameTxn), LOG);
+
+                            long fixMapSize = (mergeDataHi + 1 - columnTop) * columnSize;
+                            long fixMappedAddress = TableUtils.mapAppendColumnBuffer(
+                                    ff,
+                                    fd,
+                                    0,
+                                    fixMapSize,
+                                    false,
+                                    mapMemTag
+                            );
+
+                            dedupCommitAddresses.setColAddressValues(addr, Math.abs(fixMappedAddress) - columnTop * columnSize);
+
+                            final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
+                            dedupCommitAddresses.setO3DataAddressValues(addr, oooColAddress);
+                            dedupCommitAddresses.setReservedValuesSet1(
+                                    addr,
+                                    fixMappedAddress,
+                                    fixMapSize,
+                                    fd
+                            );
+                        } else {
+                            // Variable length column
+                            long rows = mergeDataHi + 1 - columnTop;
+                            ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+                            long auxMapSize = driver.getAuxVectorSize(rows);
+
+                            TableUtils.setSinkForPartition(tableRootPath.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, srcNameTxn);
+                            long auxFd = TableUtils.openRO(ff, TableUtils.iFile(tableRootPath, columnName, columnNameTxn), LOG);
+                            long auxMappedAddress = TableUtils.mapAppendColumnBuffer(
+                                    ff,
+                                    auxFd,
+                                    0,
+                                    auxMapSize,
+                                    false,
+                                    mapMemTag
+                            );
+
+                            long varMapSize = driver.getDataVectorSizeAt(auxMappedAddress, rows - 1);
+                            if (varMapSize > 0) {
+                                TableUtils.setSinkForPartition(tableRootPath.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, srcNameTxn);
+                            }
+                            long varFd = varMapSize > 0 ? TableUtils.openRO(ff, TableUtils.dFile(tableRootPath, columnName, columnNameTxn), LOG) : -1;
+                            long varMappedAddress = varMapSize > 0 ? TableUtils.mapAppendColumnBuffer(
+                                    ff,
+                                    varFd,
+                                    0,
+                                    varMapSize,
+                                    false,
+                                    mapMemTag
+                            ) : 0;
+
+                            long auxRecSize = driver.auxRowsToBytes(1);
+                            dedupCommitAddresses.setColAddressValues(addr, auxMappedAddress - columnTop * auxRecSize, varMappedAddress, varMapSize);
+
+                            final long oooVarColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
+                            final long oooVarColSize = oooColumns.get(getPrimaryColumnIndex(i)).size();
+                            final long oooAuxColAddress = oooColumns.get(getSecondaryColumnIndex(i)).addressOf(0);
+
+                            dedupCommitAddresses.setO3DataAddressValues(addr, oooAuxColAddress, oooVarColAddress, oooVarColSize);
+                            dedupCommitAddresses.setReservedValuesSet1(
+                                    addr,
+                                    auxMappedAddress,
+                                    auxMapSize,
+                                    auxFd
+                            );
+                            dedupCommitAddresses.setReservedValuesSet2(
+                                    addr,
+                                    varMappedAddress,
+                                    varFd
+                            );
+                        }
+                    } else {
+                        // column is all nulls because of column top
+                        dedupCommitAddresses.setColAddressValues(addr, DedupColumnCommitAddresses.NULL);
+
+                        final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
+                        dedupCommitAddresses.setO3DataAddressValues(addr, oooColAddress);
+                        dedupCommitAddresses.setReservedValuesSet1(
+                                addr,
+                                -1,
+                                -1,
+                                -1
+                        );
+                    }
+
                     dedupColumnIndex++;
                 }
             }
@@ -894,10 +935,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final long mappedAddressSize = dedupCommitAddresses.getColReserved2(dedupColSinkAddr, i);
                 if (mappedAddressSize > 0) {
                     TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, 0, mappedAddressSize, mapMemTag);
-                }
-                final long fd = dedupCommitAddresses.getColReserved3(dedupColSinkAddr, i);
-                if (fd > 0) {
+                    final long fd = dedupCommitAddresses.getColReserved3(dedupColSinkAddr, i);
                     ff.close(fd);
+                }
+
+                final long varMappedAddress = dedupCommitAddresses.getColReserved4(dedupColSinkAddr, i);
+                if (varMappedAddress > 0) {
+                    final long varMappedLength = dedupCommitAddresses.getVarDataLen(dedupColSinkAddr, i);
+                    TableUtils.mapAppendColumnBufferRelease(ff, varMappedAddress, 0, varMappedLength, mapMemTag);
+                    final long varFd = dedupCommitAddresses.getColReserved5(dedupColSinkAddr, i);
+                    ff.close(varFd);
                 }
             }
         }

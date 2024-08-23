@@ -521,21 +521,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    private void chooseUpsertKeys(RecordMetadata metadata, int dedupKeyCount, Rnd rnd, IntList upsertKeyIndexes) {
-        upsertKeyIndexes.add(metadata.getTimestampIndex());
-        int dedupKeys = dedupKeyCount > -1 ? dedupKeyCount : rnd.nextInt(metadata.getColumnCount() - 1);
-        for (int i = 0; i < dedupKeys; i++) {
-            int start = rnd.nextInt(metadata.getColumnCount());
-            for (int c = 0; c < metadata.getColumnCount(); c++) {
-                int col = (c + start) % metadata.getColumnCount();
-                int columnType = metadata.getColumnType(col);
-
-                if (!upsertKeyIndexes.contains(col) && (!ColumnType.isVarSize(columnType) || columnType == ColumnType.VARCHAR)) {
-                    upsertKeyIndexes.add(col);
-                    break;
-                }
-            }
-        }
+    private static boolean dedupSupported(int columnType) {
+        return !ColumnType.isVarSize(columnType) || columnType == ColumnType.VARCHAR;
     }
 
     private void collectUpsertKeyNames(TableRecordMetadata metadata, IntList upsertKeys, ObjList<CharSequence> upsertKeyNames) {
@@ -780,11 +767,28 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         operationList.setQuick(j, tmp);
     }
 
+    private void chooseUpsertKeys(RecordMetadata metadata, int dedupKeyCount, Rnd rnd, IntList upsertKeyIndexes) {
+        upsertKeyIndexes.add(metadata.getTimestampIndex());
+        int dedupKeys = dedupKeyCount > -1 ? dedupKeyCount : rnd.nextInt(metadata.getColumnCount() - 1);
+        for (int i = 0; i < dedupKeys; i++) {
+            int start = rnd.nextInt(metadata.getColumnCount());
+            for (int c = 0; c < metadata.getColumnCount(); c++) {
+                int col = (c + start) % metadata.getColumnCount();
+                int columnType = metadata.getColumnType(col);
+
+                if (!upsertKeyIndexes.contains(col) && dedupSupported(columnType)) {
+                    upsertKeyIndexes.add(col);
+                    break;
+                }
+            }
+        }
+    }
+
     private String toCommaSeparatedString(RecordMetadata metadata, IntList upsertKeys) {
         StringSink sink = new StringSink();
         for (int i = 0; i < upsertKeys.size(); i++) {
             int columnType = metadata.getColumnType(upsertKeys.get(i));
-            if (columnType > 0 && !ColumnType.isVarSize(columnType)) {
+            if (columnType > 0 && dedupSupported(columnType)) {
                 if (i > 0) {
                     sink.put(',');
                 }

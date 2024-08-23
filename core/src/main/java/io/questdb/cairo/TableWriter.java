@@ -1546,12 +1546,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 int columnType = metadata.getColumnType(dedupColIndex);
-                if (ColumnType.isVarSize(columnType)) {
-                    throw CairoException.critical(0).put("Unsupported column type used as deduplicate key [table=")
-                            .put(tableToken.getTableName())
-                            .put(", column=").put(getColumnNameSafe(dedupColIndex))
-                            .put(", columnType=").put(ColumnType.nameOf(columnType));
-                } else if (columnType < 0) {
+                if (columnType < 0) {
                     throw CairoException.critical(0).put("Invalid column used as deduplicate key, column is dropped [table=")
                             .put(tableToken.getTableName()).put(", columnIndex=").put(dedupColIndex);
                 }

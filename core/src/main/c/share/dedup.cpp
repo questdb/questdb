@@ -434,6 +434,23 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                         *reinterpret_cast<const MergeColumnComparer<int256> *>(src_keys)
                 );
             }
+            case -1: {
+                switch (col_key->column_type) {
+                    case (int) ColumnType::VARCHAR: {
+                        return merge_dedup_long_index_int_keys(
+                                src, data_lo, data_hi,
+                                index, index_lo, index_hi,
+                                index_tmp,
+                                *reinterpret_cast<const MergeVarcharColumnComparer *>(src_keys)
+                        );
+
+                    }
+                    default: {
+                        assert(false || "unsupported column type");
+                        return 0;
+                    }
+                }
+            }
             default:
                 assert(false || "unsupported column value_size_bytes for comparison");
                 return -1;

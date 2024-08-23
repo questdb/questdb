@@ -90,7 +90,7 @@ local void gz_reset(state)
 /* Open a gzip file either by name or file descriptor. */
 local gzFile gz_open(path, fd, mode)
     const void *path;
-    long fd;
+    int fd;
     const char *mode;
 {
     gz_statep state;
