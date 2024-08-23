@@ -1063,8 +1063,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         }
     }
 
-    private boolean isInTimestampPredicate() throws SqlException
-    {
+    private boolean isInTimestampPredicate() throws SqlException {
         // visit inOperationNode to get expression type
         predicateContext.onNodeVisited(predicateContext.inOperationNode.rhs);
         predicateContext.onNodeVisited(predicateContext.inOperationNode.lhs);
