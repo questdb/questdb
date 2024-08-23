@@ -37,7 +37,7 @@ final class Mig600 {
         final Path path = migrationContext.getTablePath();
         final FilesFacade ff = migrationContext.getFf();
         final long tempMem = migrationContext.getTempMemory(8);
-        final int fd = migrationContext.getMetadataFd();
+        final long fd = migrationContext.getMetadataFd();
 
         TableUtils.writeIntOrFail(
                 ff,

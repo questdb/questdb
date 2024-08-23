@@ -51,7 +51,7 @@ public class NullMemoryCMR implements MemoryCMR {
     }
 
     @Override
-    public int detachFdClose() {
+    public long detachFdClose() {
         return -1;
     }
 
@@ -100,7 +100,7 @@ public class NullMemoryCMR implements MemoryCMR {
     }
 
     @Override
-    public int getFd() {
+    public long getFd() {
         return -1;
     }
 

@@ -55,7 +55,9 @@ import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
+import java.text.SimpleDateFormat;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -4866,6 +4868,36 @@ public class SampleByTest extends AbstractCairoTest {
                             "                Row forward scan\n" +
                             "                Frame forward scan on: x\n"
             );
+        });
+    }
+
+    @Test
+    public void testSampleByRunsSequentiallyWithNonConstantFrom() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE 'trades' (\n" +
+                    "  symbol SYMBOL capacity 256 CACHE,\n" +
+                    "  side SYMBOL capacity 256 CACHE,\n" +
+                    "  price DOUBLE,\n" +
+                    "  amount DOUBLE,\n" +
+                    "  timestamp TIMESTAMP\n" +
+                    ") timestamp (timestamp) PARTITION BY DAY WAL;");
+            drainWalQueue();
+
+            String query = "select timestamp, count() from trades\n" +
+                    "sample by 1m FROM date_trunc('day', now()) FILL (null) \n";
+
+            Date today = new Date();
+
+            assertPlanNoLeakCheck(query, "Sample By\n" +
+                    "  fill: null\n" +
+                    "  range: (timestamp_floor('day',now()),null)\n" +
+                    "  values: [count(*)]\n" +
+                    "    PageFrame\n" +
+                    "        Row forward scan\n" +
+                    "        Interval forward scan on: trades\n" +
+                    "          intervals: [(\"" + new SimpleDateFormat("yyyy-MM-dd").format(today) + "T00:00:00.000000Z\",\"MAX\")]\n");
+
+            assertSql("timestamp\tcount\n", query);
         });
     }
 
@@ -12830,7 +12862,7 @@ public class SampleByTest extends AbstractCairoTest {
             int count = x;
 
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (count-- > 0) {
                     return super.mmap(fd, len, offset, flags, memoryTag);
                 }

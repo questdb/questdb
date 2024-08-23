@@ -63,7 +63,7 @@ public class IOContextFactoryImpl<C extends IOContext<C>> implements IOContextFa
         Misc.free(contextPool);
     }
 
-    public C newInstance(int fd, @NotNull IODispatcher<C> dispatcher) {
+    public C newInstance(long fd, @NotNull IODispatcher<C> dispatcher) {
         WeakMutableObjectPool<C> pool = contextPool.get();
         C context = pool.pop();
         try {

@@ -37,14 +37,9 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
 public class StrBindVariable extends StrFunction implements ScalarFunction, Mutable {
-    private final int floatScale;
     private final StringSink utf16Sink = new StringSink();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private boolean isNull = true;
-
-    public StrBindVariable(int floatScale) {
-        this.floatScale = floatScale;
-    }
 
     @Override
     public void clear() {
@@ -192,9 +187,9 @@ public class StrBindVariable extends StrFunction implements ScalarFunction, Muta
         isNull = Numbers.isNull(value);
         if (!isNull) {
             utf16Sink.clear();
-            utf16Sink.put(value, floatScale);
+            utf16Sink.put(value);
             utf8Sink.clear();
-            utf8Sink.put(value, floatScale);
+            utf8Sink.put(value);
         }
     }
 

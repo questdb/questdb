@@ -67,9 +67,9 @@ public interface ColumnTypeDriver {
      * @param memoryTag the memory tag to help identify sources of memory leaks
      * @param opts      mapping options
      */
-    void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, int fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts);
+    void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, long fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts);
 
-    void configureDataMemOM(FilesFacade ff, MemoryR auxMem, MemoryOM dataMem, int dataFd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts);
+    void configureDataMemOM(FilesFacade ff, MemoryR auxMem, MemoryOM dataMem, long dataFd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts);
 
     /**
      * Returns offset in bytes of the aux entry that describes the provided row number.
@@ -110,7 +110,7 @@ public interface ColumnTypeDriver {
 
     long getDataVectorSizeAt(long auxMemAddr, long row);
 
-    long getDataVectorSizeAtFromFd(FilesFacade ff, int auxFd, long row);
+    long getDataVectorSizeAtFromFd(FilesFacade ff, long auxFd, long row);
 
     long getMinAuxVectorSize();
 
@@ -145,7 +145,7 @@ public interface ColumnTypeDriver {
             long srcHi,
             long dstAddr,
             long dstFileOffset,
-            int dstFd,
+            long dstFd,
             boolean mixedIOFlag
     );
 

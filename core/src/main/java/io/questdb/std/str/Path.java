@@ -42,20 +42,20 @@ import java.io.Closeable;
  * must be closed when no longer required.
  */
 public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
+    private static final byte NULL = (byte) 0;
+    private static final int OVERHEAD = 4;
+    private static final boolean PARANOIA_MODE = false;
     public static final ThreadLocal<Path> PATH = new ThreadLocal<>(Path::new);
     public static final ThreadLocal<Path> PATH2 = new ThreadLocal<>(Path::new);
     public static final Closeable THREAD_LOCAL_CLEANER = Path::clearThreadLocals;
-    private static final byte NULL = (byte) 0;
-    private static final int OVERHEAD = 4;
     private static final ThreadLocal<StringSink> tlSink = new ThreadLocal<>(StringSink::new);
     private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
+    private final LPSZ lpsz = new PathLPSZ();
     private final int memoryTag;
     private boolean ascii;
     private int capacity;
     private long headPtr;
     private long tailPtr;
-    private final LPSZ lpsz = new PathLPSZ();
-    private static final boolean PARANOIA_MODE = true;
 
     public Path() {
         this(255);
@@ -74,12 +74,6 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
             randomSeed();
         }
         ascii = true;
-    }
-
-    private void randomSeed() {
-        for (long p = headPtr, hi = headPtr + capacity + 1; p < hi; p++) {
-            Unsafe.getUnsafe().putByte(p, (byte) (p % 127));
-        }
     }
 
     public static void clearThreadLocals() {
@@ -460,6 +454,12 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
         }
         Unsafe.getUnsafe().putByte(tailPtr++, b);
         return this;
+    }
+
+    private void randomSeed() {
+        for (long p = headPtr, hi = headPtr + capacity + 1; p < hi; p++) {
+            Unsafe.getUnsafe().putByte(p, (byte) (p % 127));
+        }
     }
 
     protected final void ensureSeparator() {

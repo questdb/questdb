@@ -309,7 +309,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             if (PartitionBy.isPartitioned(partitionBy) && numRows > 0L) {
                 if (partitionIndex >= partitionCount || !tableTxReader.isPartitionParquet(partitionIndex)) {
                     TableUtils.dFile(path.slash(), dynamicTsColName, TableUtils.COLUMN_NAME_TXN_NONE);
-                    int fd = -1;
+                    long fd = -1;
                     try {
                         fd = TableUtils.openRO(ff, path.$(), LOG);
                         long lastOffset = (numRows - 1) * ColumnType.sizeOf(ColumnType.TIMESTAMP);

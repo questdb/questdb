@@ -3205,6 +3205,9 @@ public class SqlOptimiser implements Mutable {
                 case QueryModel.SHOW_SERVER_VERSION:
                     tableFactory = new ShowServerVersionCursorFactory();
                     break;
+                case QueryModel.SHOW_SERVER_VERSION_NUM:
+                    tableFactory = new ShowServerVersionNumCursorFactory();
+                    break;
                 default:
                     tableFactory = sqlParserCallback.generateShowSqlFactory(model);
                     break;
@@ -4521,7 +4524,7 @@ public class SqlOptimiser implements Mutable {
                             && (sampleByOffset != null && SqlKeywords.isZeroOffset(sampleByOffset.token) && (sampleByTimezoneName == null || SqlKeywords.isUTC(sampleByTimezoneName.token)))
                             && (sampleByFillSize == 0 || (sampleByFillSize == 1 && !SqlKeywords.isPrevKeyword(sampleByFill.getQuick(0).token) && !SqlKeywords.isLinearKeyword(sampleByFill.getQuick(0).token)))
                             && sampleByUnit == null
-                            && (sampleByFrom == null || (sampleByFrom.type != BIND_VARIABLE))
+                            && (sampleByFrom == null || ((sampleByFrom.type != BIND_VARIABLE) && (sampleByFrom.type != FUNCTION) && (sampleByFrom.type != OPERATION)))
             ) {
                 // Validate that the model does not have wildcard column names.
                 // Using wildcard in group-by expression makes SQL ambiguous and
@@ -4598,7 +4601,6 @@ public class SqlOptimiser implements Mutable {
 
                 if (maybeKeyed.size() > 0 && ((sampleByFrom != null || sampleByTo != null) || (sampleByFillSize > 0 && !isNoneKeyword(sampleByFill.getQuick(0).token)))) {
                     boolean isKeyed = false;
-
 
                     final CharSequence tableName = nested.getTableName();
                     for (int i = 0, n = maybeKeyed.size(); i < n; i++) {

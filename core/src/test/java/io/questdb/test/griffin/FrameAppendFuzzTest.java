@@ -129,7 +129,7 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
 
         // Force overwrite partitioning to by YEAR
         Path path = Path.getThreadLocal(configuration.getRoot()).concat(merged).concat(TableUtils.META_FILE_NAME);
-        int metaFd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
+        long metaFd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
 
         long addr = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
         Unsafe.getUnsafe().putInt(addr, PartitionBy.YEAR);

@@ -51,8 +51,9 @@ public final class Numbers {
     public static final int IPv4_NULL = 0;
     public static final long JULIAN_EPOCH_OFFSET_USEC = 946684800000000L;
     public static final long LONG_NULL = Long.MIN_VALUE;
+    public static final int MAX_DOUBLE_SCALE = 19;
+    public static final int MAX_FLOAT_SCALE = 10;
     public static final long MAX_SAFE_INT_POW_2 = 1L << 31;
-    public static final int MAX_SCALE = 19;
     public static final int SIGNIFICAND_WIDTH = 53;
     public static final long SIGN_BIT_MASK = 0x8000000000000000L;
     public static final int SIZE_1MB = 1024 * 1024;
@@ -225,8 +226,12 @@ public final class Numbers {
         }
     }
 
+    public static void append(CharSink<?> sink, float value) {
+        append(sink, value, MAX_FLOAT_SCALE);
+    }
+
     public static void append(CharSink<?> sink, double value) {
-        append(sink, value, MAX_SCALE);
+        append(sink, value, MAX_DOUBLE_SCALE);
     }
 
     public static void append(CharSink<?> sink, double value, int scale) {
@@ -1977,7 +1982,7 @@ public final class Numbers {
             CharSink<?> sink,
             int outScale
     ) {
-        assert nDigits <= MAX_SCALE : nDigits;
+        assert nDigits <= MAX_DOUBLE_SCALE : nDigits;
         if (isNegative) {
             sink.putAscii('-');
         }
