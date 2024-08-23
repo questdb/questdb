@@ -835,7 +835,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                             sqlExecutionContext,
                             "select * from tab where preciseTs in '1970-01-01T00:00:00;3m;1d;5' and value = 't3' limit 10",
                             sink,
-                                    "ts\tpreciseTs\ttype\tvalue\n" +
+                            "ts\tpreciseTs\ttype\tvalue\n" +
                                     "1970-01-01T00:03:00.000000Z\t1970-01-01T00:03:00.000000Z\t3\tt3\n" +
                                     "1970-01-02T00:03:00.000000Z\t1970-01-02T00:03:00.000000Z\t3\tt3\n" +
                                     "1970-01-03T00:03:00.000000Z\t1970-01-03T00:03:00.000000Z\t3\tt3\n" +
