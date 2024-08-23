@@ -594,6 +594,8 @@ public interface CairoConfiguration {
 
     boolean isSqlJitDebugEnabled();
 
+    boolean isSqlOrderByRadixSortEnabled();
+
     boolean isSqlParallelFilterEnabled();
 
     boolean isSqlParallelFilterPreTouchEnabled();

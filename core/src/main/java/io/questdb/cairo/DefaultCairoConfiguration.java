@@ -1103,6 +1103,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlOrderByRadixSortEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlParallelFilterEnabled() {
         return true;
     }

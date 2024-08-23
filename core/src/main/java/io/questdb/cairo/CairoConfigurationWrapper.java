@@ -1101,6 +1101,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlOrderByRadixSortEnabled() {
+        return getDelegate().isSqlOrderByRadixSortEnabled();
+    }
+
+    @Override
     public boolean isSqlParallelFilterEnabled() {
         return getDelegate().isSqlParallelFilterEnabled();
     }
