@@ -1037,15 +1037,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private void serializeInTimestampRange(int position) throws SqlException {
         predicateContext.currentInSerialization = true;
 
-        final CharSequence intervalEx = predicateContext.inOperationNode.rhs.token;
+        final CharSequence token = predicateContext.inOperationNode.rhs.token;
+        final CharSequence intervalEx = token == null || SqlKeywords.isNullKeyword(token) ? null : GenericLexer.unquote(token);
 
         final LongList intervals = predicateContext.inIntervals;
-        if (intervalEx != null && !SqlKeywords.isNullKeyword(intervalEx)) {
-            IntervalUtils.parseIntervalEx(intervalEx, 1, intervalEx.length() - 1, position, intervals, IntervalOperation.INTERSECT);
-        } else {
-            IntervalUtils.addHiLoInterval(Numbers.LONG_NULL, Numbers.LONG_NULL, IntervalOperation.INTERSECT, intervals);
-        }
-        IntervalUtils.applyLastEncodedIntervalEx(intervals);
+        IntervalUtils.parseAndApplyIntervalEx(intervalEx, intervals, position);
 
         final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
         final ExpressionNode lhs = predicateContext.inOperationNode.lhs;
