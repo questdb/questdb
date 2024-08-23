@@ -112,18 +112,18 @@ stages:
             artifact: rust-llvm-coverage
           - bash: |
               set -eux
+              ls -al $(Pipeline.Workspace)/rust-llvm-coverage
+
               JACOCO_FILE="$(Pipeline.Workspace)/jacoco-coverage/jacoco.xml"
-              RUST_FILE="$(Pipeline.Workspace)/rust-llvm-coverage/cobertura.xml"
               if [ -f $JACOCO_FILE ]; then
                 JACOCO_ARGS="-type jacoco --cover $JACOCO_FILE"
               else
                 JACOCO_ARGS=""
               fi
-              if [ -f $RUST_FILE ]; then
-                RUST_ARGS="-type cobertura --cover $RUST_FILE"
-              else
-                RUST_ARGS=""
-              fi
+              RUST_ARGS=""
+              for a in $(Pipeline.Workspace)/rust-llvm-coverage/coverage-*.xml; do
+                RUST_ARGS="$RUST_ARGS -type cobertura --cover $a"
+              done
               $JAVA_HOME_11_X64/bin/java -jar \
                 $(Build.SourcesDirectory)/ci/cover-checker-1.5.0-all.jar \
                 $JACOCO_ARGS $RUST_ARGS --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) \
