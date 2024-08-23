@@ -25,16 +25,18 @@
 package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.DirectLongList;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
-import io.questdb.std.Vect;
+import io.questdb.std.*;
 
 class LongSortedLightRecordCursor implements DelegatingRecordCursor {
+    private static final RecordAdapter getIntAsLongRef = LongSortedLightRecordCursor::getIntAsLong;
+    private static final RecordAdapter getLongRef = LongSortedLightRecordCursor::getLong;
     private final int columnIndex;
+    private final int columnType;
     private final long radixSortThreshold;
     private final Cursor rowIdCursor;
     private final DirectLongList valueRowIdMem; // holds <value, rowId> pairs
@@ -44,10 +46,13 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isOpen;
+    private RecordAdapter recordAdapter;
 
-    public LongSortedLightRecordCursor(CairoConfiguration configuration, int columnIndex, boolean ascOrder) {
+    public LongSortedLightRecordCursor(CairoConfiguration configuration, int columnIndex, int columnType, boolean ascOrder) {
         try {
             this.columnIndex = columnIndex;
+            this.columnType = columnType;
+            isOpen = true;
             radixSortThreshold = configuration.getSqlOrderByRadixSortThreshold();
             valueRowIdMem = new DirectLongList(configuration.getSqlSortLightValuePageSize() / 16, MemoryTag.NATIVE_DEFAULT);
             valueRowIdMemCpy = new DirectLongList(configuration.getSqlSortLightValuePageSize() / 16, MemoryTag.NATIVE_DEFAULT);
@@ -103,7 +108,7 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
-    public void of(RecordCursor base, SqlExecutionContext executionContext) {
+    public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
         if (!isOpen) {
             isOpen = true;
             valueRowIdMem.reopen();
@@ -111,6 +116,19 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
 
         this.base = base;
         baseRecord = base.getRecord();
+        final int columnTypeTag = ColumnType.tagOf(columnType);
+        switch (columnTypeTag) {
+            case ColumnType.LONG:
+            case ColumnType.TIMESTAMP:
+            case ColumnType.DATE:
+                recordAdapter = getLongRef;
+                break;
+            case ColumnType.INT:
+                recordAdapter = getIntAsLongRef;
+                break;
+            default:
+                throw SqlException.position(0).put("unsupported order by column type: ").put(ColumnType.nameOf(columnTypeTag));
+        }
         circuitBreaker = executionContext.getCircuitBreaker();
         areValuesSorted = false;
     }
@@ -134,13 +152,25 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
         }
     }
 
+    private static long getIntAsLong(Record record, int columnIndex) {
+        final int value = record.getInt(columnIndex);
+        if (value != Numbers.INT_NULL) {
+            return value;
+        }
+        return Numbers.LONG_NULL;
+    }
+
+    private static long getLong(Record record, int columnIndex) {
+        return record.getLong(columnIndex);
+    }
+
     private void sortValues() {
         // first, copy all values to the buffer
         while (base.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             // later sort assumes unsigned 64-bit integers,
             // so we flip the highest bit to get the correct order
-            valueRowIdMem.add(baseRecord.getLong(columnIndex) ^ Long.MIN_VALUE);
+            valueRowIdMem.add(recordAdapter.getLong(baseRecord, columnIndex) ^ Long.MIN_VALUE);
             valueRowIdMem.add(baseRecord.getRowId());
         }
         // now do the actual sort
@@ -162,12 +192,16 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
     }
 
     private interface Cursor {
-
         boolean hasNext();
 
         long next();
 
         void toTop();
+    }
+
+    @FunctionalInterface
+    private interface RecordAdapter {
+        long getLong(Record record, int columnIndex);
     }
 
     private class BwdCursor implements Cursor {

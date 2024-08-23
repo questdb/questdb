@@ -2832,7 +2832,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         final int columnType = orderedMetadata.getColumnType(firstOrderByColumnIndex);
                         if (configuration.isSqlOrderBySortEnabled()
                                 && orderByColumnNames.size() == 1
-                                && (columnType == ColumnType.LONG || columnType == ColumnType.TIMESTAMP || columnType == ColumnType.DATE)) {
+                                && (columnType == ColumnType.INT || columnType == ColumnType.LONG || columnType == ColumnType.TIMESTAMP || columnType == ColumnType.DATE)) {
                             return new LongSortedLightRecordCursorFactory(
                                     configuration,
                                     orderedMetadata,

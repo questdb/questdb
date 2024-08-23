@@ -35,11 +35,11 @@ import java.util.Collection;
 
 // Tests quick and radix sort-based factories
 @RunWith(Parameterized.class)
-public class OrderBySortTest extends AbstractCairoTest {
+public class OrderByRadixSortTest extends AbstractCairoTest {
     private final SortMode sortMode;
     private final SortType sortType;
 
-    public OrderBySortTest(SortMode sortMode, SortType sortType) {
+    public OrderByRadixSortTest(SortMode sortMode, SortType sortType) {
         this.sortMode = sortMode;
         this.sortType = sortType;
     }
@@ -142,6 +142,51 @@ public class OrderBySortTest extends AbstractCairoTest {
                         "     when x >= 10 and x < 15 then null" +
                         "     else x - 25" +
                         " end as date) as a" +
+                        " from long_sequence(25)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testOrderByIntColumnDescMixedValues() throws Exception {
+        assertQuery(
+                "a\n" +
+                        "9\n" +
+                        "8\n" +
+                        "7\n" +
+                        "6\n" +
+                        "5\n" +
+                        "4\n" +
+                        "3\n" +
+                        "2\n" +
+                        "1\n" +
+                        "0\n" +
+                        "-1\n" +
+                        "-2\n" +
+                        "-3\n" +
+                        "-4\n" +
+                        "-5\n" +
+                        "-6\n" +
+                        "-7\n" +
+                        "-8\n" +
+                        "-9\n" +
+                        "-10\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n",
+                "select * from x order by a desc;",
+                "create table x as (" +
+                        "select" +
+                        " cast (case" +
+                        "     when x < 10 then x" +
+                        "     when x >= 10 and x < 15 then null" +
+                        "     else x - 25" +
+                        " end as int) as a" +
                         " from long_sequence(25)" +
                         ")",
                 null,
@@ -322,6 +367,51 @@ public class OrderBySortTest extends AbstractCairoTest {
                         "     when x >= 10 and x < 15 then null" +
                         "     else x - 25" +
                         " end as timestamp) as a" +
+                        " from long_sequence(25)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testOrderIntColumnAscMixedValues() throws Exception {
+        assertQuery(
+                "a\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "null\n" +
+                        "-10\n" +
+                        "-9\n" +
+                        "-8\n" +
+                        "-7\n" +
+                        "-6\n" +
+                        "-5\n" +
+                        "-4\n" +
+                        "-3\n" +
+                        "-2\n" +
+                        "-1\n" +
+                        "0\n" +
+                        "1\n" +
+                        "2\n" +
+                        "3\n" +
+                        "4\n" +
+                        "5\n" +
+                        "6\n" +
+                        "7\n" +
+                        "8\n" +
+                        "9\n",
+                "select * from x order by a asc;",
+                "create table x as (" +
+                        "select" +
+                        " cast (case" +
+                        "     when x < 10 then x" +
+                        "     when x >= 10 and x < 15 then null" +
+                        "     else x - 25" +
+                        " end as int) as a" +
                         " from long_sequence(25)" +
                         ")",
                 null,

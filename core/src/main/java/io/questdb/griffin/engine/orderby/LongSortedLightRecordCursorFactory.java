@@ -52,9 +52,11 @@ public class LongSortedLightRecordCursorFactory extends AbstractRecordCursorFact
     ) {
         super(metadata);
         this.base = base;
+        final int columnIndex = sortColumnFilter.getColumnIndexFactored(0);
         this.cursor = new LongSortedLightRecordCursor(
                 configuration,
-                sortColumnFilter.getColumnIndexFactored(0),
+                columnIndex,
+                metadata.getColumnType(columnIndex),
                 sortColumnFilter.getColumnIndex(0) > 0
         );
         this.sortColumnFilter = sortColumnFilter;

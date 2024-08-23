@@ -3332,7 +3332,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             drainWalQueue();
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m from '2018-01-01' to '2019-01-01'",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [ts]\n" +
@@ -3345,7 +3345,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             );
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m from '2018-01-01'",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [ts]\n" +
@@ -3358,7 +3358,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             );
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m to '2019-01-01'",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [ts]\n" +
@@ -3371,7 +3371,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             );
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [ts]\n" +
@@ -3437,7 +3437,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "AND timestamp < '2024-08-11T10:16:00' \n" +
                             "AND (symbol LIKE ('BTC-USD')) \n" +
                             "SAMPLE BY 1m FILL(NONE) ALIGN TO CALENDAR",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [timestamp]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [symbol,timestamp]\n" +
