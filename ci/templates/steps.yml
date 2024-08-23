@@ -198,7 +198,7 @@ steps:
       QUESTDBR_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdbr/debug/deps/questdbr-* -type f -executable)
       llvm-cov show \
         --format=html \
-        --output-dir=questdbr-coverage-report \
+        --output-dir=questdbr-coverage-report/$(testset) \
         --ignore-filename-regex='(\.cargo/registry|rustc/.*\.rs)' \
         --instr-profile=questdbr.profdata \
         --object core/target/rust-maven-plugin/qdbr/debug/libquestdbr.so \
@@ -214,7 +214,7 @@ steps:
 
       # Convert LCOV coverage results to Cobertura XML format
       # https://www.collabora.com/news-and-blog/blog/2021/03/24/rust-integrating-llvm-source-base-code-coverage-with-gitlab/
-      python3 lcov_cobertura.py questdbr.lcov.dat --output questdbr-coverage-report/cobertura.xml --base-dir core/rust/qdbr/src
+      python3 lcov_cobertura.py questdbr.lcov.dat --output questdbr-coverage-report/$(testset).xml --base-dir core/rust/qdbr/src
     displayName: "Generate Rust coverage report"
     condition: |
       and(
