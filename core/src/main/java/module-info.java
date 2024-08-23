@@ -909,6 +909,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.table.MemoryMetricsFunctionFactory,
             io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory,
             io.questdb.griffin.engine.functions.table.ParquetScanFunctionFactory,
+            io.questdb.griffin.engine.functions.table.WaitWalTableFunctionFactory,
 
             // strpos
             io.questdb.griffin.engine.functions.str.StrPosFunctionFactory,

@@ -3,7 +3,7 @@ use std::future::IntoFuture;
 
 use futures::Future;
 
-use crate::{AsyncDB, Connection as ConnectionName, DBOutput};
+use crate::{AsyncDB, Connection as ConnectionName, DataFormat, DBOutput, DEFAULT_DATA_FORMAT};
 
 /// Trait for making connections to an [`AsyncDB`].
 ///
@@ -66,6 +66,6 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Connections<D, M> {
     ///
     /// This is a shortcut for calling `get(Default)` then `run`.
     pub async fn run_default(&mut self, sql: &str) -> Result<DBOutput<D::ColumnType>, D::Error> {
-        self.get(ConnectionName::Default).await?.run(sql).await
+        self.get(ConnectionName::Default).await?.run(sql, DEFAULT_DATA_FORMAT).await
     }
 }

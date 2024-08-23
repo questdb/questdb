@@ -904,14 +904,33 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // column is all nulls because of column top
                         dedupCommitAddresses.setColAddressValues(addr, DedupColumnCommitAddresses.NULL);
 
-                        final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
-                        dedupCommitAddresses.setO3DataAddressValues(addr, oooColAddress);
-                        dedupCommitAddresses.setReservedValuesSet1(
-                                addr,
-                                -1,
-                                -1,
-                                -1
-                        );
+                        if (columnSize > 0) {
+                            final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
+                            dedupCommitAddresses.setO3DataAddressValues(addr, oooColAddress);
+                            dedupCommitAddresses.setReservedValuesSet1(
+                                    addr,
+                                    -1,
+                                    -1,
+                                    -1
+                            );
+                        } else {
+                            final long oooVarColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
+                            final long oooVarColSize = oooColumns.get(getPrimaryColumnIndex(i)).size();
+                            final long oooAuxColAddress = oooColumns.get(getSecondaryColumnIndex(i)).addressOf(0);
+
+                            dedupCommitAddresses.setO3DataAddressValues(addr, oooAuxColAddress, oooVarColAddress, oooVarColSize);
+                            dedupCommitAddresses.setReservedValuesSet1(
+                                    addr,
+                                    -1,
+                                    -1,
+                                    -1
+                            );
+                            dedupCommitAddresses.setReservedValuesSet2(
+                                    addr,
+                                    0,
+                                    -1
+                            );
+                        }
                     }
 
                     dedupColumnIndex++;

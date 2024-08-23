@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.sqllogictest.parquet;
+package io.questdb.test.sqllogictest.dedup;
 
 import io.questdb.test.sqllogictest.AbstractSqllogicTestRunner;
 import org.junit.runner.RunWith;
@@ -31,13 +31,13 @@ import org.junit.runners.Parameterized;
 import java.util.Collection;
 
 @RunWith(Parameterized.class)
-public class ParquetTest extends AbstractSqllogicTestRunner {
-    public ParquetTest(String testFile) {
+public class DedupTest extends AbstractSqllogicTestRunner {
+    public DedupTest(String testFile) {
         super(testFile);
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> files() {
-        return files("parquet");
+        return files("dedup");
     }
 }
