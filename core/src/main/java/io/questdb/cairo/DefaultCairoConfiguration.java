@@ -790,7 +790,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getSqlSortKeyMaxPages() {
-        return 128;
+        return 1024;
     }
 
     @Override
