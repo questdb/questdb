@@ -2267,7 +2267,7 @@ public class IPv4Test extends AbstractCairoTest {
     public void testIPv4Explain() throws Exception {
         assertQuery(
                 "QUERY PLAN\n" +
-                        "Sort light\n" +
+                        "Radix sort light\n" +
                         "  keys: [ip desc]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +

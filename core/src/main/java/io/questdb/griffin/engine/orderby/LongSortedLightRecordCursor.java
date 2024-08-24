@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.*;
 
 class LongSortedLightRecordCursor implements DelegatingRecordCursor {
+    private static final RecordAdapter getIPv4AsLongRef = LongSortedLightRecordCursor::getIPv4AsLong;
     private static final RecordAdapter getIntAsLongRef = LongSortedLightRecordCursor::getIntAsLong;
     private static final RecordAdapter getLongRef = LongSortedLightRecordCursor::getLong;
     private final int columnIndex;
@@ -126,6 +127,9 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
             case ColumnType.INT:
                 recordAdapter = getIntAsLongRef;
                 break;
+            case ColumnType.IPv4:
+                recordAdapter = getIPv4AsLongRef;
+                break;
             default:
                 throw SqlException.position(0).put("unsupported order by column type: ").put(ColumnType.nameOf(columnTypeTag));
         }
@@ -150,6 +154,10 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
             valueRowIdMem.clear();
             base.toTop();
         }
+    }
+
+    private static long getIPv4AsLong(Record record, int columnIndex) {
+        return record.getLongIPv4(columnIndex);
     }
 
     private static long getIntAsLong(Record record, int columnIndex) {

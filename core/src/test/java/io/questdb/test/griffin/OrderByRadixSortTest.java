@@ -151,6 +151,96 @@ public class OrderByRadixSortTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByIPv4ColumnAscMixedValues() throws Exception {
+        assertQuery(
+                "a\n" +
+                        "\n" +
+                        "0.0.0.1\n" +
+                        "0.0.0.2\n" +
+                        "0.0.0.3\n" +
+                        "0.0.0.4\n" +
+                        "0.0.0.5\n" +
+                        "0.0.0.6\n" +
+                        "0.0.0.7\n" +
+                        "0.0.0.8\n" +
+                        "0.0.0.9\n" +
+                        "128.0.0.0\n" +
+                        "128.0.0.0\n" +
+                        "128.0.0.0\n" +
+                        "128.0.0.0\n" +
+                        "128.0.0.0\n" +
+                        "255.255.255.246\n" +
+                        "255.255.255.247\n" +
+                        "255.255.255.248\n" +
+                        "255.255.255.249\n" +
+                        "255.255.255.250\n" +
+                        "255.255.255.251\n" +
+                        "255.255.255.252\n" +
+                        "255.255.255.253\n" +
+                        "255.255.255.254\n" +
+                        "255.255.255.255\n",
+                "select * from x order by a asc;",
+                "create table x as (" +
+                        "select" +
+                        " cast (cast (case" +
+                        "     when x < 10 then x" +
+                        "     when x >= 10 and x < 15 then null" +
+                        "     else x - 25" +
+                        " end as int) as IPv4) as a" +
+                        " from long_sequence(25)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testOrderByIPv4ColumnDescMixedValues() throws Exception {
+        assertQuery(
+                "a\n" +
+                        "255.255.255.255\n" +
+                        "255.255.255.254\n" +
+                        "255.255.255.253\n" +
+                        "255.255.255.252\n" +
+                        "255.255.255.251\n" +
+                        "255.255.255.250\n" +
+                        "255.255.255.249\n" +
+                        "255.255.255.248\n" +
+                        "255.255.255.247\n" +
+                        "255.255.255.246\n" +
+                        "128.0.0.0\n" +
+                        "128.0.0.0\n" +
+                        "128.0.0.0\n" +
+                        "128.0.0.0\n" +
+                        "128.0.0.0\n" +
+                        "0.0.0.9\n" +
+                        "0.0.0.8\n" +
+                        "0.0.0.7\n" +
+                        "0.0.0.6\n" +
+                        "0.0.0.5\n" +
+                        "0.0.0.4\n" +
+                        "0.0.0.3\n" +
+                        "0.0.0.2\n" +
+                        "0.0.0.1\n" +
+                        "\n",
+                "select * from x order by a desc;",
+                "create table x as (" +
+                        "select" +
+                        " cast (cast (case" +
+                        "     when x < 10 then x" +
+                        "     when x >= 10 and x < 15 then null" +
+                        "     else x - 25" +
+                        " end as int) as IPv4) as a" +
+                        " from long_sequence(25)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testOrderByIntColumnDescMixedValues() throws Exception {
         assertQuery(
                 "a\n" +

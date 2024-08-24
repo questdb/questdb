@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -35,7 +36,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 
 /**
- * Radix sort-based factory for ORDER BY over a single long/timestamp/date column.
+ * Radix sort-based factory for ORDER BY over a single int/ipv4/long/timestamp/date column.
  * Memory overhead is similar to {@link SortedRecordCursorFactory}:
  * each row takes 32 bytes vs 36 bytes in the red-black tree-based factory.
  */
@@ -66,6 +67,14 @@ public class LongSortedLightRecordCursorFactory extends AbstractRecordCursorFact
         sink.attr("keys").val('[');
         filter.toPlan(sink);
         sink.val(']');
+    }
+
+    public static boolean isSupportedColumnType(int columnType) {
+        return columnType == ColumnType.INT
+                || columnType == ColumnType.IPv4
+                || columnType == ColumnType.LONG
+                || columnType == ColumnType.TIMESTAMP
+                || columnType == ColumnType.DATE;
     }
 
     @Override
