@@ -117,10 +117,10 @@ stages:
               /usr/lib/jvm/temurin-11-jdk-amd64/bin/java -jar /home/vsts/work/1/s/ci/cover-checker-1.5.0-all.jar \
                 -type jacoco --cover /home/vsts/work/1/jacoco-coverage/jacoco.xml \
                 -type cobertura --cover /home/vsts/work/1/rust-llvm-coverage/coverage-griffin.xml \
+                -type cobertura --cover /home/vsts/work/1/rust-llvm-coverage/coverage-cairo.xml \
                 --repo questdb/questdb --pr $(System.PullRequest.PullRequestNumber) -t $(DIFF_COVER_THRESHOLD_PCT) \
                 --github-token $(GH_TOKEN)
 
-              # -type cobertura --cover /home/vsts/work/1/rust-llvm-coverage/coverage-cairo.xml \
 
               # JACOCO_FILE="$(Pipeline.Workspace)/jacoco-coverage/jacoco.xml"
               # if [ -f $JACOCO_FILE ]; then
