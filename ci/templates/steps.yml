@@ -173,9 +173,8 @@ steps:
       # List profraw files for debugging purposes
       find . -name \*.profraw
 
-      PROFRAW_FILES=$(for f in "core/rust/qdbr/questdbr-cargo-test.profraw core/questdbr-junit.profraw"; do \ 
-        [ -f "$f" ] && echo -n "$f "; \
-      done)
+      CANDIDATE_FILES="core/rust/qdbr/questdbr-cargo-test.profraw core/questdbr-junit.profraw"
+      PROFRAW_FILES=$(for f in $CANDIDATE_FILES; do [ -f "$f" ] && echo -n "$f "; done)
       PROFRAW_FILES=${PROFRAW_FILES% }
 
       if [ -z "$PROFRAW_FILES" ]; then
