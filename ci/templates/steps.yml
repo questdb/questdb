@@ -59,7 +59,8 @@ steps:
     condition: |
       and(
         startsWith(variables['testset'], 'coverage'),
-        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
       )
 
   - script: python3 ci/prepare_rust_env.py --export-cargo-install-env
@@ -141,7 +142,8 @@ steps:
         startsWith(variables['testset'], 'coverage'),
         or( 
             eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
-            eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+            eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+            eq(variables['System.PullRequest.IsFork'], 'false')
         )
       )
 
@@ -219,7 +221,8 @@ steps:
     condition: |
       and(
         startsWith(variables['testset'], 'coverage'),
-        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
       )
 
   - task: PublishBuildArtifacts@1
