@@ -110,30 +110,74 @@ stages:
             artifact: jacoco-coverage
           - download: current
             artifact: rust-llvm-coverage
+
+          - bash: |
+              set -eux
+              # Fetch and execute LLVM installation script
+              wget https://apt.llvm.org/llvm.sh
+              sudo bash llvm.sh
+              # CURRENT_LLVM_STABLE in the script tells which version it installed. Extract it from the script: 
+              export $(grep CURRENT_LLVM_STABLE= llvm.sh)
+              # ... and set a task variable to its value
+              echo "##vso[task.setvariable variable=LLVM_VERSION]$CURRENT_LLVM_STABLE"
+
+              # Explicitly install version-specific llvm package, in case the script didn't do it:
+              sudo apt-get install llvm-$CURRENT_LLVM_STABLE
+
+              # Check existence of the command we'll use
+              export PATH=/usr/lib/llvm-$CURRENT_LLVM_STABLE/bin:$PATH
+              llvm-cov --version
+
+              # Install Cobertura
+              wget https://raw.githubusercontent.com/eriwen/lcov-to-cobertura-xml/master/lcov_cobertura/lcov_cobertura.py
+              chmod +x lcov_cobertura.py
+            displayName: "Install Rust coverage dependencies"
+            condition: eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+
           - bash: |
               set -eux
               ls -al $(Pipeline.Workspace)/rust-llvm-coverage
 
-              /usr/lib/jvm/temurin-11-jdk-amd64/bin/java -jar /home/vsts/work/1/s/ci/cover-checker-1.5.0-all.jar \
-                -type jacoco --cover /home/vsts/work/1/jacoco-coverage/jacoco.xml \
-                -type cobertura --cover /home/vsts/work/1/rust-llvm-coverage/coverage-griffin.xml \
-                -type cobertura --cover /home/vsts/work/1/rust-llvm-coverage/coverage-cairo.xml \
-                --repo questdb/questdb --pr $(System.PullRequest.PullRequestNumber) -t $(DIFF_COVER_THRESHOLD_PCT) \
-                --github-token $(GH_TOKEN)
+              # Merge partial profdata files into the complete report
+              llvm-profdata merge -sparse -o questdbr.profdata $(Pipeline.Workspace)/rust-llvm-coverage/*.profdata
 
+              # Compile the merged coverage report into an HTML report
+              llvm-cov show \
+              --format=html \
+              --output-dir=questdbr-coverage-report/$(testset) \
+              --ignore-filename-regex='(\.cargo/registry|rustc/.*\.rs)' \
+              --instr-profile=questdbr.profdata \
+              --object $(Pipeline.Workspace)/rust-llvm-coverage/libquestdbr.so \
+              --object $(Pipeline.Workspace)/rust-llvm-coverage/questdbr-test-binary
 
-              # JACOCO_FILE="$(Pipeline.Workspace)/jacoco-coverage/jacoco.xml"
-              # if [ -f $JACOCO_FILE ]; then
-              #   JACOCO_ARGS="-type jacoco --cover $JACOCO_FILE"
-              # else
-              #   JACOCO_ARGS=""
-              # fi
-              # RUST_ARGS=""
-              # for a in $(Pipeline.Workspace)/rust-llvm-coverage/coverage-*.xml; do
-              #   RUST_ARGS="$RUST_ARGS -type cobertura --cover $a"
-              # done
-              # $JAVA_HOME_11_X64/bin/java -jar \
-              #   $(Build.SourcesDirectory)/ci/cover-checker-1.5.0-all.jar \
-              #   $JACOCO_ARGS $RUST_ARGS --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) \
-              #   -t $(DIFF_COVER_THRESHOLD_PCT) --github-token $(GH_TOKEN)
-            displayName: "Diff coverage PR report"
+              # Export the merged coverage report to LCOV format
+              llvm-cov export \
+              --format=lcov \
+              --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
+              --instr-profile=questdbr.profdata \
+              --object $(Pipeline.Workspace)/rust-llvm-coverage/libquestdbr.so \
+              --object $(Pipeline.Workspace)/rust-llvm-coverage/questdbr-test-binary
+
+              # Convert LCOV coverage results to Cobertura XML format
+              # https://www.collabora.com/news-and-blog/blog/2021/03/24/rust-integrating-llvm-source-base-code-coverage-with-gitlab/
+              python3 lcov_cobertura.py questdbr.lcov.dat --output cobertura.xml --base-dir core/rust/qdbr/src
+            displayName: "Merge partial Rust coverage reports into Cobertura format"
+            condition: eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+
+          - bash: |
+              set -eux
+              JACOCO_ARGS=""
+              RUST_ARGS=""
+              for f in $(Pipeline.Workspace)/jacoco-coverage/jacoco.xml; do
+                JACOCO_ARGS=" -type cobertura --cover $f"
+              done
+              for f in $(Pipeline.Workspace)/rust-llvm-coverage/cobertura.xml; do
+                RUST_ARGS=" -type cobertura --cover $f"
+              done
+
+              $JAVA_HOME_11_X64/bin/java -jar \
+                $(Build.SourcesDirectory)/ci/cover-checker-1.5.0-all.jar \
+                $JACOCO_ARGS $RUST_ARGS --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) \
+                -t $(DIFF_COVER_THRESHOLD_PCT) --github-token $(GH_TOKEN)
+
+            displayName: "Combine JaCoCo and Cobertura reports, create report for the PR's diff"

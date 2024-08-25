@@ -47,14 +47,9 @@ steps:
       # Explicitly install version-specific llvm package, in case the script didn't do it:
       sudo apt-get install llvm-$CURRENT_LLVM_STABLE
 
-      # Check existence of commands we'll use later
+      # Check existence of the command we'll use
       export PATH=/usr/lib/llvm-$CURRENT_LLVM_STABLE/bin:$PATH
       llvm-profdata --version
-      llvm-cov --version
-
-      # Install Cobertura
-      wget https://raw.githubusercontent.com/eriwen/lcov-to-cobertura-xml/master/lcov_cobertura/lcov_cobertura.py
-      chmod +x lcov_cobertura.py
     displayName: "Install Rust coverage dependencies"
     condition: |
       and(
@@ -173,57 +168,77 @@ steps:
       artifactName: MavenFailedTestsLogs
 
   - bash: |
-      ## Generate Rust coverage report
       set -eux
       export PATH=/usr/lib/llvm-$LLVM_VERSION/bin:$PATH
       # List profraw files for debugging purposes
       find . -name \*.profraw
 
-      FROM_RUST_TEST=core/rust/qdbr/questdbr-cargo-test.profraw
-      FROM_JAVA_TEST=core/questdbr-junit.profraw
-      if [ ! -f $FROM_RUST_TEST ]; then
-        FROM_RUST_TEST=""
-      fi
-      if [ ! -f $FROM_JAVA_TEST ]; then
-        FROM_JAVA_TEST=""
-      fi
+      PROFRAW_FILES=$(for f in "core/rust/qdbr/questdbr-cargo-test.profraw core/questdbr-junit.profraw"; do \ 
+        [ -f "$f" ] && echo -n "$f "; \
+      done)
+      PROFRAW_FILES=${PROFRAW_FILES% }
 
-      # Merge the raw Rust coverage reports
-      if [ -n "$FROM_RUST_TEST" -o -n "$FROM_JAVA_TEST" ]; then
-        llvm-profdata merge -sparse -o questdbr.profdata $FROM_RUST_TEST $FROM_JAVA_TEST
-      else
+      if [ -z "$PROFRAW_FILES" ]; then
         echo "LLVM profiling files not found"
         exit -1
       fi
-
-      # Compile the merged coverage report into an HTML report
-      QUESTDBR_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdbr/debug/deps/questdbr-* -type f -executable)
-      llvm-cov show \
-        --format=html \
-        --output-dir=questdbr-coverage-report/$(testset) \
-        --ignore-filename-regex='(\.cargo/registry|rustc/.*\.rs)' \
-        --instr-profile=questdbr.profdata \
-        --object core/target/rust-maven-plugin/qdbr/debug/libquestdbr.so \
-        --object $QUESTDBR_TEST_BIN
-
-      # Export the merged coverage report to LCOV format
-      llvm-cov export \
-        --format=lcov \
-        --ignore-filename-regex='(.cargo/registry|rustc/.*\.rs)' \
-        --instr-profile=questdbr.profdata \
-        --object core/target/rust-maven-plugin/qdbr/debug/libquestdbr.so \
-        --object $QUESTDBR_TEST_BIN > questdbr.lcov.dat
-
-      # Convert LCOV coverage results to Cobertura XML format
-      # https://www.collabora.com/news-and-blog/blog/2021/03/24/rust-integrating-llvm-source-base-code-coverage-with-gitlab/
-      python3 lcov_cobertura.py questdbr.lcov.dat --output questdbr-coverage-report/$(testset).xml --base-dir core/rust/qdbr/src
-    displayName: "Generate Rust coverage report"
+      llvm-profdata merge -sparse -o $(testset).profdata $PROFRAW_FILES
+      mkdir questdbr-coverage-report
+      mv $(testset).profdata questdbr-coverage-report/
+    displayName: "Create partial Rust coverage report in LLVM format"
     condition: |
       and(
         startsWith(variables['testset'], 'coverage'),
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
         eq(variables['System.PullRequest.IsFork'], 'false')
       )
+  - task: PublishBuildArtifacts@1
+    displayName: "Upload Rust coverage report"
+    condition: |
+      and(
+        startsWith(variables['testset'], 'coverage'),
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
+    inputs:
+      pathToPublish: $(Build.SourcesDirectory)/questdbr-coverage-report
+      artifactName: rust-llvm-coverage
+
+  - bash: |
+      QUESTDBR_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdbr/debug/deps/questdbr-* -type f -executable)
+      mkdir rust-coverage-binaries
+      mv core/target/rust-maven-plugin/qdbr/debug/libquestdbr.so rust-coverage-binaries/
+      mv $QUESTDBR_TEST_BIN rust-coverage-binaries/questdbr-test-binary
+    displayName: "Prepare Rust coverage binaries for upload"
+    condition: |
+      and(
+        eq(variables['testset'], 'coverage-griffin'),
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
+  - task: PublishBuildArtifacts@1
+    displayName: "Upload Rust coverage binaries"
+    condition: |
+      and(
+        eq(variables['testset'], 'coverage-griffin'),
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
+    inputs:
+      pathToPublish: $(Build.SourcesDirectory)/rust-coverage-binaries
+      artifactName: rust-llvm-coverage
+
+  - task: PublishBuildArtifacts@1
+    displayName: "Upload Rust binaries needed to merge coverage files"
+    condition: |
+      and(
+        startsWith(variables['testset'], 'coverage'),
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
+    inputs:
+      pathToPublish: $(Build.SourcesDirectory)/questdbr-coverage-report
+      artifactName: rust-coverage-binaries
 
   - task: PublishBuildArtifacts@1
     displayName: "Upload Java coverage report"
@@ -236,14 +251,3 @@ steps:
     inputs:
       pathToPublish: $(Build.SourcesDirectory)/core/CCReport43F6D5EF
       artifactName: jacoco-coverage
-  - task: PublishBuildArtifacts@1
-    displayName: "Upload Rust coverage report"
-    condition: |
-      and(
-        startsWith(variables['testset'], 'coverage'),
-        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-        eq(variables['System.PullRequest.IsFork'], 'false')
-      )
-    inputs:
-      pathToPublish: $(Build.SourcesDirectory)/questdbr-coverage-report
-      artifactName: rust-llvm-coverage
