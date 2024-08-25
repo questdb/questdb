@@ -204,6 +204,7 @@ steps:
       artifactName: rust-llvm-coverage
 
   - bash: |
+      set -eux
       QUESTDBR_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdbr/debug/deps/questdbr-* -type f -executable)
       mkdir rust-coverage-binaries
       mv core/target/rust-maven-plugin/qdbr/debug/libquestdbr.so rust-coverage-binaries/
