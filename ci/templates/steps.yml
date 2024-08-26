@@ -229,18 +229,6 @@ steps:
       artifactName: rust-llvm-coverage
 
   - task: PublishBuildArtifacts@1
-    displayName: "Upload Rust binaries needed to merge coverage files"
-    condition: |
-      and(
-        startsWith(variables['testset'], 'coverage'),
-        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-        eq(variables['System.PullRequest.IsFork'], 'false')
-      )
-    inputs:
-      pathToPublish: $(Build.SourcesDirectory)/questdbr-coverage-report
-      artifactName: rust-coverage-binaries
-
-  - task: PublishBuildArtifacts@1
     displayName: "Upload Java coverage report"
     condition: |
       and(
