@@ -156,6 +156,11 @@ steps:
       set -eux
       mv core/CCReport43F6D5EF/jacoco.exec $(testset).exec
     displayName: "Prepare partial JaCoCo report for upload"
+    condition: |
+      and(
+        startsWith(variables['testset'], 'coverage'),
+        eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
+      )
   - task: PublishBuildArtifacts@1
     displayName: "Upload partial JaCoCo report"
     condition: |
