@@ -26,9 +26,9 @@ package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.math.MulIntFunctionFactory;
 import io.questdb.std.Numbers;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class MulIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
@@ -55,6 +55,16 @@ public class MulIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
     @Test
     public void testSimple() throws SqlException {
         call(10, 81).andAssert(810);
+    }
+
+    @Test
+    public void testTimestamp() throws SqlException {
+        call(10, 81).andAssertTimestamp(810);
+    }
+
+    @Test
+    public void testTimestampIntOverflow() throws SqlException {
+        call(1720468802, 1000000).andAssertTimestamp(1720468802000000L);
     }
 
     @Override

@@ -22,43 +22,41 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions.math;
+package io.questdb.griffin.engine.functions.constants;
 
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.math.MulLongFunctionFactory;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.Numbers;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
-import org.junit.Test;
 
-public class MulLongFunctionFactoryTest extends AbstractFunctionFactoryTest {
-    @Test
-    public void testBothNan() throws SqlException {
-        call(Numbers.LONG_NULL, Numbers.LONG_NULL).andAssert(Numbers.LONG_NULL);
-    }
+public class TimestampAwareIntConstant extends IntFunction implements ConstantFunction {
+    public static final IntConstant NULL = new IntConstant(Numbers.INT_NULL);
 
-    @Test
-    public void testLeftNan() throws SqlException {
-        call(Numbers.LONG_NULL, 5L).andAssert(Numbers.LONG_NULL);
-    }
+    private final int intValue;
+    private final long tsValue;
 
-    @Test
-    public void testMulByZero() throws SqlException {
-        call(10L, 0L).andAssert(0L);
-    }
-
-    @Test
-    public void testRightNan() throws SqlException {
-        call(123L, Numbers.LONG_NULL).andAssert(Numbers.LONG_NULL);
-    }
-
-    @Test
-    public void testSimple() throws SqlException {
-        call(10L, 81L).andAssert(810L);
+    public TimestampAwareIntConstant(int intValue, long tsValue) {
+        this.intValue = intValue;
+        this.tsValue = tsValue;
     }
 
     @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new MulLongFunctionFactory();
+    public int getInt(Record rec) {
+        return intValue;
+    }
+
+    @Override
+    public long getTimestamp(Record rec) {
+        return tsValue;
+    }
+
+    @Override
+    public boolean isNullConstant() {
+        return intValue == Numbers.INT_NULL && tsValue == Numbers.LONG_NULL;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val(intValue).val(tsValue);
     }
 }

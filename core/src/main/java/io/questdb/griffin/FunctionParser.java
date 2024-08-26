@@ -999,7 +999,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (function instanceof IntConstant) {
                     return function;
                 } else {
-                    return IntConstant.newInstance(function.getInt(null));
+                    int intConst = function.getInt(null);
+                    long tsConst = function.getTimestamp(null);
+                    if (intConst == tsConst) {
+                        return IntConstant.newInstance(intConst);
+                    } else {
+                        return new TimestampAwareIntConstant(intConst, tsConst);
+                    }
                 }
             case ColumnType.BOOLEAN:
                 if (function instanceof BooleanConstant) {
