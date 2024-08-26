@@ -170,7 +170,7 @@ stages:
               set -eux
               COVER_ARGS=""
               for f in "$(Pipeline.Workspace)/jacoco-coverage/jacoco.xml"; do
-                [ -f "$f" ] && COVER_ARGS="$COVER_ARGS -type jacoco --cover $f"
+                [ -f "$f" ] && COVER_ARGS=" -type jacoco --cover $f"
               done
               [ -f cobertura.xml ] && COVER_ARGS="$COVER_ARGS -type cobertura --cover cobertura.xml"
 
