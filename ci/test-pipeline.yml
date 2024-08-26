@@ -162,6 +162,8 @@ stages:
 
           - bash: |
               set -eux
+              ls -al ci/target/coverage-reports
+              ls -al ../jacoco-aggregate
               COVER_ARGS=""
               for f in "$(Pipeline.Workspace)/jacoco-aggregate/jacoco.xml"; do
                 [ -f "$f" ] && COVER_ARGS="-type jacoco --cover $f"
