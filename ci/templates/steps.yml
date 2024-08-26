@@ -157,7 +157,6 @@ steps:
       export PATH=/usr/lib/llvm-$LLVM_VERSION/bin:$PATH
       # List profraw files for debugging purposes
       find . -name \*.profraw
-
       CANDIDATE_FILES="core/rust/qdbr/questdbr-cargo-test.profraw core/questdbr-junit.profraw"
       PROFRAW_FILES=$(for f in $CANDIDATE_FILES; do [ -f "$f" ] && echo -n "$f "; done)
       PROFRAW_FILES=${PROFRAW_FILES% }
@@ -165,10 +164,7 @@ steps:
         echo "LLVM profiling files not found"
         exit -1
       fi
-
       llvm-profdata merge -sparse -o $(testset).profdata $PROFRAW_FILES
-      mkdir questdbr-coverage-report
-      mv $(testset).profdata questdbr-coverage-report/
     displayName: "Create partial Rust coverage report in LLVM format"
     condition: |
       and(
@@ -185,9 +181,8 @@ steps:
         eq(variables['System.PullRequest.IsFork'], 'false')
       )
     inputs:
-      pathToPublish: $(Build.SourcesDirectory)/questdbr-coverage-report
+      pathToPublish: $(Build.SourcesDirectory)/$(testset).profdata
       artifactName: rust-llvm-coverage
-
   - bash: |
       set -eux
       QUESTDBR_TEST_BIN=$(find ./core/target/rust-maven-plugin/qdbr/debug/deps/questdbr-* -type f -executable)
