@@ -120,6 +120,7 @@ stages:
               path: $(MAVEN_CACHE_FOLDER)
           - task: Maven@3
             displayName: "Compile with Maven"
+            condition: eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
             inputs:
               mavenPomFile: "core/pom.xml"
               mavenOptions: "$(MAVEN_OPTS)"
@@ -128,6 +129,7 @@ stages:
               jdkVersionOption: "1.11"
           - task: Maven@3
             displayName: "Merge partial JaCoCo reports"
+            condition: eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
             inputs:
               mavenPomFile: "ci/jacoco-merge.xml"
               goals: "verify"
@@ -139,9 +141,6 @@ stages:
           - bash: |
               set -eux
               export PATH=/usr/lib/llvm-$LLVM_VERSION/bin:$PATH
-              pwd
-              echo $(Build.SourcesDirectory)
-              echo $(Pipeline.Workspace)
               ls -al $(Pipeline.Workspace)/rust-llvm-coverage
 
               # Merge partial profdata files into the complete report
@@ -174,8 +173,6 @@ stages:
 
           - bash: |
               set -eux
-              ls -al ci/target/coverage-reports
-              ls -al ../jacoco-aggregate
               COVER_ARGS=""
               for f in "$(Pipeline.Workspace)/jacoco-aggregate/jacoco.xml"; do
                 [ -f "$f" ] && COVER_ARGS="-type jacoco --cover $f"
