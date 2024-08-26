@@ -110,7 +110,7 @@ stages:
             artifact: jacoco-coverage
           - download: current
             artifact: rust-llvm-coverage
-          - template: install-llvm.yml
+          - template: templates/install-llvm.yml
             parameters:
               shouldRun: eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
           - bash: |
