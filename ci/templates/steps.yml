@@ -154,6 +154,21 @@ steps:
 
   - bash: |
       set -eux
+      mv core/CCReport43F6D5EF/jacoco.exec $(testset).exec
+    displayName: "Prepare partial JaCoCo report for upload"
+  - task: PublishBuildArtifacts@1
+    displayName: "Upload partial JaCoCo report"
+    condition: |
+      and(
+        startsWith(variables['testset'], 'coverage'),
+        eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
+      )
+    inputs:
+      pathToPublish: $(Build.SourcesDirectory)/$(testset).exec
+      artifactName: jacoco-coverage
+  - bash: |
+      set -eux
       export PATH=/usr/lib/llvm-$LLVM_VERSION/bin:$PATH
       # List profraw files for debugging purposes
       find . -name \*.profraw
@@ -207,15 +222,3 @@ steps:
     inputs:
       pathToPublish: $(Build.SourcesDirectory)/rust-coverage-binaries
       artifactName: rust-llvm-coverage
-
-  - task: PublishBuildArtifacts@1
-    displayName: "Upload Java coverage report"
-    condition: |
-      and(
-        startsWith(variables['testset'], 'coverage'),
-        eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
-        eq(variables['System.PullRequest.IsFork'], 'false')
-      )
-    inputs:
-      pathToPublish: $(Build.SourcesDirectory)/core/CCReport43F6D5EF
-      artifactName: jacoco-coverage
