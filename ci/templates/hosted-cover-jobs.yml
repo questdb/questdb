@@ -27,7 +27,7 @@ jobs:
           os: Linux
           jdk: "1.11"
           testset: "coverage-other"
-          includeTests: "**/cutlass/**"
+          includeTests: "**/std/**"
           javadoc_step: ""
           javadoc_profile: ""
     pool:
