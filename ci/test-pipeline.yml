@@ -110,30 +110,8 @@ stages:
             artifact: jacoco-coverage
           - download: current
             artifact: rust-llvm-coverage
-
-          - bash: |
-              set -eux
-              # Fetch and execute LLVM installation script
-              wget https://apt.llvm.org/llvm.sh
-              sudo bash llvm.sh
-              # CURRENT_LLVM_STABLE in the script tells which version it installed. Extract it from the script: 
-              export $(grep CURRENT_LLVM_STABLE= llvm.sh)
-              # ... and set a task variable to its value
-              echo "##vso[task.setvariable variable=LLVM_VERSION]$CURRENT_LLVM_STABLE"
-
-              # Explicitly install version-specific llvm package, in case the script didn't do it:
-              sudo apt-get install llvm-$CURRENT_LLVM_STABLE
-
-              # Check existence of the command we'll use
-              export PATH=/usr/lib/llvm-$CURRENT_LLVM_STABLE/bin:$PATH
-              llvm-cov --version
-
-              # Install Cobertura
-              wget https://raw.githubusercontent.com/eriwen/lcov-to-cobertura-xml/master/lcov_cobertura/lcov_cobertura.py
-              chmod +x lcov_cobertura.py
-            displayName: "Install Rust coverage dependencies"
+          - template: install-llvm.yml
             condition: eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
-
           - bash: |
               set -eux
               export PATH=/usr/lib/llvm-$LLVM_VERSION/bin:$PATH
@@ -162,6 +140,7 @@ stages:
 
               # Convert LCOV coverage results to Cobertura XML format
               # https://www.collabora.com/news-and-blog/blog/2021/03/24/rust-integrating-llvm-source-base-code-coverage-with-gitlab/
+              wget https://raw.githubusercontent.com/eriwen/lcov-to-cobertura-xml/master/lcov_cobertura/lcov_cobertura.py
               python3 lcov_cobertura.py questdbr.lcov.dat --output cobertura.xml --base-dir core/rust/qdbr/src
             displayName: "Merge partial Rust coverage reports into Cobertura format"
             condition: eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
@@ -178,5 +157,4 @@ stages:
                 $(Build.SourcesDirectory)/ci/cover-checker-1.5.0-all.jar \
                 $COVER_ARGS --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) \
                 -t $(DIFF_COVER_THRESHOLD_PCT) --github-token $(GH_TOKEN)
-
             displayName: "Combine JaCoCo and Cobertura reports, create report for the PR's diff"

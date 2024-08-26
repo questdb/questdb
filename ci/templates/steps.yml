@@ -34,23 +34,7 @@ steps:
       destinationFolder: '$(build.sourcesdirectory)/maven'
     condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'))
 
-  - bash: |
-      set -eux
-      # Fetch and execute LLVM installation script
-      wget https://apt.llvm.org/llvm.sh
-      sudo bash llvm.sh
-      # CURRENT_LLVM_STABLE in the script tells which version it installed. Extract it from the script: 
-      export $(grep CURRENT_LLVM_STABLE= llvm.sh)
-      # ... and set a task variable to its value
-      echo "##vso[task.setvariable variable=LLVM_VERSION]$CURRENT_LLVM_STABLE"
-
-      # Explicitly install version-specific llvm package, in case the script didn't do it:
-      sudo apt-get install llvm-$CURRENT_LLVM_STABLE
-
-      # Check existence of the command we'll use
-      export PATH=/usr/lib/llvm-$CURRENT_LLVM_STABLE/bin:$PATH
-      llvm-profdata --version
-    displayName: "Install Rust coverage dependencies"
+  - template: install-llvm.yml
     condition: |
       and(
         startsWith(variables['testset'], 'coverage'),
@@ -176,11 +160,11 @@ steps:
       CANDIDATE_FILES="core/rust/qdbr/questdbr-cargo-test.profraw core/questdbr-junit.profraw"
       PROFRAW_FILES=$(for f in $CANDIDATE_FILES; do [ -f "$f" ] && echo -n "$f "; done)
       PROFRAW_FILES=${PROFRAW_FILES% }
-
       if [ -z "$PROFRAW_FILES" ]; then
         echo "LLVM profiling files not found"
         exit -1
       fi
+
       llvm-profdata merge -sparse -o $(testset).profdata $PROFRAW_FILES
       mkdir questdbr-coverage-report
       mv $(testset).profdata questdbr-coverage-report/
