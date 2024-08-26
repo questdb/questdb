@@ -120,7 +120,7 @@ stages:
               mavenPomFile: "ci/jacoco-merge.xml"
               goals: "verify"
               options:
-                "-Dhttp.keepAlive=false -DincludeRoot=$(Pipeline.Workspace)
+                "--batch-mode -Dhttp.keepAlive=false -DincludeRoot=$(Pipeline.Workspace)
                 -DoutputDirectory=$(Pipeline.Workspace)/jacoco-aggregate
                 -DcoverDiff=$(COVERAGE_DIFF)
                 -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
