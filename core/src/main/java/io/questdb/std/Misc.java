@@ -90,13 +90,6 @@ public final class Misc {
         return null;
     }
 
-    public static void freeMapAndClear(ConcurrentHashMap<? extends Closeable> map) {
-        if (map != null) {
-            map.forEach(HASH_MAP_CLEANER);
-            map.clear();
-        }
-    }
-
     public static <T extends Closeable> void freeObjList(ObjList<T> list) {
         if (list != null) {
             freeObjList0(list);
@@ -120,7 +113,7 @@ public final class Misc {
         }
     }
 
-    //same as freeObjList() but can be used when input object type is not guaranteed to be Closeable
+    // same as freeObjList() but can be used when input object type is not guaranteed to be Closeable
     public static <T> void freeObjListIfCloseable(ObjList<T> list) {
         if (list != null) {
             freeObjList0(list);

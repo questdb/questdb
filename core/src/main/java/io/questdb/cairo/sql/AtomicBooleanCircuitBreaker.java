@@ -33,7 +33,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     private final int throttle;
     private AtomicBoolean cancelledFlag;
-    private int fd = -1;
+    private long fd = -1;
     private int testCount = 0;
 
     public AtomicBooleanCircuitBreaker() {
@@ -50,7 +50,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     @Override
-    public boolean checkIfTripped(long millis, int fd) {
+    public boolean checkIfTripped(long millis, long fd) {
         return isCancelled();
     }
 
@@ -70,7 +70,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     @Override
-    public int getFd() {
+    public long getFd() {
         return fd;
     }
 
@@ -80,7 +80,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     @Override
-    public int getState(long millis, int fd) {
+    public int getState(long millis, long fd) {
         return getState();
     }
 
@@ -104,7 +104,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     @Override
-    public void setFd(int fd) {
+    public void setFd(long fd) {
         this.fd = fd;
     }
 

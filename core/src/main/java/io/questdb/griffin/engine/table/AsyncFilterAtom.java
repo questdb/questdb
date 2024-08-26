@@ -43,18 +43,19 @@ import java.util.concurrent.atomic.LongAdder;
 public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
 
     public static final LongAdder PRE_TOUCH_BLACK_HOLE = new LongAdder();
-
+    private final IntList columnTypes;
     private final Function filter;
+    private final boolean forceDisablePreTouch;
     private final ObjList<Function> perWorkerFilters;
     private final PerWorkerLocks perWorkerLocks;
-    private final IntList preTouchColumnTypes;
     private boolean preTouchEnabled;
 
     public AsyncFilterAtom(
             @NotNull CairoConfiguration configuration,
             @NotNull Function filter,
             @Nullable ObjList<Function> perWorkerFilters,
-            @Nullable IntList preTouchColumnTypes
+            @NotNull IntList columnTypes,
+            boolean forceDisablePreTouch
     ) {
         this.filter = filter;
         this.perWorkerFilters = perWorkerFilters;
@@ -63,7 +64,8 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
         } else {
             perWorkerLocks = null;
         }
-        this.preTouchColumnTypes = preTouchColumnTypes;
+        this.columnTypes = columnTypes;
+        this.forceDisablePreTouch = forceDisablePreTouch;
     }
 
     public int acquireFilter(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -124,17 +126,17 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
      * @param record record to use
      * @param rows   rows to pre-touch
      */
-    public void preTouchColumns(PageAddressCacheRecord record, DirectLongList rows) {
-        if (!preTouchEnabled || preTouchColumnTypes == null) {
+    public void preTouchColumns(PageFrameMemoryRecord record, DirectLongList rows) {
+        if (!preTouchEnabled || forceDisablePreTouch) {
             return;
         }
         // We use a LongAdder as a black hole to make sure that the JVM JIT compiler keeps the load instructions in place.
         long sum = 0;
-        for (long p = 0; p < rows.size(); p++) {
+        for (long p = 0, n = rows.size(); p < n; p++) {
             long r = rows.get(p);
             record.setRowIndex(r);
-            for (int i = 0; i < preTouchColumnTypes.size(); i++) {
-                int columnType = preTouchColumnTypes.getQuick(i);
+            for (int i = 0; i < columnTypes.size(); i++) {
+                int columnType = columnTypes.getQuick(i);
                 switch (ColumnType.tagOf(columnType)) {
                     case ColumnType.BOOLEAN:
                         sum += record.getBool(i) ? 1 : 0;
@@ -144,6 +146,9 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
                         break;
                     case ColumnType.SHORT:
                         sum += record.getShort(i);
+                        break;
+                    case ColumnType.CHAR:
+                        sum += record.getChar(i);
                         break;
                     case ColumnType.INT:
                     case ColumnType.IPv4:
@@ -188,10 +193,10 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
                         }
                         break;
                     case ColumnType.VARCHAR:
-                        Utf8Sequence vs = record.getVarcharA(i);
-                        if (vs != null && vs.size() > 0) {
+                        Utf8Sequence us = record.getVarcharA(i);
+                        if (us != null && us.size() > 0) {
                             // Touch the first page of the varchar contents only.
-                            sum += vs.byteAt(0);
+                            sum += us.byteAt(0);
                         }
                         break;
                     case ColumnType.BINARY:

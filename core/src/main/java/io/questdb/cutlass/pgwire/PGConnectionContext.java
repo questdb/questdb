@@ -33,8 +33,8 @@ import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
+import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.text.TextLoader;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -146,7 +146,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private IntList activeBindVariableTypes;
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private IntList activeSelectColumnTypes;
-    private Authenticator authenticator;
+    private SocketAuthenticator authenticator;
     private BindVariableService bindVariableService;
     private int bufferRemainingOffset = 0;
     private int bufferRemainingSize = 0;
@@ -525,7 +525,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     @Override
-    public PGConnectionContext of(int fd, @NotNull IODispatcher<PGConnectionContext> dispatcher) {
+    public PGConnectionContext of(long fd, @NotNull IODispatcher<PGConnectionContext> dispatcher) {
         super.of(fd, dispatcher);
         sqlExecutionContext.with(fd);
         if (recvBuffer == 0) {
@@ -540,7 +540,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         return this;
     }
 
-    public void setAuthenticator(Authenticator authenticator) {
+    public void setAuthenticator(SocketAuthenticator authenticator) {
         this.authenticator = authenticator;
     }
 
@@ -789,7 +789,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         final float floatValue = record.getFloat(columnIndex);
         if (floatValue == floatValue) {
             final long a = responseUtf8Sink.skip();
-            responseUtf8Sink.put(floatValue, 3);
+            responseUtf8Sink.put(floatValue);
             responseUtf8Sink.putLenEx(a);
         } else {
             responseUtf8Sink.setNullValue();
@@ -1707,9 +1707,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         int r;
         try {
             r = authenticator.handleIO();
-            if (r == Authenticator.OK) {
+            if (r == SocketAuthenticator.OK) {
                 try {
-                    final SecurityContext securityContext = securityContextFactory.getInstance(authenticator.getPrincipal(), authenticator.getAuthType(), SecurityContextFactory.PGWIRE);
+                    final SecurityContext securityContext = securityContextFactory.getInstance(authenticator.getPrincipal(), authenticator.getGroups(), authenticator.getAuthType(), SecurityContextFactory.PGWIRE);
                     sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
                     securityContext.checkEntityEnabled();
                     r = authenticator.loginOK();
@@ -1722,14 +1722,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             throw PeerDisconnectedException.INSTANCE;
         }
         switch (r) {
-            case Authenticator.OK:
+            case SocketAuthenticator.OK:
                 assert authenticator.isAuthenticated();
                 break;
-            case Authenticator.NEEDS_READ:
+            case SocketAuthenticator.NEEDS_READ:
                 throw PeerIsSlowToWriteException.INSTANCE;
-            case Authenticator.NEEDS_WRITE:
+            case SocketAuthenticator.NEEDS_WRITE:
                 throw PeerIsSlowToReadException.INSTANCE;
-            case Authenticator.NEEDS_DISCONNECT:
+            case SocketAuthenticator.NEEDS_DISCONNECT:
                 throw PeerDisconnectedException.INSTANCE;
             default:
                 throw BadProtocolException.INSTANCE;

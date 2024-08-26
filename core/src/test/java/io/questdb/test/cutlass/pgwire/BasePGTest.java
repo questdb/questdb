@@ -548,7 +548,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
     protected NetworkFacade getFragmentedSendFacade() {
         return new NetworkFacadeImpl() {
             @Override
-            public int sendRaw(int fd, long buffer, int bufferLen) {
+            public int sendRaw(long fd, long buffer, int bufferLen) {
                 int total = 0;
                 for (int i = 0; i < bufferLen; i++) {
                     int n = super.sendRaw(fd, buffer + i, 1);

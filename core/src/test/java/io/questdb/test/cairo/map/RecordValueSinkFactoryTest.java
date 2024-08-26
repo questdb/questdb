@@ -27,13 +27,13 @@ package io.questdb.test.cairo.map;
 import io.questdb.cairo.*;
 import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -77,13 +77,15 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
             writer.commit();
         }
 
-        try (TableReader reader = newOffPoolReader(configuration, "all")) {
+        try (
+                TableReader reader = newOffPoolReader(configuration, "all");
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
             final SymbolAsIntTypes valueTypes = new SymbolAsIntTypes().of(reader.getMetadata());
             try (final Map map = new OrderedMap(Numbers.SIZE_1MB, keyTypes, valueTypes, N, 0.5, 100)) {
                 EntityColumnFilter columnFilter = new EntityColumnFilter();
                 columnFilter.of(reader.getMetadata().getColumnCount());
                 RecordValueSink sink = RecordValueSinkFactory.getInstance(new BytecodeAssembler(), reader.getMetadata(), columnFilter);
-                RecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();
 
                 int index = 0;
@@ -160,19 +162,21 @@ public class RecordValueSinkFactoryTest extends AbstractCairoTest {
             writer.commit();
         }
 
-        try (TableReader reader = newOffPoolReader(configuration, "all")) {
+        try (
+                TableReader reader = newOffPoolReader(configuration, "all");
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
             ArrayColumnTypes valueTypes = new ArrayColumnTypes();
             valueTypes.add(ColumnType.BOOLEAN);
             valueTypes.add(ColumnType.TIMESTAMP);
             valueTypes.add(ColumnType.INT);
-            try (final Map map = new OrderedMap(Numbers.SIZE_1MB, keyTypes, valueTypes, N, 0.5, 100)) {
+            try (Map map = new OrderedMap(Numbers.SIZE_1MB, keyTypes, valueTypes, N, 0.5, 100)) {
                 ListColumnFilter columnFilter = new ListColumnFilter();
                 columnFilter.add(8);
                 columnFilter.add(10);
                 columnFilter.add(7);
 
                 RecordValueSink sink = RecordValueSinkFactory.getInstance(new BytecodeAssembler(), reader.getMetadata(), columnFilter);
-                RecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();
 
                 int index = 0;

@@ -44,7 +44,7 @@ import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 public class TouchTableFunctionFactory implements FunctionFactory {
 

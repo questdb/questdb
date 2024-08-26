@@ -6,3 +6,6 @@ contact_links:
   - name: Community on Slack
     url: https://slack.questdb.io
     about: Ask generic questions or meet other developers who are building with QuestDB.
+  - name: Documentation
+    url: https://github.com/questdb/documentation
+    about: Our documentation files are hosted separately. Please contribute issues and PRs in the documentation repo.

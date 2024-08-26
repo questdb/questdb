@@ -104,12 +104,12 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return nonCritical().setEntityDisabled(true).put("entity is disabled [name=").put(entityName).put(']');
     }
 
-    public static boolean errnoReadPathDoesNotExist(int errno) {
-        return errnoRemovePathDoesNotExist(errno) || (Os.type == Os.WINDOWS && errno == ERRNO_ACCESS_DENIED_WIN);
+    public static boolean errnoPathDoesNotExist(int errno) {
+        return errno == ERRNO_FILE_DOES_NOT_EXIST || (Os.type == Os.WINDOWS && errno == ERRNO_FILE_DOES_NOT_EXIST_WIN);
     }
 
-    public static boolean errnoRemovePathDoesNotExist(int errno) {
-        return errno == ERRNO_FILE_DOES_NOT_EXIST || (Os.type == Os.WINDOWS && errno == ERRNO_FILE_DOES_NOT_EXIST_WIN);
+    public static boolean errnoReadPathDoesNotExist(int errno) {
+        return errnoPathDoesNotExist(errno) || (Os.type == Os.WINDOWS && errno == ERRNO_ACCESS_DENIED_WIN);
     }
 
     public static CairoException invalidMetadataRecoverable(@NotNull CharSequence msg, @NotNull CharSequence columnName) {
@@ -128,7 +128,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return instance(PARTITION_MANIPULATION_RECOVERABLE);
     }
 
-    public static CairoException queryCancelled(int fd) {
+    public static CairoException queryCancelled(long fd) {
         CairoException exception = nonCritical().put("cancelled by user").setInterruption(true).setCancellation(true);
         if (fd > -1) {
             exception.put(" [fd=").put(fd).put(']');
@@ -140,7 +140,7 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return nonCritical().put("cancelled by user").setInterruption(true).setCancellation(true);
     }
 
-    public static CairoException queryTimedOut(int fd) {
+    public static CairoException queryTimedOut(long fd) {
         return nonCritical().put("timeout, query aborted [fd=").put(fd).put(']').setInterruption(true);
     }
 

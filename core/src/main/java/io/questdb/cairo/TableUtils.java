@@ -55,6 +55,10 @@ import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
 public final class TableUtils {
     public static final int ANY_TABLE_VERSION = -1;
     public static final String ATTACHABLE_DIR_MARKER = ".attachable";
+    public static final String CHECKPOINT_DIRECTORY = ".checkpoint";
+    public static final String CHECKPOINT_LEGACY_META_FILE_NAME = "_snapshot";
+    public static final String CHECKPOINT_LEGACY_META_FILE_NAME_TXT = "_snapshot.txt";
+    public static final String CHECKPOINT_META_FILE_NAME = "_checkpoint_meta.d";
     public static final long COLUMN_NAME_TXN_NONE = -1L;
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
     public static final String DEFAULT_PARTITION_NAME = "default";
@@ -63,6 +67,7 @@ public final class TableUtils {
     public static final String FILE_SUFFIX_D = ".d";
     public static final String FILE_SUFFIX_I = ".i";
     public static final int INITIAL_TXN = 0;
+    public static final String LEGACY_CHECKPOINT_DIRECTORY = "snapshot";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
@@ -100,9 +105,7 @@ public final class TableUtils {
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     public static final int NULL_LEN = -1;
-    public static final String RESTORE_SNAPSHOT_TRIGGER_FILE_NAME = "_restore";
-    public static final String SNAPSHOT_META_FILE_NAME = "_snapshot";
-    public static final String SNAPSHOT_META_FILE_NAME_TXT = "_snapshot.txt";
+    public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
     public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
     public static final int TABLE_DOES_NOT_EXIST = 1;
@@ -180,13 +183,13 @@ public final class TableUtils {
     private TableUtils() {
     }
 
-    public static void allocateDiskSpace(FilesFacade ff, int fd, long size) {
+    public static void allocateDiskSpace(FilesFacade ff, long fd, long size) {
         if (ff.length(fd) < size && !ff.allocate(fd, size)) {
             throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
         }
     }
 
-    public static void allocateDiskSpaceToPage(FilesFacade ff, int fd, long size) {
+    public static void allocateDiskSpaceToPage(FilesFacade ff, long fd, long size) {
         size = Files.ceilPageSize(size);
         allocateDiskSpace(ff, fd, size);
     }
@@ -202,6 +205,7 @@ public final class TableUtils {
         checkSum = checkSum * 31 + seqTxn;
         checkSum = checkSum * 31 + lagRowCount;
         checkSum = checkSum * 31 + lagTxnCount;
+        //noinspection UseHashCodeMethodInspection
         return (int) (checkSum ^ (checkSum >>> 32));
     }
 
@@ -283,7 +287,7 @@ public final class TableUtils {
 
     public static void createConvertFile(FilesFacade ff, Path path, byte walFlag) {
         long addr = 0;
-        int fd = -1;
+        long fd = -1;
         try {
             fd = ff.openRW(path.concat(CONVERT_FILE_NAME).$(), CairoConfiguration.O_NONE);
             if (fd < 1) {
@@ -441,7 +445,7 @@ public final class TableUtils {
             int tableId,
             CharSequence txnFileName
     ) {
-        final int dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.trimTo(rootLen).$(), LOG) : 0;
+        final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRO(ff, path.trimTo(rootLen).$(), LOG) : 0;
         try (MemoryMARW mem = memory) {
             mem.smallFile(ff, path.trimTo(rootLen).concat(META_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
             mem.jumpTo(0);
@@ -803,8 +807,16 @@ public final class TableUtils {
         return iFile(path, columnName, COLUMN_NAME_TXN_NONE);
     }
 
-    public static boolean isPendingRenameTempTableName(String tableName, CharSequence tempTablePrefix) {
-        return Chars.startsWith(tableName, tempTablePrefix);
+    /**
+     * Check is table name does not start with temp table prefix. Usually in case
+     * of table renames, table name can have temp prefix.
+     *
+     * @param tableName       name of the table
+     * @param tempTablePrefix the temp prefix
+     * @return true if table name is not pending table rename.
+     */
+    public static boolean isFinalTableName(String tableName, CharSequence tempTablePrefix) {
+        return !Chars.startsWith(tableName, tempTablePrefix);
     }
 
     public static boolean isSymbolCached(MemoryMR metaMem, int columnIndex) {
@@ -924,7 +936,7 @@ public final class TableUtils {
         return columnValue != null ? columnValue.length() : NULL_LEN;
     }
 
-    public static int lock(FilesFacade ff, LPSZ path, boolean verbose) {
+    public static long lock(FilesFacade ff, LPSZ path, boolean verbose) {
         // workaround for https://github.com/docker/for-mac/issues/7004
         if (Files.VIRTIO_FS_DETECTED) {
             if (!ff.touch(path)) {
@@ -935,7 +947,7 @@ public final class TableUtils {
             }
         }
 
-        int fd = ff.openRW(path, CairoConfiguration.O_NONE);
+        long fd = ff.openRW(path, CairoConfiguration.O_NONE);
         if (fd == -1) {
             if (verbose) {
                 LOG.error().$("cannot open '").$(path).$("' to lock [errno=").$(ff.errno()).I$();
@@ -956,7 +968,7 @@ public final class TableUtils {
         return fd;
     }
 
-    public static int lock(FilesFacade ff, LPSZ path) {
+    public static long lock(FilesFacade ff, LPSZ path) {
         return lock(ff, path, true);
     }
 
@@ -964,7 +976,7 @@ public final class TableUtils {
         return path.put(".lock").$();
     }
 
-    public static long mapAppendColumnBuffer(FilesFacade ff, int fd, long offset, long size, boolean rw, int memoryTag) {
+    public static long mapAppendColumnBuffer(FilesFacade ff, long fd, long offset, long size, boolean rw, int memoryTag) {
         assert !Vm.PARANOIA_MODE || ff.length(fd) >= offset + size : "mmap ro buffer is beyond EOF";
 
         // Linux requires the mmap offset to be page aligned
@@ -983,7 +995,7 @@ public final class TableUtils {
         ff.munmap(address - alignedExtraLen, size + alignedExtraLen, memoryTag);
     }
 
-    public static long mapRO(FilesFacade ff, int fd, long size, int memoryTag) {
+    public static long mapRO(FilesFacade ff, long fd, long size, int memoryTag) {
         return mapRO(ff, fd, size, 0, memoryTag);
     }
 
@@ -999,7 +1011,7 @@ public final class TableUtils {
      * @param memoryTag bucket to trace memory allocation calls
      * @return read-only memory address
      */
-    public static long mapRO(FilesFacade ff, int fd, long size, long offset, int memoryTag) {
+    public static long mapRO(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
         assert fd != -1;
         assert offset % Files.PAGE_SIZE == 0;
         final long address = ff.mmap(fd, size, offset, Files.MAP_RO, memoryTag);
@@ -1016,7 +1028,7 @@ public final class TableUtils {
         return address;
     }
 
-    public static long mapRW(FilesFacade ff, int fd, long size, int memoryTag) {
+    public static long mapRW(FilesFacade ff, long fd, long size, int memoryTag) {
         return mapRW(ff, fd, size, 0, memoryTag);
     }
 
@@ -1032,7 +1044,7 @@ public final class TableUtils {
      * @param memoryTag bucket to trace memory allocation calls
      * @return read-write memory address
      */
-    public static long mapRW(FilesFacade ff, int fd, long size, long offset, int memoryTag) {
+    public static long mapRW(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
         assert fd != -1;
         assert offset % Files.PAGE_SIZE == 0;
         allocateDiskSpace(ff, fd, size + offset);
@@ -1051,7 +1063,7 @@ public final class TableUtils {
      * @param memoryTag bucket to trace memory allocation calls
      * @return read-write memory address
      */
-    public static long mapRWNoAlloc(FilesFacade ff, int fd, long size, long offset, int memoryTag) {
+    public static long mapRWNoAlloc(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
         long addr = ff.mmap(fd, size, offset, Files.MAP_RW, memoryTag);
         if (addr > -1) {
             return addr;
@@ -1063,7 +1075,7 @@ public final class TableUtils {
         throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
     }
 
-    public static long mapRWOrClose(FilesFacade ff, int fd, long size, int memoryTag) {
+    public static long mapRWOrClose(FilesFacade ff, long fd, long size, int memoryTag) {
         try {
             return TableUtils.mapRW(ff, fd, size, memoryTag);
         } catch (CairoException e) {
@@ -1074,7 +1086,7 @@ public final class TableUtils {
 
     public static long mremap(
             FilesFacade ff,
-            int fd,
+            long fd,
             long prevAddress,
             long prevSize,
             long newSize,
@@ -1086,7 +1098,7 @@ public final class TableUtils {
 
     public static long mremap(
             FilesFacade ff,
-            int fd,
+            long fd,
             long prevAddress,
             long prevSize,
             long newSize,
@@ -1129,11 +1141,11 @@ public final class TableUtils {
         path.put("-x-").put(txn);
     }
 
-    public static int openFileRWOrFail(FilesFacade ff, LPSZ path, long opts) {
+    public static long openFileRWOrFail(FilesFacade ff, LPSZ path, long opts) {
         return openRW(ff, path, LOG, opts);
     }
 
-    public static int openRO(FilesFacade ff, Path path, CharSequence fileName, Log log) {
+    public static long openRO(FilesFacade ff, Path path, CharSequence fileName, Log log) {
         final int rootLen = path.size();
         path.concat(fileName);
         try {
@@ -1143,17 +1155,21 @@ public final class TableUtils {
         }
     }
 
-    public static int openRO(FilesFacade ff, LPSZ path, Log log) {
-        final int fd = ff.openRO(path);
+    public static long openRO(FilesFacade ff, LPSZ path, Log log) {
+        final long fd = ff.openRO(path);
         if (fd > -1) {
             log.debug().$("open [file=").$(path).$(", fd=").$(fd).I$();
             return fd;
         }
-        throw CairoException.critical(ff.errno()).put("could not open read-only [file=").put(path).put(']');
+        int errno = ff.errno();
+        if (CairoException.errnoReadPathDoesNotExist(errno)) {
+            throw CairoException.critical(errno).put("could not open, file does not exist: ").put(path).put(']');
+        }
+        throw CairoException.critical(errno).put("could not open read-only [file=").put(path).put(']');
     }
 
-    public static int openRW(FilesFacade ff, LPSZ path, Log log, long opts) {
-        final int fd = ff.openRW(path, opts);
+    public static long openRW(FilesFacade ff, LPSZ path, Log log, long opts) {
+        final long fd = ff.openRW(path, opts);
         if (fd > -1) {
             log.debug().$("open [file=").$(path).$(", fd=").$(fd).I$();
             return fd;
@@ -1233,7 +1249,7 @@ public final class TableUtils {
         }
     }
 
-    public static int readIntOrFail(FilesFacade ff, int fd, long offset, long tempMem8b, Path path) {
+    public static int readIntOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
         if (ff.read(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
             throw CairoException.critical(ff.errno()).put("Cannot read: ").put(path);
         }
@@ -1241,7 +1257,7 @@ public final class TableUtils {
     }
 
     public static long readLongAtOffset(FilesFacade ff, LPSZ path, long tempMem8b, long offset) {
-        final int fd = TableUtils.openRO(ff, path, LOG);
+        final long fd = TableUtils.openRO(ff, path, LOG);
         try {
             return readLongOrFail(ff, fd, offset, tempMem8b, path);
         } finally {
@@ -1249,7 +1265,7 @@ public final class TableUtils {
         }
     }
 
-    public static long readLongOrFail(FilesFacade ff, int fd, long offset, long tempMem8b, @Nullable LPSZ path) {
+    public static long readLongOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, @Nullable LPSZ path) {
         if (ff.read(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
             if (path != null) {
                 throw CairoException.critical(ff.errno()).put("could not read long [path=").put(path).put(", fd=").put(fd).put(", offset=").put(offset);
@@ -1260,7 +1276,7 @@ public final class TableUtils {
     }
 
     public static String readTableName(Path path, int rootLen, MemoryCMR mem, FilesFacade ff) {
-        int fd = -1;
+        long fd = -1;
         try {
             path.concat(TableUtils.TABLE_NAME_FILE);
             LPSZ $path = path.$();
@@ -1290,7 +1306,7 @@ public final class TableUtils {
     }
 
     public static String readText(FilesFacade ff, LPSZ path1) {
-        int fd = ff.openRO(path1);
+        long fd = ff.openRO(path1);
         long bytes = 0;
         long length = 0;
         if (fd > -1) {
@@ -1328,7 +1344,7 @@ public final class TableUtils {
         deletedMeta.markDeleted();
     }
 
-    public static void removeOrException(FilesFacade ff, int fd, LPSZ path) {
+    public static void removeOrException(FilesFacade ff, long fd, LPSZ path) {
         if (ff.exists(path) && !ff.closeRemove(fd, path)) {
             throw CairoException.critical(ff.errno()).put("Cannot remove ").put(path);
         }
@@ -1540,6 +1556,11 @@ public final class TableUtils {
         setSinkForPartition(path.slash(), partitionBy, timestamp, nameTxn);
     }
 
+    public static void setPathTable(@NotNull Path path, @NotNull CairoConfiguration configuration, @NotNull TableToken token) {
+        path.close();
+        path.of(configuration.getRoot()).concat(token.getDirName()).trimTo(path.size());
+    }
+
     /**
      * Sets the sink to the directory of a partition taking into account the timestamp, the partitioning scheme
      * and the partition version.
@@ -1554,6 +1575,10 @@ public final class TableUtils {
         if (nameTxn > -1L) {
             sink.put('.').put(nameTxn);
         }
+    }
+
+    public static void setTxReaderPath(@NotNull TxReader reader, @NotNull FilesFacade ff, @NotNull Path path, int partitionBy) {
+        reader.ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy);
     }
 
     public static int toIndexKey(int symbolKey) {
@@ -1666,7 +1691,7 @@ public final class TableUtils {
         return CairoException.critical(CairoException.METADATA_VALIDATION).put("Invalid metadata at fd=").put(mem.getFd()).put(". ");
     }
 
-    public static void writeIntOrFail(FilesFacade ff, int fd, long offset, int value, long tempMem8b, Path path) {
+    public static void writeIntOrFail(FilesFacade ff, long fd, long offset, int value, long tempMem8b, Path path) {
         Unsafe.getUnsafe().putInt(tempMem8b, value);
         if (ff.write(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
             throw CairoException.critical(ff.errno())
@@ -1678,7 +1703,7 @@ public final class TableUtils {
         }
     }
 
-    public static void writeLongOrFail(FilesFacade ff, int fd, long offset, long value, long tempMem8b, Path path) {
+    public static void writeLongOrFail(FilesFacade ff, long fd, long offset, long value, long tempMem8b, Path path) {
         Unsafe.getUnsafe().putLong(tempMem8b, value);
         if (ff.write(fd, tempMem8b, Long.BYTES, offset) != Long.BYTES) {
             throw CairoException.critical(ff.errno())
@@ -1856,7 +1881,6 @@ public final class TableUtils {
     }
 
     static {
-        //noinspection ConstantValue
         assert TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8 <= TX_OFFSET_MAP_WRITER_COUNT_32;
     }
 }

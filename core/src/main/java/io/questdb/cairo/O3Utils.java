@@ -40,7 +40,7 @@ public class O3Utils {
             long srcLo,
             long dstAddr,
             long dstFixFileOffset,
-            int dstFd,
+            long dstFd,
             boolean mixedIOFlag,
             long len,
             int shl
@@ -56,7 +56,7 @@ public class O3Utils {
         }
     }
 
-    static void close(FilesFacade ff, int fd) {
+    static void close(FilesFacade ff, long fd) {
         if (fd > 0) {
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
             ff.close(fd);
@@ -88,7 +88,7 @@ public class O3Utils {
         }
     }
 
-    static void unmapAndClose(FilesFacade ff, int dstFixFd, long dstFixAddr, long dstFixSize) {
+    static void unmapAndClose(FilesFacade ff, long dstFixFd, long dstFixAddr, long dstFixSize) {
         unmap(ff, dstFixAddr, dstFixSize);
         close(ff, dstFixFd);
     }

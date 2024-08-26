@@ -23,12 +23,12 @@
  ******************************************************************************/
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 
-abstract class AbstractLatestByValueRecordCursor extends AbstractDataFrameRecordCursor {
-
+abstract class AbstractLatestByValueRecordCursor extends AbstractPageFrameRecordCursor {
     protected final int columnIndex;
     protected SqlExecutionCircuitBreaker circuitBreaker;
     protected boolean hasNext;
@@ -36,8 +36,13 @@ abstract class AbstractLatestByValueRecordCursor extends AbstractDataFrameRecord
     protected boolean isRecordFound;
     protected int symbolKey;
 
-    AbstractLatestByValueRecordCursor(@NotNull IntList columnIndexes, int columnIndex, int symbolKey) {
-        super(columnIndexes);
+    AbstractLatestByValueRecordCursor(
+            @NotNull CairoConfiguration configuration,
+            @NotNull RecordMetadata metadata,
+            int columnIndex,
+            int symbolKey
+    ) {
+        super(configuration, metadata);
         this.columnIndex = columnIndex;
         this.symbolKey = symbolKey;
     }
