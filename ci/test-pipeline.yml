@@ -111,7 +111,8 @@ stages:
           - download: current
             artifact: rust-llvm-coverage
           - template: install-llvm.yml
-            condition: eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+            parameters:
+              shouldRun: eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
           - bash: |
               set -eux
               export PATH=/usr/lib/llvm-$LLVM_VERSION/bin:$PATH
