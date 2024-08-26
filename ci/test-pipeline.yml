@@ -114,6 +114,18 @@ stages:
           - template: templates/install-llvm.yml
             parameters:
               shouldRun: eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+          - task: Cache@2
+            inputs:
+              key: '"questdb_main" | "maven"'
+              path: $(MAVEN_CACHE_FOLDER)
+          - task: Maven@3
+            displayName: "Compile with Maven"
+            inputs:
+              mavenPomFile: "core/pom.xml"
+              mavenOptions: "$(MAVEN_OPTS)"
+              goals: "compile"
+              options: "--batch-mode -DskipTests -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER)"
+              jdkVersionOption: "1.11"
           - task: Maven@3
             displayName: "Merge partial JaCoCo reports"
             inputs:
