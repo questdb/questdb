@@ -116,6 +116,9 @@ stages:
           - bash: |
               set -eux
               export PATH=/usr/lib/llvm-$LLVM_VERSION/bin:$PATH
+              pwd
+              echo $(Build.SourcesDirectory)
+              echo $(Pipeline.Workspace)
               ls -al $(Pipeline.Workspace)/rust-llvm-coverage
 
               # Merge partial profdata files into the complete report
