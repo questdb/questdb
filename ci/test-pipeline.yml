@@ -109,12 +109,15 @@ stages:
             submodules: false
           - download: current
             artifact: jacoco-coverage
+            condition: eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
           - download: current
             artifact: rust-llvm-coverage
+            condition: eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
           - template: templates/install-llvm.yml
             parameters:
               shouldRun: eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
           - task: Cache@2
+            condition: eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
             inputs:
               key: '"questdb_main" | "maven"'
               path: $(MAVEN_CACHE_FOLDER)
@@ -168,7 +171,7 @@ stages:
               # https://www.collabora.com/news-and-blog/blog/2021/03/24/rust-integrating-llvm-source-base-code-coverage-with-gitlab/
               wget https://raw.githubusercontent.com/eriwen/lcov-to-cobertura-xml/master/lcov_cobertura/lcov_cobertura.py
               python3 lcov_cobertura.py questdbr.lcov.dat --output cobertura.xml --base-dir core/rust/qdbr/src
-            displayName: "Merge partial Rust coverage reports into Cobertura format"
+            displayName: "Merge partial Rust reports"
             condition: eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
 
           - bash: |
@@ -183,4 +186,4 @@ stages:
                 $(Build.SourcesDirectory)/ci/cover-checker-1.5.0-all.jar \
                 $COVER_ARGS --repo "questdb/questdb" --pr $(System.PullRequest.PullRequestNumber) \
                 -t $(DIFF_COVER_THRESHOLD_PCT) --github-token $(GH_TOKEN)
-            displayName: "Combine JaCoCo and Cobertura reports, create report for the PR's diff"
+            displayName: "Post combined report to GitHub"
