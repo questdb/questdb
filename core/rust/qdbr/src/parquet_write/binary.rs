@@ -100,10 +100,7 @@ pub fn binary_to_page(
 
 fn encode_plain(offsets: &[i64], values: &[u8], buffer: &mut Vec<u8>, stats: &mut BinaryMaxMin) {
     let size_of_header = size_of::<i64>();
-
-    if offsets.first().is_some() {
-        println!("mock code -- encode_plain");
-    }
+    println!("mock code -- encode_plain");
 
     for offset in offsets {
         let offset = usize::try_from(*offset).expect("invalid offset value in binary aux column");
@@ -127,10 +124,7 @@ fn encode_delta(
     buffer: &mut Vec<u8>,
     stats: &mut BinaryMaxMin,
 ) {
-    if offsets.first().is_some() {
-        println!("mock code -- encode_delta");
-    }
-
+    println!("mock code -- encode_delta");
     let size_of_header = size_of::<i64>();
     let row_count = offsets.len();
 
