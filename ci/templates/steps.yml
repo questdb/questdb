@@ -192,7 +192,7 @@ steps:
         eq(variables['System.PullRequest.IsFork'], 'false')
       )
   - task: PublishBuildArtifacts@1
-    displayName: "Upload Rust coverage report"
+    displayName: "Upload partial Rust coverage report"
     condition: |
       and(
         startsWith(variables['testset'], 'coverage'),
@@ -209,7 +209,7 @@ steps:
       mkdir rust-coverage-binaries
       mv core/target/rust-maven-plugin/qdbr/debug/libquestdbr.so rust-coverage-binaries/
       mv $QUESTDBR_TEST_BIN rust-coverage-binaries/questdbr-test-binary
-    displayName: "Prepare Rust coverage binaries for upload"
+    displayName: "Prepare Rust binaries for upload"
     condition: |
       and(
         eq(variables['testset'], 'coverage-griffin'),
@@ -217,7 +217,7 @@ steps:
         eq(variables['System.PullRequest.IsFork'], 'false')
       )
   - task: PublishBuildArtifacts@1
-    displayName: "Upload Rust coverage binaries"
+    displayName: "Upload Rust binaries needed to merge coverage files"
     condition: |
       and(
         eq(variables['testset'], 'coverage-griffin'),
