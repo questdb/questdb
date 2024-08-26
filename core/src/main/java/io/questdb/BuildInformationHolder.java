@@ -44,7 +44,6 @@ public class BuildInformationHolder implements BuildInformation, CharSequence {
     }
 
     public BuildInformationHolder(Class<?> clazz) {
-        System.out.println("this is soo fun");
         String swVersion;
         String swName;
         String commitHash;
