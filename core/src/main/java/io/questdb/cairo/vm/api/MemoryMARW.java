@@ -31,7 +31,7 @@ import org.jetbrains.annotations.Nullable;
 // mapped appendable readable writable
 public interface MemoryMARW extends MemoryMW, MemoryARW, MemoryMA, MemoryMR, MemoryMAR {
 
-    void of(FilesFacade ff, int fd, @Nullable LPSZ fileName, long size, int memoryTag);
+    void of(FilesFacade ff, long fd, @Nullable LPSZ fileName, long size, int memoryTag);
 
-    void of(FilesFacade ff, int fd, @Nullable LPSZ fileName, long extendSegmentSize, long size, int memoryTag);
+    void of(FilesFacade ff, long fd, @Nullable LPSZ fileName, long extendSegmentSize, long size, int memoryTag);
 }

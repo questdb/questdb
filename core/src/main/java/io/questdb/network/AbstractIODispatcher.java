@@ -81,7 +81,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     private final int testConnectionBufSize;
     protected boolean closed = false;
     protected long heartbeatIntervalMs;
-    protected int serverFd;
+    protected long serverFd;
     private long closeListenFdEpochMs;
     private volatile boolean listening;
     private int port;
@@ -219,7 +219,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         }
     }
 
-    private void addPending(int fd, long timestamp) {
+    private void addPending(long fd, long timestamp) {
         // append pending connection
         // all rows below watermark will be registered with epoll (or similar)
         final C context = ioContextFactory.newInstance(fd, this);
@@ -305,7 +305,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             // fire accept requests at us one at a time we will be actively accepting
             // until nothing left.
 
-            int fd = nf.accept(serverFd);
+            long fd = nf.accept(serverFd);
 
             if (fd < 0) {
                 if (nf.errno() != Net.EWOULDBLOCK) {
@@ -359,7 +359,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             return;
         }
 
-        final int fd = context.getFd();
+        final long fd = context.getFd();
         LOG.info()
                 .$("disconnected [ip=").$ip(nf.getPeerIP(fd))
                 .$(", fd=").$(fd)
@@ -407,7 +407,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     protected abstract void registerListenerFd();
 
-    protected boolean testConnection(int fd) {
+    protected boolean testConnection(long fd) {
         return nf.testConnection(fd, testConnectionBuf, testConnectionBufSize);
     }
 

@@ -77,7 +77,7 @@ public class WalEventReader implements Closeable {
 
             if (segmentTxn > -1) {
                 // Read record offset and size
-                int fdi = openRO(ff, path.trimTo(pathLen).concat(EVENT_INDEX_FILE_NAME).$(), LOG);
+                long fdi = openRO(ff, path.trimTo(pathLen).concat(EVENT_INDEX_FILE_NAME).$(), LOG);
                 try {
                     int maxTxn = eventMem.getInt(WALE_MAX_TXN_OFFSET_32);
                     long offset = ff.readNonNegativeLong(fdi, segmentTxn << 3);

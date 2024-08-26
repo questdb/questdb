@@ -102,13 +102,8 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             final CharSequence likeSeq = pattern.getStrA(null);
             int len;
             if (likeSeq != null && (len = likeSeq.length()) > 0) {
-                int oneCount = countChar(likeSeq, '_');
-                if (oneCount == 0) {
-                    if (likeSeq.charAt(len - 1) == '\\') {
-                        throw SqlException.parserErr(len - 1, likeSeq, "LIKE pattern must not end with escape character");
-                    }
-
-                    int anyCount = countChar(likeSeq, '%');
+                if (countChar(likeSeq, '_') == 0 && countChar(likeSeq, '\\') == 0) {
+                    final int anyCount = countChar(likeSeq, '%');
                     if (anyCount == 1) {
                         if (len == 1) {
                             // LIKE '%' case

@@ -184,7 +184,7 @@ public class BitmapIndexWriter implements Closeable, Mutable {
         return keyMem.isOpen();
     }
 
-    public final void of(CairoConfiguration configuration, int keyFd, int valueFd, boolean init, int indexBlockCapacity) {
+    public final void of(CairoConfiguration configuration, long keyFd, long valueFd, boolean init, int indexBlockCapacity) {
         close();
         final FilesFacade ff = configuration.getFilesFacade();
         boolean kFdUnassigned = true;

@@ -46,7 +46,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
     private final StringSink nameSink = new StringSink();
     private final TableFlagResolver tableFlagResolver;
     private final MemoryCMR tableNameRoMemory = Vm.getCMRInstance();
-    private int lockFd = -1;
+    private long lockFd = -1;
     private long longBuffer;
 
     public TableNameRegistryStore(CairoConfiguration configuration, TableFlagResolver tableFlagResolver) {
@@ -153,7 +153,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         }
 
         path.trimTo(plimit).concat(tableToken.getDirName()).concat(SEQ_DIR).concat(META_FILE_NAME);
-        int seqMetaFd = ff.openRO(path.$());
+        long seqMetaFd = ff.openRO(path.$());
         if (seqMetaFd == -1) {
             LOG.error().$("cannot open seq meta file, assume table is being dropped [path=").$(path).I$();
             return true;
@@ -296,7 +296,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
 
     private int readTableId(Path path, CharSequence dirName, FilesFacade ff) {
         path.of(configuration.getRoot()).concat(dirName).concat(META_FILE_NAME);
-        int fd = ff.openRO(path.$());
+        long fd = ff.openRO(path.$());
         if (fd < 1) {
             return 0;
         }

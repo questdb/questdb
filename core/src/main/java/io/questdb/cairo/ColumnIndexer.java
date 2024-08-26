@@ -44,13 +44,13 @@ public interface ColumnIndexer extends QuietCloseable {
 
     void distress();
 
-    int getFd();
+    long getFd();
 
     long getSequence();
 
     BitmapIndexWriter getWriter();
 
-    void index(FilesFacade ff, int dataColumnFd, long loRow, long hiRow);
+    void index(FilesFacade ff, long dataColumnFd, long loRow, long hiRow);
 
     boolean isDistressed();
 

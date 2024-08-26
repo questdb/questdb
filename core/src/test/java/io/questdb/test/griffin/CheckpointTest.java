@@ -79,7 +79,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
         circuitBreaker = new NetworkSqlExecutionCircuitBreaker(circuitBreakerConfiguration, MemoryTag.NATIVE_CB5) {
             @Override
-            protected boolean testConnection(int fd) {
+            protected boolean testConnection(long fd) {
                 return false;
             }
         };
@@ -943,7 +943,7 @@ public class CheckpointTest extends AbstractCairoTest {
             // create snapshot.txt file
             FilesFacade ff = configuration.getFilesFacade();
             path.trimTo(rootLen).concat(TableUtils.CHECKPOINT_LEGACY_META_FILE_NAME_TXT);
-            int fd = ff.openRW(path.$(), configuration.getWriterFileOpenOpts());
+            long fd = ff.openRW(path.$(), configuration.getWriterFileOpenOpts());
             Assert.assertTrue(fd > 0);
 
             try {

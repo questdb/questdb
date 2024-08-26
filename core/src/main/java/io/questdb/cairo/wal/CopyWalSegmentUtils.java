@@ -60,10 +60,10 @@ public class CopyWalSegmentUtils {
     ) {
         Path newSegPath = Path.PATH.get().of(walPath).slash().put(newSegment);
         int setPathRoot = newSegPath.size();
-        int primaryFd = openRW(ff, dFile(newSegPath, columnName, COLUMN_NAME_TXN_NONE), LOG, options);
+        long primaryFd = openRW(ff, dFile(newSegPath, columnName, COLUMN_NAME_TXN_NONE), LOG, options);
         newColumnFiles.setDestPrimaryFd(primaryFd);
 
-        int secondaryFd;
+        long secondaryFd;
         if (ColumnType.isVarSize(newColumnType)) {
             secondaryFd = openRW(ff, iFile(newSegPath.trimTo(setPathRoot), columnName, COLUMN_NAME_TXN_NONE), LOG, options);
         } else {
@@ -110,8 +110,8 @@ public class CopyWalSegmentUtils {
             }
         } else {
             try {
-                int srcFixFd;
-                int srcVarFd;
+                long srcFixFd;
+                long srcVarFd;
 
                 if (ColumnType.isVarSize(columnType)) {
                     srcFixFd = secondaryColumn.getFd();
@@ -121,8 +121,8 @@ public class CopyWalSegmentUtils {
                     srcVarFd = -1;
                 }
 
-                int dstFixFd;
-                int dstVarFd;
+                long dstFixFd;
+                long dstVarFd;
 
                 if (ColumnType.isVarSize(newColumnType)) {
                     dstFixFd = secondaryFd;
@@ -175,7 +175,7 @@ public class CopyWalSegmentUtils {
     private static boolean copyFixLenFile(
             FilesFacade ff,
             MemoryMA primaryColumn,
-            int primaryFd,
+            long primaryFd,
             long rowOffset,
             long rowCount,
             int columnType,
@@ -200,7 +200,7 @@ public class CopyWalSegmentUtils {
     private static boolean copyTimestampFile(
             FilesFacade ff,
             MemoryMA primaryColumn,
-            int primaryFd,
+            long primaryFd,
             long rowOffset,
             long rowCount,
             SegmentColumnRollSink newOffsets,
@@ -225,8 +225,8 @@ public class CopyWalSegmentUtils {
             int columnType,
             MemoryMA dataMem,
             MemoryMA auxMem,
-            int primaryFd,
-            int secondaryFd,
+            long primaryFd,
+            long secondaryFd,
             long startRowNumber,
             long rowCount,
             SegmentColumnRollSink newOffsets,

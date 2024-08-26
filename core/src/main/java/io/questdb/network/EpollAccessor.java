@@ -24,6 +24,8 @@
 
 package io.questdb.network;
 
+import static io.questdb.std.Files.toOsFd;
+
 public class EpollAccessor {
     public static final short DATA_OFFSET;
     public static final int EPOLLET;
@@ -36,11 +38,19 @@ public class EpollAccessor {
     public static final short EVENTS_OFFSET;
     static final short SIZEOF_EVENT;
 
+    private static native int epollWait(int epfd, long eventPtr, int eventCount, int timeout);
+
+    private static native long readEventFd(int fd);
+
     static native int epollCreate();
 
     static native int epollCtl(int epfd, int op, int fd, long eventPtr);
 
-    static native int epollWait(int epfd, long eventPtr, int eventCount, int timeout);
+    private static native int writeEventFd(int fd);
+
+    static int epollWait(long epfd, long eventPtr, int eventCount, int timeout) {
+        return epollWait(toOsFd(epfd), eventPtr, eventCount, timeout);
+    }
 
     static native int eventFd();
 
@@ -64,9 +74,13 @@ public class EpollAccessor {
 
     static native short getEventsOffset();
 
-    static native long readEventFd(int fd);
+    static long readEventFd(long fd) {
+        return readEventFd(toOsFd(fd));
+    }
 
-    static native int writeEventFd(int fd);
+    static int writeEventFd(long fd) {
+        return writeEventFd(toOsFd(fd));
+    }
 
     static {
         DATA_OFFSET = getDataOffset();

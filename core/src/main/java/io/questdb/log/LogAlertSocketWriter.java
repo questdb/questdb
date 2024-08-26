@@ -108,7 +108,7 @@ public class LogAlertSocketWriter extends SynchronizedJob implements Closeable, 
 
     @TestOnly
     public static void readFile(String location, long address, long addressSize, FilesFacade ff, Utf8Sink sink) {
-        int templateFd = -1;
+        long templateFd = -1;
         try (Path path = new Path()) {
             // Paths for logger are typically derived from resources.
             // They may start with `/C:` on Windows OS, which is Java way of emphasising absolute path.

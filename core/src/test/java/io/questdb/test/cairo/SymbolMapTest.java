@@ -1045,7 +1045,7 @@ public class SymbolMapTest extends AbstractCairoTest {
             offsetFileName(path.trimTo(plen), name, -1);
             long size = ff.length(path.$());
 
-            int fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
+            long fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
             long address = TableUtils.mapRW(ff, fd, size, MemoryTag.MMAP_DEFAULT);
             for (long i = keyToOffset(cleanCount); i + 4 < size; i += 4) {
                 Unsafe.getUnsafe().putInt(address + i, rnd.nextInt());
