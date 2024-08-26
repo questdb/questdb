@@ -120,10 +120,10 @@ steps:
     condition: |
       and(
         startsWith(variables['testset'], 'coverage'),
+        eq(variables['System.PullRequest.IsFork'], 'false'),
         or( 
             eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
-            eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-            eq(variables['System.PullRequest.IsFork'], 'false')
+            eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
         )
       )
 
@@ -159,7 +159,8 @@ steps:
     condition: |
       and(
         startsWith(variables['testset'], 'coverage'),
-        eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
+        eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
+        eq(variables['System.PullRequest.IsFork'], 'false')
       )
   - task: PublishBuildArtifacts@1
     displayName: "Upload partial JaCoCo report"
