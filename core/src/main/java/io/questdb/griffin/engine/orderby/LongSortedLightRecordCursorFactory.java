@@ -63,12 +63,6 @@ public class LongSortedLightRecordCursorFactory extends AbstractRecordCursorFact
         this.sortColumnFilter = sortColumnFilter;
     }
 
-    public static void addSortKeys(PlanSink sink, ListColumnFilter filter) {
-        sink.attr("keys").val('[');
-        filter.toPlan(sink);
-        sink.val(']');
-    }
-
     public static boolean isSupportedColumnType(int columnType) {
         return columnType == ColumnType.INT
                 || columnType == ColumnType.IPv4
@@ -107,7 +101,7 @@ public class LongSortedLightRecordCursorFactory extends AbstractRecordCursorFact
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Radix sort light");
-        addSortKeys(sink, sortColumnFilter);
+        SortedLightRecordCursorFactory.addSortKeys(sink, sortColumnFilter);
         sink.child(base);
     }
 
