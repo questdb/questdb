@@ -37,7 +37,7 @@ steps:
           eq(variables['System.PullRequest.IsFork'], 'false')
         )
 
-  - script: python3 ci/prepare_rust_env.py --export-cargo-install-env
+  - script: python3 .github/prepare_rust_env.py
     displayName: "Ensure Rust is installed"
     # Note, the `prepare_rust_env.py` script exports a number of variables.
   - task: Cache@2
