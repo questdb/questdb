@@ -1381,7 +1381,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
             getDdlListener(tableToken).onTableCreated(securityContext, tableToken);
 
-            CairoMetadata.INSTANCE.hydrateTable(tableToken, configuration, LOG, true);
+            CairoMetadata.INSTANCE.hydrateTable(tableToken, configuration, true, true);
 
             return tableToken;
         }

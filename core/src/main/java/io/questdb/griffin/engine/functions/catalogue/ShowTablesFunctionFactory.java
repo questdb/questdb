@@ -252,7 +252,7 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                     table = CairoMetadata.INSTANCE.getTableQuiet(tableToken);
 
                     if (table == null) {
-                        CairoMetadata.INSTANCE.hydrateTable(tableToken, executionContext.getCairoEngine().getConfiguration(), LOG, false);
+                        CairoMetadata.INSTANCE.hydrateTable(tableToken, executionContext.getCairoEngine().getConfiguration(), false, true);
                         table = CairoMetadata.INSTANCE.getTableQuiet(tableToken);
                     }
 

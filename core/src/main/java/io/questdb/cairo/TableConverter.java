@@ -122,7 +122,7 @@ public class TableConverter {
                                 }
                                 metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
                                 convertedTables.add(token);
-                                CairoMetadata.INSTANCE.hydrateTable(token, configuration, CairoMetadata.LOG, true);
+                                CairoMetadata.INSTANCE.hydrateTable(token, configuration, true, true);
                             }
 
                             path.trimTo(rootLen).concat(dirNameSink).concat(CONVERT_FILE_NAME);
