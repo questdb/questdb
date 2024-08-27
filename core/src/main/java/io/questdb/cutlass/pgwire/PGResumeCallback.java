@@ -28,5 +28,5 @@ import io.questdb.griffin.SqlExecutionContext;
 
 @FunctionalInterface
 interface PGResumeCallback {
-    void resume(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink) throws Exception;
+    void resume() throws Exception;
 }

@@ -52,6 +52,8 @@ public class PGPipelineEntry implements QuietCloseable {
     // we need it in case cursor gets invalidated and bind used non-default binary format for some column(s)
     // pg clients (like asyncpg) fail when format sent by server is not the same as requested in bind message
     private final IntList msgBindSelectFormatCodes = new IntList();
+    // list of pair: column types (with format flag stored in first bit) AND additional type flag
+    private final IntList pgResultSetColumnTypes = new IntList();
     // types are sent to us via "parse" message
     private final IntList msgParseParameterTypes = new IntList();
     private boolean cacheHit = false;    // extended protocol cursor resume callback
@@ -64,8 +66,8 @@ public class PGPipelineEntry implements QuietCloseable {
     private int msgBindParameterFormatCodeCount;
     private int msgBindParameterValueCount;
     private boolean outRecordPending = false;
-    // list of pair: column types (with format flag stored in first bit) AND additional type flag
-    private IntList pgResultSetColumnTypes;    private final PGResumeCallback outResumeExtCursorCompleteCallbackRef = this::outResumeExtCursorCompleteCallback;
+    private final ObjList<CharSequence> portalNames = new ObjList<>();
+    private PGPipelineEntry parentPreparedStatementPipelineEntry;
     private boolean portal = false;
     private boolean preparedStatement = false;
     // the name of the prepared statement as used by "deallocate" SQL
@@ -81,8 +83,9 @@ public class PGPipelineEntry implements QuietCloseable {
     private boolean sqlTextHasSecret = false;
     private short sqlType = 0;
     private boolean stateBind;
+    private boolean stateClosed;
     private int stateDesc;
-    private boolean stateExec;
+    private boolean stateExec = false;
     // boolean state, bitset?
     private boolean stateParse;
     private int stateSync = 0;
@@ -94,6 +97,10 @@ public class PGPipelineEntry implements QuietCloseable {
 
     @Override
     public void close() {
+    }
+
+    public void bindPortalName(CharSequence portalName) {
+        portalNames.add(portalName);
     }
 
     // return transaction state
@@ -130,6 +137,7 @@ public class PGPipelineEntry implements QuietCloseable {
             case CompiledQuery.DEALLOCATE:
                 // this is our own SQL query, which is intended to remove named statement from
                 // connection cache.
+                // todo: this will fail for portals
                 PGPipelineEntry pe = namedStatements.get(this.preparedStatementName);
                 if (pe != null) {
                     pe.setPreparedStatement(false);
@@ -146,6 +154,56 @@ public class PGPipelineEntry implements QuietCloseable {
                 break;
         }
         return transactionState;
+    }
+
+    public PGPipelineEntry getParentPreparedStatementPipelineEntry() {
+        return parentPreparedStatementPipelineEntry;
+    }
+
+    public ObjList<CharSequence> getPortalNames() {
+        return portalNames;
+    }
+
+    public CharSequence getSqlText() {
+        return sqlText;
+    }
+
+    public boolean isFactory() {
+        return factory != null;
+    }
+
+    public void of(
+            CharSequence sqlText,
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            SimpleAssociativeCache<TypesAndInsert> taiCache,
+            AssociativeCache<TypesAndSelect> tasCache,
+            WeakSelfReturningObjectPool<TypesAndInsert> taiPool
+    ) throws SqlException {
+        // pipeline entries begin life as anonymous, typical pipeline length is 1-3 entries
+        // we do not need to create new objects until we know we're caching the entry
+        this.sqlText = sqlText;
+        this.empty = sqlText == null || sqlText.length() == 0;
+        cacheHit = true;
+        if (!empty) {
+            // try insert, peek because this is our private cache,
+            // and we do not want to remove statement from it
+            if (
+                    !lookup(
+                            taiCache,
+                            tasCache,
+                            sqlExecutionContext.getBindVariableService()
+                    )
+            ) {
+                cacheHit = false;
+                parseNew(
+                        engine,
+                        sqlExecutionContext,
+                        taiPool
+                );
+            }
+            buildResultSetColumnTypes();
+        }
     }
 
     public boolean isPortal() {
@@ -273,47 +331,26 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
-    public void of(
-            CharSequence sqlText,
-            CairoEngine engine,
-            SqlExecutionContext sqlExecutionContext,
-            SimpleAssociativeCache<TypesAndInsert> taiCache,
-            SimpleAssociativeCache<TypesAndUpdate> tauCache,
-            AssociativeCache<TypesAndSelect> tasCache,
-            WeakSelfReturningObjectPool<TypesAndInsert> taiPool,
-            WeakSelfReturningObjectPool<TypesAndUpdate> tauPool
-    ) throws SqlException {
-        this.sqlText = sqlText;
-        this.empty = sqlText == null || sqlText.length() == 0;
-        cacheHit = true;
-        if (!empty) {
-            // try insert, peek because this is our private cache,
-            // and we do not want to remove statement from it
-            if (
-                    !lookup(
-                            taiCache,
-                            tasCache,
-                            sqlExecutionContext.getBindVariableService()
-                    )
-            ) {
-                cacheHit = false;
-                parseNew(
-                        engine,
-                        sqlExecutionContext,
-                        taiPool,
-                        tauPool
-                );
-            }
-            buildResultSetColumnTypes();
-        }
+    public void setPatentPreparedStatement(PGPipelineEntry preparedStatementPipelineEntry) {
+        this.parentPreparedStatementPipelineEntry = preparedStatementPipelineEntry;
     }
 
     public void setPortal(boolean portal) {
         this.portal = portal;
+        // because this is now a prepared statement, it means the entry is
+        // cached. All flyweight objects referenced from cache have to be internalized
+        this.sqlText = Chars.toString(this.sqlText);
     }
 
     public void setPreparedStatement(boolean preparedStatement) {
         this.preparedStatement = preparedStatement;
+        // because this is now a prepared statement, it means the entry is
+        // cached. All flyweight objects referenced from cache have to be internalized
+        this.sqlText = Chars.toString(this.sqlText);
+    }
+
+    public void setStateClosed(boolean stateClosed) {
+        this.stateClosed = stateClosed;
     }
 
     public void setReturnRowCountLimit(int rowCountLimit) {
@@ -344,8 +381,12 @@ public class PGPipelineEntry implements QuietCloseable {
      * pertaining network difficulties, the calling party must fix those difficulties and call this method
      * again.
      *
-     * @param sqlExecutionContext
-     * @param transactionState
+     * @param sqlExecutionContext the execution context used to optionally execute SQL and send result set out.
+     * @param transactionState the state of the current transaction; determines if to use insert auto-commit or not
+     * @param taiCache "insert" SQL cache, used to optionally execute the insert (when 'E' message is omitted)
+     * @param pendingWriters per connection write cache to be used by "insert" SQL. This is also part of the optional "execute"
+     * @param writerSource global writer cache
+     * @param namedStatements
      * @param utf8Sink
      * @return
      * @throws Exception
@@ -353,9 +394,12 @@ public class PGPipelineEntry implements QuietCloseable {
     public int sync(
             SqlExecutionContext sqlExecutionContext,
             int transactionState,
+            SimpleAssociativeCache<TypesAndInsert> taiCache,
+            ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
+            WriterSource writerSource,
+            CharSequenceObjHashMap<PGPipelineEntry> namedStatements,
             PGResponseSink utf8Sink
     ) throws Exception {
-
         switch (stateSync) {
             case 0:
                 if (stateParse) {
@@ -385,11 +429,19 @@ public class PGPipelineEntry implements QuietCloseable {
                 }
                 stateSync = 3;
             case 3:
+                if (stateClosed) {
+                    outSimpleMsg(utf8Sink, MESSAGE_TYPE_CLOSE_COMPLETE);
+                }
+                stateSync = 4;
             case 4:
                 // state goes deeper
                 if (empty) {
                     outEmptyQuery(utf8Sink);
                 } else {
+                    if (!stateExec) {
+                        execute(sqlExecutionContext, transactionState, taiCache, pendingWriters, writerSource, namedStatements);
+                        stateExec = true;
+                    }
                     switch (sqlType) {
                         case CompiledQuery.CREATE_TABLE_AS_SELECT:
                         case CompiledQuery.SET:
@@ -434,6 +486,9 @@ public class PGPipelineEntry implements QuietCloseable {
                         }
                     }
                 }
+                break;
+            default:
+                assert false;
         }
         return transactionState;
     }
@@ -483,8 +538,8 @@ public class PGPipelineEntry implements QuietCloseable {
             BindVariableService bindVariableService,
             ObjectPool<DirectBinarySequence> binarySequenceParamsPool
     ) throws SqlException {
+        // todo: copy bind variable into the arena
         bindVariableService.setBin(variableIndex, binarySequenceParamsPool.next().of(valueAddr, valueSize));
-        freezeRecvBuffer = true;
     }
 
     private static void setBindVariableAsBoolean(
@@ -493,7 +548,10 @@ public class PGPipelineEntry implements QuietCloseable {
             BindVariableService bindVariableService
     ) throws SqlException {
         if (valueSize != 4 && valueSize != 5) {
-            throw SqlException.$(0, "bad value for BOOLEAN parameter [variableIndex=").put(variableIndex).put(", valueSize=").put(valueSize).put(']');
+            throw SqlException
+                    .$(0, "bad value for BOOLEAN parameter [variableIndex=").put(variableIndex)
+                    .put(", valueSize=").put(valueSize)
+                    .put(']');
         }
         bindVariableService.setBoolean(variableIndex, valueSize == 4);
     }
@@ -991,10 +1049,15 @@ public class PGPipelineEntry implements QuietCloseable {
         } else {
             // if length is above max we will error out the result set
             long blobSize = sequence.length();
-            if (blobSize < maxBlobSizeOnQuery) {
+            if (blobSize < utf8Sink.getMaxBlobSize()) {
                 utf8Sink.put(sequence);
             } else {
-                throw SqlException.position(0).put("blob is too large [blobSize=").put(blobSize).put(", max=").put(maxBlobSizeOnQuery).put(", columnIndex=").put(i).put(']');
+                // todo: this should be CairoException
+                throw SqlException.position(0)
+                        .put("blob is too large [blobSize=").put(blobSize)
+                        .put(", maxBlobSize=").put(utf8Sink.getMaxBlobSize())
+                        .put(", columnIndex=").put(i)
+                        .put(']');
             }
         }
     }
@@ -1206,7 +1269,6 @@ public class PGPipelineEntry implements QuietCloseable {
                 this.sqlReturnRowCountLimitComputed = Long.MAX_VALUE;
             }
         } catch (DataUnavailableException e) {
-            stateSync = 100; // query is paused
             throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
         }
     }
@@ -1293,7 +1355,6 @@ public class PGPipelineEntry implements QuietCloseable {
             // we sent as many rows as was requested, but we have more to send
             stateSync = 30;
         }
-        outResumeExtCursorCompleteCallbackRef.resume(sqlExecutionContext, utf8Sink);
     }
 
     private void outParameterTypeDescription(PGResponseSink utf8Sink) {
@@ -1436,15 +1497,10 @@ public class PGPipelineEntry implements QuietCloseable {
             outRecord(utf8Sink, record, columnCount);
         } catch (NoSpaceLeftInResponseBufferException e1) {
             // oopsie, buffer is too small for single record
-            LOG.error().$("not enough space in buffer for row data [buffer=").$(sendBufferSize).I$();
+            LOG.error().$("not enough space in buffer for row data [sendBufferSize=").$(utf8Sink.getSendBufferSize()).I$();
             utf8Sink.reset();
-            freeFactory();
             throw CairoException.critical(0).put("server configuration error: not enough space in send buffer for row data");
         }
-    }
-
-    private void outResumeExtCursorCompleteCallback(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink) throws Exception {
-
     }
 
     private void outRowDescription(PGResponseSink utf8Sink) {
@@ -1481,8 +1537,7 @@ public class PGPipelineEntry implements QuietCloseable {
     private void parseNew(
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
-            WeakSelfReturningObjectPool<TypesAndInsert> taiPool,
-            WeakSelfReturningObjectPool<TypesAndUpdate> tauPool
+            WeakSelfReturningObjectPool<TypesAndInsert> taiPool
     ) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             CompiledQuery cq = compiler.compile(sqlText, sqlExecutionContext);
@@ -1605,8 +1660,9 @@ public class PGPipelineEntry implements QuietCloseable {
                     LOG.error().$("invalid varchar bind variable type [variableIndex=").$(variableIndex).I$();
                     throw BadProtocolException.INSTANCE;
             }
+            // todo: copy value of bind variable into the arena so that the receive buffer can
+            //     remain to be dynamic
             bindVariableService.setVarchar(variableIndex, utf8String.of(valueAddr, valueAddr + valueSize, ascii));
-
         } else {
             if (Utf8s.utf8ToUtf16(valueAddr, valueAddr + valueSize, e)) {
                 bindVariableService.setStr(variableIndex, characterStore.toImmutable());
@@ -1616,8 +1672,4 @@ public class PGPipelineEntry implements QuietCloseable {
             }
         }
     }
-
-
-
-
 }

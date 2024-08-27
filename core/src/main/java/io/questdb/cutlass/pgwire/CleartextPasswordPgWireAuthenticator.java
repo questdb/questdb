@@ -444,7 +444,7 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
                     try {
                         dus.of(valueLo + 21, valueHi, false);
                         long statementTimeout = Numbers.parseLong(dus);
-                        optionsListener.setStatementTimeout(statementTimeout);
+                        optionsListener.setSqlTimeout(statementTimeout);
                     } catch (NumericException ex) {
                         parsed = false;
                     }
