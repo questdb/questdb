@@ -81,7 +81,9 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
         @Override
         public void close() {
-
+            cairoTable = null;
+            cairoColumn = null;
+            names = null;
         }
 
         @Override
