@@ -78,7 +78,7 @@ public class LongSortedLightRecordCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        RecordCursor baseCursor = base.getCursor(executionContext);
+        final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             cursor.of(baseCursor, executionContext);
             return cursor;
