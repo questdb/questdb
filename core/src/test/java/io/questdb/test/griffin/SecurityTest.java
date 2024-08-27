@@ -38,7 +38,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
@@ -279,12 +278,12 @@ public class SecurityTest extends AbstractCairoTest {
             sqlExecutionContext.getRandom().reset();
             ddl("create table tab as (select" +
                     " rnd_double(2) d" +
-                    " from long_sequence(10000000))");
+                    " from long_sequence(1000000))");
             memoryRestrictedEngine.reloadTableNames();
 
             try {
                 setMaxCircuitBreakerChecks(Long.MAX_VALUE);
-                circuitBreakerTimeoutDeadline = MicrosecondClockImpl.INSTANCE.getTicks() + Timestamps.SECOND_MICROS;
+                circuitBreakerTimeoutDeadline = MicrosecondClockImpl.INSTANCE.getTicks() + 10; // 10ms query timeout
                 TestUtils.printSql(
                         engine,
                         readOnlyExecutionContext,
