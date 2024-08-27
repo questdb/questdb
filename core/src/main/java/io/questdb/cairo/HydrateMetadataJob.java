@@ -77,13 +77,13 @@ public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
         }
 
         if (position == 0) {
-            LOG.infoW().$("hydration started [all_tables=").$(tokens.size()).I$();
+            LOG.info().$("hydration started [all_tables=").$(tokens.size()).I$();
         }
 
         if (position >= tokens.size()) {
             completed = true;
             close();
-            LOG.infoW().$("hydration completed [user_tables=").$(CairoMetadata.INSTANCE.getTablesCount()).I$();
+            LOG.info().$("hydration completed [user_tables=").$(CairoMetadata.INSTANCE.getTablesCount()).I$();
             tokens.clear();
             position = -1;
             return true;

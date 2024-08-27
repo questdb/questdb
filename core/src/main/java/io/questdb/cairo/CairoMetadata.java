@@ -76,12 +76,11 @@ public class CairoMetadata implements Sinkable {
      * @param blindUpsert         Specifies whether upsert is blind or only if non-null. This is important as TableWriter should take priority over other processes calling this function (async hydration job, queries)
      */
     public void hydrateTable(@NotNull TableToken token, @NotNull CairoConfiguration configuration, @NotNull Log logger, @NotNull Path path, @NotNull ColumnVersionReader columnVersionReader, boolean blindUpsert) {
-        logger.debugW().$("hydrating metadata [table=").$(token.getTableName()).I$();
+        logger.info().$("hydrating metadata [table=").$(token.getTableName()).I$();
 
         // set up dir path
         path.of(configuration.getRoot())
                 .concat(token.getDirName());
-
 
         boolean isSoftLink = Files.isSoftLink(path.$());
 
@@ -105,7 +104,7 @@ public class CairoMetadata implements Sinkable {
             // make sure we aren't duplicating work
             CairoTable potentiallyExistingTable = tables.get(token.getDirName());
             if (potentiallyExistingTable != null && potentiallyExistingTable.getMetadataVersion() > metadataVersion) {
-                logger.debugW().$("table in cache with newer version [table=")
+                logger.debug().$("table in cache with newer version [table=")
                         .$(token.getTableName()).$(", version=").$(potentiallyExistingTable.getMetadataVersion()).I$();
                 return;
             }
@@ -113,13 +112,13 @@ public class CairoMetadata implements Sinkable {
             // get basic metadata
             int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
 
-            logger.debugW().$("reading columns [table=").$(token.getTableName())
+            logger.debug().$("reading columns [table=").$(token.getTableName())
                     .$(", count=").$(columnCount)
                     .I$();
 
             table.setMetadataVersion(metadataVersion);
 
-            logger.debugW().$("set metadata version [table=").$(token.getTableName())
+            logger.debug().$("set metadata version [table=").$(token.getTableName())
                     .$(", version=").$(metadataVersion)
                     .I$();
 
@@ -148,7 +147,7 @@ public class CairoMetadata implements Sinkable {
                     String columnName = Chars.toString(name);
                     CairoColumn column = new CairoColumn();
 
-                    logger.debugW().$("hydrating column [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
+                    logger.debug().$("hydrating column [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
 
                     column.setName(columnName);
                     table.upsertColumn(column);
@@ -175,7 +174,7 @@ public class CairoMetadata implements Sinkable {
                     }
 
                     if (ColumnType.isSymbol(columnType)) {
-                        logger.debugW().$("hydrating symbol metadata [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
+                        logger.debug().$("hydrating symbol metadata [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
 
                         // get column version
                         path.trimTo(configuration.getRoot().length())
@@ -214,6 +213,7 @@ public class CairoMetadata implements Sinkable {
                 tables.putIfAbsent(token.getDirName(), table);
             }
 
+            logger.info().$("hydrated metadata [table=").$(table.getName()).I$();
         } finally {
             metaMem.close();
             path.close();
@@ -228,7 +228,7 @@ public class CairoMetadata implements Sinkable {
      * @see CairoMetadata#hydrateTable(TableToken, CairoConfiguration, Log, Path, ColumnVersionReader, boolean)
      */
     public void hydrateTable(@NotNull TableToken token, @NotNull CairoConfiguration configuration, @NotNull Log logger, boolean blindUpsert) {
-        logger.debugW().$("hydrating table using thread-local path and column version reader [table=").$(token.getTableName()).I$();
+        logger.debug().$("hydrating table using thread-local path and column version reader [table=").$(token.getTableName()).I$();
         try {
             hydrateTable(token, configuration, logger, tlPath.get(), tlColumnVersionReader.get(), blindUpsert);
         } finally {
@@ -240,7 +240,7 @@ public class CairoMetadata implements Sinkable {
     public void hydrateTable(@NotNull TableWriterMetadata metadata, @NotNull Log logger, boolean blindUpsert) {
         CairoTable table = new CairoTable();
 
-        logger.debugW().$("hydrating metadata [table=").$(metadata.getTableName()).I$();
+        logger.info().$("hydrating metadata [table=").$(metadata.getTableName()).I$();
 
         // create table to work with
         table.setTableToken(metadata.getTableToken());
@@ -248,7 +248,7 @@ public class CairoMetadata implements Sinkable {
 
         int columnCount = metadata.getColumnCount();
 
-        logger.debugW().$("set metadata version [table=").$(table.getName()).$(", version=").$(table.getMetadataVersion()).I$();
+        logger.debug().$("set metadata version [table=").$(table.getName()).$(", version=").$(table.getMetadataVersion()).I$();
 
         table.setPartitionBy(metadata.getPartitionBy());
         table.setMaxUncommittedRows(metadata.getMaxUncommittedRows());
@@ -257,7 +257,7 @@ public class CairoMetadata implements Sinkable {
         table.setIsSoftLink(metadata.isSoftLink());
 
 
-        logger.debugW().$("reading columns [table=").$(table.getName()).$(", count=").$(columnCount).I$();
+        logger.debug().$("reading columns [table=").$(table.getName()).$(", count=").$(columnCount).I$();
 
         for (int i = 0; i < columnCount; i++) {
             TableColumnMetadata columnMetadata = metadata.columnMetadata.getQuick(i);
@@ -297,6 +297,8 @@ public class CairoMetadata implements Sinkable {
         } else {
             tables.putIfAbsent(table.getDirectoryName(), table);
         }
+
+        logger.info().$("hydrated metadata [table=").$(metadata.getTableName()).I$();
     }
 
     public void removeTable(@NotNull TableToken tableToken) {
