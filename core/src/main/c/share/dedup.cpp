@@ -497,13 +497,15 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                     switch (col_key->column_type) {
                         case (int) ColumnType::VARCHAR: {
                             auto comparer{*reinterpret_cast<const MergeVarcharColumnComparer *>(col_key)};
-                            return comparer(l, r);
+                            diff = comparer(l, r);
+                            break;
                         }
                         default: {
                             assert(false || "unsupported column type");
                             return 0;
                         }
                     }
+                    break;
                 }
                 default:
                     assert(false || "unsupported column value_size_bytes");
@@ -579,16 +581,6 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                                     index_in, index_count, index_out, index_temp,
                                     *reinterpret_cast<const SortVarcharColumnComparer *>(src_keys)
                             );
-//                        case (int)ColumnType::STRING:
-//                            return dedup_sorted_timestamp_index_with_keys(
-//                                    index_in, index_count, index_out, index_temp,
-//                                    *reinterpret_cast<const SortStringColumnComparer *>(src_keys)
-//                            );
-//                        case (int)ColumnType::BINARY:
-//                            return dedup_sorted_timestamp_index_with_keys(
-//                                    index_in, index_count, index_out, index_temp,
-//                                    *reinterpret_cast<const SortBinaryColumnComparer *>(src_keys)
-//                            );
                         default:
                             assert(false || "unsupported column type");
                             return -1;
@@ -639,13 +631,15 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                         switch (col_key->column_type) {
                             case (int) ColumnType::VARCHAR: {
                                 auto comparer{*reinterpret_cast<const SortVarcharColumnComparer *>(col_key)};
-                                return comparer(l, r);
+                                diff = comparer(l, r);
+                                break;
                             }
                             default: {
                                 assert(false || "unsupported column type");
                                 return 0;
                             }
                         }
+                        break;
                     }
                     default:
                         assert(false || "unsupported column type");

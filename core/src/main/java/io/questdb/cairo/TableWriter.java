@@ -4579,6 +4579,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                     }
                 }
+                assert dedupKeyIndex <= dedupColumnCommitAddresses.getColumnCount();
             }
             return Vect.dedupSortedTimestampIndexIntKeysChecked(
                     indexSrcAddr,
