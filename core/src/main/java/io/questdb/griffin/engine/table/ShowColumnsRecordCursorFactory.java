@@ -111,6 +111,8 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
                     } catch (Exception e) {
                         if (e.getMessage().contains("could not open")) {
                             throw CairoException.tableDoesNotExist(tableToken.getTableName());
+                        } else {
+                            throw e;
                         }
                     }
                     cairoTable = CairoMetadata.INSTANCE.getTableQuiet(tableToken);
