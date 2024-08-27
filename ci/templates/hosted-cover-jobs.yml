@@ -9,7 +9,7 @@ jobs:
           os: Linux
           jdk: "1.11"
           testset: "coverage-griffin"
-          includeTests: "**/griffin/engine/table/parquet/**"
+          includeTests: "**/griffin/**"
           javadoc_step: ""
           javadoc_profile: ""
         linux-cairo:
@@ -18,7 +18,7 @@ jobs:
           os: Linux
           jdk: "1.11"
           testset: "coverage-cairo"
-          includeTests: "**/cairo/map/*"
+          includeTests: "**/cairo/**"
           javadoc_step: ""
           javadoc_profile: ""
         linux-other:
@@ -27,7 +27,7 @@ jobs:
           os: Linux
           jdk: "1.11"
           testset: "coverage-other"
-          includeTests: "**/std/**"
+          excludeTests: "**/griffin/**,**/cairo/**"
           javadoc_step: ""
           javadoc_profile: ""
     pool:
