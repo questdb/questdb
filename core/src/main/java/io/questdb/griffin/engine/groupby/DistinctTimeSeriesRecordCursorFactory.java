@@ -85,7 +85,7 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         try {
             return cursor.of(baseCursor, executionContext);
         } catch (Throwable th) {
-            baseCursor.close();
+            cursor.close();
             throw th;
         }
     }
@@ -142,7 +142,7 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         public void close() {
             if (isOpen) {
                 isOpen = false;
-                Misc.free(baseCursor);
+                baseCursor = Misc.free(baseCursor);
                 Misc.free(dataMap);
             }
         }
@@ -204,14 +204,14 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
         }
 
         public RecordCursor of(RecordCursor baseCursor, SqlExecutionContext sqlExecutionContext) {
+            this.baseCursor = baseCursor;
+            record = baseCursor.getRecord();
+            recordB = baseCursor.getRecordB();
             if (!isOpen) {
                 isOpen = true;
                 dataMap.reopen();
             }
-            this.baseCursor = baseCursor;
             circuitBreaker = sqlExecutionContext.getCircuitBreaker();
-            record = baseCursor.getRecord();
-            recordB = baseCursor.getRecordB();
             state = INIT_FIRST_TIMESTAMP;
             return this;
         }

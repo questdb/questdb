@@ -89,7 +89,6 @@ public class LongSortedLightRecordCursorFactory extends AbstractRecordCursorFact
             cursor.of(baseCursor, executionContext);
             return cursor;
         } catch (Throwable ex) {
-            baseCursor.close();
             cursor.close();
             throw ex;
         }

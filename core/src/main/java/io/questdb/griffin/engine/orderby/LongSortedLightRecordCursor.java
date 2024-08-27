@@ -43,7 +43,7 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
     private final DirectLongList valueRowIdMem; // holds <value, rowId> pairs
     private final DirectLongList valueRowIdMemCpy; // used in radix sort
     private boolean areValuesSorted;
-    private RecordCursor base;
+    private RecordCursor baseCursor;
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isOpen;
@@ -70,7 +70,7 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
             isOpen = false;
             Misc.free(valueRowIdMem);
             Misc.free(valueRowIdMemCpy);
-            base = Misc.free(base);
+            baseCursor = Misc.free(baseCursor);
             baseRecord = null;
         }
     }
@@ -82,12 +82,12 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public Record getRecordB() {
-        return base.getRecordB();
+        return baseCursor.getRecordB();
     }
 
     @Override
     public SymbolTable getSymbolTable(int columnIndex) {
-        return base.getSymbolTable(columnIndex);
+        return baseCursor.getSymbolTable(columnIndex);
     }
 
     @Override
@@ -97,7 +97,7 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
             areValuesSorted = true;
         }
         if (rowIdCursor.hasNext()) {
-            base.recordAt(baseRecord, rowIdCursor.next());
+            baseCursor.recordAt(baseRecord, rowIdCursor.next());
             return true;
         }
         return false;
@@ -105,18 +105,20 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public SymbolTable newSymbolTable(int columnIndex) {
-        return base.newSymbolTable(columnIndex);
+        return baseCursor.newSymbolTable(columnIndex);
     }
 
     @Override
-    public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
+    public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+        // assign base cursor as the first step, so that we close it in close() call
+        this.baseCursor = baseCursor;
+        baseRecord = baseCursor.getRecord();
+
         if (!isOpen) {
             isOpen = true;
             valueRowIdMem.reopen();
         }
 
-        this.base = base;
-        baseRecord = base.getRecord();
         final int columnTypeTag = ColumnType.tagOf(columnType);
         switch (columnTypeTag) {
             case ColumnType.LONG:
@@ -139,12 +141,12 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        base.recordAt(record, atRowId);
+        baseCursor.recordAt(record, atRowId);
     }
 
     @Override
     public long size() {
-        return base.size();
+        return baseCursor.size();
     }
 
     @Override
@@ -152,7 +154,7 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
         rowIdCursor.toTop();
         if (!areValuesSorted) {
             valueRowIdMem.clear();
-            base.toTop();
+            baseCursor.toTop();
         }
     }
 
@@ -174,7 +176,7 @@ class LongSortedLightRecordCursor implements DelegatingRecordCursor {
 
     private void sortValues() {
         // first, copy all values to the buffer
-        while (base.hasNext()) {
+        while (baseCursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             // later sort assumes unsigned 64-bit integers,
             // so we flip the highest bit to get the correct order
