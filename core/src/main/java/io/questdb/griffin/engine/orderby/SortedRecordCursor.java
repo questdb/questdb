@@ -46,8 +46,8 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     public void close() {
         if (isOpen) {
             isOpen = false;
-            chainCursor = Misc.free(chainCursor); // this call also closes base cursor
-            baseCursor = null;
+            chainCursor = Misc.free(chainCursor);
+            baseCursor = Misc.free(baseCursor);
             Misc.free(chain);
         }
     }
@@ -84,11 +84,11 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     @Override
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) {
         this.baseCursor = baseCursor;
-        chainCursor = chain.getCursor(baseCursor);
         if (!isOpen) {
             isOpen = true;
             chain.reopen();
         }
+        chainCursor = chain.getCursor(baseCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
         isChainBuilt = false;
     }
