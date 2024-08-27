@@ -898,6 +898,7 @@ io.questdb.griffin.engine.functions.table.TableWriterMetricsFunctionFactory
 io.questdb.griffin.engine.functions.table.MemoryMetricsFunctionFactory
 io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory
 io.questdb.griffin.engine.functions.table.ParquetScanFunctionFactory
+io.questdb.griffin.engine.functions.table.HydrateTableMetadataFunctionFactory
 
 io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.FirstStrGroupByFunctionFactory
