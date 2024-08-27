@@ -104,7 +104,13 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
                 cairoTable = CairoMetadata.INSTANCE.getTableQuiet(tableToken);
 
                 if (cairoTable == null) {
-                    CairoMetadata.INSTANCE.hydrateTable(tableToken, executionContext.getCairoEngine().getConfiguration(), LOG, false);
+                    try {
+                        CairoMetadata.INSTANCE.hydrateTable(tableToken, executionContext.getCairoEngine().getConfiguration(), LOG, false);
+                    } catch (Exception e) {
+                        if (e.getMessage().contains("could not open")) {
+                            throw CairoException.tableDoesNotExist(tableToken.getTableName());
+                        }
+                    }
                     cairoTable = CairoMetadata.INSTANCE.getTableQuiet(tableToken);
                 }
 

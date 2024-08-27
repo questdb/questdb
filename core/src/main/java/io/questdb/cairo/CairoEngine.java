@@ -391,6 +391,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     }
                 } finally {
                     unlockTableUnsafe(tableToken, null, false);
+                    CairoMetadata.INSTANCE.removeTable(tableToken);
                 }
 
                 tableNameRegistry.dropTable(tableToken);

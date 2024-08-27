@@ -299,6 +299,10 @@ public class CairoMetadata implements Sinkable {
         }
     }
 
+    public void removeTable(@NotNull TableToken tableToken) {
+        tables.remove(tableToken.getDirName());
+    }
+
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.put("CairoMetadata [");
