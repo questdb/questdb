@@ -1449,6 +1449,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             if (timestampAdapter == null && ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
                 timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
             }
+
+            CairoMetadata.INSTANCE.hydrateTable(tableToken, cairoEngine.getConfiguration(), true, true);
         } catch (Throwable t) {
             closeWriter();
             throw t;
