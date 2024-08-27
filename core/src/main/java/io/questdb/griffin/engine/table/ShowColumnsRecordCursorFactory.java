@@ -137,6 +137,9 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         @Override
         public void toTop() {
             columnIndex = -1;
+            cairoTable = null;
+            cairoColumn = null;
+            names = null;
         }
 
         public class ShowColumnsRecord implements Record {
