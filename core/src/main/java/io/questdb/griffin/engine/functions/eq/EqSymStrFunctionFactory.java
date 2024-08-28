@@ -192,7 +192,7 @@ public class EqSymStrFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+    public static class NullCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
 
         public NullCheckFunc(Function arg) {

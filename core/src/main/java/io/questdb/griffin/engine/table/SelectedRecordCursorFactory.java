@@ -71,7 +71,7 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
             cursor.of(baseCursor);
             return cursor;
         } catch (Throwable th) {
-            baseCursor.close();
+            cursor.close();
             throw th;
         }
     }
