@@ -1218,7 +1218,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts asc",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Except\n" +
                             "        Limit lo: 10\n" +
@@ -1240,7 +1240,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts desc",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts desc]\n" +
                             "    Except\n" +
                             "        Limit lo: 10\n" +
@@ -1293,7 +1293,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  from tab\n" +
                             "  where id = 'XXX' \n" +
                             "  sample by 15m ALIGN to CALENDAR\n",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      keys: [ts,id]\n" +
@@ -1794,7 +1794,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select s, count() from trips where s is not null order by count desc",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [count desc]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      keys: [s]\n" +
@@ -3643,7 +3643,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts asc",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Intersect\n" +
                             "        Limit lo: 10\n" +
@@ -3665,7 +3665,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts desc",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts desc]\n" +
                             "    Intersect\n" +
                             "        Limit lo: 10\n" +
@@ -6589,7 +6589,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select first(i) from a sample by 1h align to calendar",
                     "SelectedRecord\n" +
-                            "    Sort light\n" +
+                            "    Radix sort light\n" +
                             "      keys: [ts]\n" +
                             "        Async Group By workers: 1\n" +
                             "          keys: [ts]\n" +
@@ -6828,7 +6828,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "and   ts > 0::timestamp and ts < 100::timestamp " +
                             "sample by 1h align to calendar",
                     "SelectedRecord\n" +
-                            "    Sort light\n" +
+                            "    Radix sort light\n" +
                             "      keys: [ts]\n" +
                             "        GroupBy vectorized: false\n" +
                             "          keys: [sym,ts]\n" +
@@ -6859,7 +6859,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select l, i, first(i) from a sample by 1h align to calendar",
                     "SelectedRecord\n" +
-                            "    Sort light\n" +
+                            "    Radix sort light\n" +
                             "      keys: [ts]\n" +
                             "        Async Group By workers: 1\n" +
                             "          keys: [l,i,ts]\n" +
@@ -6889,7 +6889,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select l, i, first(i) from a sample by 1h align to calendar",
                     "SelectedRecord\n" +
-                            "    Sort light\n" +
+                            "    Radix sort light\n" +
                             "      keys: [ts]\n" +
                             "        Async Group By workers: 1\n" +
                             "          keys: [l,i,ts]\n" +
@@ -7377,7 +7377,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) ;",
                 "select * from a order by ts desc",
-                "Sort light\n" +
+                "Radix sort light\n" +
                         "  keys: [ts desc]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
@@ -8213,7 +8213,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from a limit -5",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Limit lo: 5\n" +
                             "        PageFrame\n" +
@@ -8231,7 +8231,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from a limit -10+2",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Limit lo: 8\n" +
                             "        PageFrame\n" +
@@ -8246,7 +8246,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts);",
                 "select * from a order by 2 desc limit -10",
-                "Sort light\n" +
+                "Radix sort light\n" +
                         "  keys: [ts desc]\n" +
                         "    Limit lo: 10\n" +
                         "        PageFrame\n" +
@@ -8274,7 +8274,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts asc limit 5) order by ts desc",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts desc]\n" +
                             "    Limit lo: 5\n" +
                             "        PageFrame\n" +
@@ -8292,7 +8292,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts desc limit 5) order by ts asc",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Limit lo: 5\n" +
                             "        PageFrame\n" +
@@ -8331,7 +8331,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by ts desc limit -10",
-                "Sort light\n" +
+                "Radix sort light\n" +
                         "  keys: [ts desc]\n" +
                         "    Limit lo: 10\n" +
                         "        PageFrame\n" +
@@ -8345,7 +8345,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts)",
                 "select * from a order by ts  limit -5",
-                "Sort light\n" +
+                "Radix sort light\n" +
                         "  keys: [ts]\n" +
                         "    Limit lo: 5\n" +
                         "        PageFrame\n" +
@@ -8412,7 +8412,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by i asc",
-                "Sort light\n" +
+                "Radix sort light\n" +
                         "  keys: [i]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
@@ -8425,7 +8425,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by i desc",
-                "Sort light\n" +
+                "Radix sort light\n" +
                         "  keys: [i desc]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
@@ -8473,7 +8473,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc ",
-                "Sort light\n" +
+                "Radix sort light\n" +
                         "  keys: [l desc]\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
@@ -8513,7 +8513,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts in '2020-03-01' or ts in '2020-03-10'",
-                "Async Filter workers: 1\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: (ts in [1583020800000000,1583107199999999] or ts in [1583798400000000,1583884799999999])\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
@@ -9110,7 +9110,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a limit -10",
-                "Sort light\n" +
+                "Radix sort light\n" +
                         "  keys: [ts]\n" +
                         "    Limit lo: 10\n" +
                         "        PageFrame\n" +
@@ -9388,7 +9388,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by ts desc limit -10",
-                "Sort light\n" +
+                "Radix sort light\n" +
                         "  keys: [ts desc]\n" +
                         "    Limit lo: 10\n" +
                         "        PageFrame\n" +
@@ -9403,7 +9403,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select i from a order by ts desc limit -10",
                 "SelectedRecord\n" +
-                        "    Sort light\n" +
+                        "    Radix sort light\n" +
                         "      keys: [ts desc]\n" +
                         "        Limit lo: 10\n" +
                         "            PageFrame\n" +
@@ -9417,7 +9417,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by ts limit -10",
-                "Sort light\n" +
+                "Radix sort light\n" +
                         "  keys: [ts]\n" +
                         "    Limit lo: 10\n" +
                         "        PageFrame\n" +
@@ -9432,7 +9432,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select i from a order by ts limit -10",
                 "SelectedRecord\n" +
-                        "    Sort light\n" +
+                        "    Radix sort light\n" +
                         "      keys: [ts]\n" +
                         "        Limit lo: 10\n" +
                         "            PageFrame\n" +
@@ -9632,7 +9632,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from " +
                             "(select * from (select * from a order by ts desc, l desc) limit 10) " +
                             "order by ts asc",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Limit lo: 10\n" +
                             "        Sort light\n" +
@@ -9715,7 +9715,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts asc limit 10) order by ts desc",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts desc]\n" +
                             "    Limit lo: 10\n" +
                             "        PageFrame\n" +
@@ -9747,7 +9747,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts desc limit 10) order by ts asc",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Limit lo: 10\n" +
                             "        PageFrame\n" +
