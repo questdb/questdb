@@ -84,12 +84,19 @@ public abstract class AbstractSampleByRecordCursorFactory extends AbstractRecord
         try {
             // init all record functions for this cursor, in case functions require metadata and/or symbol tables
             Function.init(recordFunctions, baseCursor, executionContext);
-            AbstractNoRecordSampleByCursor cursor = getRawCursor();
+        } catch (Throwable th) {
+            Misc.free(baseCursor);
+            throw th;
+        }
+
+        AbstractNoRecordSampleByCursor cursor = null;
+        try {
+            cursor = getRawCursor();
             cursor.of(baseCursor, executionContext);
             return cursor;
-        } catch (Throwable ex) {
-            Misc.free(baseCursor);
-            throw ex;
+        } catch (Throwable th) {
+            Misc.free(cursor);
+            throw th;
         }
     }
 }

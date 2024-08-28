@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public abstract class AbstractSampleByNotKeyedRecordCursorFactory extends AbstractSampleByRecordCursorFactory {
@@ -45,11 +44,6 @@ public abstract class AbstractSampleByNotKeyedRecordCursorFactory extends Abstra
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
-        try {
-            return initFunctionsAndCursor(executionContext, baseCursor);
-        } catch (Throwable ex) {
-            Misc.free(baseCursor);
-            throw ex;
-        }
+        return initFunctionsAndCursor(executionContext, baseCursor);
     }
 }

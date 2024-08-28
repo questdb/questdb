@@ -76,6 +76,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         AbstractCairoTest.setUpStatic();
     }
 
+    @Override
     public void setUp() {
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, "true");
