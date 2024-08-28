@@ -340,6 +340,36 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         Assert.assertEquals(ColumnType.INT, bindVarFunctions.get(1).getType());
     }
 
+    @Test
+    public void testTimestampInLiteral() throws Exception {
+        serialize("atimestamp in '2020-01-01'");
+        assertIR("(i64 1577836800000000L)(i64 atimestamp)(>=)(i64 1577923199999999L)(i64 atimestamp)(<=)(&&)(ret)");
+        serialize("atimestamp in '2020-01-01;15s'");
+        assertIR("(i64 1577836800000000L)(i64 atimestamp)(>=)(i64 1577923214999999L)(i64 atimestamp)(<=)(&&)(ret)");
+        serialize("atimestamp in '2020-01-01T23:59:58;4s;-1d;3'");
+        assertIR("(i64 1577750398000000L)(i64 atimestamp)(>=)(i64 1577750402999999L)(i64 atimestamp)(<=)(&&)" +
+                "(i64 1577836798000000L)(i64 atimestamp)(>=)(i64 1577836802999999L)(i64 atimestamp)(<=)(&&)" +
+                "(i64 1577923198000000L)(i64 atimestamp)(>=)(i64 1577923202999999L)(i64 atimestamp)(<=)(&&)(||)(||)(ret)");
+        serialize("along = 42 and atimestamp in '2020-01-01T23:59:58;4s;-1d;3'");
+        assertIR("(i64 1577750398000000L)(i64 atimestamp)(>=)(i64 1577750402999999L)(i64 atimestamp)(<=)(&&)" +
+                "(i64 1577836798000000L)(i64 atimestamp)(>=)(i64 1577836802999999L)(i64 atimestamp)(<=)(&&)" +
+                "(i64 1577923198000000L)(i64 atimestamp)(>=)(i64 1577923202999999L)(i64 atimestamp)(<=)(&&)" +
+                "(||)(||)(i64 42L)(i64 along)(=)(&&)(ret)");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testTimestampInLiteralBindVariables() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("str", "2020");
+        serialize("atimestamp in :str");
+    }
+
+    @Test
+    public void testTimestampInLiteralNull() throws Exception {
+        serialize("atimestamp in null");
+        assertIR("(i64 -9223372036854775808L)(i64 atimestamp)(>=)(i64 -9223372036854775808L)(i64 atimestamp)(<=)(&&)(ret)");
+    }
+
     @Test(expected = SqlException.class)
     public void testInvalidTimestampLiteral() throws Exception {
         serialize("atimestamp > ''");
@@ -563,11 +593,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(string_header astring)(i32 -1L)(<>)(ret)");
         serialize("null = astring");
         assertIR("(string_header astring)(i32 -1L)(=)(ret)");
-    }
-
-    @Test(expected = SqlException.class)
-    public void testTimestampInLiteral() throws Exception {
-        serialize("atimestamp in '2020-01-01'");
     }
 
     @Test
