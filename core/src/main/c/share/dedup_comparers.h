@@ -50,26 +50,29 @@ struct VarcharDataView {
 
 const VarcharDataView NULL_VARCHAR_VIEW = {NULL, NULL, -1};
 
-const int32_t INLINED_LENGTH_MASK = (1 << 4) - 1;
 const int32_t HEADER_FLAGS_WIDTH = 4;
 const int32_t MIN_INLINE_CHARS = 6;
-const uint8_t HEADER_FLAG_NULL = 1 << 2;
+const uint32_t HEADER_FLAG_NULL = 1 << 2;
+const int32_t VARCHAR_MAX_BYTES_FULLY_INLINED = 9;
+const uint32_t VARCHAR_HEADER_FLAG_INLINED = 1 << 0;
 
-inline VarcharDataView read_varchar(int64_t offset, const void * column_data, const void * column_var_data, const long column_var_data_len) {
+inline VarcharDataView
+read_varchar(int64_t offset, const void *column_data, const void *column_var_data, const long column_var_data_len) {
     const auto aux_data = &reinterpret_cast<const VarcharAuxEntrySplit *>(column_data)[offset];
     if (aux_data->header & HEADER_FLAG_NULL) {
         return NULL_VARCHAR_VIEW;
     }
 
     if (aux_data->header & VARCHAR_HEADER_FLAG_INLINED) {
-        const auto aux_inlined_data = reinterpret_cast<const VarcharAuxEntryInlined *>(aux_data);
-        const uint8_t size = aux_inlined_data->header & INLINED_LENGTH_MASK;
+        const auto aux_inlined_data = &reinterpret_cast<const VarcharAuxEntryInlined *>(column_data)[offset];
+        const uint8_t size = aux_inlined_data->header >> HEADER_FLAGS_WIDTH;
+        assert(size <= VARCHAR_MAX_BYTES_FULLY_INLINED || "ERROR: invalid len of inline varchar");
         return VarcharDataView{aux_inlined_data->chars, &aux_inlined_data->chars[MIN_INLINE_CHARS], (int32_t) size};
     }
-    const int32_t size = aux_data->header >> HEADER_FLAGS_WIDTH;
+    const auto size = (int32_t) (aux_data->header >> HEADER_FLAGS_WIDTH);
     const uint64_t data_offset = aux_data->offset_lo | ((uint64_t) aux_data->offset_hi) << 16;
 
-    assert(data_offset < (uint64_t)column_var_data_len || "ERROR: reading beyond varchar address length!");
+    assert(data_offset < (uint64_t) column_var_data_len || "ERROR: reading beyond varchar address length!");
 
     const uint8_t *data = &reinterpret_cast<const uint8_t *>(column_var_data)[data_offset];
     return VarcharDataView{aux_data->chars, &data[MIN_INLINE_CHARS], size};
@@ -113,7 +116,7 @@ public:
 
         const auto r_val = r > -1
                            ? read_varchar(r, this->column_data, this->column_var_data, this->column_var_data_len)
-                           : read_varchar(l & ~(1ull << 63), this->o3_data, this->o3_var_data, this->o3_var_data_len);
+                           : read_varchar(r & ~(1ull << 63), this->o3_data, this->o3_var_data, this->o3_var_data_len);
 
         return compare(l_val, r_val);
     }
@@ -124,10 +127,12 @@ class MergeVarcharColumnComparer : dedup_column {
 public:
     inline int operator()(int64_t col_index, int64_t index_index) const {
         const VarcharDataView l_val = col_index >= dedup_column::column_top
-                                       ? read_varchar(col_index, this->column_data, this->column_var_data, this->column_var_data_len)
-                                       : NULL_VARCHAR_VIEW;
+                                      ? read_varchar(col_index, this->column_data, this->column_var_data,
+                                                     this->column_var_data_len)
+                                      : NULL_VARCHAR_VIEW;
 
-        const VarcharDataView r_val = read_varchar(index_index, this->o3_data, this->o3_var_data, this->o3_var_data_len);
+        const VarcharDataView r_val = read_varchar(index_index, this->o3_data, this->o3_var_data,
+                                                   this->o3_var_data_len);
 
         return compare(l_val, r_val);
     }

@@ -4553,9 +4553,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     0L
                             );
 
-                            MemoryCR o3Column = o3Columns.get(getPrimaryColumnIndex(i));
-                            long o3ColumnVarDataAddr = o3Column.addressOf(0);
-                            long o3ColumnVarDataSize = o3Column.size();
+                            MemoryCR o3VarColumn = o3Columns.get(getPrimaryColumnIndex(i));
+                            long o3ColumnVarDataAddr = o3VarColumn.addressOf(0);
+                            long o3ColumnVarDataSize = o3VarColumn.size();
                             long o3ColumnVarAuxAddr = o3Columns.get(getSecondaryColumnIndex(i)).addressOf(0);
                             dedupColumnCommitAddresses.setColAddressValues(addr, o3ColumnVarAuxAddr, o3ColumnVarDataAddr, o3ColumnVarDataSize);
 
@@ -4565,7 +4565,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                                 long lagAuxOffset = driver.getAuxVectorOffset(roLo);
                                 long lagAuxSize = driver.getAuxVectorSize(lagRows);
-                                long lagAuxKeyAddr = mapAppendColumnBuffer(columns.get(getSecondaryColumnIndex(i)), 0, lagAuxOffset + lagAuxSize, false);
+                                long lagAuxKeyAddr = mapAppendColumnBuffer(columns.get(getSecondaryColumnIndex(i)), lagAuxOffset, lagAuxOffset + lagAuxSize, false);
 
                                 long lagVarDataOffset = driver.getDataVectorOffset(lagAuxKeyAddr, 0);
                                 long lagVarDataSize = driver.getDataVectorSize(lagAuxKeyAddr, 0, lagRows - 1);

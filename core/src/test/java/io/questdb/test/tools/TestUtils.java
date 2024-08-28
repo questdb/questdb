@@ -1761,7 +1761,7 @@ public final class TestUtils {
     static void addRecordToMap(StringSink sink, Record record, RecordMetadata metadata, Map<String, Integer> map, boolean genericStringMatch) {
         sink.clear();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            CursorPrinter.printColumn(record, metadata, i, sink, genericStringMatch, true);
+            CursorPrinter.printColumn(record, metadata, i, sink, genericStringMatch, true, "<null>");
         }
         String printed = sink.toString();
         map.compute(printed, (s, i) -> {

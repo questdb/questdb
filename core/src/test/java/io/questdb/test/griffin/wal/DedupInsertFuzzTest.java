@@ -35,6 +35,8 @@ import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.fuzz.FuzzInsertOperation;
 import io.questdb.test.fuzz.FuzzStableInsertOperation;
@@ -97,7 +99,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             );
 
             applyWal(transactions, tableName, 1, rnd);
-            validateNoTimestampDuplicates(tableName, from, delta, count, null, 1);
+            validateNoTimestampDuplicates(tableName, from, delta, count, null, 1, ColumnType.NULL);
         });
     }
 
@@ -114,56 +116,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                             + " DEDUP UPSERT KEYS(ts, s)"
             );
 
-            ObjList<FuzzTransaction> transactions = new ObjList<>();
-            long initialDelta = Timestamps.MINUTE_MICROS * 15;
-            int rndCount = rnd.nextInt(10);
-            List<String> distinctSymbols = Arrays.stream(generateSymbols(rnd, 1 + rndCount, rnd.nextPositiveInt() % 16, tableName)).distinct()
-                    .collect(Collectors.toList());
-            String[] symbols = new String[distinctSymbols.size()];
-            distinctSymbols.toArray(symbols);
-            String[] initialSymbols = symbols.length == 1
-                    ? symbols
-                    : Arrays.copyOf(symbols, 1 + rnd.nextInt(symbols.length - 1));
-            int initialDuplicates = 1 + rnd.nextInt(1);
-
-            generateInsertsTransactions(
-                    transactions,
-                    1,
-                    parseFloorPartialTimestamp("2020-02-24T04:30"),
-                    initialDelta,
-                    4 * 24 * 5,
-                    initialDuplicates,
-                    initialSymbols,
-                    rnd
-            );
-
-            int transactionCount = 1 + rnd.nextInt(3);
-            splitTransactionInserts(transactions, transactionCount, rnd);
-            applyWal(transactions, tableName, 1, rnd);
-
-            transactions.clear();
-            long shift = rnd.nextLong(4 * 24 * 5) * Timestamps.MINUTE_MICROS * 15 +
-                    rnd.nextLong(15) * Timestamps.MINUTE_MICROS;
-            long from = parseFloorPartialTimestamp("2020-02-24") + shift;
-            long delta = Timestamps.MINUTE_MICROS;
-            int count = rnd.nextInt(48) * 60;
-            int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
-            generateInsertsTransactions(
-                    transactions,
-                    2,
-                    from,
-                    delta,
-                    count,
-                    rowsWithSameTimestamp,
-                    symbols,
-                    rnd
-            );
-
-            transactionCount = 1 + rnd.nextInt(3);
-            splitTransactionInserts(transactions, transactionCount, rnd);
-            applyWal(transactions, tableName, 1, rnd);
-
-            validateNoTimestampDuplicates(tableName, from, delta, count, symbols, 1);
+            runDedupWithShiftAndStep(rnd, tableName, ColumnType.SYMBOL);
         });
     }
 
@@ -261,7 +214,24 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
             // adding rows with commit = 2 from=2020-02-25T10:29:00.000000Z, to=2020-02-26T10:29:00.000000Z
             applyWal(transactions, tableName, 1, rnd);
-            validateNoTimestampDuplicates(tableName, from, delta, count, symbols, 1);
+            validateNoTimestampDuplicates(tableName, from, delta, count, symbols, 1, ColumnType.SYMBOL);
+        });
+    }
+
+    @Test
+    public void testDedupWithRandomShiftAndStepAndVarcharKey() throws Exception {
+        assertMemoryLeak(() -> {
+            Rnd rnd = generateRandom(LOG, 1559499947283666L, 1724867438346L);
+
+            String tableName = testName.getMethodName();
+            compile(
+                    "create table " + tableName +
+                            " (ts timestamp, commit int, s varchar) " +
+                            " timestamp(ts) partition by DAY WAL "
+                            + " DEDUP UPSERT KEYS(ts, s)"
+            );
+
+            runDedupWithShiftAndStep(rnd, tableName, ColumnType.VARCHAR);
         });
     }
 
@@ -310,7 +280,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             );
 
             applyWal(transactions, tableName, 1, rnd);
-            validateNoTimestampDuplicates(tableName, from, delta, count, null, initialDuplicates);
+            validateNoTimestampDuplicates(tableName, from, delta, count, null, initialDuplicates, ColumnType.NULL);
         });
     }
 
@@ -360,13 +330,12 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             );
 
             applyWal(transactions, tableName, 1, rnd);
-            validateNoTimestampDuplicates(tableName, from, delta, count, null, 1);
+            validateNoTimestampDuplicates(tableName, from, delta, count, null, 1, ColumnType.NULL);
         });
     }
 
     @Test
     public void testRandomColumnsDedupMultipleKeyCol() throws Exception {
-//        Rnd rnd = generateRandom(LOG, 1516755295897208L, 1724776218972L);
         Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
@@ -461,6 +430,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         runFuzzWithRepeatDedup(rnd);
     }
 
+    private static boolean dedupSupported(int columnType) {
+        return !ColumnType.isVarSize(columnType) || columnType == ColumnType.VARCHAR;
+    }
+
     private void assertAllSymbolsSet(
             boolean[] foundSymbols,
             String[] symbols,
@@ -481,11 +454,12 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String tableNameWal
     ) throws SqlException {
         Log log = LOG;
+        String filter = ""; // " WHERE ts in ('2022-02-24T23:59:59.114787', '2022-02-24T23:59:59.114752Z')";
         try (
-                RecordCursorFactory factory = select(tableNameNoWal);
-                RecordCursorFactory factoryPreview = select(tableNameNoWal)
+                RecordCursorFactory factory = select(tableNameNoWal + filter);
+                RecordCursorFactory factoryPreview = select(tableNameNoWal + filter)
         ) {
-            try (RecordCursorFactory factory2 = select(tableNameWal)) {
+            try (RecordCursorFactory factory2 = select(tableNameWal + filter)) {
                 try (
                         RecordCursor cursor1 = factory.getCursor(sqlExecutionContext);
                         RecordCursor previewCursor = factoryPreview.getCursor(sqlExecutionContext)
@@ -522,8 +496,21 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    private static boolean dedupSupported(int columnType) {
-        return !ColumnType.isVarSize(columnType) || columnType == ColumnType.VARCHAR;
+    private void chooseUpsertKeys(RecordMetadata metadata, int dedupKeyCount, Rnd rnd, IntList upsertKeyIndexes) {
+        upsertKeyIndexes.add(metadata.getTimestampIndex());
+        int dedupKeys = dedupKeyCount > -1 ? dedupKeyCount : rnd.nextInt(metadata.getColumnCount() - 1);
+        for (int i = 0; i < dedupKeys; i++) {
+            int start = rnd.nextInt(metadata.getColumnCount());
+            for (int c = 0; c < metadata.getColumnCount(); c++) {
+                int col = (c + start) % metadata.getColumnCount();
+                int columnType = metadata.getColumnType(col);
+
+                if (!upsertKeyIndexes.contains(col) && dedupSupported(columnType)) {
+                    upsertKeyIndexes.add(col);
+                    break;
+                }
+            }
+        }
     }
 
     private void collectUpsertKeyNames(TableRecordMetadata metadata, IntList upsertKeys, ObjList<CharSequence> upsertKeyNames) {
@@ -595,13 +582,38 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String[] symbols,
             Rnd rnd
     ) {
+        generateInsertsTransactions(
+                transactions,
+                commit,
+                fromTimestamp,
+                delta,
+                count,
+                rowsWithSameTimestamp,
+                symbols,
+                rnd,
+                ColumnType.SYMBOL
+        );
+    }
+
+    private void generateInsertsTransactions(
+            ObjList<FuzzTransaction> transactions,
+            int commit,
+            long fromTimestamp,
+            long delta,
+            int count,
+            int rowsWithSameTimestamp,
+            String[] symbols,
+            Rnd rnd,
+            int columnType
+    ) {
         FuzzTransaction transaction = new FuzzTransaction();
         transactions.add(transaction);
+        Utf8StringSink sink = new Utf8StringSink();
         for (int i = 0; i < count; i++) {
             for (int j = 0; j < rowsWithSameTimestamp; j++) {
                 if (symbols != null && symbols.length > 0) {
                     for (int s = 0; s < symbols.length; s++) {
-                        transaction.operationList.add(new FuzzStableInsertOperation(fromTimestamp, commit, symbols[s]));
+                        transaction.operationList.add(new FuzzStableInsertOperation(fromTimestamp, commit, symbols[s], columnType, sink));
                     }
                 } else {
                     transaction.operationList.add(new FuzzStableInsertOperation(fromTimestamp, commit));
@@ -622,76 +634,71 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    private void runFuzzWithRandomColsDedup(Rnd rnd, int dedupKeys) throws Exception {
-        assertMemoryLeak(() -> {
-            String tableNameBase = getTestName();
-            String tableNameDedup = tableNameBase + "_wal";
+    private CharSequence readStrValue(Record rec, int colType, int col) {
+        switch (colType) {
+            case ColumnType.SYMBOL:
+                return rec.getSymA(col);
+            case ColumnType.STRING:
+                return rec.getStrA(col);
+            case ColumnType.VARCHAR:
+                return Utf8s.toString(rec.getVarcharA(col));
+        }
+        throw new IllegalArgumentException();
+    }
 
-            // TODO: remove
-            fuzzer.initialRowCount = 0;
-            String tableNameWalNoDedup = tableNameBase + "_nodedup";
+    private void runDedupWithShiftAndStep(Rnd rnd, String tableName, int colType) {
+        ObjList<FuzzTransaction> transactions = new ObjList<>();
+        long initialDelta = Timestamps.MINUTE_MICROS * 15;
+        int rndCount = rnd.nextInt(10);
+        List<String> distinctSymbols = Arrays.stream(generateSymbols(rnd, 1 + rndCount, rnd.nextPositiveInt() % 16, tableName)).distinct()
+                .collect(Collectors.toList());
+        String[] symbols = new String[distinctSymbols.size()];
+        distinctSymbols.toArray(symbols);
+        String[] initialSymbols = symbols.length == 1
+                ? symbols
+                : Arrays.copyOf(symbols, 1 + rnd.nextInt(symbols.length - 1));
+        int initialDuplicates = 1 + rnd.nextInt(1);
 
-            fuzzer.createInitialTable(tableNameWalNoDedup, true);
-            fuzzer.createInitialTable(tableNameDedup, true);
+        generateInsertsTransactions(
+                transactions,
+                1,
+                parseFloorPartialTimestamp("2020-02-24T04:30"),
+                initialDelta,
+                4 * 24 * 5,
+                initialDuplicates,
+                initialSymbols,
+                rnd,
+                colType
+        );
 
-            // Add long256 type to have to be a chance of a dedup key
-            compile("alter table " + tableNameDedup + " add column col256 long256");
-            compile("alter table " + tableNameWalNoDedup + " add column col256 long256");
+        int transactionCount = 1 + rnd.nextInt(3);
+        splitTransactionInserts(transactions, transactionCount, rnd);
+        applyWal(transactions, tableName, 1, rnd);
 
-            drainWalQueue();
+        transactions.clear();
+        long shift = rnd.nextLong(4 * 24 * 5) * Timestamps.MINUTE_MICROS * 15 +
+                rnd.nextLong(15) * Timestamps.MINUTE_MICROS;
+        long from = parseFloorPartialTimestamp("2020-02-24") + shift;
+        long delta = Timestamps.MINUTE_MICROS;
+        int count = rnd.nextInt(48) * 60;
+        int rowsWithSameTimestamp = 1 + rnd.nextInt(2);
+        generateInsertsTransactions(
+                transactions,
+                2,
+                from,
+                delta,
+                count,
+                rowsWithSameTimestamp,
+                symbols,
+                rnd,
+                colType
+        );
 
-            ObjList<FuzzTransaction> transactions;
-            IntList upsertKeyIndexes = new IntList();
-            String comaSeparatedUpsertCols;
-            String timestampColumnName;
+        transactionCount = 1 + rnd.nextInt(3);
+        splitTransactionInserts(transactions, transactionCount, rnd);
+        applyWal(transactions, tableName, 1, rnd);
 
-            try (
-                    TableReader reader = getReader(tableNameWalNoDedup);
-                    TableMetadata sequencerMetadata = engine.getSequencerMetadata(reader.getTableToken())
-            ) {
-                TableReaderMetadata readerMetadata = reader.getMetadata();
-                chooseUpsertKeys(readerMetadata, dedupKeys, rnd, upsertKeyIndexes);
-                timestampColumnName = readerMetadata.getColumnName(readerMetadata.getTimestampIndex());
-
-                long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T23:59:59");
-                long end = start + 2 * Timestamps.SECOND_MICROS;
-                transactions = generateSet(rnd, sequencerMetadata, readerMetadata, start, end, tableNameWalNoDedup);
-                comaSeparatedUpsertCols = toCommaSeparatedString(readerMetadata, upsertKeyIndexes);
-            }
-            String alterStatement = String.format(
-                    "alter table %s dedup upsert keys(%s))",
-                    tableNameDedup,
-                    comaSeparatedUpsertCols
-            );
-            compile(alterStatement);
-
-            WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
-            sharedWorkerPool.start(LOG);
-
-            try {
-                applyWal(transactions, tableNameWalNoDedup, 1, new Rnd());
-                applyWal(transactions, tableNameDedup, 1 + rnd.nextInt(4), rnd);
-
-                String renamedUpsertKeys;
-                ObjList<CharSequence> upsertKeyNames = new ObjList<>();
-                try (TableWriter writer = getWriter(tableNameWalNoDedup)) {
-                    collectUpsertKeyNames(writer.getMetadata(), upsertKeyIndexes, upsertKeyNames);
-                    renamedUpsertKeys = toCommaSeparatedString(writer.getMetadata(), upsertKeyIndexes);
-                }
-
-                LOG.info().$("asserting no dups on keys: ").$(renamedUpsertKeys).$();
-                assertSqlCursorsNoDups(
-                        tableNameWalNoDedup,
-                        upsertKeyNames,
-                        tableNameDedup
-                );
-
-                fuzzer.assertCounts(tableNameDedup, timestampColumnName);
-                fuzzer.assertStringColDensity(tableNameDedup);
-            } finally {
-                sharedWorkerPool.halt();
-            }
-        });
+        validateNoTimestampDuplicates(tableName, from, delta, count, symbols, 1, colType);
     }
 
     private void runFuzzWithRepeatDedup(Rnd rnd) throws Exception {
@@ -771,23 +778,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         operationList.setQuick(j, tmp);
     }
 
-    private void chooseUpsertKeys(RecordMetadata metadata, int dedupKeyCount, Rnd rnd, IntList upsertKeyIndexes) {
-        upsertKeyIndexes.add(metadata.getTimestampIndex());
-        int dedupKeys = dedupKeyCount > -1 ? dedupKeyCount : rnd.nextInt(metadata.getColumnCount() - 1);
-        for (int i = 0; i < dedupKeys; i++) {
-            int start = rnd.nextInt(metadata.getColumnCount());
-            for (int c = 0; c < metadata.getColumnCount(); c++) {
-                int col = (c + start) % metadata.getColumnCount();
-                int columnType = metadata.getColumnType(col);
-
-                if (!upsertKeyIndexes.contains(col) && dedupSupported(columnType)) {
-                    upsertKeyIndexes.add(col);
-                    break;
-                }
-            }
-        }
-    }
-
     private String toCommaSeparatedString(RecordMetadata metadata, IntList upsertKeys) {
         StringSink sink = new StringSink();
         for (int i = 0; i < upsertKeys.size(); i++) {
@@ -800,6 +790,75 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             }
         }
         return sink.toString();
+    }
+
+    private void runFuzzWithRandomColsDedup(Rnd rnd, int dedupKeys) throws Exception {
+        assertMemoryLeak(() -> {
+            String tableNameBase = getTestName();
+            String tableNameDedup = tableNameBase + "_wal";
+            String tableNameWalNoDedup = tableNameBase + "_nodedup";
+
+            fuzzer.createInitialTable(tableNameWalNoDedup, true);
+            fuzzer.createInitialTable(tableNameDedup, true);
+
+            // Add long256 type to have to be a chance of a dedup key
+            compile("alter table " + tableNameDedup + " add column col256 long256");
+            compile("alter table " + tableNameWalNoDedup + " add column col256 long256");
+
+            drainWalQueue();
+
+            ObjList<FuzzTransaction> transactions;
+            IntList upsertKeyIndexes = new IntList();
+            String comaSeparatedUpsertCols;
+            String timestampColumnName;
+
+            try (
+                    TableReader reader = getReader(tableNameWalNoDedup);
+                    TableMetadata sequencerMetadata = engine.getSequencerMetadata(reader.getTableToken())
+            ) {
+                TableReaderMetadata readerMetadata = reader.getMetadata();
+                chooseUpsertKeys(readerMetadata, dedupKeys, rnd, upsertKeyIndexes);
+                timestampColumnName = readerMetadata.getColumnName(readerMetadata.getTimestampIndex());
+
+                long start = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T23:59:59");
+                long end = start + 2 * Timestamps.SECOND_MICROS;
+                transactions = generateSet(rnd, sequencerMetadata, readerMetadata, start, end, tableNameWalNoDedup);
+                comaSeparatedUpsertCols = toCommaSeparatedString(readerMetadata, upsertKeyIndexes);
+            }
+            String alterStatement = String.format(
+                    "alter table %s dedup upsert keys(%s))",
+                    tableNameDedup,
+                    comaSeparatedUpsertCols
+            );
+            compile(alterStatement);
+
+            WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+            sharedWorkerPool.start(LOG);
+
+            try {
+                applyWal(transactions, tableNameWalNoDedup, 1, new Rnd());
+                applyWal(transactions, tableNameDedup, 1 + rnd.nextInt(4), rnd);
+
+                String renamedUpsertKeys;
+                ObjList<CharSequence> upsertKeyNames = new ObjList<>();
+                try (TableWriter writer = getWriter(tableNameDedup)) {
+                    collectUpsertKeyNames(writer.getMetadata(), upsertKeyIndexes, upsertKeyNames);
+                    renamedUpsertKeys = toCommaSeparatedStringDebug(writer.getMetadata(), upsertKeyIndexes);
+                }
+
+                LOG.info().$("asserting no dups on keys: ").$(renamedUpsertKeys).$();
+                assertSqlCursorsNoDups(
+                        tableNameWalNoDedup,
+                        upsertKeyNames,
+                        tableNameDedup
+                );
+
+                fuzzer.assertCounts(tableNameDedup, timestampColumnName);
+                fuzzer.assertStringColDensity(tableNameDedup);
+            } finally {
+                sharedWorkerPool.halt();
+            }
+        });
     }
 
     private ObjList<FuzzTransaction> uniqueInserts(ObjList<FuzzTransaction> transactions) {
@@ -828,13 +887,28 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         return result;
     }
 
+    private String toCommaSeparatedStringDebug(RecordMetadata metadata, IntList upsertKeys) {
+        StringSink sink = new StringSink();
+        for (int i = 0; i < upsertKeys.size(); i++) {
+            int columnType = metadata.getColumnType(upsertKeys.get(i));
+            if (columnType > 0 && dedupSupported(columnType)) {
+                if (i > 0) {
+                    sink.put(',');
+                }
+                sink.put(metadata.getColumnName(upsertKeys.get(i)) + ":" + ColumnType.nameOf(columnType));
+            }
+        }
+        return sink.toString();
+    }
+
     private void validateNoTimestampDuplicates(
             String tableName,
             long fromTimestamp,
             long delta,
             long commit2Count,
             String[] symbols,
-            int existingDups
+            int existingDups,
+            int colType
     ) {
 
         LOG.info().$("Validating no timestamp duplicates [from=").$ts(fromTimestamp)
@@ -878,7 +952,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                         sink.putISODate(timestamp).put(',').put(commit);
                         if (symbols != null) {
                             sink.put(',');
-                            CharSequence cs = rec.getSymA(2);
+                            CharSequence cs = readStrValue(rec, colType, 2);
                             if (cs != null) {
                                 sink.put(cs);
                             }
@@ -894,11 +968,14 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                                 // and reset foundSymbols to false
                                 assertAllSymbolsSet(foundSymbols, symbols, lastTimestamp);
                             }
-                            CharSequence sym = rec.getSymA(2);
+                            CharSequence sym = readStrValue(rec, colType, 2);
                             if (sym == null) {
                                 sym = nullSymbolValue;
                             }
                             int symbolIndex = symbolSet.get(sym);
+                            if (symbolIndex < 0) {
+                                Assert.fail("Unknown symbol found: timestamp " + Timestamps.toUSecString(timestamp) + ", symbol '" + sym + "'");
+                            }
                             if (foundSymbols[symbolIndex]) {
                                 Assert.fail("Duplicate timestamp " + Timestamps.toUSecString(timestamp) + " for symbol '" + sym + "'");
                             }

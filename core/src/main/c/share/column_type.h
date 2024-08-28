@@ -81,9 +81,6 @@ struct VarcharAuxEntrySplit {
     uint16_t offset_lo;
     uint32_t offset_hi;
 };
-
-const uint8_t VARCHAR_HEADER_FLAG_INLINED = 1 << 0;
-
 #pragma pack(pop)
 
 #endif //COLUMN_TYPE_H

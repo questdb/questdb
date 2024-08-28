@@ -3,7 +3,7 @@ use std::future::IntoFuture;
 
 use futures::Future;
 
-use crate::{AsyncDB, Connection as ConnectionName, DataFormat, DBOutput, DEFAULT_DATA_FORMAT};
+use crate::{AsyncDB, Connection as ConnectionName, DBOutput, DEFAULT_DATA_FORMAT};
 
 /// Trait for making connections to an [`AsyncDB`].
 ///

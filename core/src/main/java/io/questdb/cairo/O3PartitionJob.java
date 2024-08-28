@@ -914,6 +914,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     -1
                             );
                         } else {
+                            // Var len columns
                             final long oooVarColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
                             final long oooVarColSize = oooColumns.get(getPrimaryColumnIndex(i)).size();
                             final long oooAuxColAddress = oooColumns.get(getSecondaryColumnIndex(i)).addressOf(0);
