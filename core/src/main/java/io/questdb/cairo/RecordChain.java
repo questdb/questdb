@@ -36,7 +36,6 @@ import org.jetbrains.annotations.NotNull;
 import java.io.Closeable;
 
 public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSinkSPI, WindowSPI, Reopenable {
-
     private final long[] columnOffsets;
     private final long fixOffset;
     private final MemoryARW mem;
@@ -304,7 +303,7 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
 
     @Override
     public void reopen() {
-        //nothing to do here
+        // nothing to do here
     }
 
     public void setSymbolTableResolver(SymbolTableSource resolver) {

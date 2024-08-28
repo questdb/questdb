@@ -435,6 +435,8 @@ public interface CairoConfiguration {
 
     int getSqlModelPoolCapacity();
 
+    int getSqlOrderByRadixSortThreshold();
+
     int getSqlPageFrameMaxRows();
 
     int getSqlPageFrameMinRows();
@@ -593,6 +595,8 @@ public interface CairoConfiguration {
     boolean isReadOnlyInstance();
 
     boolean isSqlJitDebugEnabled();
+
+    boolean isSqlOrderBySortEnabled();
 
     boolean isSqlParallelFilterEnabled();
 

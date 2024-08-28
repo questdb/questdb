@@ -116,7 +116,7 @@ _The public demo queries over 1.6BN rows and uses a `r6a.12xlarge` 48 vCPU and 3
 We also have some public, real-time demo dashboards using our [Grafana-native](https://questdb.io/docs/third-party-tools/grafana/) plugin:
 
 - [Real-time crypto trades:](https://questdb.io/dashboards/crypto/) executed
-  trades on Coinbase from more than 20 assets in real time
+  trades on OKX from more than 20 assets in real time
 - [NYC taxi geolocation data:](https://questdb.io/dashboards/taxi/) real-time
   replay of 146,393,317 taxi rides across New York City in 2016
 
