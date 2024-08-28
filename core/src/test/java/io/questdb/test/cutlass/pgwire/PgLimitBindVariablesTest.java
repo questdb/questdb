@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.std.Misc;
 import io.questdb.test.AbstractBootstrapTest;
+import io.questdb.test.TestServerMain;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -57,7 +58,8 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
     @Test
     public void testLimitLow() throws Exception {
         assertMemoryLeak(() -> {
-            try (ServerMain serverMain = startWithEnvVariables()) {
+            try (final ServerMain serverMain = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
+                serverMain.start();
                 createTable(serverMain, 25);
                 try (Connection connection = getConnection(serverMain)) {
                     final String sql = "SELECT * from tab where status = ? order by ts desc limit ?";
@@ -79,7 +81,8 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
     @Test
     public void testLimitLowHigh() throws Exception {
         assertMemoryLeak(() -> {
-            try (ServerMain serverMain = startWithEnvVariables()) {
+            try (final ServerMain serverMain = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
+                serverMain.start();
                 createTable(serverMain, 100);
                 try (Connection connection = getConnection(serverMain)) {
                     final String sql = "SELECT * from tab where status = ? order by ts desc limit ?,?";
@@ -108,6 +111,7 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
         } catch (SqlException e) {
             throw CairoException.critical(0).put("Could not create table: '").put(e.getFlyweightMessage());
         }
+        drainWalQueue(engine);
     }
 
     private static Connection getConnection(ServerMain serverMain) throws SQLException {
