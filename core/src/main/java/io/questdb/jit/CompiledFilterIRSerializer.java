@@ -875,10 +875,11 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (SqlKeywords.isInKeyword(token)) {
             if (type == ExpressionNode.FUNCTION) {
                 serializeIn();
+                return;
             } else if (type == ExpressionNode.SET_OPERATION && isInTimestampPredicate()) {
                 serializeInTimestampRange(position);
+                return;
             }
-            return;
         }
         if (SqlKeywords.isNotKeyword(token)) {
             putOperator(NOT);
