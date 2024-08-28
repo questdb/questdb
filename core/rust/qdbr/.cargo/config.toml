@@ -1,3 +1,2 @@
 [build]
-target-dir = "../../target/rust-maven-plugin/qdbr/"
 rustflags = ["-D", "warnings"]
