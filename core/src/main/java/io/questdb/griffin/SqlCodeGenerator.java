@@ -5839,13 +5839,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final int type = func.getType();
         if (limitTypes.excludes(type)) {
             if (type == ColumnType.UNDEFINED) {
+                final ConstantFunction defValue = defaultValue == null ? LongConstant.NULL : defaultValue;
                 if (func instanceof IndexedParameterLinkFunction) {
-                    executionContext.getBindVariableService().setLong(((IndexedParameterLinkFunction) func).getVariableIndex(), defaultValue.getLong(null));
+                    executionContext.getBindVariableService().setLong(((IndexedParameterLinkFunction) func).getVariableIndex(), defValue.getLong(null));
                     return func;
                 }
 
                 if (func instanceof NamedParameterLinkFunction) {
-                    executionContext.getBindVariableService().setLong(((NamedParameterLinkFunction) func).getVariableName(), defaultValue.getLong(null));
+                    executionContext.getBindVariableService().setLong(((NamedParameterLinkFunction) func).getVariableName(), defValue.getLong(null));
                     return func;
                 }
             }
