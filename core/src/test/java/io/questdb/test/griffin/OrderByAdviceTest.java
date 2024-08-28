@@ -123,7 +123,8 @@ public class OrderByAdviceTest extends AbstractCairoTest {
 
         assertQuery(
                 "sym\tspread\n",
-                "select sym, ask-bid spread from x where ts IN '1970-01-03' order by spread", "create table x (\n" +
+                "select sym, ask-bid spread from x where ts IN '1970-01-03' order by spread",
+                "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    bid int,\n" +
                         "    ask int,\n" +
@@ -602,7 +603,6 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 "BB\t-1575378703\t806715481\t1970-01-03T00:24:00.000000Z\n" +
                 "BB\t-1191262516\t-2041844972\t1970-01-03T00:18:00.000000Z\n" +
                 "AA\t315515118\t1548800833\t1970-01-03T00:00:00.000000Z\n";
-
 
         assertQuery(
                 "sym\tbid\task\tts\n",

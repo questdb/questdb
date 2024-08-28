@@ -466,7 +466,7 @@ public class GroupByTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     query,
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [date_report]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [date_report]\n" +
@@ -499,7 +499,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "order by ordr.date_report";
             assertPlanNoLeakCheck(
                     query,
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [date_report]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [date_report]\n" +
@@ -533,7 +533,7 @@ public class GroupByTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     query,
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [date_report]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [date_report]\n" +
@@ -567,7 +567,7 @@ public class GroupByTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     query,
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [date_report1]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [date_report,date_report,count]\n" +
@@ -605,7 +605,7 @@ public class GroupByTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     query,
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [date_report]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [date_report,dateadd,dateadd('d',1,date_report),concat(['1',date_report,'3']),count]\n" +
@@ -643,7 +643,7 @@ public class GroupByTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     query,
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [date_report]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [date_report,to_str(date_report),dateadd('d',1,date_report),dateadd('d',-1,date_report),count]\n" +
@@ -688,7 +688,7 @@ public class GroupByTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     query,
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [date_report]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [date_report,to_str(date_report),dateadd('d',1,date_report),min,count,minminusday]\n" +
@@ -1306,7 +1306,7 @@ public class GroupByTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     query,
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [x]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [x,max,dateadd::long+x1]\n" +
@@ -1785,7 +1785,7 @@ public class GroupByTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     query1,
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [i]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [ts,i,avg,sum,first_value]\n" +
@@ -1835,7 +1835,7 @@ public class GroupByTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     query2,
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [i]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      keys: [i]\n" +
@@ -2102,7 +2102,7 @@ public class GroupByTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     query,
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [y_utc_15m]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      keys: [y_utc_15m]\n" +
@@ -2486,7 +2486,7 @@ public class GroupByTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     query,
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ref0]\n" +
                             "    Distinct\n" +
                             "      keys: ref0\n" +
@@ -2528,7 +2528,7 @@ public class GroupByTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     query,
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ref0]\n" +
                             "    Distinct\n" +
                             "      keys: ref0\n" +
@@ -2570,7 +2570,7 @@ public class GroupByTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     query,
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [created]\n" +
                             "    Distinct\n" +
                             "      keys: created\n" +

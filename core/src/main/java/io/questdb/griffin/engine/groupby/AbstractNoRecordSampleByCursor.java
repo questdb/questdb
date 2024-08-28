@@ -87,7 +87,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
 
     @Override
     public void close() {
-        Misc.free(baseCursor);
+        baseCursor = Misc.free(baseCursor);
         Misc.free(allocator);
         Misc.clearObjList(groupByFunctions);
         circuitBreaker = null;
@@ -104,11 +104,11 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     }
 
     public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
+        this.baseCursor = baseCursor;
+        baseRecord = baseCursor.getRecord();
         prevDst = Long.MIN_VALUE;
         parseParams(baseCursor, executionContext);
         topNextDst = nextDstUtc;
-        this.baseCursor = baseCursor;
-        baseRecord = baseCursor.getRecord();
         circuitBreaker = executionContext.getCircuitBreaker();
         rowId = 0;
         isNotKeyedLoopInitialized = false;

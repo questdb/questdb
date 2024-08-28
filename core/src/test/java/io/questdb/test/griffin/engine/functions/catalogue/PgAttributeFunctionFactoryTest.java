@@ -42,7 +42,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(query,
                     "SelectedRecord\n" +
-                            "    Sort light\n" +
+                            "    Radix sort light\n" +
                             "      keys: [b1]\n" +
                             "        CachedWindow\n" +
                             "          orderedFunctions: [[b desc] => [row_number() over (partition by [a1])]]\n" +
