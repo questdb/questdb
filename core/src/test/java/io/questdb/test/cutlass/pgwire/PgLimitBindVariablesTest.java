@@ -56,30 +56,7 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testLimitLow() throws Exception {
-        assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
-                serverMain.start();
-                createTable(serverMain, 25);
-                try (Connection connection = getConnection(serverMain)) {
-                    final String sql = "SELECT * from tab where status = ? order by ts desc limit ?";
-                    runQueryWithParams(connection, sql, 1, 3, 0, "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n" +
-                            "Sym1,1,1970-01-01 00:00:22.4\n" +
-                            "Sym0,1,1970-01-01 00:00:22.0\n" +
-                            "Sym2,1,1970-01-01 00:00:21.6\n");
-                    runQueryWithParams(connection, sql, 1, 5, 0, "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n" +
-                            "Sym1,1,1970-01-01 00:00:22.4\n" +
-                            "Sym0,1,1970-01-01 00:00:22.0\n" +
-                            "Sym2,1,1970-01-01 00:00:21.6\n" +
-                            "Sym1,1,1970-01-01 00:00:21.2\n" +
-                            "Sym0,1,1970-01-01 00:00:20.8\n");
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testLimitLowHigh() throws Exception {
+    public void testLowAndHighLimit() throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain serverMain = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
                 serverMain.start();
@@ -95,6 +72,72 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
                             "Sym0,1,1970-01-01 00:00:26.8\n");
                     runQueryWithParams(connection, sql, 2, 4, 5, "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n" +
                             "Sym1,2,1970-01-01 00:00:28.1\n");
+                    runQueryWithParams(connection, sql, 2, 4, -20, "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n" +
+                            "Sym1,2,1970-01-01 00:00:28.1\n");
+                    runQueryWithParams(connection, sql, 2, 4, -21, "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n");
+                    runQueryWithParams(connection, sql, 2, 4, -22, "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLowLimitOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
+                serverMain.start();
+                createTable(serverMain, 25);
+                try (Connection connection = getConnection(serverMain)) {
+                    final String sql = "SELECT * from tab where status = ? order by ts desc limit ?";
+                    runQueryWithParams(connection, sql, 1, 3, "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n" +
+                            "Sym1,1,1970-01-01 00:00:22.4\n" +
+                            "Sym0,1,1970-01-01 00:00:22.0\n" +
+                            "Sym2,1,1970-01-01 00:00:21.6\n");
+                    runQueryWithParams(connection, sql, 1, 5, "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n" +
+                            "Sym1,1,1970-01-01 00:00:22.4\n" +
+                            "Sym0,1,1970-01-01 00:00:22.0\n" +
+                            "Sym2,1,1970-01-01 00:00:21.6\n" +
+                            "Sym1,1,1970-01-01 00:00:21.2\n" +
+                            "Sym0,1,1970-01-01 00:00:20.8\n");
+                    runQueryWithParams(connection, sql, 1, -3, "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n" +
+                            "Sym0,1,1970-01-01 00:00:20.8\n" +
+                            "Sym2,1,1970-01-01 00:00:20.4\n" +
+                            "Sym1,1,1970-01-01 00:00:20.0\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLowLimitZero() throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain serverMain = TestServerMain.createWithManualWalRun(getServerMainArgs())) {
+                serverMain.start();
+                createTable(serverMain, 25);
+                try (Connection connection = getConnection(serverMain)) {
+                    final String sql = "SELECT * from tab where status = ? order by ts desc limit ?,?";
+                    runQueryWithParams(connection, sql, 1, 0, 1, "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n" +
+                            "Sym1,1,1970-01-01 00:00:22.4\n");
+                    runQueryWithParams(connection, sql, 3, 0, 3, "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n" +
+                            "Sym2,3,1970-01-01 00:00:22.2\n" +
+                            "Sym1,3,1970-01-01 00:00:21.8\n" +
+                            "Sym0,3,1970-01-01 00:00:21.4\n");
+                    runQueryWithParams(connection, sql, 2, 0, 3, "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n" +
+                            "Sym1,2,1970-01-01 00:00:22.1\n" +
+                            "Sym0,2,1970-01-01 00:00:21.7\n" +
+                            "Sym2,2,1970-01-01 00:00:21.3\n");
+                    runQueryWithParams(connection, sql, 1, 0, 10, "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n" +
+                            "Sym1,1,1970-01-01 00:00:22.4\n" +
+                            "Sym0,1,1970-01-01 00:00:22.0\n" +
+                            "Sym2,1,1970-01-01 00:00:21.6\n" +
+                            "Sym1,1,1970-01-01 00:00:21.2\n" +
+                            "Sym0,1,1970-01-01 00:00:20.8\n" +
+                            "Sym2,1,1970-01-01 00:00:20.4\n" +
+                            "Sym1,1,1970-01-01 00:00:20.0\n");
+                    runQueryWithParams(connection, sql, 1, 0, -4, "col1[VARCHAR],status[BIGINT],ts[TIMESTAMP]\n" +
+                            "Sym1,1,1970-01-01 00:00:22.4\n" +
+                            "Sym0,1,1970-01-01 00:00:22.0\n" +
+                            "Sym2,1,1970-01-01 00:00:21.6\n");
                 }
             }
         });
@@ -121,6 +164,10 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
         properties.setProperty("password", "quest");
         final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", port);
         return DriverManager.getConnection(url, properties);
+    }
+
+    private static void runQueryWithParams(Connection connection, String sql, int status, int limitLow, String expected) throws SQLException, IOException {
+        runQueryWithParams(connection, sql, status, limitLow, 0, expected);
     }
 
     private static void runQueryWithParams(Connection connection, String sql, int status, int limitLow, int limitHigh, String expected) throws SQLException, IOException {
