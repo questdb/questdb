@@ -57,12 +57,12 @@ public class MulIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
     public void testTimestamp() throws Exception {
-        assertQuery("to_utc\n1969-12-31T23:00:00.000810Z\n", "SELECT to_utc(810, 'Europe/Berlin')");
+        assertQuery("to_utc\n1969-12-31T23:00:00.000810Z\n", "SELECT to_utc(10*81, 'Europe/Berlin')");
     }
 
     @Test
     public void testTimestampIntOverflow() throws Exception {
-        assertQuery("to_utc\n2024-07-08T18:00:02.000000Z\n", "SELECT to_utc(1720468802000000, 'Europe/Berlin')");
+        assertQuery("to_utc\n2024-07-08T18:00:02.000000Z\n", "SELECT to_utc(1720468802 * 1000000, 'Europe/Berlin')");
     }
 
     @Override
