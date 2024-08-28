@@ -48,7 +48,7 @@ import static org.junit.Assert.assertNotNull;
 
 @RunWith(Parameterized.class)
 public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
-    private static String TEST_DIR_NAME;
+    private String TEST_DIR_NAME;
     private final String testFile;
     private static short pgPort;
     private static TestServerMain serverMain;
@@ -74,7 +74,7 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
     @AfterClass
     public static void tearDownUpStatic() {
         AbstractBootstrapTest.tearDownStatic();
-        Misc.free(serverMain);
+        serverMain = Misc.free(serverMain);
     }
 
     @Before
@@ -85,7 +85,7 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
             if (serverMain == null) {
                 pgPort = (short) (10000 + TestUtils.generateRandom(null).nextInt(1000));
                 String testResourcePath = getTestResourcePath();
-                path.of(testResourcePath).concat("test").concat(TEST_DIR_NAME);
+                path.of(testResourcePath).concat("test");
 
                 serverMain = startWithEnvVariables(
                         PG_NET_BIND_TO.getEnvVarName(), "0.0.0.0:" + pgPort,
@@ -109,7 +109,7 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
     public void test() {
         try (Path path = new Path()) {
             String testResourcePath = getTestResourcePath();
-            path.of(testResourcePath).concat("test").concat(TEST_DIR_NAME).concat(testFile);
+            path.of(testResourcePath).concat("test").concat(testFile);
             Assert.assertTrue(Misc.getThreadLocalUtf8Sink().put(path).toString(), FilesFacadeImpl.INSTANCE.exists(path.$()));
 
             Sqllogictest.run(pgPort, path.$().ptr());
@@ -126,7 +126,7 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
         }
     }
 
-    private static int runRecursive(FilesFacade ff, Path src, List<Object[]> paths) {
+    private static int runRecursive(FilesFacade ff, String dirName, Path src, List<Object[]> paths) {
         int srcLen = src.size();
         int len = src.size();
         long p = ff.findFirst(src.$());
@@ -146,12 +146,12 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
                                 String path = src.toString();
                                 paths.add(
                                         new Object[]{
-                                                path.substring(root.length() + 1)
+                                                path.substring(root.length() - dirName.length())
                                         }
                                 );
                             }
                         } else {
-                            if ((res = runRecursive(ff, src, paths)) < 0) {
+                            if ((res = runRecursive(ff, dirName, src, paths)) < 0) {
                                 return res;
                             }
                         }
@@ -170,12 +170,11 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
     protected static Collection<Object[]> files(String dirName) {
         String testResourcePath = getTestResourcePath();
         FilesFacade ff = FilesFacadeImpl.INSTANCE;
-        TEST_DIR_NAME = dirName;
 
         try (Path path = new Path()) {
             path.concat(testResourcePath).concat("test").concat(dirName);
             List<Object[]> paths = new ArrayList<>();
-            runRecursive(FilesFacadeImpl.INSTANCE, path, paths);
+            runRecursive(FilesFacadeImpl.INSTANCE, dirName, path, paths);
             return paths;
         }
     }

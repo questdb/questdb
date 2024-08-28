@@ -36,6 +36,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.MutableCharSink;
+import io.questdb.std.str.Utf8Sequence;
 
 import static io.questdb.std.Numbers.IPv4_NULL;
 
@@ -84,7 +85,8 @@ public class CursorPrinter {
                 break;
             case ColumnType.STRING:
                 if (!symbolAsString | metadata.getColumnType(columnIndex) != ColumnType.SYMBOL) {
-                    sink.put(record.getStrA(columnIndex));
+                    CharSequence val = record.getStrA(columnIndex);
+                    sink.put(val != null ? val : nullStringValue);
                     break;
                 } // Fall down to SYMBOL
             case ColumnType.SYMBOL:
@@ -146,7 +148,12 @@ public class CursorPrinter {
                 break;
             }
             case ColumnType.VARCHAR:
-                sink.put(record.getVarcharA(columnIndex));
+                Utf8Sequence varchar = record.getVarcharA(columnIndex);
+                if (varchar != null) {
+                    sink.put(varchar);
+                } else {
+                    sink.put(nullStringValue);
+                }
                 break;
             default:
                 break;

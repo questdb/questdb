@@ -4568,7 +4568,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 long lagAuxKeyAddr = mapAppendColumnBuffer(columns.get(getSecondaryColumnIndex(i)), 0, lagAuxOffset + lagAuxSize, false);
 
                                 long lagVarDataOffset = driver.getDataVectorOffset(lagAuxKeyAddr, 0);
-                                long lagVarDataSize = driver.getDataVectorSize(lagAuxKeyAddr, 0, lagRows);
+                                long lagVarDataSize = driver.getDataVectorSize(lagAuxKeyAddr, 0, lagRows - 1);
                                 long lagVarDataAddr = mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagVarDataOffset, lagVarDataSize, false);
                                 dedupColumnCommitAddresses.setO3DataAddressValues(addr, Math.abs(lagAuxKeyAddr), Math.abs(lagVarDataAddr), lagVarDataSize);
                                 dedupColumnCommitAddresses.setReservedValuesSet1(addr, lagAuxKeyAddr, lagAuxOffset, lagAuxSize);
@@ -4599,11 +4599,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     mapAppendColumnBufferRelease(lagAuxAddr, lagAuxMemOffset, mapAuxSize);
 
-                    long lagVarAddr = dedupColumnCommitAddresses.getColReserved4(dedupCommitAddr, i);
-                    long lagVarMemOffset = dedupColumnCommitAddresses.getColReserved5(dedupCommitAddr, i);
                     long mapVarSize = dedupColumnCommitAddresses.getVarDataLen(dedupCommitAddr, i);
-
-                    mapAppendColumnBufferRelease(lagVarAddr, lagVarMemOffset, mapVarSize);
+                    if (mapVarSize > 0) {
+                        long lagVarAddr = dedupColumnCommitAddresses.getColReserved4(dedupCommitAddr, i);
+                        long lagVarMemOffset = dedupColumnCommitAddresses.getColReserved5(dedupCommitAddr, i);
+                        mapAppendColumnBufferRelease(lagVarAddr, lagVarMemOffset, mapVarSize);
+                    }
                 }
             }
             dedupColumnCommitAddresses.clear();

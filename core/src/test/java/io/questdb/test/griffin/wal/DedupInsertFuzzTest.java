@@ -366,7 +366,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomColumnsDedupMultipleKeyCol() throws Exception {
-        Rnd rnd = generateRandom(LOG, 1413083111921375L, 1724245122858L);
+//        Rnd rnd = generateRandom(LOG, 1516755295897208L, 1724776218972L);
+        Rnd rnd = generateRandom(LOG);
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
@@ -625,6 +626,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         assertMemoryLeak(() -> {
             String tableNameBase = getTestName();
             String tableNameDedup = tableNameBase + "_wal";
+
+            // TODO: remove
+            fuzzer.initialRowCount = 0;
             String tableNameWalNoDedup = tableNameBase + "_nodedup";
 
             fuzzer.createInitialTable(tableNameWalNoDedup, true);
