@@ -1000,11 +1000,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     return function;
                 } else {
                     int intConst = function.getInt(null);
-                    long tsConst = function.getTimestamp(null);
-                    if (intConst == tsConst) {
+                    long longConst = function.getLong(null);
+                    if (intConst == longConst) {
                         return IntConstant.newInstance(intConst);
                     } else {
-                        return new TimestampAwareIntConstant(intConst, tsConst);
+                        return new LongConstant(longConst);
                     }
                 }
             case ColumnType.BOOLEAN:

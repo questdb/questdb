@@ -36,6 +36,11 @@ public class MulIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
+    public void testIntOverflow() throws Exception {
+        assertQuery("column\n1720468802000000\n", "SELECT 1720468802 * 1000000");
+    }
+
+    @Test
     public void testLeftNan() throws Exception {
         assertQuery("column\nnull\n", "SELECT null*5");
     }
