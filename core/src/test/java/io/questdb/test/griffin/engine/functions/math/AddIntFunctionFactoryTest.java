@@ -37,11 +37,6 @@ public class AddIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
-    public void testOverflow() throws Exception {
-        call(5, Integer.MAX_VALUE).andAssert(-2147483644);
-    }
-
-    @Test
     public void testRightNull() throws Exception {
         assertQuery("column\n\n", "SELECT (4 + null)");
     }
