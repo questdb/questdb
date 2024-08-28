@@ -94,13 +94,7 @@ public class MulIntFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
-            final int l = left.getInt(rec);
-            final int r = right.getInt(rec);
-
-            if (l == Numbers.INT_NULL || r == Numbers.INT_NULL) {
-                return Numbers.LONG_NULL;
-            }
-            return (long) l * r;
+            return getLong(rec);
         }
 
         @Override
