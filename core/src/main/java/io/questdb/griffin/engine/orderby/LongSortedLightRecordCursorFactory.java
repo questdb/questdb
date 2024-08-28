@@ -26,44 +26,49 @@ package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ListColumnFilter;
-import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.RecordComparator;
-import org.jetbrains.annotations.NotNull;
 
-public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
+/**
+ * Radix sort-based factory for ORDER BY over a single int/ipv4/long/timestamp/date column.
+ * Memory overhead is similar to {@link SortedRecordCursorFactory}:
+ * each row takes 32 bytes vs 36 bytes in the red-black tree-based factory.
+ */
+public class LongSortedLightRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
-    private final SortedRecordCursor cursor;
-
+    private final LongSortedLightRecordCursor cursor;
     private final ListColumnFilter sortColumnFilter;
 
-    public SortedRecordCursorFactory(
-            @NotNull CairoConfiguration configuration,
-            @NotNull RecordMetadata metadata,
-            @NotNull RecordCursorFactory base,
-            @NotNull RecordSink recordSink,
-            @NotNull RecordComparator comparator,
-            @NotNull ListColumnFilter sortColumnFilter
+    public LongSortedLightRecordCursorFactory(
+            CairoConfiguration configuration,
+            RecordMetadata metadata,
+            RecordCursorFactory base,
+            ListColumnFilter sortColumnFilter
     ) {
         super(metadata);
-        RecordTreeChain chain = new RecordTreeChain(
-                metadata,
-                recordSink,
-                comparator,
-                configuration.getSqlSortKeyPageSize(),
-                configuration.getSqlSortKeyMaxPages(),
-                configuration.getSqlSortValuePageSize(),
-                configuration.getSqlSortValueMaxPages()
-        );
         this.base = base;
-        this.cursor = new SortedRecordCursor(chain);
+        final int columnIndex = sortColumnFilter.getColumnIndexFactored(0);
+        this.cursor = new LongSortedLightRecordCursor(
+                configuration,
+                columnIndex,
+                metadata.getColumnType(columnIndex),
+                sortColumnFilter.getColumnIndex(0) > 0
+        );
         this.sortColumnFilter = sortColumnFilter;
+    }
+
+    public static boolean isSupportedColumnType(int columnType) {
+        return columnType == ColumnType.INT
+                || columnType == ColumnType.IPv4
+                || columnType == ColumnType.LONG
+                || columnType == ColumnType.TIMESTAMP
+                || columnType == ColumnType.DATE;
     }
 
     @Override
@@ -77,15 +82,15 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
         try {
             cursor.of(baseCursor, executionContext);
             return cursor;
-        } catch (Throwable th) {
+        } catch (Throwable ex) {
             cursor.close();
-            throw th;
+            throw ex;
         }
     }
 
     @Override
     public int getScanDirection() {
-        return getScanDirection(sortColumnFilter);
+        return SortedRecordCursorFactory.getScanDirection(sortColumnFilter);
     }
 
     @Override
@@ -95,7 +100,7 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Sort");
+        sink.type("Radix sort light");
         SortedLightRecordCursorFactory.addSortKeys(sink, sortColumnFilter);
         sink.child(base);
     }
@@ -108,20 +113,6 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean usesIndex() {
         return base.usesIndex();
-    }
-
-    private static int toOrder(int filter) {
-        if (filter >= 0) {
-            return SCAN_DIRECTION_FORWARD;
-        } else {
-            return SCAN_DIRECTION_BACKWARD;
-        }
-    }
-
-    static int getScanDirection(ListColumnFilter sortColumnFilter) {
-        assert sortColumnFilter.size() > 0;
-
-        return toOrder(sortColumnFilter.get(0));
     }
 
     @Override
