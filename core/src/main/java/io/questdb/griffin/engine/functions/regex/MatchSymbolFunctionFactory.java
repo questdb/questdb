@@ -107,6 +107,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         private final Matcher matcher;
         private final SymbolFunction symbolFun;
         private final IntList symbolKeys = new IntList();
+        private boolean initialized;
 
         public MatchStaticSymbolTableConstPatternFunction(SymbolFunction symbolFun, Matcher matcher) {
             this.symbolFun = symbolFun;
@@ -120,13 +121,17 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
+            if (!initialized) {
+                extractSymbolKeys(symbolFun, symbolKeys, matcher);
+                initialized = true;
+            }
             return symbolMatches(symbolFun, rec, symbolKeys);
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            extractSymbolKeys(symbolFun, symbolKeys, matcher);
+            initialized = false;
         }
 
         @Override
@@ -145,6 +150,8 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         private final int patternPosition;
         private final SymbolFunction symbolFun;
         private final IntList symbolKeys = new IntList();
+        private boolean initialized;
+        private Matcher matcher;
 
         public MatchStaticSymbolTableRuntimeConstPatternFunction(SymbolFunction symbolFun, Function pattern, int patternPosition) {
             this.symbolFun = symbolFun;
@@ -159,6 +166,10 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
+            if (!initialized) {
+                extractSymbolKeys(symbolFun, symbolKeys, matcher);
+                initialized = true;
+            }
             return symbolMatches(symbolFun, rec, symbolKeys);
         }
 
@@ -166,7 +177,8 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
             pattern.init(symbolTableSource, executionContext);
-            extractSymbolKeys(symbolFun, symbolKeys, RegexUtils.createMatcher(pattern, patternPosition));
+            matcher = RegexUtils.createMatcher(pattern, patternPosition);
+            initialized = false;
         }
 
         @Override

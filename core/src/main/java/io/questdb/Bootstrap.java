@@ -59,11 +59,11 @@ import static io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory.
 public class Bootstrap {
 
     public static final String CONFIG_FILE = "/server.conf";
+    public static final String CONTAINERIZED_SYSTEM_PROPERTY = "containerized";
     public static final String SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION = "--use-default-log-factory-configuration";
     private static final String LOG_NAME = "server-main";
     private static final String PUBLIC_VERSION_TXT = "version.txt";
     private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
-    public static final String CONTAINERIZED_SYSTEM_PROPERTY = "containerized";
     private final String banner;
     private final BuildInformation buildInformation;
     private final ServerConfiguration config;
@@ -443,7 +443,7 @@ public class Bootstrap {
     private static void verifyFileOpts(Path path, CairoConfiguration cairoConfiguration) {
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         path.of(cairoConfiguration.getRoot()).concat("_verify_").put(cairoConfiguration.getRandom().nextPositiveInt()).put(".d").$();
-        int fd = ff.openRW(path.$(), cairoConfiguration.getWriterFileOpenOpts());
+        long fd = ff.openRW(path.$(), cairoConfiguration.getWriterFileOpenOpts());
         try {
             if (fd > -1) {
                 long mem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -457,6 +457,14 @@ public class Bootstrap {
             ff.close(fd);
         }
         ff.remove(path.$());
+    }
+
+    private void copyLogConfResource(byte[] buffer) throws IOException {
+        if (Chars.equalsIgnoreCaseNc("false", System.getProperty(CONTAINERIZED_SYSTEM_PROPERTY))) {
+            copyConfResource(rootDirectory, false, buffer, "conf/non_containerized_log.conf", "conf/log.conf", null);
+        } else {
+            copyConfResource(rootDirectory, false, buffer, "conf/log.conf", null);
+        }
     }
 
     private void createHelloFile(String helloMsg) {
@@ -485,14 +493,6 @@ public class Bootstrap {
         }
         copyConfResource(rootDirectory, false, buffer, "conf/server.conf", log);
         copyLogConfResource(buffer);
-    }
-
-    private void copyLogConfResource(byte[] buffer) throws IOException {
-        if (Chars.equalsIgnoreCaseNc("true", System.getProperty(CONTAINERIZED_SYSTEM_PROPERTY))) {
-            copyConfResource(rootDirectory, false, buffer, "conf/log.conf", null);
-        } else {
-            copyConfResource(rootDirectory, false, buffer, "conf/non_containerized_log.conf", "conf/log.conf", null);
-        }
     }
 
     private void extractSite0(String publicDir, byte[] buffer, String thisVersion) throws IOException {
@@ -537,7 +537,8 @@ public class Bootstrap {
         try (Path path = new Path()) {
             verifyFileSystem(path, cairoConfig.getRoot(), "db", true);
             verifyFileSystem(path, cairoConfig.getBackupRoot(), "backup", true);
-            verifyFileSystem(path, cairoConfig.getSnapshotRoot(), "snapshot", true);
+            verifyFileSystem(path, cairoConfig.getCheckpointRoot(), TableUtils.CHECKPOINT_DIRECTORY, true);
+            verifyFileSystem(path, cairoConfig.getLegacyCheckpointRoot(), TableUtils.LEGACY_CHECKPOINT_DIRECTORY, true);
             verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input", false);
             verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker", true);
             verifyFileOpts(path, cairoConfig);

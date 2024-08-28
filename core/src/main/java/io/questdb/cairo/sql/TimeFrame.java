@@ -60,6 +60,9 @@ public interface TimeFrame {
      * Unlike {@link #getTimestampHi()} this value is not precise, i.e. it may
      * be larger than the actual boundary. Yet, it doesn't require the frame
      * to be open.
+     * <p>
+     * Note that estimated timestamp intervals of subsequent time frames may
+     * intersect.
      *
      * @return upper range boundary of timestamps in the time frame, exclusive
      */
@@ -69,6 +72,9 @@ public interface TimeFrame {
      * Unlike {@link #getTimestampLo()} this value is not precise, i.e. it may
      * be smaller than the actual boundary. Yet, it doesn't require the frame
      * to be open.
+     * <p>
+     * Note that estimated timestamp intervals of subsequent time frames may
+     * intersect.
      *
      * @return lower range boundary of timestamps in the time frame, inclusive
      */

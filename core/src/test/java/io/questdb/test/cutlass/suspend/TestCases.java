@@ -75,13 +75,13 @@ public class TestCases {
         // FilterOnValuesRecordCursorFactory
         addTestCase("select * from x where isym in (?,?)", false, "d", "a");
 
-        // DataFrameRecordCursorFactory
+        // PageFrameRecordCursorFactory
         addTestCase("select * from x where isym = ? and i != 42", false, "c");
 
-        // DeferredSingleSymbolFilterDataFrameRecordCursorFactory
+        // DeferredSingleSymbolFilterPageFrameRecordCursorFactory
         addTestCase("select * from x where isym = ?", false, "b");
 
-        // LimitRecordCursorFactory, FullFwdDataFrameCursor, FullBwdDataFrameCursor
+        // LimitRecordCursorFactory, FullFwdPartitionFrameCursor, FullBwdPartitionFrameCursor
         addTestCase("select * from x limit 1");
         addTestCase("select * from x limit 1,3");
         addTestCase("select * from x order by ts desc limit 1,3");
@@ -232,10 +232,10 @@ public class TestCases {
         // LatestByValueIndexedFilteredRecordCursorFactory
         addTestCase("select * from x where isym = 'c' and i <> 13 latest on ts partition by isym");
 
-        // DataFrameRecordCursorFactory, LatestByValueIndexedRowCursorFactory
+        // PageFrameRecordCursorFactory, LatestByValueIndexedRowCursorFactory
         addTestCase("select * from x where isym = 'c' latest on ts partition by isym");
 
-        // DataFrameRecordCursorFactory, LatestByValueDeferredIndexedRowCursorFactory
+        // PageFrameRecordCursorFactory, LatestByValueDeferredIndexedRowCursorFactory
         addTestCase("select * from x where isym = ? latest on ts partition by isym", false, "a");
 
         // LatestByValueDeferredIndexedFilteredRecordCursorFactory

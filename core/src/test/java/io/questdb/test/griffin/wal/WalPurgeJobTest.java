@@ -794,7 +794,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         FilesFacade testFF = new TestFilesFacadeImpl() {
 
             @Override
-            public boolean close(int fd) {
+            public boolean close(long fd) {
                 if (fd > -1 && fd == this.fd) {
                     // Create another 2 segments after Sequencer transaction scan
                     if (walWriter1Ref.get() != null) {
@@ -807,7 +807,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             }
 
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, TXN_FILE_NAME)) {
                     return this.fd = super.openRO(name);
                 }
@@ -869,7 +869,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         FilesFacade testFF = new TestFilesFacadeImpl() {
 
             @Override
-            public boolean close(int fd) {
+            public boolean close(long fd) {
                 if (fd > -1 && fd == this.fd) {
                     // Create another 2 segments after Sequencer transaction scan
                     if (walWriter1Ref.get() != null) {
@@ -882,7 +882,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             }
 
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, TXN_FILE_NAME)) {
                     return this.fd = super.openRO(name);
                 }
@@ -1237,11 +1237,11 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     private static class TestDeleter implements WalPurgeJob.Deleter {
-        public final IntList closedFds = new IntList();
+        public final LongList closedFds = new LongList();
         public final ObjList<DeletionEvent> events = new ObjList<>();
 
         @Override
-        public void deleteSegmentDirectory(int walId, int segmentId, int lockFd) {
+        public void deleteSegmentDirectory(int walId, int segmentId, long lockFd) {
             events.add(new DeletionEvent(walId, segmentId));
         }
 
@@ -1251,12 +1251,12 @@ public class WalPurgeJobTest extends AbstractCairoTest {
         }
 
         @Override
-        public void deleteWalDirectory(int walId, int lockFd) {
+        public void deleteWalDirectory(int walId, long lockFd) {
             events.add(new DeletionEvent(walId));
         }
 
         @Override
-        public void unlock(int lockFd) {
+        public void unlock(long lockFd) {
             if (lockFd > -1) {
                 closedFds.add(lockFd);
             }

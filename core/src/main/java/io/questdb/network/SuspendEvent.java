@@ -83,7 +83,7 @@ public abstract class SuspendEvent implements Closeable {
      *
      * @return fd to be used to listen/wait for the event
      */
-    public abstract int getFd();
+    public abstract long getFd();
 
     @TestOnly
     public boolean isClosedByAtLeastOneSide() {

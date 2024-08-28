@@ -140,7 +140,8 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     }
 
     /**
-     * Returns function name or symbol, e.g. concat or + .
+     * @return function name or symbol, e.g. concat or + .
+     * r=
      */
     default String getName() {
         return getClass().getName();

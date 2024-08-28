@@ -31,9 +31,9 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TestDirectUtf8String;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.runner.RunWith;
@@ -889,17 +889,17 @@ public class MapTest extends AbstractCairoTest {
                 // 10% chances of using on-heap utf8 sequence
                 key.putVarchar(new Utf8String(String.valueOf(index)));
             } else if (mode == 1) {
-                // 10% of using a non-stable offheap sequence
+                // 10% of using a non-stable off-heap sequence
                 try (DirectUtf8Sink sink = new DirectUtf8Sink(16)) {
                     sink.put(index);
                     key.putVarchar(sink);
                 }
             } else {
-                // 80% of using a stable offheap sequence
-                long hi = STABLE_SINK.hi();
+                // 80% of using a stable off-heap sequence
+                long lo = STABLE_SINK.hi();
                 STABLE_SINK.put(index);
-                DirectUtf8String directStr = new DirectUtf8String(true);
-                directStr.of(hi, STABLE_SINK.hi(), true, true);
+                TestDirectUtf8String directStr = new TestDirectUtf8String(true);
+                directStr.of(lo, STABLE_SINK.hi(), true);
                 key.putVarchar(directStr);
             }
         } else {

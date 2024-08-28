@@ -195,7 +195,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 rows.add(record.getRowId());
             }
 
-            final Record rec = cursor.getRecordB();
+            final Record rec = cursor.getRecord();
             CursorPrinter.println(metadata, sink);
             for (int i = 0, n = rows.size(); i < n; i++) {
                 cursor.recordAt(rec, rows.getQuick(i));
@@ -464,6 +464,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         memoryUsage = -1;
         forEachNode(QuestDBTestNode::setUpGriffin);
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
+        // 30% chance to enable paranoia checking FD mode
+        Files.PARANOIA_FD_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
     }
 
     @After
@@ -1185,7 +1187,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
             while (cursor.hasNext()) {
                 long ts = record.getTimestamp(index);
                 if ((isAscending && timestamp > ts) || (!isAscending && timestamp < ts)) {
-
                     StringSink error = new StringSink();
                     error.put("record # ").put(c).put(" should have ").put(isAscending ? "bigger" : "smaller").put(" (or equal) timestamp than the row before. Values prior=");
                     TimestampFormatUtils.appendDateTimeUSec(error, timestamp);
@@ -1227,7 +1228,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static boolean couldObtainLock(Path path) {
-        final int lockFd = TableUtils.lock(TestFilesFacadeImpl.INSTANCE, path.$(), false);
+        final long lockFd = TableUtils.lock(TestFilesFacadeImpl.INSTANCE, path.$(), false);
         if (lockFd != -1L) {
             TestFilesFacadeImpl.INSTANCE.close(lockFd);
             return true;  // Could lock/unlock.

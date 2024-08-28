@@ -166,7 +166,7 @@ typedef struct {
                             /* x.pos: current position in uncompressed data */
         /* used for both reading and writing */
     int mode;               /* see gzip modes above */
-    int fd;                 /* file descriptor */
+    long fd;                 /* file descriptor */
     char *path;             /* path or fd for error messages */
     unsigned size;          /* buffer size, zero if not allocated yet */
     unsigned want;          /* requested buffer size, default is GZBUFSIZE */

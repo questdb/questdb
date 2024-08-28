@@ -25,17 +25,17 @@
 package io.questdb.std.filewatch;
 
 public interface LinuxAccessorFacade {
-    int inotifyAddWatch(int fd, long pathPtr, int flags);
+    int inotifyAddWatch(long fd, long pathPtr, int flags);
 
     int inotifyInit();
 
-    short inotifyRmWatch(int fd, int wd);
+    short inotifyRmWatch(long fd, int wd);
 
     long pipe();
 
-    int readEvent(int fd, long buf, int bufSize);
+    int readEvent(long fd, long buf, int bufSize);
 
-    int readPipe(int fd);
+    int readPipe(long fd);
 
-    int writePipe(int fd);
+    int writePipe(long fd);
 }

@@ -43,6 +43,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.cutlass.line.tcp.load.LineData;
 import io.questdb.test.cutlass.line.tcp.load.TableData;
 import io.questdb.test.fuzz.FuzzChangeColumnTypeOperation;
@@ -309,14 +310,16 @@ abstract class AbstractLineHttpFuzzTest extends AbstractBootstrapTest {
         if (table.size() < 1) {
             return;
         }
-        try (TableReader reader = serverMain.getEngine().getReader(tableName)) {
+        try (
+                TableReader reader = serverMain.getEngine().getReader(tableName);
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
             getLog().info().$("table.getName(): ").$(table.getName()).$(", tableName: ").$(tableName)
                     .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
             final TableReaderMetadata metadata = reader.getMetadata();
             final CharSequence expected = table.generateRows(metadata);
             getLog().info().$(table.getName()).$(" expected:\n").utf8(expected).$();
 
-            final TableReaderRecordCursor cursor = reader.getCursor();
             // Assert reader min timestamp
             long txnMinTs = reader.getMinTimestamp();
             int timestampIndex = reader.getMetadata().getTimestampIndex();

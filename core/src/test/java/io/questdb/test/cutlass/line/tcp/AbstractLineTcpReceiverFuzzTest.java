@@ -28,7 +28,6 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.cairo.TableReaderRecordCursor;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -36,6 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.*;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.cutlass.line.tcp.load.LineData;
 import io.questdb.test.cutlass.line.tcp.load.TableData;
 import org.junit.Assert;
@@ -209,20 +209,21 @@ abstract class AbstractLineTcpReceiverFuzzTest extends AbstractLineTcpReceiverTe
             getLog().info().$(table.getName()).$(" expected:\n").utf8(expected).$();
 
             if (timestampMark < 0L) {
-                final TableReaderRecordCursor cursor = reader.getCursor();
-                // Assert reader min timestamp
-                long txnMinTs = reader.getMinTimestamp();
-                int timestampIndex = reader.getMetadata().getTimestampIndex();
-                if (cursor.hasNext()) {
-                    long dataMinTs = cursor.getRecord().getLong(timestampIndex);
-                    Assert.assertEquals(dataMinTs, txnMinTs);
-                    cursor.toTop();
-                }
+                try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
+                    // Assert reader min timestamp
+                    long txnMinTs = reader.getMinTimestamp();
+                    int timestampIndex = reader.getMetadata().getTimestampIndex();
+                    if (cursor.hasNext()) {
+                        long dataMinTs = cursor.getRecord().getLong(timestampIndex);
+                        Assert.assertEquals(dataMinTs, txnMinTs);
+                        cursor.toTop();
+                    }
 
-                try {
-                    assertCursorTwoPass(expected, cursor, metadata);
-                } catch (AssertionError e) {
-                    throw new AssertionError("Table: " + table.getName(), e);
+                    try {
+                        assertCursorTwoPass(expected, cursor, metadata);
+                    } catch (AssertionError e) {
+                        throw new AssertionError("Table: " + table.getName(), e);
+                    }
                 }
             } else {
                 final String sql = tableName + " where timestamp > " + timestampMark;

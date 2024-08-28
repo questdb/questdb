@@ -120,7 +120,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                 path.concat(tableToken.getDirName()).concat("a_symbol").put(".o");
                 FilesFacade ff = configuration.getFilesFacade();
                 Assert.assertTrue(ff.exists(path.$()));
-                int fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+                long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
                 Assert.assertTrue(configuration.getFilesFacade().truncate(fd, SymbolMapWriter.HEADER_SIZE - 2));
                 ff.close(fd);
             }

@@ -182,12 +182,17 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         try {
             // init all record functions for this cursor, in case functions require metadata and/or symbol tables
             Function.init(recordFunctions, baseCursor, executionContext);
+        } catch (Throwable th) {
+            baseCursor.close();
+            throw th;
+        }
+
+        try {
             cursor.of(baseCursor, executionContext);
             return cursor;
-        } catch (Throwable e) {
-            baseCursor.close();
+        } catch (Throwable th) {
             cursor.close();
-            throw e;
+            throw th;
         }
     }
 
@@ -311,12 +316,12 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         }
 
         public void of(RecordCursor managedCursor, SqlExecutionContext executionContext) throws SqlException {
+            super.of(managedCursor, dataMap.getCursor());
             if (!isOpen) {
                 isOpen = true;
                 recordKeyMap.reopen();
                 dataMap.reopen();
             }
-            super.of(managedCursor, dataMap.getCursor());
             circuitBreaker = executionContext.getCircuitBreaker();
             managedRecord = managedCursor.getRecord();
             loSample = -1;

@@ -121,7 +121,7 @@ public class LineWalAppender {
         final int entCount = parser.getEntityCount();
         for (int i = 0; i < entCount; i++) {
             final LineTcpParser.ProtoEntity ent = parser.getEntity(i);
-            int columnWriterIndex = ld.getColumnWriterIndex(ent.getName(), parser.hasNonAsciiChars(), metadata);
+            int columnWriterIndex = ld.getColumnWriterIndex(ent.getName(), metadata);
 
             switch (columnWriterIndex) {
                 default:
@@ -136,7 +136,7 @@ public class LineWalAppender {
                         break;
                     } else {
                         // column has been deleted from the metadata, but it is in our utf8 cache
-                        ld.removeFromCaches(ent.getName(), parser.hasNonAsciiChars());
+                        ld.removeFromCaches(ent.getName());
                         // act as if we did not find this column and fall through
                     }
                 case COLUMN_NOT_FOUND:

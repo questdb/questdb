@@ -136,7 +136,7 @@ public final class JavaTlsClientSocket implements Socket {
     }
 
     @Override
-    public int getFd() {
+    public long getFd() {
         return delegate.getFd();
     }
 
@@ -156,7 +156,7 @@ public final class JavaTlsClientSocket implements Socket {
     }
 
     @Override
-    public void of(int fd) {
+    public void of(long fd) {
         assert state == STATE_EMPTY;
         delegate.of(fd);
         state = STATE_PLAINTEXT;

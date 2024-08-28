@@ -258,6 +258,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(100_000_000, configuration.getCairoConfiguration().getGroupByPresizeMaxSize());
         Assert.assertEquals(Numbers.SIZE_1GB, configuration.getCairoConfiguration().getGroupByPresizeMaxHeapSize());
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getGroupByAllocatorDefaultChunkSize());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlOrderBySortEnabled());
+        Assert.assertEquals(600, configuration.getCairoConfiguration().getSqlOrderByRadixSortThreshold());
 
         Assert.assertEquals(SqlJitMode.JIT_MODE_ENABLED, configuration.getCairoConfiguration().getSqlJitMode());
         Assert.assertEquals(8192, configuration.getCairoConfiguration().getSqlJitIRMemoryPageSize());
@@ -287,10 +289,11 @@ public class PropServerConfigurationTest {
 
         TestUtils.assertEquals(new File(root, "db").getAbsolutePath(), configuration.getCairoConfiguration().getRoot());
         TestUtils.assertEquals(new File(root, "conf").getAbsolutePath(), configuration.getCairoConfiguration().getConfRoot());
-        TestUtils.assertEquals(new File(root, "snapshot").getAbsolutePath(), configuration.getCairoConfiguration().getSnapshotRoot());
+        TestUtils.assertEquals(new File(root, TableUtils.LEGACY_CHECKPOINT_DIRECTORY).getAbsolutePath(), configuration.getCairoConfiguration().getLegacyCheckpointRoot());
+        TestUtils.assertEquals(new File(root, TableUtils.CHECKPOINT_DIRECTORY).getAbsolutePath(), configuration.getCairoConfiguration().getCheckpointRoot());
 
         Assert.assertEquals("", configuration.getCairoConfiguration().getSnapshotInstanceId());
-        Assert.assertTrue(configuration.getCairoConfiguration().isSnapshotRecoveryEnabled());
+        Assert.assertTrue(configuration.getCairoConfiguration().isCheckpointRecoveryEnabled());
 
         // assert mime types
         TestUtils.assertEquals("application/json", configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getMimeTypesCache().get(new Utf8String("json")));
@@ -577,6 +580,20 @@ public class PropServerConfigurationTest {
                 "Replaced by `http.min.net.connection.rcvbuf` and `http.net.connection.rcvbuf`"));
     }
 
+    @Test(expected = ServerConfigurationException.class)
+    public void testDoubleCastScaleGreaterThanMax() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.double.cast.scale", Integer.toString(Numbers.MAX_DOUBLE_SCALE + 1));
+        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testDoubleScaleGreaterThanMax() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("http.json.query.double.scale", Integer.toString(Numbers.MAX_DOUBLE_SCALE + 1));
+        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+    }
+
     @Test
     public void testEnvOverrides() throws Exception {
         final Properties properties = new Properties();
@@ -635,6 +652,20 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().getTextConfiguration().isUseLegacyStringDefault());
     }
 
+    @Test(expected = ServerConfigurationException.class)
+    public void testFloatCastScaleGreaterThanMax() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.float.cast.scale", Integer.toString(Numbers.MAX_FLOAT_SCALE + 1));
+        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testFloatScaleGreaterThanMax() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("http.json.query.float.scale", Integer.toString(Numbers.MAX_FLOAT_SCALE + 1));
+        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+    }
+
     @Test
     public void testHttpDisabled() throws Exception {
         try (InputStream is = PropServerConfigurationTest.class.getResourceAsStream("/server-http-disabled.conf")) {
@@ -680,13 +711,13 @@ public class PropServerConfigurationTest {
         //direct cases
         assertInputWorkRootCantBeSetTo(properties, root);
         assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getRoot());
-        assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getSnapshotRoot().toString());
+        assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getCheckpointRoot().toString());
         assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getConfRoot().toString());
 
         //relative cases
         assertInputWorkRootCantBeSetTo(properties, getRelativePath(root));
         assertInputWorkRootCantBeSetTo(properties, getRelativePath(configuration.getCairoConfiguration().getRoot()));
-        assertInputWorkRootCantBeSetTo(properties, getRelativePath(configuration.getCairoConfiguration().getSnapshotRoot().toString()));
+        assertInputWorkRootCantBeSetTo(properties, getRelativePath(configuration.getCairoConfiguration().getCheckpointRoot().toString()));
         assertInputWorkRootCantBeSetTo(properties, getRelativePath(configuration.getCairoConfiguration().getConfRoot().toString()));
     }
 
@@ -1307,7 +1338,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(8, configuration.getDoubleToStrCastScale());
         Assert.assertEquals(3, configuration.getFloatToStrCastScale());
         Assert.assertEquals("test-id-42", configuration.getSnapshotInstanceId());
-        Assert.assertFalse(configuration.isSnapshotRecoveryEnabled());
+        Assert.assertFalse(configuration.isCheckpointRecoveryEnabled());
 
         Assert.assertEquals(CommitMode.ASYNC, configuration.getCommitMode());
         Assert.assertEquals(12, configuration.getCreateAsSelectRetryCount());
@@ -1396,6 +1427,8 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isSqlParallelFilterEnabled());
         Assert.assertFalse(configuration.isSqlParallelFilterPreTouchEnabled());
         Assert.assertFalse(configuration.isSqlParallelGroupByEnabled());
+        Assert.assertFalse(configuration.isSqlOrderBySortEnabled());
+        Assert.assertEquals(100, configuration.getSqlOrderByRadixSortThreshold());
         Assert.assertEquals(32, configuration.getSqlParallelWorkStealingThreshold());
         Assert.assertEquals(1000, configuration.getSqlPageFrameMaxRows());
         Assert.assertEquals(100, configuration.getSqlPageFrameMinRows());

@@ -11,7 +11,7 @@ QUESTDB_GID="${QUESTDB_GID:-"$(id -g questdb)"}"
 JAVA_COMMAND="/app/bin/java"
 
 # directories inside QUESTDB_DATA_DIR that we will chown
-DEFAULT_LOCAL_DIRS=${DEFAULT_LOCAL_DIRS:-"/conf /public /db /snapshot"}
+DEFAULT_LOCAL_DIRS=${DEFAULT_LOCAL_DIRS:-"/conf /public /db /.checkpoint /snapshot"}
 array=( ${DEFAULT_LOCAL_DIRS} )
 read -ra LOCALDIRS < <( echo -n "( "; printf -- "-ipath ${QUESTDB_DATA_DIR}%s* -o " "${array[@]:0:$((${#array[@]} - 1))}"; echo -n "-ipath ${QUESTDB_DATA_DIR}${array[@]: -1}*"; echo " )";)
 

@@ -38,6 +38,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestFilesFacade;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -313,17 +314,20 @@ public class ReaderPoolTest extends AbstractCairoTest {
             TableModel model = new TableModel(configuration, name, PartitionBy.NONE).col("ts", ColumnType.DATE);
             AbstractCairoTest.create(model);
 
-            try (TableWriter w = newOffPoolWriter(configuration, name, metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, name, metrics)) {
                 for (int k = 0; k < 10; k++) {
-                    TableWriter.Row r = w.newRow();
+                    TableWriter.Row r = writer.newRow();
                     r.putDate(0, dataRnd.nextLong());
                     r.append();
                 }
-                w.commit();
+                writer.commit();
             }
 
-            try (TableReader r = newOffPoolReader(configuration, name)) {
-                println(r.getMetadata(), r.getCursor());
+            try (
+                    TableReader reader = newOffPoolReader(configuration, name);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
+                println(reader.getMetadata(), cursor);
             }
             expectedRows[i] = sink.toString();
             expectedRowsMap.put(name, expectedRows[i]);
@@ -511,7 +515,7 @@ public class ReaderPoolTest extends AbstractCairoTest {
             int count = N;
 
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 count--;
                 if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && locked.get() == 1) {
                     return -1;

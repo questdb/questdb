@@ -28,17 +28,16 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 
 public class ShowServerVersionCursorFactory extends AbstractRecordCursorFactory {
-
     public static final String SERVER_VERSION = Constants.PG_COMPATIBLE_VERSION + " (questdb)";
-
-    private static final int SIZE = 1;
     private static final GenericRecordMetadata METADATA = new GenericRecordMetadata();
+    private static final int SIZE = 1;
     private final ShowServerVersionRecordCursor cursor = new ShowServerVersionRecordCursor();
 
     public ShowServerVersionCursorFactory() {
@@ -60,7 +59,7 @@ public class ShowServerVersionCursorFactory extends AbstractRecordCursorFactory 
         sink.type("show_server_version");
     }
 
-    private static class ShowServerVersionRecordCursor implements RecordCursor {
+    private static class ShowServerVersionRecordCursor implements NoRandomAccessRecordCursor {
         private final Record record = new Record() {
             @Override
             public CharSequence getStrA(int col) {
@@ -91,18 +90,8 @@ public class ShowServerVersionCursorFactory extends AbstractRecordCursorFactory 
         }
 
         @Override
-        public Record getRecordB() {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public boolean hasNext() {
             return ++idx < SIZE;
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            throw new UnsupportedOperationException();
         }
 
         @Override

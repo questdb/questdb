@@ -1,0 +1,23 @@
+parameters:
+  name: shouldRun
+  default: true
+steps:
+  - bash: |
+      set -eux
+      # Fetch and execute LLVM installation script
+      wget https://apt.llvm.org/llvm.sh
+      sudo bash llvm.sh
+      # CURRENT_LLVM_STABLE in the script tells which version it installed. Extract it from the script: 
+      export $(grep CURRENT_LLVM_STABLE= llvm.sh)
+      # ... and set a task variable to its value
+      echo "##vso[task.setvariable variable=LLVM_VERSION]$CURRENT_LLVM_STABLE"
+
+      # Explicitly install version-specific llvm package, in case the script didn't do it:
+      sudo apt-get install llvm-$CURRENT_LLVM_STABLE
+
+      # Check existence of the commands we'll use
+      export PATH=/usr/lib/llvm-$CURRENT_LLVM_STABLE/bin:$PATH
+      llvm-profdata --version
+      llvm-cov --version
+    displayName: "Install LLVM coverage tools"
+    condition: ${{ parameters.shouldRun }}
