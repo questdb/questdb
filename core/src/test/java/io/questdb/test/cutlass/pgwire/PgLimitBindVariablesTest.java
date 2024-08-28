@@ -171,14 +171,14 @@ public class PgLimitBindVariablesTest extends AbstractBootstrapTest {
     }
 
     private static void runQueryWithParams(Connection connection, String sql, int status, int limitLow, int limitHigh, String expected) throws SQLException, IOException {
-        final PreparedStatement statement = connection.prepareStatement(sql);
-        statement.setInt(1, status);
-        statement.setInt(2, limitLow);
+        final PreparedStatement stmt = connection.prepareStatement(sql);
+        stmt.setInt(1, status);
+        stmt.setInt(2, limitLow);
         if (limitHigh != 0) {
-            statement.setInt(3, limitHigh);
+            stmt.setInt(3, limitHigh);
         }
-        final ResultSet resultSet = statement.executeQuery();
+        final ResultSet resultSet = stmt.executeQuery();
         assertResultSet(expected, Misc.getThreadLocalSink(), resultSet);
-        statement.close();
+        stmt.close();
     }
 }
