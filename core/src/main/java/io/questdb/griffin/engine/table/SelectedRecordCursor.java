@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 
 class SelectedRecordCursor implements RecordCursor {
     private final IntList columnCrossIndex;
@@ -54,7 +55,7 @@ class SelectedRecordCursor implements RecordCursor {
 
     @Override
     public void close() {
-        baseCursor.close();
+        baseCursor = Misc.free(baseCursor);
     }
 
     @Override

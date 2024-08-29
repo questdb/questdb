@@ -104,7 +104,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             cursor.of(baseCursor, fromFunc, toFunc, stride, valueFuncs, timestampIndex, executionContext);
             return cursor;
         } catch (Throwable th) {
-            baseCursor.close();
+            cursor.close();
             throw th;
         }
     }

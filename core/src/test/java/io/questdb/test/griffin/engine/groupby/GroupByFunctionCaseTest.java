@@ -203,7 +203,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                             "    AND venue in ('CBS', 'FUS', 'LMX', 'BTS')\n" +
                             "  SAMPLE BY 1h \n" +
                             "  ALIGN TO CALENDAR TIME ZONE 'UTC'",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [candle_st]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [candle_st,venue,num_ticks,quote_volume,quote_volume/SUM]\n" +

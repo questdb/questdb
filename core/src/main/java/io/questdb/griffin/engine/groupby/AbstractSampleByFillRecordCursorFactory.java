@@ -72,19 +72,19 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final RecordCursor baseCursor = base.getCursor(executionContext);
-        AbstractNoRecordSampleByCursor rawCursor = null;
+        AbstractNoRecordSampleByCursor cursor = null;
         try {
-            rawCursor = getRawCursor();
-            if (rawCursor instanceof Reopenable) {
-                ((Reopenable) rawCursor).reopen();
+            cursor = getRawCursor();
+            if (cursor instanceof Reopenable) {
+                ((Reopenable) cursor).reopen();
             }
-            return initFunctionsAndCursor(executionContext, baseCursor);
-        } catch (Throwable ex) {
-            baseCursor.close();
-            Misc.free(rawCursor);
-            throw ex;
+        } catch (Throwable th) {
+            Misc.free(cursor);
+            throw th;
         }
+
+        final RecordCursor baseCursor = base.getCursor(executionContext);
+        return initFunctionsAndCursor(executionContext, baseCursor);
     }
 
     @Override

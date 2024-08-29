@@ -761,6 +761,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlOrderByRadixSortThreshold() {
+        return getDelegate().getSqlOrderByRadixSortThreshold();
+    }
+
+    @Override
     public int getSqlPageFrameMaxRows() {
         return getDelegate().getSqlPageFrameMaxRows();
     }
@@ -1098,6 +1103,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlJitDebugEnabled() {
         return getDelegate().isSqlJitDebugEnabled();
+    }
+
+    @Override
+    public boolean isSqlOrderBySortEnabled() {
+        return getDelegate().isSqlOrderBySortEnabled();
     }
 
     @Override

@@ -8,7 +8,7 @@ jobs:
           poolName: "Azure Pipelines"
           os: Linux
           jdk: "1.11"
-          testset: "coverage"
+          testset: "coverage-griffin"
           includeTests: "**/griffin/**"
           javadoc_step: ""
           javadoc_profile: ""
@@ -17,7 +17,7 @@ jobs:
           poolName: "Azure Pipelines"
           os: Linux
           jdk: "1.11"
-          testset: "coverage"
+          testset: "coverage-cairo"
           includeTests: "**/cairo/**"
           javadoc_step: ""
           javadoc_profile: ""
@@ -26,7 +26,7 @@ jobs:
           poolName: "Azure Pipelines"
           os: Linux
           jdk: "1.11"
-          testset: "coverage"
+          testset: "coverage-other"
           excludeTests: "**/griffin/**,**/cairo/**"
           javadoc_step: ""
           javadoc_profile: ""
@@ -36,8 +36,10 @@ jobs:
     timeoutInMinutes: 60
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
+      RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
       COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
       CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
+      DIFF_COVER_THRESHOLD_PCT: 50
       ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
     steps:
       - template: steps.yml
