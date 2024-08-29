@@ -1532,7 +1532,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             // purge old column versions
             finishColumnPurge();
-            LOG.info().$("REMOVED index [txn=").$(txWriter.getTxn());
+            LOG.info().$("REMOVED index [txn=").$(txWriter.getTxn()).$();
 
             CairoMetadata.INSTANCE.hydrateTable(metadata, true, true);
 
