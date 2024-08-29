@@ -77,6 +77,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     static final int INT_NULL_X = Numbers.bswap(-1);
     static final int IN_TRANSACTION = 1;
     static final byte MESSAGE_TYPE_BIND_COMPLETE = '2';
+    static final byte MESSAGE_TYPE_CLOSE_COMPLETE = '3';
     static final byte MESSAGE_TYPE_COMMAND_COMPLETE = 'C';
     static final byte MESSAGE_TYPE_DATA_ROW = 'D';
     static final byte MESSAGE_TYPE_EMPTY_QUERY = 'I';
@@ -87,7 +88,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     static final byte MESSAGE_TYPE_ROW_DESCRIPTION = 'T';
     static final int NO_TRANSACTION = 0;
     private static final int COMMIT_TRANSACTION = 2;
-    static final byte MESSAGE_TYPE_CLOSE_COMPLETE = '3';
+    private static final Log LOG = LogFactory.getLog(PGConnectionContext.class);
     private static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
     private static final byte MESSAGE_TYPE_SSL_SUPPORTED_RESPONSE = 'S';
@@ -95,9 +96,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private static final int PROTOCOL_TAIL_COMMAND_LENGTH = 64;
     private static final int ROLLING_BACK_TRANSACTION = 4;
     private static final int SSL_REQUEST = 80877103;
-    private static final Log LOG = LogFactory.getLog(PGConnectionContext.class);
     private final BatchCallback batchCallback;
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
+    private final BindVariableService bindVariableService;
     private final IntList bindVariableTypes = new IntList();
     private final CharacterStore characterStore;
     private final NetworkSqlExecutionCircuitBreaker circuitBreaker;
@@ -113,12 +114,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final ArrayDeque<PGPipelineEntry> pipeline = new ArrayDeque<>();
     private final int recvBufferSize;
     private final ResponseUtf8Sink responseUtf8Sink = new ResponseUtf8Sink();
+    private final Rnd rnd;
     private final SecurityContextFactory securityContextFactory;
     private final int sendBufferSize;
+    private final SqlExecutionContextImpl sqlExecutionContext;
     private final WeakSelfReturningObjectPool<TypesAndInsert> taiPool;
     private final DirectUtf8String utf8String = new DirectUtf8String();
     private Authenticator authenticator;
-    private final BindVariableService bindVariableService;
     private int bufferRemainingOffset = 0;
     private int bufferRemainingSize = 0;
     private boolean freezeRecvBuffer;
@@ -131,11 +133,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private long recvBufferReadOffset = 0;
     private long recvBufferWriteOffset = 0;
     private PGResumeCallback resumeCallback;
-    private final Rnd rnd;
     private long sendBuffer;
     private long sendBufferLimit;
     private long sendBufferPtr;
-    private final SqlExecutionContextImpl sqlExecutionContext;
     private SuspendEvent suspendEvent;
     // insert 'statements' are cached only for the duration of user session
     private SimpleAssociativeCache<TypesAndInsert> taiCache;
@@ -144,6 +144,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private boolean tlsSessionStarting = false;
     private long totalReceived = 0;
     private int transactionState = NO_TRANSACTION;
+
     public PGConnectionContext(
             CairoEngine engine,
             PGWireConfiguration configuration,
@@ -197,24 +198,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    public static int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
-        if (address + Integer.BYTES <= msgLimit) {
-            return getIntUnsafe(address);
-        }
-        LOG.error().$(errorMessage).$();
-        throw BadProtocolException.INSTANCE;
-    }
-
     public static long getLongUnsafe(long address) {
         return Numbers.bswap(Unsafe.getUnsafe().getLong(address));
-    }
-
-    public static short getShort(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
-        if (address + Short.BYTES <= msgLimit) {
-            return getShortUnsafe(address);
-        }
-        LOG.error().$(errorMessage).$();
-        throw BadProtocolException.INSTANCE;
     }
 
     public static long getStringLengthTedious(long x, long limit) {
@@ -227,13 +212,18 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         return -1;
     }
 
-    public static long getUtf8StrSize(long x, long limit, CharSequence errorMessage) throws BadProtocolException {
+    public static long getUtf8StrSize(long x, long limit, CharSequence errorMessage, @Nullable PGPipelineEntry pe) throws BadProtocolException {
         long len = Unsafe.getUnsafe().getByte(x) == 0 ? x : getStringLengthTedious(x, limit);
         if (len > -1) {
             return len;
         }
         // we did not find 0 within message limit
-        LOG.error().$(errorMessage).$();
+        if (pe != null) {
+            // report error to the pipeline entry and continue parsing messages
+            pe.getErrorMessageSink().put(errorMessage);
+        } else {
+            LOG.error().$(errorMessage).$();
+        }
         throw BadProtocolException.INSTANCE;
     }
 
@@ -398,14 +388,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                  QueryPausedException | BadProtocolException e) {
             throw e;
         } catch (Throwable th) {
+            th.printStackTrace();
             handleException(-1, th.getMessage(), true, -1, true);
-        }
-    }
-
-    @Override
-    public void setSqlTimeout(long sqlTimeout) {
-        if (sqlTimeout > 0) {
-            circuitBreaker.setTimeout(sqlTimeout);
         }
     }
 
@@ -429,15 +413,22 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.authenticator = authenticator;
     }
 
-    private void addPipelineEntry() {
-        if (pipelineCurrentEntry != null) {
-            pipeline.add(pipelineCurrentEntry);
-            pipelineCurrentEntry = null;
+    @Override
+    public void setSqlTimeout(long sqlTimeout) {
+        if (sqlTimeout > 0) {
+            circuitBreaker.setTimeout(sqlTimeout);
         }
     }
 
     public void setSuspendEvent(SuspendEvent suspendEvent) {
         this.suspendEvent = suspendEvent;
+    }
+
+    private void addPipelineEntry() {
+        if (pipelineCurrentEntry != null) {
+            pipeline.add(pipelineCurrentEntry);
+            pipelineCurrentEntry = null;
+        }
     }
 
     private void assertBufferSize(boolean check) throws BadProtocolException {
@@ -472,27 +463,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void msgFlush() throws Exception {
-        addPipelineEntry();
-        // "The Flush message does not cause any specific output to be generated, but forces the backend to deliver any data pending in its output buffers.
-        //  A Flush must be sent after any extended-query command except Sync, if the frontend wishes to examine the results of that command before issuing more commands.
-        //  Without Flush, messages returned by the backend will be combined into the minimum possible number of packets to minimize network overhead."
-        // some clients (asyncpg) chose not to send 'S' (sync) message
-        // but instead fire 'H'. Can't wrap my head around as to why
-        // query execution is so ambiguous
-
-        resumeCallback = this::msgFlush0;
-        msgFlush0();
-    }
-
-    private void flushRemainingBuffer() throws PeerDisconnectedException, PeerIsSlowToReadException {
-        if (bufferRemainingSize > 0) {
-            sendBuffer(bufferRemainingOffset, bufferRemainingSize);
-        }
-    }
-
     // processes one or more queries (batch/script). "Simple Query" in PostgreSQL docs.
-    private void cmdQuery(long lo, long limit) throws Exception {
+    private void cmdQuery(long lo, long limit)  {
+/*
         sendRNQ = true;
         prepareForNewQuery();
         isEmptyQuery = true; // assume SQL text contains no query until we find out otherwise
@@ -522,6 +495,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             throw BadProtocolException.INSTANCE;
         }
         sendReadyForNewQuery();
+*/
     }
 
     private void doSendWithRetries(int bufferOffset, int bufferSize) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -550,6 +524,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             bufferRemainingOffset = offset;
             bufferRemainingSize = remaining;
             throw PeerIsSlowToReadException.INSTANCE;
+        }
+    }
+
+    private void flushRemainingBuffer() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        if (bufferRemainingSize > 0) {
+            sendBuffer(bufferRemainingOffset, bufferRemainingSize);
         }
     }
 
@@ -627,6 +607,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void handleException(int position, CharSequence message, boolean critical, int errno, boolean interruption) throws PeerDisconnectedException, PeerIsSlowToReadException {
+/*
         metrics.pgWire().getErrorCounter().inc();
         clearCursorAndFactory();
         if (interruption) {
@@ -641,6 +622,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         } else {
             replyAndContinue();
         }
+*/
     }
 
     private void handleTlsRequest() throws PeerIsSlowToWriteException, PeerIsSlowToReadException, BadProtocolException, PeerDisconnectedException {
@@ -679,19 +661,22 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private boolean lookupPipelineEntryForPortalName(@Nullable CharSequence portalName) throws BadProtocolException {
         if (portalName != null) {
+            PGPipelineEntry pe = namedPortals.get(portalName);
+            if (pe == null) {
+                if (pipelineCurrentEntry == null) {
+                    pipelineCurrentEntry = new PGPipelineEntry(engine);
+                }
+                pipelineCurrentEntry.getErrorMessageSink().put(" portal does not exist [name=").put(portalName).put(']');
+                throw BadProtocolException.INSTANCE;
+            }
+
             // Alright, the client wants to use the named statement. What if they just
             // send "parse" message and want to abandon it?
-            pipelineCurrentEntry = freeIfAbandoned(pipelineCurrentEntry);
+            freeIfAbandoned(pipelineCurrentEntry);
 
             // it is safe to overwrite the pipeline entry,
             // named entries will be held in the hash map
-            pipelineCurrentEntry = namedPortals.get(portalName);
-
-            // however, we cannot continue if the portal name is invalid
-            if (pipelineCurrentEntry == null) {
-                LOG.error().$(" portal does not exist [name=").$(portalName).I$();
-                throw BadProtocolException.INSTANCE;
-            }
+            pipelineCurrentEntry = pe;
             return false;
         }
         return true;
@@ -699,35 +684,43 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private boolean lookupPipelineEntryForStatementName(@Nullable CharSequence statementName) throws BadProtocolException {
         if (statementName != null) {
+            PGPipelineEntry pe = namedStatements.get(statementName);
+            if (pe == null) {
+                // we cannot continue if the prepared statement name is invalid
+                if (pipelineCurrentEntry == null) {
+                    pipelineCurrentEntry = new PGPipelineEntry(engine);
+                }
+                pipelineCurrentEntry.getErrorMessageSink().put("statement or portal does not exist [name=").put(statementName).put(']');
+                throw BadProtocolException.INSTANCE;
+            }
             // Alright, the client wants to use the named statement. What if they just
             // send "parse" message and want to abandon it?
-            pipelineCurrentEntry = freeIfAbandoned(pipelineCurrentEntry);
+            freeIfAbandoned(pipelineCurrentEntry);
 
             // it is safe to overwrite the pipeline entry,
             // named entries will be held in the "namedEntries" cache
-            pipelineCurrentEntry = namedStatements.get(statementName);
-
-            // however, we cannot continue if the prepared statement name is invalid
-            if (pipelineCurrentEntry == null) {
-                LOG.error().$("statement or portal does not exist [name=").$(statementName).I$();
-                throw BadProtocolException.INSTANCE;
-            }
+            pipelineCurrentEntry = pe;
             return false;
         }
         return true;
     }
 
-    private void msgBind(long lo, long msgLimit) throws BadProtocolException, SqlException {
+    private void msgBind(long lo, long msgLimit) throws BadProtocolException {
+
+        if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
+            return;
+        }
+
         short parameterValueCount;
 
         LOG.debug().$("bind").$();
 
         // portal name
-        long hi = getUtf8StrSize(lo, msgLimit, "bad portal name length (bind)");
+        long hi = getUtf8StrSize(lo, msgLimit, "bad portal name length (bind)", pipelineCurrentEntry);
         CharSequence portalName = getUtf16Str(lo, hi, "invalid UTF8 bytes in portal name (bind)");
         // named statement
         lo = hi + 1;
-        hi = getUtf8StrSize(lo, msgLimit, "bad prepared statement name length [msgType='B']");
+        hi = getUtf8StrSize(lo, msgLimit, "bad prepared statement name length [msgType='B']", pipelineCurrentEntry);
 
         CharSequence statementName = getUtf16Str(lo, hi, "invalid UTF8 bytes in statement name (bind)");
 
@@ -736,7 +729,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // Past this point the pipeline entry must not be null.
         // If it is - this means back-to-back "bind" messages were received with no prepared statement name.
         if (pipelineCurrentEntry == null) {
-            LOG.error().$("spurious bind message").I$();
+            pipelineCurrentEntry = new PGPipelineEntry(engine);
+            pipelineCurrentEntry.getErrorMessageSink().put("spurious bind message");
             throw BadProtocolException.INSTANCE;
         }
 
@@ -770,7 +764,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                                 tasCache,
                                 taiPool
                         );
-                        pe.setPatentPreparedStatement(pipelineCurrentEntry);
+                        pe.setParentPreparedStatement(pipelineCurrentEntry);
                         // Keep the reference to the portal name on the prepared statement before we overwrite the
                         // reference. Keeping list of portal names is required in case the client closes the prepared
                         // statement. We will also be required to close all the portals.
@@ -785,17 +779,18 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     pipelineCurrentEntry.setPortal(true);
                     namedPortals.putAt(index, portalName, pipelineCurrentEntry);
                 } else {
-                    pipelineCurrentEntry = freeIfAbandoned(pipelineCurrentEntry);
-                    throw CairoException.nonCritical().put("portal already exists [portalName=").put(portalName).put(']');
+                    pipelineCurrentEntry.getErrorMessageSink().put("portal already exists [portalName=").put(portalName).put(']');
+                    throw BadProtocolException.INSTANCE;
                 }
             } else {
-                throw CairoException.nonCritical().put("cannot create portal for non-SELECT SQL [portalName=").put(portalName).put(']');
+                pipelineCurrentEntry.getErrorMessageSink().put("cannot create portal for non-SELECT SQL [portalName=").put(portalName).put(']');
+                throw BadProtocolException.INSTANCE;
             }
         }
 
         // parameter format count
         lo = hi + 1;
-        final short parameterFormatCodeCount = getShort(lo, msgLimit, "could not read parameter format code count");
+        final short parameterFormatCodeCount = pipelineCurrentEntry.getShort(lo, msgLimit, "could not read parameter format code count");
         pipelineCurrentEntry.msgBindCopyParameterFormatCodes(
                 lo,
                 msgLimit,
@@ -805,7 +800,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         // parameter value count
         lo += parameterFormatCodeCount * Short.BYTES;
-        parameterValueCount = getShort(lo, msgLimit, "could not read parameter value count");
+        parameterValueCount = pipelineCurrentEntry.getShort(lo, msgLimit, "could not read parameter value count");
 
         LOG.debug().$("binding [parameterValueCount=").$(parameterValueCount).$(", thread=").$(Thread.currentThread().getId()).I$();
 
@@ -824,7 +819,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 binarySequenceParamsPool
         );
 
-        short columnFormatCodeCount = getShort(lo, msgLimit, "could not read result set column format codes");
+        short columnFormatCodeCount = pipelineCurrentEntry.getShort(lo, msgLimit, "could not read result set column format codes");
         lo += Short.BYTES;
         pipelineCurrentEntry.msgBindCopySelectFormatCodes(lo, msgLimit, columnFormatCodeCount);
     }
@@ -844,7 +839,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 // reference of the pipeline entry as the statement, so we only need to remove this
                 // reference from maps.
                 lo = lo + 1;
-                final long hi = getUtf8StrSize(lo, msgLimit, "bad prepared statement name length");
+                final long hi = getUtf8StrSize(lo, msgLimit, "bad prepared statement name length", pipelineCurrentEntry);
                 final CharSequence statementName = getUtf16Str(lo, hi, "invalid UTF8 bytes in statement name (close)");
                 if (statementName != null) {
                     int index = namedStatements.keyIndex(statementName);
@@ -883,7 +878,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 break;
             case 'P':
                 lo = lo + 1;
-                final long high = getUtf8StrSize(lo, msgLimit, "bad prepared portal name length (close)");
+                final long high = getUtf8StrSize(lo, msgLimit, "bad prepared portal name length (close)", pipelineCurrentEntry);
                 final CharSequence portalName = getUtf16Str(lo, high, "invalid UTF8 bytes in portal name (close)");
                 if (portalName != null) {
                     final int index = namedPortals.keyIndex(portalName);
@@ -917,13 +912,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void msgDescribe(long lo, long msgLimit) throws BadProtocolException {
+        if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
+            return;
+        }
 
         // 'S' = statement name
         // 'P' = portal name
         // followed by the name, which can be NULL, typically with 'P'
         boolean isPortal = Unsafe.getUnsafe().getByte(lo) == 'P';
         // todo: we can use utf8 names in maps and also lookup 0 terminator more efficiently
-        final long hi = getUtf8StrSize(lo + 1, msgLimit, "bad prepared statement name length (describe)");
+        final long hi = getUtf8StrSize(lo + 1, msgLimit, "bad prepared statement name length (describe)", pipelineCurrentEntry);
         final boolean nullTargetName;
         if (isPortal) {
             nullTargetName = lookupPipelineEntryForPortalName(
@@ -940,15 +938,20 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // a pipeline entry
 
         if (pipelineCurrentEntry == null) {
-            LOG.error().$("spurious describe message received").I$();
+            pipelineCurrentEntry = new PGPipelineEntry(engine);
+            pipelineCurrentEntry.getErrorMessageSink().put("spurious describe message received");
             throw BadProtocolException.INSTANCE;
         }
 
         pipelineCurrentEntry.setStateDesc(nullTargetName ? 1 : isPortal ? 2 : 3);
     }
 
-    private void msgExecute(long lo, long msgLimit) throws Exception {
-        final long hi = getUtf8StrSize(lo, msgLimit, "bad portal name length (execute)");
+    private void msgExecute(long lo, long msgLimit) throws BadProtocolException {
+        if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
+            return;
+        }
+
+        final long hi = getUtf8StrSize(lo, msgLimit, "bad portal name length (execute)", pipelineCurrentEntry);
         lookupPipelineEntryForPortalName(getUtf16Str(lo, hi, "invalid UTF8 bytes in portal name (execute)"));
 
         if (pipelineCurrentEntry == null) {
@@ -957,9 +960,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         lo = hi + 1;
-        pipelineCurrentEntry.setReturnRowCountLimit(getInt(lo, msgLimit, "could not read max rows value"));
+        pipelineCurrentEntry.setReturnRowCountLimit(pipelineCurrentEntry.getInt(lo, msgLimit, "could not read max rows value"));
         pipelineCurrentEntry.setStateExec(true);
-        pipelineCurrentEntry.execute(
+        transactionState = pipelineCurrentEntry.execute(
                 sqlExecutionContext,
                 transactionState,
                 taiCache,
@@ -972,17 +975,35 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         addPipelineEntry();
     }
 
-    private void msgFlush0() throws Exception {
+    private void msgFlush() throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, BadProtocolException {
+        addPipelineEntry();
+        // "The Flush message does not cause any specific output to be generated, but forces the backend to deliver any data pending in its output buffers.
+        //  A Flush must be sent after any extended-query command except Sync, if the frontend wishes to examine the results of that command before issuing more commands.
+        //  Without Flush, messages returned by the backend will be combined into the minimum possible number of packets to minimize network overhead."
+        // some clients (asyncpg) chose not to send 'S' (sync) message
+        // but instead fire 'H'. Can't wrap my head around as to why
+        // query execution is so ambiguous
+
+        resumeCallback = this::msgFlush0;
+        msgFlush0();
+    }
+
+    private void msgFlush0() throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, BadProtocolException {
         syncPipeline();
         responseUtf8Sink.sendBufferAndReset();
         resumeCallback = null;
     }
 
-    private void msgParse(long address, long lo, long msgLimit) throws BadProtocolException, SqlException {
+    private void msgParse(long address, long lo, long msgLimit) throws BadProtocolException {
+        // Parse message typically starts a new pipeline entry. So if there is existing one in flight
+        // we have to add it to the pipeline
+        addPipelineEntry();
+
+        pipelineCurrentEntry = new PGPipelineEntry(engine);
 
         // 'Parse'
         //message length
-        long hi = getUtf8StrSize(lo, msgLimit, "bad prepared statement name length (parse)");
+        long hi = getUtf8StrSize(lo, msgLimit, "bad prepared statement name length (parse)", pipelineCurrentEntry);
 
         // when statement name is present in "parse" message
         // it should be interpreted as "store" command, e.g. we store the
@@ -991,14 +1012,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         //query text
         lo = hi + 1;
-        hi = getUtf8StrSize(lo, msgLimit, "bad query text length");
+        hi = getUtf8StrSize(lo, msgLimit, "bad query text length", pipelineCurrentEntry);
 
-        // Parse message typically starts a new pipeline entry. So if there is existing one in flight
-        // we have to add it to the pipeline
-        addPipelineEntry();
 
         // it is safe to overwrite the entry without having memory leak
-        pipelineCurrentEntry = parseSql(lo, hi);
+        parseSql(pipelineCurrentEntry, lo, hi);
         pipelineCurrentEntry.setStateParse(true);
 
         lo = hi + 1;
@@ -1006,17 +1024,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         msgParseCreateTargetStatement(targetStatementName);
 
         // parameter type count
-        short parameterTypeCount = getShort(lo, msgLimit, "could not read parameter type count");
+        short parameterTypeCount = pipelineCurrentEntry.getShort(lo, msgLimit, "could not read parameter type count");
 
         // process parameter types
         if (parameterTypeCount > 0) {
             if (lo + Short.BYTES + parameterTypeCount * 4L > msgLimit) {
-                LOG.error()
-                        .$("could not read parameters [parameterCount=").$(parameterTypeCount)
-                        .$(", offset=").$(lo - address)
-                        .$(", remaining=")
-                        .$(msgLimit - lo)
-                        .I$();
+                pipelineCurrentEntry.getErrorMessageSink()
+                        .put("could not read parameters [parameterCount=").put(parameterTypeCount)
+                        .put(", offset=").put(lo - address)
+                        .put(", remaining=").put(msgLimit - lo);
                 throw BadProtocolException.INSTANCE;
             }
 
@@ -1026,7 +1042,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // validation of the "bind" message.
             pipelineCurrentEntry.msgParseCopyParameterTypesFromMsg(lo + Short.BYTES, parameterTypeCount);
         } else if (parameterTypeCount < 0) {
-            LOG.error().$("invalid parameter count [parameterCount=").$(parameterTypeCount).$(", offset=").$(lo - address).I$();
+            pipelineCurrentEntry.getErrorMessageSink()
+                    .put("invalid parameter count [parameterCount=").put(parameterTypeCount)
+                    .put(", offset=").put(lo - address);
             throw BadProtocolException.INSTANCE;
         } else {
             // parameter types were not provided by the client
@@ -1043,14 +1061,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 pipelineCurrentEntry.setPreparedStatement(true);
                 namedStatements.putAt(index, Chars.toString(targetStatementName), pipelineCurrentEntry);
             } else {
-                pipelineCurrentEntry = freeIfAbandoned(pipelineCurrentEntry);
-                LOG.error().$("duplicate statement [name=").$(targetStatementName).I$();
+                pipelineCurrentEntry.getErrorMessageSink().put("duplicate statement [name=").put(targetStatementName).put(']');
                 throw BadProtocolException.INSTANCE;
             }
         }
     }
 
-    private void msgSync() throws Exception {
+    private void msgSync() throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, BadProtocolException {
         addPipelineEntry();
 
         // the sync0 is liable to get interrupted due to:
@@ -1062,7 +1079,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         msgSync0();
     }
 
-    private void msgSync0() throws Exception {
+    private void msgSync0() throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, BadProtocolException {
         syncPipeline();
 
         // flush the buffer in case response message does not fit the buffer
@@ -1099,7 +1116,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
      * in the buffer they need to be passed again in parse function along with
      * any additional bytes received
      */
-    private void parseMessage(long address, int len) throws Exception {
+    private void parseMessage(long address, int len)
+            throws BadProtocolException, PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException {
         // we will wait until we receive the entire header
         if (len < PREFIXED_MESSAGE_HEADER_LEN) {
             // we need to be able to read header and length
@@ -1165,16 +1183,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 msgClose(msgLo, msgLimit);
                 break;
             default:
-                LOG.error().$("unknown message [type=").$(type).I$();
+                if (pipelineCurrentEntry == null) {
+                    pipelineCurrentEntry = new PGPipelineEntry(engine);
+                }
+                pipelineCurrentEntry.getErrorMessageSink().put("unknown message [type=").put(type).put(']');
                 throw BadProtocolException.INSTANCE;
         }
     }
 
-    private PGPipelineEntry parseSql(long lo, long hi) throws BadProtocolException, SqlException {
+    private void parseSql(PGPipelineEntry pe, long lo, long hi) throws BadProtocolException {
         CharacterStoreEntry e = characterStore.newEntry();
         if (Utf8s.utf8ToUtf16(lo, hi, e)) {
-            // todo: these should be pooled in a simple way (stack)
-            PGPipelineEntry pe = new PGPipelineEntry(engine);
             pe.of(
                     e.toImmutable(),
                     engine,
@@ -1183,21 +1202,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     tasCache,
                     taiPool
             );
-            return pe;
+            return;
         }
-        LOG.error().$("invalid UTF8 bytes in parse query").$();
+        pe.getErrorMessageSink().put("invalid UTF8 bytes in parse query");
         throw BadProtocolException.INSTANCE;
-    }
-
-    // clears whole state except for characterStore because top-level batch text is using it
-    private void prepareForNewBatchQuery() {
-
-        LOG.debug().$("prepare for new query").$();
-        Misc.clear(bindVariableService);
-        freezeRecvBuffer = false;
-        sqlExecutionContext.setCacheHit(false);
-        sqlExecutionContext.containsSecret(false);
-
     }
 
     private void prepareBindCompleteResponse() {
@@ -1241,11 +1249,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         responseUtf8Sink.putLen(addr);
     }
 
-    private void sendReadyForNewQuery() throws PeerDisconnectedException {
-        LOG.debug().$("RNQ sent").$();
-        sendBufferAndResetBlocking();
-
-        outReadForNewQuery();
+    // clears whole state except for characterStore because top-level batch text is using it
+    private void prepareForNewBatchQuery() {
+        LOG.debug().$("prepare for new query").$();
+        Misc.clear(bindVariableService);
+        freezeRecvBuffer = false;
+        sqlExecutionContext.setCacheHit(false);
+        sqlExecutionContext.containsSecret(false);
     }
 
     private void prepareForNewQuery() {
@@ -1279,8 +1289,24 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         responseUtf8Sink.reset();
     }
 
+    private void sendReadyForNewQuery() throws PeerDisconnectedException {
+        LOG.debug().$("RNQ sent").$();
+        sendBufferAndResetBlocking();
+
+        outReadForNewQuery();
+    }
+
+    private void shiftReceiveBuffer(long readOffsetBeforeParse) {
+        final long len = recvBufferWriteOffset - readOffsetBeforeParse;
+        LOG.debug().$("shift [offset=").$(readOffsetBeforeParse).$(", len=").$(len).I$();
+
+        Vect.memmove(recvBuffer, recvBuffer + readOffsetBeforeParse, len);
+        recvBufferWriteOffset = len;
+        recvBufferReadOffset = 0;
+    }
+
     // Send responses from the pipeline entries we have accumulated so far.
-    private void syncPipeline() throws Exception {
+    private void syncPipeline() throws PeerIsSlowToReadException, QueryPausedException, BadProtocolException, PeerDisconnectedException {
         while (pipelineCurrentEntry != null || (pipelineCurrentEntry = pipeline.poll()) != null) {
             // with the sync call the existing pipeline entry will assign its own completion hooks (resume callbacks)
             transactionState = pipelineCurrentEntry.sync(
@@ -1296,15 +1322,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void shiftReceiveBuffer(long readOffsetBeforeParse) {
-        final long len = recvBufferWriteOffset - readOffsetBeforeParse;
-        LOG.debug().$("shift [offset=").$(readOffsetBeforeParse).$(", len=").$(len).I$();
-
-        Vect.memmove(recvBuffer, recvBuffer + readOffsetBeforeParse, len);
-        recvBufferWriteOffset = len;
-        recvBufferReadOffset = 0;
-    }
-
     static void dumpBuffer(char direction, long buffer, int len, boolean dumpNetworkTraffic) {
         if (dumpNetworkTraffic && len > 0) {
             StdoutSink.INSTANCE.put(direction);
@@ -1312,11 +1329,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    static PGPipelineEntry freeIfAbandoned(PGPipelineEntry pe) {
+    static void freeIfAbandoned(PGPipelineEntry pe) {
         if (pe != null && !pe.isPreparedStatement() && !pe.isPortal()) {
-            return Misc.free(pe);
+            Misc.free(pe);
         }
-        return pe;
     }
 
     static int getIntUnsafe(long address) {

@@ -30,14 +30,15 @@ import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.*;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
@@ -46,16 +47,17 @@ import static io.questdb.cutlass.pgwire.PGOids.*;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
 public class PGPipelineEntry implements QuietCloseable {
-    private static final Log LOG = LogFactory.getLog(PGPipelineEntry.class);
     private final CompiledQueryImpl compiledQuery;
+    private final StringSink errorMessageSink = new StringSink();
     // stores result format codes (0=Text,1=Binary) from the latest bind message
     // we need it in case cursor gets invalidated and bind used non-default binary format for some column(s)
     // pg clients (like asyncpg) fail when format sent by server is not the same as requested in bind message
     private final IntList msgBindSelectFormatCodes = new IntList();
-    // list of pair: column types (with format flag stored in first bit) AND additional type flag
-    private final IntList pgResultSetColumnTypes = new IntList();
     // types are sent to us via "parse" message
     private final IntList msgParseParameterTypes = new IntList();
+    // list of pair: column types (with format flag stored in first bit) AND additional type flag
+    private final IntList pgResultSetColumnTypes = new IntList();
+    private final ObjList<CharSequence> portalNames = new ObjList<>();
     private boolean cacheHit = false;    // extended protocol cursor resume callback
     private RecordCursor cursor;
     private boolean empty;
@@ -66,7 +68,6 @@ public class PGPipelineEntry implements QuietCloseable {
     private int msgBindParameterFormatCodeCount;
     private int msgBindParameterValueCount;
     private boolean outRecordPending = false;
-    private final ObjList<CharSequence> portalNames = new ObjList<>();
     private PGPipelineEntry parentPreparedStatementPipelineEntry;
     private boolean portal = false;
     private boolean preparedStatement = false;
@@ -91,16 +92,17 @@ public class PGPipelineEntry implements QuietCloseable {
     private int stateSync = 0;
     private TypesAndInsert tai = null;
     private TypesAndSelect tas = null;
+
     public PGPipelineEntry(CairoEngine engine) {
         this.compiledQuery = new CompiledQueryImpl(engine);
     }
 
-    @Override
-    public void close() {
-    }
-
     public void bindPortalName(CharSequence portalName) {
         portalNames.add(portalName);
+    }
+
+    @Override
+    public void close() {
     }
 
     // return transaction state
@@ -111,49 +113,59 @@ public class PGPipelineEntry implements QuietCloseable {
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             WriterSource writerSource,
             CharSequenceObjHashMap<PGPipelineEntry> namedStatements
-    ) throws SqlException {
-        // todo: we must not throw exception as this step, instead we must cache the outcome and
-        //     send it when the client is ready to receive
-        switch (this.sqlType) {
-            case CompiledQuery.CREATE_TABLE_AS_SELECT:
-                //  nothing to do, this SQL executes at compilation
-                break;
-            case CompiledQuery.EXPLAIN:
-            case CompiledQuery.SELECT:
-            case CompiledQuery.PSEUDO_SELECT:
-                executeSelect(sqlExecutionContext);
-                break;
-            case CompiledQuery.INSERT:
-            case CompiledQuery.INSERT_AS_SELECT:
-                executeInsert(sqlExecutionContext, transactionState, taiCache, pendingWriters, writerSource);
-                break;
-            case CompiledQuery.ALTER:
-            case CompiledQuery.ALTER_USER:
-            case CompiledQuery.CREATE_USER:
-            case CompiledQuery.UPDATE:
-                sqlExecutionContext.containsSecret(sqlTextHasSecret);
-                executeCompiledQuery(sqlExecutionContext, transactionState);
-                break;
-            case CompiledQuery.DEALLOCATE:
-                // this is our own SQL query, which is intended to remove named statement from
-                // connection cache.
-                // todo: this will fail for portals
-                PGPipelineEntry pe = namedStatements.get(this.preparedStatementName);
-                if (pe != null) {
-                    pe.setPreparedStatement(false);
-                    PGConnectionContext.freeIfAbandoned(pe);
-                }
-                break;
-            case CompiledQuery.BEGIN:
-                return IN_TRANSACTION;
-            case CompiledQuery.COMMIT:
-            case CompiledQuery.ROLLBACK:
-                freePendingWriters(pendingWriters, this.sqlType == CompiledQuery.COMMIT);
-                return NO_TRANSACTION;
-            default:
-                break;
+    ) {
+        try {
+            switch (this.sqlType) {
+                case CompiledQuery.CREATE_TABLE_AS_SELECT:
+                    //  nothing to do, this SQL executes at compilation
+                    break;
+                case CompiledQuery.EXPLAIN:
+                case CompiledQuery.SELECT:
+                case CompiledQuery.PSEUDO_SELECT:
+                    executeSelect(sqlExecutionContext);
+                    break;
+                case CompiledQuery.INSERT:
+                case CompiledQuery.INSERT_AS_SELECT:
+                    executeInsert(sqlExecutionContext, transactionState, taiCache, pendingWriters, writerSource);
+                    break;
+                case CompiledQuery.ALTER:
+                case CompiledQuery.ALTER_USER:
+                case CompiledQuery.CREATE_USER:
+                case CompiledQuery.UPDATE:
+                    sqlExecutionContext.containsSecret(sqlTextHasSecret);
+                    executeCompiledQuery(sqlExecutionContext, transactionState);
+                    break;
+                case CompiledQuery.DEALLOCATE:
+                    // this is our own SQL query, which is intended to remove named statement from
+                    // connection cache.
+                    // todo: this will fail for portals
+                    PGPipelineEntry pe = namedStatements.get(this.preparedStatementName);
+                    if (pe != null) {
+                        pe.setPreparedStatement(false);
+                        PGConnectionContext.freeIfAbandoned(pe);
+                    }
+                    break;
+                case CompiledQuery.BEGIN:
+                    return IN_TRANSACTION;
+                case CompiledQuery.COMMIT:
+                case CompiledQuery.ROLLBACK:
+                    freePendingWriters(pendingWriters, this.sqlType == CompiledQuery.COMMIT);
+                    return NO_TRANSACTION;
+                default:
+                    break;
+            }
+        } catch (Throwable e) {
+            if (e instanceof FlyweightMessageContainer) {
+                getErrorMessageSink().put(((FlyweightMessageContainer) e).getFlyweightMessage());
+            } else {
+                getErrorMessageSink().put(e.getMessage());
+            }
         }
         return transactionState;
+    }
+
+    public StringSink getErrorMessageSink() {
+        return errorMessageSink;
     }
 
     public PGPipelineEntry getParentPreparedStatementPipelineEntry() {
@@ -164,46 +176,24 @@ public class PGPipelineEntry implements QuietCloseable {
         return portalNames;
     }
 
+    public short getShort(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
+        if (address + Short.BYTES <= msgLimit) {
+            return getShortUnsafe(address);
+        }
+        getErrorMessageSink().put(errorMessage);
+        throw BadProtocolException.INSTANCE;
+    }
+
     public CharSequence getSqlText() {
         return sqlText;
     }
 
-    public boolean isFactory() {
-        return factory != null;
+    public boolean isError() {
+        return errorMessageSink.length() > 0;
     }
 
-    public void of(
-            CharSequence sqlText,
-            CairoEngine engine,
-            SqlExecutionContext sqlExecutionContext,
-            SimpleAssociativeCache<TypesAndInsert> taiCache,
-            AssociativeCache<TypesAndSelect> tasCache,
-            WeakSelfReturningObjectPool<TypesAndInsert> taiPool
-    ) throws SqlException {
-        // pipeline entries begin life as anonymous, typical pipeline length is 1-3 entries
-        // we do not need to create new objects until we know we're caching the entry
-        this.sqlText = sqlText;
-        this.empty = sqlText == null || sqlText.length() == 0;
-        cacheHit = true;
-        if (!empty) {
-            // try insert, peek because this is our private cache,
-            // and we do not want to remove statement from it
-            if (
-                    !lookup(
-                            taiCache,
-                            tasCache,
-                            sqlExecutionContext.getBindVariableService()
-                    )
-            ) {
-                cacheHit = false;
-                parseNew(
-                        engine,
-                        sqlExecutionContext,
-                        taiPool
-                );
-            }
-            buildResultSetColumnTypes();
-        }
+    public boolean isFactory() {
+        return factory != null;
     }
 
     public boolean isPortal() {
@@ -251,11 +241,15 @@ public class PGPipelineEntry implements QuietCloseable {
                     } else if (selectFormatCodeCount == 1) {
                         msgBindSelectFormatCodes.setAll(columnCount, getShortUnsafe(lo));
                     } else {
-                        LOG.error().$("could not process column format codes [fmtCount=").$(selectFormatCodeCount).$(", columnCount=").$(columnCount).I$();
+                        getErrorMessageSink()
+                                .put("could not process column format codes [fmtCount=").put(selectFormatCodeCount)
+                                .put(", columnCount=").put(columnCount);
                         throw BadProtocolException.INSTANCE;
                     }
                 } else {
-                    LOG.error().$("could not process column format codes [bufSpaceNeeded=").$(spaceNeeded).$(", bufSpaceAvail=").$(msgLimit).I$();
+                    getErrorMessageSink()
+                            .put("could not process column format codes [bufSpaceNeeded=").put(spaceNeeded)
+                            .put(", bufSpaceAvail=").put(msgLimit);
                     throw BadProtocolException.INSTANCE;
                 }
             } else if (selectFormatCodeCount == 0) {
@@ -272,7 +266,7 @@ public class PGPipelineEntry implements QuietCloseable {
             CharacterStore characterStore,
             DirectUtf8String utf8String,
             ObjectPool<DirectBinarySequence> binarySequenceParamsPool
-    ) throws SqlException, BadProtocolException {
+    ) throws BadProtocolException {
         if (msgBindParameterValueCount > 0) {
             // client doesn't need to specify any type in Parse message and can just use types returned in ParameterDescription message
             if (this.getMsgParseParameterTypeCount() > 0) {
@@ -301,11 +295,11 @@ public class PGPipelineEntry implements QuietCloseable {
         this.msgBindParameterValueCount = valueCount;
         if (valueCount > 0) {
             if (valueCount < getMsgParseParameterTypeCount()) {
-                LOG.error().$("parameter type count must be less or equals to number of parameters values").$();
+                getErrorMessageSink().put("parameter type count must be less or equals to number of parameters values");
                 throw BadProtocolException.INSTANCE;
             }
             if (msgBindParameterFormatCodeCount > 1 && msgBindParameterFormatCodeCount != valueCount) {
-                LOG.error().$("parameter format count and parameter value count must match").$();
+                getErrorMessageSink().put("parameter format count and parameter value count must match");
                 throw BadProtocolException.INSTANCE;
             }
         }
@@ -331,7 +325,46 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
-    public void setPatentPreparedStatement(PGPipelineEntry preparedStatementPipelineEntry) {
+    public void of(
+            CharSequence sqlText,
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            SimpleAssociativeCache<TypesAndInsert> taiCache,
+            AssociativeCache<TypesAndSelect> tasCache,
+            WeakSelfReturningObjectPool<TypesAndInsert> taiPool
+    ) throws BadProtocolException {
+        // pipeline entries begin life as anonymous, typical pipeline length is 1-3 entries
+        // we do not need to create new objects until we know we're caching the entry
+        this.sqlText = sqlText;
+        this.empty = sqlText == null || sqlText.length() == 0;
+        cacheHit = true;
+        if (!empty) {
+            // try insert, peek because this is our private cache,
+            // and we do not want to remove statement from it
+            try {
+                if (
+                        !lookup(
+                                taiCache,
+                                tasCache,
+                                sqlExecutionContext.getBindVariableService()
+                        )
+                ) {
+                    cacheHit = false;
+                    parseNew(
+                            engine,
+                            sqlExecutionContext,
+                            taiPool
+                    );
+                }
+                buildResultSetColumnTypes();
+            } catch (SqlException e) {
+                getErrorMessageSink().put(e.getFlyweightMessage());
+                throw BadProtocolException.INSTANCE;
+            }
+        }
+    }
+
+    public void setParentPreparedStatement(PGPipelineEntry preparedStatementPipelineEntry) {
         this.parentPreparedStatementPipelineEntry = preparedStatementPipelineEntry;
     }
 
@@ -349,16 +382,16 @@ public class PGPipelineEntry implements QuietCloseable {
         this.sqlText = Chars.toString(this.sqlText);
     }
 
-    public void setStateClosed(boolean stateClosed) {
-        this.stateClosed = stateClosed;
-    }
-
     public void setReturnRowCountLimit(int rowCountLimit) {
         this.sqlReturnRowCountLimit = rowCountLimit;
     }
 
     public void setStateBind(boolean stateBind) {
         this.stateBind = stateBind;
+    }
+
+    public void setStateClosed(boolean stateClosed) {
+        this.stateClosed = stateClosed;
     }
 
     public void setStateDesc(int stateDesc) {
@@ -373,6 +406,15 @@ public class PGPipelineEntry implements QuietCloseable {
         this.stateParse = stateParse;
     }
 
+    public int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
+        if (address + Integer.BYTES <= msgLimit) {
+            return getIntUnsafe(address);
+        }
+        getErrorMessageSink().put(errorMessage);
+        throw BadProtocolException.INSTANCE;
+    }
+
+
     /**
      * This method writes the response to the provided sink. The response is typically
      * larger than the available buffer. For that reason this method also flushes the buffers. During the
@@ -382,10 +424,10 @@ public class PGPipelineEntry implements QuietCloseable {
      * again.
      *
      * @param sqlExecutionContext the execution context used to optionally execute SQL and send result set out.
-     * @param transactionState the state of the current transaction; determines if to use insert auto-commit or not
-     * @param taiCache "insert" SQL cache, used to optionally execute the insert (when 'E' message is omitted)
-     * @param pendingWriters per connection write cache to be used by "insert" SQL. This is also part of the optional "execute"
-     * @param writerSource global writer cache
+     * @param transactionState    the state of the current transaction; determines if to use insert auto-commit or not
+     * @param taiCache            "insert" SQL cache, used to optionally execute the insert (when 'E' message is omitted)
+     * @param pendingWriters      per connection write cache to be used by "insert" SQL. This is also part of the optional "execute"
+     * @param writerSource        global writer cache
      * @param namedStatements
      * @param utf8Sink
      * @return
@@ -399,7 +441,10 @@ public class PGPipelineEntry implements QuietCloseable {
             WriterSource writerSource,
             CharSequenceObjHashMap<PGPipelineEntry> namedStatements,
             PGResponseSink utf8Sink
-    ) throws Exception {
+    ) throws PeerIsSlowToReadException, QueryPausedException, BadProtocolException, PeerDisconnectedException {
+        if (isError()) {
+
+        }
         switch (stateSync) {
             case 0:
                 if (stateParse) {
@@ -434,9 +479,11 @@ public class PGPipelineEntry implements QuietCloseable {
                 }
                 stateSync = 4;
             case 4:
+            case 5:
                 // state goes deeper
                 if (empty) {
                     outEmptyQuery(utf8Sink);
+                    stateSync = 6;
                 } else {
                     if (!stateExec) {
                         execute(sqlExecutionContext, transactionState, taiCache, pendingWriters, writerSource, namedStatements);
@@ -444,6 +491,7 @@ public class PGPipelineEntry implements QuietCloseable {
                     }
                     switch (sqlType) {
                         case CompiledQuery.CREATE_TABLE_AS_SELECT:
+                            break;
                         case CompiledQuery.SET:
                         case CompiledQuery.BEGIN:
                         case CompiledQuery.COMMIT:
@@ -457,7 +505,7 @@ public class PGPipelineEntry implements QuietCloseable {
                             long addr = utf8Sink.skipInt();
                             utf8Sink.put(sqlTag).put((byte) 0);
                             utf8Sink.putLen(addr);
-                            stateSync = 5;
+                            stateSync = 6;
                             break;
                         }
                         case CompiledQuery.EXPLAIN:
@@ -472,37 +520,46 @@ public class PGPipelineEntry implements QuietCloseable {
                             break;
                         case CompiledQuery.INSERT_AS_SELECT:
                         case CompiledQuery.INSERT: {
+                            utf8Sink.bookmark();
+                            // todo: if we get sent a log of inserts as the pipeline, we might run out of buffer
+                            //           sending the replies. We should handle this
                             utf8Sink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
                             long addr = utf8Sink.skipInt();
                             utf8Sink.put(sqlTag).putAscii(" 0 ").put(sqlAffectedRowCount).put((byte) 0);
                             utf8Sink.putLen(addr);
-                            stateSync = 5;
+                            stateSync = 6;
                             break;
                         }
                         case CompiledQuery.UPDATE: {
                             outCommandComplete(utf8Sink, sqlAffectedRowCount);
-                            stateSync = 5;
+                            stateSync = 6;
                             break;
                         }
                     }
                 }
                 break;
+            case 20:
+            case 30:
+                // ignore these, they are set by outCursor() call and should be processed outside of this
+                // switch statement
+                break;
             default:
                 assert false;
         }
-        return transactionState;
-    }
 
-    private static void ensureValueLength(int variableIndex, int sizeRequired, int sizeActual) throws BadProtocolException {
-        if (sizeRequired == sizeActual) {
-            return;
+        // this is a separate switch because there is no way to-recheck the stateSync that
+        // is set withing the top switch. These values are set by outCursor()
+
+        switch (stateSync) {
+            case 20:
+                outCommandComplete(utf8Sink, sqlReturnRowCount);
+                break;
+            case 30:
+                outPortalSuspended(utf8Sink);
+                break;
         }
-        LOG.error()
-                .$("bad parameter value length [sizeRequired=").$(sizeRequired)
-                .$(", sizeActual=").$(sizeActual)
-                .$(", variableIndex=").$(variableIndex)
-                .I$();
-        throw BadProtocolException.INSTANCE;
+
+        return transactionState;
     }
 
     private static void outBindComplete(PGResponseSink utf8Sink) {
@@ -522,11 +579,13 @@ public class PGPipelineEntry implements QuietCloseable {
     }
 
     private static void outPortalSuspended(PGResponseSink utf8Sink) {
+        utf8Sink.bookmark();
         utf8Sink.put(MESSAGE_TYPE_PORTAL_SUSPENDED);
         utf8Sink.putIntDirect(INT_BYTES_X);
     }
 
     private static void outSimpleMsg(PGResponseSink utf8Sink, byte msgByte) {
+        utf8Sink.bookmark();
         utf8Sink.put(msgByte);
         utf8Sink.putIntDirect(INT_BYTES_X);
     }
@@ -556,111 +615,6 @@ public class PGPipelineEntry implements QuietCloseable {
         bindVariableService.setBoolean(variableIndex, valueSize == 4);
     }
 
-    private static void setBindVariableAsChar(
-            int variableIndex,
-            long valueAddr,
-            int valueSize,
-            BindVariableService bindVariableService,
-            CharacterStore characterStore
-    ) throws BadProtocolException, SqlException {
-        CharacterStoreEntry e = characterStore.newEntry();
-        if (Utf8s.utf8ToUtf16(valueAddr, valueAddr + valueSize, e)) {
-            bindVariableService.setChar(variableIndex, characterStore.toImmutable().charAt(0));
-        } else {
-            LOG.error().$("invalid char UTF8 bytes [variableIndex=").$(variableIndex).I$();
-            throw BadProtocolException.INSTANCE;
-        }
-    }
-
-    private static void setBindVariableAsDate(
-            int variableIndex,
-            long valueAddr,
-            int valueSize,
-            BindVariableService bindVariableService,
-            CharacterStore characterStore
-    ) throws SqlException, BadProtocolException {
-        CharacterStoreEntry e = characterStore.newEntry();
-        if (Utf8s.utf8ToUtf16(valueAddr, valueAddr + valueSize, e)) {
-            bindVariableService.define(variableIndex, ColumnType.DATE, 0);
-            bindVariableService.setStr(variableIndex, characterStore.toImmutable());
-        } else {
-            LOG.error().$("invalid str UTF8 bytes [variableIndex=").$(variableIndex).I$();
-            throw BadProtocolException.INSTANCE;
-        }
-    }
-
-    private static void setBindVariableAsDouble(
-            int variableIndex,
-            long valueAddr,
-            int valueSize,
-            BindVariableService bindVariableService
-    ) throws BadProtocolException, SqlException {
-        ensureValueLength(variableIndex, Double.BYTES, valueSize);
-        bindVariableService.setDouble(variableIndex, Double.longBitsToDouble(getLongUnsafe(valueAddr)));
-    }
-
-    private static void setBindVariableAsFloat(
-            int variableIndex,
-            long valueAddr,
-            int valueSize,
-            BindVariableService bindVariableService
-    ) throws BadProtocolException, SqlException {
-        ensureValueLength(variableIndex, Float.BYTES, valueSize);
-        bindVariableService.setFloat(variableIndex, Float.intBitsToFloat(getIntUnsafe(valueAddr)));
-    }
-
-    private static void setBindVariableAsInt(
-            int variableIndex,
-            long valueAddr,
-            int valueSize,
-            BindVariableService bindVariableService
-    ) throws BadProtocolException, SqlException {
-        ensureValueLength(variableIndex, Integer.BYTES, valueSize);
-        bindVariableService.setInt(variableIndex, getIntUnsafe(valueAddr));
-    }
-
-    private static void setBindVariableAsLong(
-            int variableIndex,
-            long valueAddr,
-            int valueSize,
-            BindVariableService bindVariableService
-    ) throws BadProtocolException, SqlException {
-        ensureValueLength(variableIndex, Long.BYTES, valueSize);
-        bindVariableService.setLong(variableIndex, getLongUnsafe(valueAddr));
-    }
-
-    private static void setBindVariableAsShort(
-            int variableIndex,
-            long valueAddr,
-            int valueSize,
-            BindVariableService bindVariableService
-    ) throws BadProtocolException, SqlException {
-        ensureValueLength(variableIndex, Short.BYTES, valueSize);
-        bindVariableService.setShort(variableIndex, getShortUnsafe(valueAddr));
-    }
-
-    private static void setBindVariableAsTimestamp(
-            int variableIndex,
-            long valueAddr,
-            int valueSize,
-            BindVariableService bindVariableService
-    ) throws BadProtocolException, SqlException {
-        ensureValueLength(variableIndex, Long.BYTES, valueSize);
-        bindVariableService.setTimestamp(variableIndex, getLongUnsafe(valueAddr) + Numbers.JULIAN_EPOCH_OFFSET_USEC);
-    }
-
-    private static void setUuidBindVariable(
-            int variableIndex,
-            long valueAddr,
-            int valueSize,
-            BindVariableService bindVariableService
-    ) throws BadProtocolException, SqlException {
-        ensureValueLength(variableIndex, Long128.BYTES, valueSize);
-        long hi = getLongUnsafe(valueAddr);
-        long lo = getLongUnsafe(valueAddr + Long.BYTES);
-        bindVariableService.setUuid(variableIndex, lo, hi);
-    }
-
     private void buildResultSetColumnTypes() {
         if (factory != null) {
             final RecordMetadata m = factory.getMetadata();
@@ -673,6 +627,17 @@ public class PGPipelineEntry implements QuietCloseable {
                 pgResultSetColumnTypes.setQuick(2 * i + 1, GeoHashes.getBitFlags(columnType));
             }
         }
+    }
+
+    private void ensureValueLength(int variableIndex, int sizeRequired, int sizeActual) throws BadProtocolException {
+        if (sizeRequired == sizeActual) {
+            return;
+        }
+        getErrorMessageSink()
+                .put("bad parameter value length [sizeRequired=").put(sizeRequired)
+                .put(", sizeActual=").put(sizeActual)
+                .put(", variableIndex=").put(variableIndex);
+        throw BadProtocolException.INSTANCE;
     }
 
     private void executeCompiledQuery(SqlExecutionContext sqlExecutionContext, int transactionState) throws SqlException {
@@ -740,9 +705,6 @@ public class PGPipelineEntry implements QuietCloseable {
             sqlExecutionContext.setCacheHit(cacheHit);
             try {
                 cursor = factory.getCursor(sqlExecutionContext);
-                // cache random if it was replaced (this make no difference on tests)
-                // todo: investigate why this was here
-//                        rnd = sqlExecutionContext.getRandom();
             } catch (Throwable e) {
                 // un-cache the erroneous SQL
                 tas = Misc.free(tas);
@@ -810,7 +772,7 @@ public class PGPipelineEntry implements QuietCloseable {
             BindVariableService bindVariableService,
             CharacterStore characterStore,
             DirectUtf8String utf8String
-    ) throws BadProtocolException, SqlException {
+    ) throws BadProtocolException {
         for (int j = 0; j < msgBindParameterValueCount; j++) {
             final int valueSize = getInt(lo, msgLimit, "malformed bind variable");
             lo += Integer.BYTES;
@@ -819,11 +781,10 @@ public class PGPipelineEntry implements QuietCloseable {
                 setBindVariableAsStr(j, lo, valueSize, bindVariableService, characterStore, utf8String);
                 lo += valueSize;
             } else if (valueSize != -1) {
-                LOG.error()
-                        .$("value length is outside of buffer [parameterIndex=").$(j)
-                        .$(", valueSize=").$(valueSize)
-                        .$(", messageRemaining=").$(msgLimit - lo)
-                        .I$();
+                getErrorMessageSink().put("value length is outside of buffer [parameterIndex=").put(j)
+                        .put(", valueSize=").put(valueSize)
+                        .put(", messageRemaining=").put(msgLimit - lo)
+                        .put(']');
                 throw BadProtocolException.INSTANCE;
             }
         }
@@ -837,107 +798,115 @@ public class PGPipelineEntry implements QuietCloseable {
             CharacterStore characterStore,
             DirectUtf8String utf8String,
             ObjectPool<DirectBinarySequence> binarySequenceParamsPool
-    ) throws BadProtocolException, SqlException {
-        for (int j = 0; j < msgBindParameterValueCount; j++) {
-            final int valueSize = getInt(lo, msgLimit, "malformed bind variable");
-            lo += Integer.BYTES;
-            if (valueSize == -1) {
-                // undefined function?
-                switch (msgParseParameterTypes.getQuick(j)) {
-                    case X_B_PG_INT4:
-                        bindVariableService.define(j, ColumnType.INT, 0);
-                        break;
-                    case X_B_PG_INT8:
-                        bindVariableService.define(j, ColumnType.LONG, 0);
-                        break;
-                    case X_B_PG_TIMESTAMP:
-                        bindVariableService.define(j, ColumnType.TIMESTAMP, 0);
-                        break;
-                    case X_B_PG_INT2:
-                        bindVariableService.define(j, ColumnType.SHORT, 0);
-                        break;
-                    case X_B_PG_FLOAT8:
-                        bindVariableService.define(j, ColumnType.DOUBLE, 0);
-                        break;
-                    case X_B_PG_FLOAT4:
-                        bindVariableService.define(j, ColumnType.FLOAT, 0);
-                        break;
-                    case X_B_PG_CHAR:
-                        bindVariableService.define(j, ColumnType.CHAR, 0);
-                        break;
-                    case X_B_PG_DATE:
-                        bindVariableService.define(j, ColumnType.DATE, 0);
-                        break;
-                    case X_B_PG_BOOL:
-                        bindVariableService.define(j, ColumnType.BOOLEAN, 0);
-                        break;
-                    case X_B_PG_BYTEA:
-                        bindVariableService.define(j, ColumnType.BINARY, 0);
-                        break;
-                    case X_B_PG_UUID:
-                        bindVariableService.define(j, ColumnType.UUID, 0);
-                        break;
-                    default:
-                        bindVariableService.define(j, ColumnType.STRING, 0);
-                        break;
+    ) throws BadProtocolException {
+        try {
+            for (int j = 0; j < msgBindParameterValueCount; j++) {
+                final int valueSize = getInt(lo, msgLimit, "malformed bind variable");
+                lo += Integer.BYTES;
+                if (valueSize == -1) {
+                    // undefined function?
+                    switch (msgParseParameterTypes.getQuick(j)) {
+                        case X_B_PG_INT4:
+                            bindVariableService.define(j, ColumnType.INT, 0);
+                            break;
+                        case X_B_PG_INT8:
+                            bindVariableService.define(j, ColumnType.LONG, 0);
+                            break;
+                        case X_B_PG_TIMESTAMP:
+                            bindVariableService.define(j, ColumnType.TIMESTAMP, 0);
+                            break;
+                        case X_B_PG_INT2:
+                            bindVariableService.define(j, ColumnType.SHORT, 0);
+                            break;
+                        case X_B_PG_FLOAT8:
+                            bindVariableService.define(j, ColumnType.DOUBLE, 0);
+                            break;
+                        case X_B_PG_FLOAT4:
+                            bindVariableService.define(j, ColumnType.FLOAT, 0);
+                            break;
+                        case X_B_PG_CHAR:
+                            bindVariableService.define(j, ColumnType.CHAR, 0);
+                            break;
+                        case X_B_PG_DATE:
+                            bindVariableService.define(j, ColumnType.DATE, 0);
+                            break;
+                        case X_B_PG_BOOL:
+                            bindVariableService.define(j, ColumnType.BOOLEAN, 0);
+                            break;
+                        case X_B_PG_BYTEA:
+                            bindVariableService.define(j, ColumnType.BINARY, 0);
+                            break;
+                        case X_B_PG_UUID:
+                            bindVariableService.define(j, ColumnType.UUID, 0);
+                            break;
+                        default:
+                            bindVariableService.define(j, ColumnType.STRING, 0);
+                            break;
+                    }
+                } else if (lo + valueSize <= msgLimit) {
+                    switch (msgParseParameterTypes.getQuick(j)) {
+                        case X_B_PG_INT4:
+                            setBindVariableAsInt(j, lo, valueSize, bindVariableService);
+                            break;
+                        case X_B_PG_INT8:
+                            setBindVariableAsLong(j, lo, valueSize, bindVariableService);
+                            break;
+                        case X_B_PG_TIMESTAMP:
+                            setBindVariableAsTimestamp(j, lo, valueSize, bindVariableService);
+                            break;
+                        case X_B_PG_INT2:
+                            setBindVariableAsShort(j, lo, valueSize, bindVariableService);
+                            break;
+                        case X_B_PG_FLOAT8:
+                            setBindVariableAsDouble(j, lo, valueSize, bindVariableService);
+                            break;
+                        case X_B_PG_FLOAT4:
+                            setBindVariableAsFloat(j, lo, valueSize, bindVariableService);
+                            break;
+                        case X_B_PG_CHAR:
+                            setBindVariableAsChar(j, lo, valueSize, bindVariableService, characterStore);
+                            break;
+                        case X_B_PG_DATE:
+                            setBindVariableAsDate(j, lo, valueSize, bindVariableService, characterStore);
+                            break;
+                        case X_B_PG_BOOL:
+                            setBindVariableAsBoolean(j, valueSize, bindVariableService);
+                            break;
+                        case X_B_PG_BYTEA:
+                            setBindVariableAsBin(j, lo, valueSize, bindVariableService, binarySequenceParamsPool);
+                            break;
+                        case X_B_PG_UUID:
+                            setUuidBindVariable(j, lo, valueSize, bindVariableService);
+                            break;
+                        default:
+                            setBindVariableAsStr(j, lo, valueSize, bindVariableService, characterStore, utf8String);
+                            break;
+                    }
+                    lo += valueSize;
+                } else {
+                    getErrorMessageSink()
+                            .put("value length is outside of buffer [parameterIndex=").put(j)
+                            .put(", valueSize=").put(valueSize)
+                            .put(", messageRemaining=").put(msgLimit - lo)
+                            .put(']');
+                    throw BadProtocolException.INSTANCE;
                 }
-            } else if (lo + valueSize <= msgLimit) {
-                switch (msgParseParameterTypes.getQuick(j)) {
-                    case X_B_PG_INT4:
-                        setBindVariableAsInt(j, lo, valueSize, bindVariableService);
-                        break;
-                    case X_B_PG_INT8:
-                        setBindVariableAsLong(j, lo, valueSize, bindVariableService);
-                        break;
-                    case X_B_PG_TIMESTAMP:
-                        setBindVariableAsTimestamp(j, lo, valueSize, bindVariableService);
-                        break;
-                    case X_B_PG_INT2:
-                        setBindVariableAsShort(j, lo, valueSize, bindVariableService);
-                        break;
-                    case X_B_PG_FLOAT8:
-                        setBindVariableAsDouble(j, lo, valueSize, bindVariableService);
-                        break;
-                    case X_B_PG_FLOAT4:
-                        setBindVariableAsFloat(j, lo, valueSize, bindVariableService);
-                        break;
-                    case X_B_PG_CHAR:
-                        setBindVariableAsChar(j, lo, valueSize, bindVariableService, characterStore);
-                        break;
-                    case X_B_PG_DATE:
-                        setBindVariableAsDate(j, lo, valueSize, bindVariableService, characterStore);
-                        break;
-                    case X_B_PG_BOOL:
-                        setBindVariableAsBoolean(j, valueSize, bindVariableService);
-                        break;
-                    case X_B_PG_BYTEA:
-                        setBindVariableAsBin(j, lo, valueSize, bindVariableService, binarySequenceParamsPool);
-                        break;
-                    case X_B_PG_UUID:
-                        setUuidBindVariable(j, lo, valueSize, bindVariableService);
-                        break;
-                    default:
-                        setBindVariableAsStr(j, lo, valueSize, bindVariableService, characterStore, utf8String);
-                        break;
-                }
-                lo += valueSize;
-            } else {
-                LOG.error().$("value length is outside of buffer [parameterIndex=").$(j).$(", valueSize=").$(valueSize).$(", messageRemaining=").$(msgLimit - lo).I$();
-                throw BadProtocolException.INSTANCE;
             }
+        } catch (SqlException e) {
+            getErrorMessageSink().put(e.getFlyweightMessage());
+            throw BadProtocolException.INSTANCE;
         }
         return lo;
     }
 
     private void msgBindMergeParameterTypesAndFormatCodes(long lo, long msgLimit, short parameterFormatCount) throws BadProtocolException {
         if (lo + Short.BYTES * parameterFormatCount <= msgLimit) {
-            LOG.debug().$("processing bind formats [count=").$(parameterFormatCount).I$();
             for (int i = 0; i < parameterFormatCount; i++) {
                 final short code = getShortUnsafe(lo + i * Short.BYTES);
                 msgParseParameterTypes.setQuick(i, toParamBinaryType(code, msgParseParameterTypes.getQuick(i)));
             }
         } else {
-            LOG.error().$("invalid format code count [value=").$(parameterFormatCount).I$();
+            getErrorMessageSink().put("invalid format code count [value=").put(parameterFormatCount).put(']');
             throw BadProtocolException.INSTANCE;
         }
     }
@@ -1042,7 +1011,7 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
-    private void outColBinary(PGResponseSink utf8Sink, Record record, int i) throws SqlException {
+    private void outColBinary(PGResponseSink utf8Sink, Record record, int i) throws BadProtocolException {
         BinarySequence sequence = record.getBin(i);
         if (sequence == null) {
             utf8Sink.setNullValue();
@@ -1052,12 +1021,12 @@ public class PGPipelineEntry implements QuietCloseable {
             if (blobSize < utf8Sink.getMaxBlobSize()) {
                 utf8Sink.put(sequence);
             } else {
-                // todo: this should be CairoException
-                throw SqlException.position(0)
+                getErrorMessageSink()
                         .put("blob is too large [blobSize=").put(blobSize)
                         .put(", maxBlobSize=").put(utf8Sink.getMaxBlobSize())
                         .put(", columnIndex=").put(i)
                         .put(']');
+                throw BadProtocolException.INSTANCE;
             }
         }
     }
@@ -1254,6 +1223,7 @@ public class PGPipelineEntry implements QuietCloseable {
     }
 
     private void outCommandComplete(PGResponseSink utf8Sink, long rowCount) {
+        utf8Sink.bookmark();
         utf8Sink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
         long addr = utf8Sink.skipInt();
         utf8Sink.put(sqlTag).putAscii(' ').put(rowCount).put((byte) 0);
@@ -1273,12 +1243,13 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
-    private void outCursor(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink) throws Exception {
+    private void outCursor(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink)
+            throws QueryPausedException, PeerIsSlowToReadException, PeerDisconnectedException, BadProtocolException {
         switch (stateSync) {
-            case 3:
-                outComputeCursorSize(sqlExecutionContext);
-                stateSync = 4;
             case 4:
+                outComputeCursorSize(sqlExecutionContext);
+                stateSync = 5;
+            case 5:
                 utf8Sink.bookmark();
                 outCursor(
                         sqlExecutionContext,
@@ -1286,13 +1257,6 @@ public class PGPipelineEntry implements QuietCloseable {
                         cursor.getRecord(),
                         factory.getMetadata().getColumnCount()
                 );
-                break;
-            case 10:
-                utf8Sink.sendBufferAndReset();
-                outCommandComplete(utf8Sink, sqlReturnRowCount);
-                break;
-            case 20:
-                outPortalSuspended(utf8Sink);
                 break;
             default:
                 assert false;
@@ -1304,7 +1268,7 @@ public class PGPipelineEntry implements QuietCloseable {
             PGResponseSink utf8Sink,
             Record record,
             int columnCount
-    ) throws Exception {
+    ) throws PeerIsSlowToReadException, PeerDisconnectedException, BadProtocolException, QueryPausedException {
 
         if (!sqlExecutionContext.getCircuitBreaker().isTimerSet()) {
             sqlExecutionContext.getCircuitBreaker().resetTimer();
@@ -1319,23 +1283,18 @@ public class PGPipelineEntry implements QuietCloseable {
 
             while (cursor.hasNext()) {
                 try {
-                    try {
-                        outRecordPending = true;
-                        outRecord(utf8Sink, record, columnCount);
-                        outRecordPending = false;
-                        utf8Sink.bookmark();
-                    } catch (NoSpaceLeftInResponseBufferException e) {
-                        utf8Sink.resetToBookmark();
-                        utf8Sink.sendBufferAndReset();
-                        outRecordOrFail(utf8Sink, record, columnCount);
-                        utf8Sink.bookmark();
-                    }
-                    if (sqlReturnRowCount >= sqlReturnRowCountLimitComputed) {
-                        break;
-                    }
-                } catch (SqlException e) {
+                    outRecordPending = true;
+                    outRecord(utf8Sink, record, columnCount);
+                    outRecordPending = false;
+                    utf8Sink.bookmark();
+                } catch (NoSpaceLeftInResponseBufferException e) {
                     utf8Sink.resetToBookmark();
-                    throw e;
+                    utf8Sink.sendBufferAndReset();
+                    outRecordOrFail(utf8Sink, record, columnCount);
+                    utf8Sink.bookmark();
+                }
+                if (sqlReturnRowCount >= sqlReturnRowCountLimitComputed) {
+                    break;
                 }
             }
         } catch (DataUnavailableException e) {
@@ -1370,7 +1329,7 @@ public class PGPipelineEntry implements QuietCloseable {
         utf8Sink.putLen(offset);
     }
 
-    private void outRecord(PGResponseSink utf8Sink, Record record, int columnCount) throws SqlException {
+    private void outRecord(PGResponseSink utf8Sink, Record record, int columnCount) throws BadProtocolException {
         utf8Sink.put(MESSAGE_TYPE_DATA_ROW); // data
         final long offset = utf8Sink.skipInt();
         utf8Sink.putNetworkShort((short) columnCount);
@@ -1492,14 +1451,15 @@ public class PGPipelineEntry implements QuietCloseable {
         sqlReturnRowCount++;
     }
 
-    private void outRecordOrFail(PGResponseSink utf8Sink, Record record, int columnCount) throws SqlException {
+    private void outRecordOrFail(PGResponseSink utf8Sink, Record record, int columnCount) throws BadProtocolException {
         try {
             outRecord(utf8Sink, record, columnCount);
-        } catch (NoSpaceLeftInResponseBufferException e1) {
+        } catch (NoSpaceLeftInResponseBufferException e) {
             // oopsie, buffer is too small for single record
-            LOG.error().$("not enough space in buffer for row data [sendBufferSize=").$(utf8Sink.getSendBufferSize()).I$();
+            getErrorMessageSink()
+                    .put("not enough space in buffer for row data [sendBufferSize=").put(utf8Sink.getSendBufferSize()).put(']');
             utf8Sink.reset();
-            throw CairoException.critical(0).put("server configuration error: not enough space in send buffer for row data");
+            throw BadProtocolException.INSTANCE;
         }
     }
 
@@ -1633,6 +1593,89 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
+    private void setBindVariableAsChar(
+            int variableIndex,
+            long valueAddr,
+            int valueSize,
+            BindVariableService bindVariableService,
+            CharacterStore characterStore
+    ) throws BadProtocolException, SqlException {
+        CharacterStoreEntry e = characterStore.newEntry();
+        if (Utf8s.utf8ToUtf16(valueAddr, valueAddr + valueSize, e)) {
+            bindVariableService.setChar(variableIndex, characterStore.toImmutable().charAt(0));
+        } else {
+            getErrorMessageSink().put("invalid char UTF8 bytes [variableIndex=").put(variableIndex).put(']');
+            throw BadProtocolException.INSTANCE;
+        }
+    }
+
+    private void setBindVariableAsDate(
+            int variableIndex,
+            long valueAddr,
+            int valueSize,
+            BindVariableService bindVariableService,
+            CharacterStore characterStore
+    ) throws SqlException, BadProtocolException {
+        CharacterStoreEntry e = characterStore.newEntry();
+        if (Utf8s.utf8ToUtf16(valueAddr, valueAddr + valueSize, e)) {
+            bindVariableService.define(variableIndex, ColumnType.DATE, 0);
+            bindVariableService.setStr(variableIndex, characterStore.toImmutable());
+        } else {
+            getErrorMessageSink().put("invalid str UTF8 bytes [variableIndex=").put(variableIndex).put(']');
+            throw BadProtocolException.INSTANCE;
+        }
+    }
+
+    private void setBindVariableAsDouble(
+            int variableIndex,
+            long valueAddr,
+            int valueSize,
+            BindVariableService bindVariableService
+    ) throws BadProtocolException, SqlException {
+        ensureValueLength(variableIndex, Double.BYTES, valueSize);
+        bindVariableService.setDouble(variableIndex, Double.longBitsToDouble(getLongUnsafe(valueAddr)));
+    }
+
+    private void setBindVariableAsFloat(
+            int variableIndex,
+            long valueAddr,
+            int valueSize,
+            BindVariableService bindVariableService
+    ) throws BadProtocolException, SqlException {
+        ensureValueLength(variableIndex, Float.BYTES, valueSize);
+        bindVariableService.setFloat(variableIndex, Float.intBitsToFloat(getIntUnsafe(valueAddr)));
+    }
+
+    private void setBindVariableAsInt(
+            int variableIndex,
+            long valueAddr,
+            int valueSize,
+            BindVariableService bindVariableService
+    ) throws BadProtocolException, SqlException {
+        ensureValueLength(variableIndex, Integer.BYTES, valueSize);
+        bindVariableService.setInt(variableIndex, getIntUnsafe(valueAddr));
+    }
+
+    private void setBindVariableAsLong(
+            int variableIndex,
+            long valueAddr,
+            int valueSize,
+            BindVariableService bindVariableService
+    ) throws BadProtocolException, SqlException {
+        ensureValueLength(variableIndex, Long.BYTES, valueSize);
+        bindVariableService.setLong(variableIndex, getLongUnsafe(valueAddr));
+    }
+
+    private void setBindVariableAsShort(
+            int variableIndex,
+            long valueAddr,
+            int valueSize,
+            BindVariableService bindVariableService
+    ) throws BadProtocolException, SqlException {
+        ensureValueLength(variableIndex, Short.BYTES, valueSize);
+        bindVariableService.setShort(variableIndex, getShortUnsafe(valueAddr));
+    }
+
     private void setBindVariableAsStr(
             int variableIndex,
             long valueAddr,
@@ -1640,36 +1683,63 @@ public class PGPipelineEntry implements QuietCloseable {
             BindVariableService bindVariableService,
             CharacterStore characterStore,
             DirectUtf8String utf8String
-    ) throws BadProtocolException, SqlException {
+    ) throws BadProtocolException {
         CharacterStoreEntry e = characterStore.newEntry();
         Function fn = bindVariableService.getFunction(variableIndex);
         // If the function type is VARCHAR, there's no need to convert to UTF-16
-        if (fn != null && fn.getType() == ColumnType.VARCHAR) {
-            final int sequenceType = Utf8s.getUtf8SequenceType(valueAddr, valueAddr + valueSize);
-            boolean ascii;
-            switch (sequenceType) {
-                case 0:
-                    // ascii sequence
-                    ascii = true;
-                    break;
-                case 1:
-                    // non-ASCII sequence
-                    ascii = false;
-                    break;
-                default:
-                    LOG.error().$("invalid varchar bind variable type [variableIndex=").$(variableIndex).I$();
-                    throw BadProtocolException.INSTANCE;
-            }
-            // todo: copy value of bind variable into the arena so that the receive buffer can
-            //     remain to be dynamic
-            bindVariableService.setVarchar(variableIndex, utf8String.of(valueAddr, valueAddr + valueSize, ascii));
-        } else {
-            if (Utf8s.utf8ToUtf16(valueAddr, valueAddr + valueSize, e)) {
-                bindVariableService.setStr(variableIndex, characterStore.toImmutable());
+        try {
+            if (fn != null && fn.getType() == ColumnType.VARCHAR) {
+                final int sequenceType = Utf8s.getUtf8SequenceType(valueAddr, valueAddr + valueSize);
+                boolean ascii;
+                switch (sequenceType) {
+                    case 0:
+                        // ascii sequence
+                        ascii = true;
+                        break;
+                    case 1:
+                        // non-ASCII sequence
+                        ascii = false;
+                        break;
+                    default:
+                        getErrorMessageSink().put("invalid varchar bind variable type [variableIndex=").put(variableIndex).put(']');
+                        throw BadProtocolException.INSTANCE;
+                }
+                // todo: copy value of bind variable into the arena so that the receive buffer can
+                //     remain to be dynamic
+                bindVariableService.setVarchar(variableIndex, utf8String.of(valueAddr, valueAddr + valueSize, ascii));
             } else {
-                LOG.error().$("invalid str bind variable type [variableIndex=").$(variableIndex).I$();
-                throw BadProtocolException.INSTANCE;
+                if (Utf8s.utf8ToUtf16(valueAddr, valueAddr + valueSize, e)) {
+                    bindVariableService.setStr(variableIndex, characterStore.toImmutable());
+                } else {
+                    getErrorMessageSink().put("invalid str bind variable type [variableIndex=").put(variableIndex).put(']');
+                    throw BadProtocolException.INSTANCE;
+                }
             }
+        } catch (SqlException ex) {
+            getErrorMessageSink().put(ex.getFlyweightMessage());
+            throw BadProtocolException.INSTANCE;
         }
+    }
+
+    private void setBindVariableAsTimestamp(
+            int variableIndex,
+            long valueAddr,
+            int valueSize,
+            BindVariableService bindVariableService
+    ) throws BadProtocolException, SqlException {
+        ensureValueLength(variableIndex, Long.BYTES, valueSize);
+        bindVariableService.setTimestamp(variableIndex, getLongUnsafe(valueAddr) + Numbers.JULIAN_EPOCH_OFFSET_USEC);
+    }
+
+    private void setUuidBindVariable(
+            int variableIndex,
+            long valueAddr,
+            int valueSize,
+            BindVariableService bindVariableService
+    ) throws BadProtocolException, SqlException {
+        ensureValueLength(variableIndex, Long128.BYTES, valueSize);
+        long hi = getLongUnsafe(valueAddr);
+        long lo = getLongUnsafe(valueAddr + Long.BYTES);
+        bindVariableService.setUuid(variableIndex, lo, hi);
     }
 }

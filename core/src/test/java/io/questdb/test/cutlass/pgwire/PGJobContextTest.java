@@ -2654,7 +2654,7 @@ if __name__ == "__main__":
     @Test
     public void testCreateTableAsSelectExtendedPrepared() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
                     "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(10))")) {

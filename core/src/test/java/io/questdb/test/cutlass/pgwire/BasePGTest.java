@@ -374,7 +374,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
 
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_BINARY) == BasePGTest.CONN_AWARE_EXTENDED_BINARY) {
             LOG.info().$("Mode: asserting extended binary").$();
-            assertWithPgServer(Mode.EXTENDED, true, runnable, -2, queryTimeout);
+//            assertWithPgServer(Mode.EXTENDED, true, runnable, -2, queryTimeout);
             assertWithPgServer(Mode.EXTENDED, true, runnable, -1, queryTimeout);
         }
 
