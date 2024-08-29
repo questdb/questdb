@@ -174,7 +174,7 @@ stages:
               wget https://raw.githubusercontent.com/eriwen/lcov-to-cobertura-xml/master/lcov_cobertura/lcov_cobertura.py
               python3 lcov_cobertura.py questdbr.lcov.dat --output cobertura.xml --base-dir core/rust/qdbr/src
             displayName: "Merge partial Rust reports"
-            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'))
 
           - bash: |
               set -eux
