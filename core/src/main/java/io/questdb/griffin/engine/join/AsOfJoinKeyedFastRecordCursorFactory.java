@@ -26,28 +26,38 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkSPI;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
+import io.questdb.std.str.Utf8Sequence;
 
 public class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinKeyedFastRecordCursor cursor;
+    private final RecordSink masterKeySink;
+    private final LongOnlyRecordSinkImpl masterSink = new LongOnlyRecordSinkImpl();
+    private final RecordSink slaveKeySink;
+    private final LongOnlyRecordSinkImpl slaveSink = new LongOnlyRecordSinkImpl();
 
     public AsOfJoinKeyedFastRecordCursorFactory(
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
-            RecordSink masterSink,
+            RecordSink masterKeySink,
             RecordCursorFactory slaveFactory,
-            RecordSink slaveSink,
+            RecordSink slaveKeySink,
             int columnSplit
     ) {
         super(metadata, null, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
+        this.masterKeySink = masterKeySink;
+        this.slaveKeySink = slaveKeySink;
         this.cursor = new AsOfJoinKeyedFastRecordCursor(
                 columnSplit,
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
@@ -101,8 +111,111 @@ public class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinRecordCurs
         Misc.free(slaveFactory);
     }
 
+    private static class LongOnlyRecordSinkImpl implements RecordSinkSPI {
+        private long value;
 
-    private static class AsOfJoinKeyedFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
+        @Override
+        public void putBin(BinarySequence value) {
+            throw new UnsupportedOperationException("Not implemented");
+        }
+
+        @Override
+        public void putBool(boolean value) {
+            throw new UnsupportedOperationException("Not implemented");
+        }
+
+        @Override
+        public void putByte(byte value) {
+            throw new UnsupportedOperationException("Not implemented");
+        }
+
+        @Override
+        public void putChar(char value) {
+            throw new UnsupportedOperationException("Not implemented");
+        }
+
+        @Override
+        public void putDate(long value) {
+            throw new UnsupportedOperationException("Not implemented");
+        }
+
+        @Override
+        public void putDouble(double value) {
+            throw new UnsupportedOperationException("Not implemented");
+        }
+
+        @Override
+        public void putFloat(float value) {
+            throw new UnsupportedOperationException("Not implemented");
+        }
+
+        @Override
+        public void putIPv4(int value) {
+            throw new UnsupportedOperationException("Not implemented");
+        }
+
+        @Override
+        public void putInt(int value) {
+            throw new UnsupportedOperationException("Not implemented");
+        }
+
+        @Override
+        public void putLong(long value) {
+            this.value = value;
+        }
+
+        @Override
+        public void putLong128(long lo, long hi) {
+            throw new UnsupportedOperationException("Not implemented");
+        }
+
+        @Override
+        public void putLong256(Long256 value) {
+            throw new UnsupportedOperationException("Not implemented");
+        }
+
+        @Override
+        public void putLong256(long l0, long l1, long l2, long l3) {
+            throw new UnsupportedOperationException("Not implemented");
+        }
+
+        @Override
+        public void putRecord(Record value) {
+            throw new UnsupportedOperationException("Not implemented");
+        }
+
+        @Override
+        public void putShort(short value) {
+            throw new UnsupportedOperationException("Not implemented");
+        }
+
+        @Override
+        public void putStr(CharSequence value) {
+            throw new UnsupportedOperationException("Not implemented");
+        }
+
+        @Override
+        public void putStr(CharSequence value, int lo, int hi) {
+            throw new UnsupportedOperationException("Not implemented");
+        }
+
+        @Override
+        public void putTimestamp(long value) {
+            throw new UnsupportedOperationException("Not implemented");
+        }
+
+        @Override
+        public void putVarchar(Utf8Sequence value) {
+            throw new UnsupportedOperationException("Not implemented");
+        }
+
+        @Override
+        public void skip(int bytes) {
+            throw new UnsupportedOperationException("Not implemented");
+        }
+    }
+
+    private class AsOfJoinKeyedFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
 
         public AsOfJoinKeyedFastRecordCursor(
                 int columnSplit,
@@ -137,7 +250,7 @@ public class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinRecordCurs
 
             // ok, the non-keyed matcher found a record with matching timestamps.
             // we have to make sure the JOIN keys match as well.
-            long masterId = masterRecord.getLong(1); // todo: this should be a parameter received from SQLCodeGen
+            masterKeySink.copy(masterRecord, masterSink);
             TimeFrame timeFrame = slaveCursor.getTimeFrame();
             assert timeFrame.isOpen();
 
@@ -149,8 +262,8 @@ public class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinRecordCurs
             long keyedRowId = slaveFrameRow;
             int keyedFrameIndex = slaveFrameIndex;
             for (; ; ) {
-                long slaveId = slaveRecB.getLong(0); // todo: this should be a parameter received from SQLCodeGen
-                if (masterId == slaveId) {
+                slaveKeySink.copy(slaveRecB, slaveSink);
+                if (masterSink.value == slaveSink.value) {
                     // we have a match, that's awesome, no need to traverse the slave cursor!
                     break;
                 }
