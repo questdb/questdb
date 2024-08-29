@@ -22,16 +22,16 @@
  *
  ******************************************************************************/
 
-mod parquet_read;
-mod parquet_write;
-
 extern crate core;
 pub extern crate jni;
 
+use jni::{JNIEnv, objects::JClass};
 use jni::sys::jlong;
-use jni::{objects::JClass, JNIEnv};
 use once_cell::sync::Lazy;
 use rayon::{ThreadPool, ThreadPoolBuilder};
+
+mod parquet_read;
+mod parquet_write;
 
 pub static POOL: Lazy<ThreadPool> = Lazy::new(|| {
     let num_threads = std::env::var("QUESTDB_MAX_THREADS") // TODO: Use a proper config system
@@ -58,6 +58,7 @@ pub extern "system" fn Java_io_questdb_std_Os_initRust(_env: JNIEnv, _class: JCl
     if std::env::var("RUST_BACKTRACE").is_err() {
         std::env::set_var("RUST_BACKTRACE", "1");
     }
+    println!("Qdbr init");
 }
 
 #[no_mangle]
