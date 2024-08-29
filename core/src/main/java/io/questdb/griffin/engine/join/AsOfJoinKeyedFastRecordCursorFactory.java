@@ -41,9 +41,9 @@ import io.questdb.std.str.Utf8Sequence;
 public class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinKeyedFastRecordCursor cursor;
     private final RecordSink masterKeySink;
-    private final LongOnlyRecordSinkImpl masterSink = new LongOnlyRecordSinkImpl();
+    private final LongOnlyRecordSinkImpl masterSinkTarget = new LongOnlyRecordSinkImpl();
     private final RecordSink slaveKeySink;
-    private final LongOnlyRecordSinkImpl slaveSink = new LongOnlyRecordSinkImpl();
+    private final LongOnlyRecordSinkImpl slaveSinkTarget = new LongOnlyRecordSinkImpl();
 
     public AsOfJoinKeyedFastRecordCursorFactory(
             CairoConfiguration configuration,
@@ -111,6 +111,7 @@ public class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinRecordCurs
         Misc.free(slaveFactory);
     }
 
+    // todo: generalize this to support all types
     private static class LongOnlyRecordSinkImpl implements RecordSinkSPI {
         private long value;
 
@@ -247,7 +248,7 @@ public class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinRecordCurs
 
             // ok, the non-keyed matcher found a record with matching timestamps.
             // we have to make sure the JOIN keys match as well.
-            masterKeySink.copy(masterRecord, masterSink);
+            masterKeySink.copy(masterRecord, masterSinkTarget);
             TimeFrame timeFrame = slaveCursor.getTimeFrame();
             assert timeFrame.isOpen();
 
@@ -259,8 +260,8 @@ public class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinRecordCurs
             long keyedRowId = slaveFrameRow;
             int keyedFrameIndex = slaveFrameIndex;
             for (; ; ) {
-                slaveKeySink.copy(slaveRecB, slaveSink);
-                if (masterSink.value == slaveSink.value) {
+                slaveKeySink.copy(slaveRecB, slaveSinkTarget);
+                if (masterSinkTarget.value == slaveSinkTarget.value) {
                     // we have a match, that's awesome, no need to traverse the slave cursor!
                     break;
                 }
