@@ -46,8 +46,8 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
     protected TimeFrameRecordCursor slaveCursor;
     protected int slaveFrameIndex = -1;
     protected long slaveFrameRow = Long.MIN_VALUE;
-    protected Record slaveRecA;
-    protected Record slaveRecB;
+    protected Record slaveRecA; // used for internal navigation
+    protected Record slaveRecB; // used inside the user-facing OuterJoinRecord
 
     public AbstractAsOfJoinFastRecordCursor(
             int columnSplit,
@@ -158,6 +158,14 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         return lo;
     }
 
+    /**
+     * Returns true if the slave cursor has been advanced to a row with timestamp greater than the master timestamp.
+     * This means we do not have to scan the slave cursor further, e.g. by binary search.
+     *
+     * @param frame
+     * @param masterTimestamp
+     * @return
+     */
     protected boolean linearScan(TimeFrame frame, long masterTimestamp) {
         final long scanHi = Math.min(slaveFrameRow + lookahead, frame.getRowHi());
         while (slaveFrameRow < scanHi || (lookaheadTimestamp == masterTimestamp && slaveFrameRow < frame.getRowHi())) {
@@ -170,7 +178,10 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
             slaveCursor.recordAt(slaveRecB, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
             slaveFrameRow++;
         }
-        return false;
+
+        slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
+        lookaheadTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);
+        return lookaheadTimestamp > masterTimestamp;
     }
 
     protected void nextSlave(long masterTimestamp) {
@@ -185,11 +196,6 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
                     // Fallback to binary search.
                     // Find the last value less or equal to the master timestamp.
                     long foundRow = binarySearch(masterTimestamp, slaveFrameRow, frame.getRowHi() - 1);
-                    if (foundRow < slaveFrameRow) {
-                        // All searched timestamps are greater than the master timestamp.
-                        // Linear scan must have found the row.
-                        return;
-                    }
                     slaveFrameRow = foundRow;
                     record.hasSlave(true);
                     slaveCursor.recordAt(slaveRecB, Rows.toRowID(slaveFrameIndex, slaveFrameRow));

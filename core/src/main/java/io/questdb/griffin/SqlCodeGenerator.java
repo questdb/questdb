@@ -2059,27 +2059,35 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
-                                        master = createAsOfJoin(
+                                        master = new AsOfJoinKeyedFastRecordCursorFactory(
+                                                configuration,
                                                 createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                                 master,
-                                                RecordSinkFactory.getInstance(
-                                                        asm,
-                                                        masterMetadata,
-                                                        listColumnFilterB,
-                                                        writeSymbolAsString,
-                                                        writeStringAsVarcharB
-                                                ),
                                                 slave,
-                                                RecordSinkFactory.getInstance(
-                                                        asm,
-                                                        slaveMetadata,
-                                                        listColumnFilterA,
-                                                        writeSymbolAsString,
-                                                        writeStringAsVarcharA
-                                                ),
-                                                masterMetadata.getColumnCount(),
-                                                slaveModel.getContext()
+                                                masterMetadata.getColumnCount()
                                         );
+
+//                                        master = createAsOfJoin(
+//                                                createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+//                                                master,
+//                                                RecordSinkFactory.getInstance(
+//                                                        asm,
+//                                                        masterMetadata,
+//                                                        listColumnFilterB,
+//                                                        writeSymbolAsString,
+//                                                        writeStringAsVarcharB
+//                                                ),
+//                                                slave,
+//                                                RecordSinkFactory.getInstance(
+//                                                        asm,
+//                                                        slaveMetadata,
+//                                                        listColumnFilterA,
+//                                                        writeSymbolAsString,
+//                                                        writeStringAsVarcharA
+//                                                ),
+//                                                masterMetadata.getColumnCount(),
+//                                                slaveModel.getContext()
+//                                        );
                                     } else {
                                         if (slave.supportsTimeFrameCursor()) {
                                             master = new AsOfJoinNoKeyFastRecordCursorFactory(
