@@ -37,13 +37,18 @@ public class AddIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
+    public void testOverflow() throws Exception {
+        assertQuery("column\n2147483650\n", "SELECT 2147483647 + 3");
+    }
+
+    @Test
     public void testRightNull() throws Exception {
         assertQuery("column\n\n", "SELECT (4 + null)");
     }
 
     @Test
     public void testSimple() throws Exception {
-        assertQuery("column\n2147483652\n", "SELECT 2147483647 + 5");
+        assertQuery("column\n15\n", "SELECT 10 + 5");
     }
 
     @Override
