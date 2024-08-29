@@ -1417,6 +1417,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     cairoEngine.registerTableToken(tableToken);
                     targetTableCreated = true;
                     writer = cairoEngine.getWriter(tableToken, LOCK_REASON);
+                    CairoMetadata.INSTANCE.hydrateTable(tableToken, cairoEngine.getConfiguration(), true, true);
                     metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
                     partitionBy = writer.getPartitionBy();
                     break;
@@ -1449,8 +1450,6 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
             if (timestampAdapter == null && ColumnType.isTimestamp(types.getQuick(timestampIndex).getType())) {
                 timestampAdapter = (TimestampAdapter) types.getQuick(timestampIndex);
             }
-
-            CairoMetadata.INSTANCE.hydrateTable(tableToken, cairoEngine.getConfiguration(), true, true);
         } catch (Throwable t) {
             closeWriter();
             throw t;

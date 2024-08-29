@@ -183,7 +183,7 @@ public class CairoMetadata implements Sinkable {
                                 .concat(TableUtils.COLUMN_VERSION_FILE_NAME);
                         columnVersionReader.ofRO(configuration.getFilesFacade(),
                                 path.$());
-
+                        
                         final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
                         columnVersionReader.close();
 
