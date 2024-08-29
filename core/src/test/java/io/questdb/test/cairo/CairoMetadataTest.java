@@ -402,7 +402,7 @@ public class CairoMetadataTest extends AbstractCairoTest {
             drop("DROP TABLE y");
             drainWalQueue();
 
-            assertException("table_columns('y')", -1, "exception in function factory");
+            assertException("table_columns('y')", -1, "table does not exist");
         });
     }
 
