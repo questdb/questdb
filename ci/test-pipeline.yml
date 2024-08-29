@@ -101,7 +101,7 @@ stages:
                 eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
               ),
               eq(variables['System.PullRequest.IsFork'], 'false')
-            ) }}true${{ else }}false 
+            ) 'true' else 'false'}} 
 
         # Coverage Job is required to run by a validation rule, but there's no point in running the steps
         # if there were no code changes. Therefore we define SHOULD_RUN and use it as a condition in all steps.
