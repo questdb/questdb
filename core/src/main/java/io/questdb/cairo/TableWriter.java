@@ -7793,6 +7793,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         processPartitionRemoveCandidates();
 
         LOG.info().$("truncated [name=").utf8(tableToken.getTableName()).I$();
+
+        CairoMetadata.INSTANCE.hydrateTable(metadata, true, true);
     }
 
     private void truncateColumns() {
