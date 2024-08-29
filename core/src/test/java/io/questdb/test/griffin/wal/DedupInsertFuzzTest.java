@@ -123,7 +123,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     @Test
     public void testDedupWithRandomShiftAndStepAndSymbolKeyAndColumnTops() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = generateRandom(LOG);
+            Rnd rnd = generateRandom(LOG, 1576934513608750L, 1724940418585L);
 
             String tableName = testName.getMethodName();
             compile(
@@ -132,6 +132,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                             " timestamp(ts) partition by DAY WAL "
                             + " DEDUP UPSERT KEYS(ts)"
             );
+            short columType = ColumnType.SYMBOL;
 
             ObjList<FuzzTransaction> transactions = new ObjList<>();
             long initialDelta = Timestamps.MINUTE_MICROS * 15;
@@ -147,7 +148,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     startCount,
                     initialDuplicates,
                     null,
-                    rnd
+                    rnd,
+                    columType
             );
             long maxTimestamp = startTimestamp + startCount * initialDelta;
             LOG.info().$("adding rows with commit = 1 from=").$ts(startTimestamp).$(", to=").$ts(maxTimestamp).$();
@@ -179,7 +181,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     startCount,
                     initialDuplicates,
                     initialSymbols,
-                    rnd
+                    rnd,
+                    columType
             );
             LOG.info().$("adding more rows with commit = 1 from=").$ts(fromTops).$(", to=")
                     .$ts(fromTops + initialDelta * startCount).$();
@@ -203,7 +206,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     count,
                     rowsWithSameTimestamp,
                     symbols,
-                    rnd
+                    rnd,
+                    columType
             );
 
             LOG.info().$("adding rows with commit = 2 from=").$ts(from).$(", to=")
@@ -214,14 +218,14 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
             // adding rows with commit = 2 from=2020-02-25T10:29:00.000000Z, to=2020-02-26T10:29:00.000000Z
             applyWal(transactions, tableName, 1, rnd);
-            validateNoTimestampDuplicates(tableName, from, delta, count, symbols, 1, ColumnType.SYMBOL);
+            validateNoTimestampDuplicates(tableName, from, delta, count, symbols, 1, columType);
         });
     }
 
     @Test
     public void testDedupWithRandomShiftAndStepAndVarcharKey() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = generateRandom(LOG, 1559499947283666L, 1724867438346L);
+            Rnd rnd = generateRandom(LOG);
 
             String tableName = testName.getMethodName();
             compile(

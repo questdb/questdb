@@ -8,6 +8,8 @@
 #include "column_type.h"
 #include <algorithm>
 
+#define assertm(exp, msg) assert(((void)msg, exp))
+
 template<typename T>
 class MergeColumnComparer : dedup_column {
 public:
@@ -59,6 +61,7 @@ const uint32_t VARCHAR_HEADER_FLAG_INLINED = 1 << 0;
 inline VarcharDataView
 read_varchar(int64_t offset, const void *column_data, const void *column_var_data, const long column_var_data_len) {
     const auto aux_data = &reinterpret_cast<const VarcharAuxEntrySplit *>(column_data)[offset];
+    assertm(aux_data->header != 0, "ERROR: invalid varchar aux data");
     if (aux_data->header & HEADER_FLAG_NULL) {
         return NULL_VARCHAR_VIEW;
     }
@@ -66,15 +69,19 @@ read_varchar(int64_t offset, const void *column_data, const void *column_var_dat
     if (aux_data->header & VARCHAR_HEADER_FLAG_INLINED) {
         const auto aux_inlined_data = &reinterpret_cast<const VarcharAuxEntryInlined *>(column_data)[offset];
         const uint8_t size = aux_inlined_data->header >> HEADER_FLAGS_WIDTH;
-        assert(size <= VARCHAR_MAX_BYTES_FULLY_INLINED || "ERROR: invalid len of inline varchar");
+        assertm(size <= VARCHAR_MAX_BYTES_FULLY_INLINED, "ERROR: invalid len of inline varchar");
         return VarcharDataView{aux_inlined_data->chars, &aux_inlined_data->chars[MIN_INLINE_CHARS], (int32_t) size};
     }
     const auto size = (int32_t) (aux_data->header >> HEADER_FLAGS_WIDTH);
+
+    assertm(size > VARCHAR_MAX_BYTES_FULLY_INLINED, "ERROR: invalid varchar non-inlined size");
     const uint64_t data_offset = aux_data->offset_lo | ((uint64_t) aux_data->offset_hi) << 16;
 
     assert(data_offset < (uint64_t) column_var_data_len || "ERROR: reading beyond varchar address length!");
 
     const uint8_t *data = &reinterpret_cast<const uint8_t *>(column_var_data)[data_offset];
+
+    assertm(std::memcmp(aux_data->chars, data, MIN_INLINE_CHARS) == 0, "ERROR: varchar inline prefix does not match the data");
     return VarcharDataView{aux_data->chars, &data[MIN_INLINE_CHARS], size};
 }
 

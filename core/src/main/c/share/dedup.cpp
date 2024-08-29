@@ -32,7 +32,7 @@
 #include <cassert>
 #include "dedup.h"
 #include "dedup_comparers.h"
-
+#define assertm(exp, msg) assert(((void)msg, exp))
 
 struct int256 {
     __int128 lo;
@@ -243,7 +243,7 @@ inline void merge_sort_slice(const index_t *src1, const index_t *src2, index_t *
     int64_t i1 = 0, i2 = 0;
 
     while (i1 < src1_len && i2 < src2_len) {
-        if (src1[i1] > src2[i2].ts) {
+        if (src1[i1].ts > src2[i2].ts) {
             *dest++ = src2[i2++];
         } else if (src1[i1].ts < src2[i2].ts) {
             *dest++ = src1[i1++];
@@ -446,14 +446,14 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
 
                     }
                     default: {
-                        assert(false || "unsupported column type");
+                        assertm(false, "unsupported column type");
                         return 0;
                     }
                 }
             }
             default:
-                assert(false || "unsupported column value_size_bytes for comparison");
-                return -1;
+                assertm(false, "unsupported column value_size_bytes for comparison");
+                return 0;
         }
     }
 
@@ -501,14 +501,14 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                             break;
                         }
                         default: {
-                            assert(false || "unsupported column type");
+                            assertm(false, "unsupported column type");
                             return 0;
                         }
                     }
                     break;
                 }
                 default:
-                    assert(false || "unsupported column value_size_bytes");
+                    assertm(false, "unsupported column value_size_bytes");
                     return 0;
             }
             if (diff != 0) {
@@ -582,12 +582,12 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                                     *reinterpret_cast<const SortVarcharColumnComparer *>(src_keys)
                             );
                         default:
-                            assert(false || "unsupported column type");
+                            assertm(false, "unsupported column type");
                             return -1;
 
                     }
                 default:
-                    assert(false || "unsupported column type");
+                    assertm(false, "unsupported column type");
                     return -1;
             }
         }
@@ -635,15 +635,15 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                                 break;
                             }
                             default: {
-                                assert(false || "unsupported column type");
-                                return 0;
+                                assertm(false, "unsupported column type");
+                                return -1;
                             }
                         }
                         break;
                     }
                     default:
-                        assert(false || "unsupported column type");
-                        return 0;
+                        assertm(false, "unsupported column type");
+                        return -1;
                 }
                 if (diff != 0) {
                     return diff;
