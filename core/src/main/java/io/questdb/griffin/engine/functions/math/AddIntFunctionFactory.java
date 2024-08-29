@@ -83,7 +83,7 @@ public class AddIntFunctionFactory implements FunctionFactory {
                 return Numbers.LONG_NULL;
             }
 
-            return (long) left + right;
+            return ((long) left) + right;
         }
 
         @Override

@@ -1001,7 +1001,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 } else {
                     int intConst = function.getInt(null);
                     long longConst = function.getLong(null);
-                    if (intConst == longConst) {
+                    if (intConst == Numbers.INT_NULL || intConst == longConst) {
                         return IntConstant.newInstance(intConst);
                     } else {
                         return new LongConstant(longConst);

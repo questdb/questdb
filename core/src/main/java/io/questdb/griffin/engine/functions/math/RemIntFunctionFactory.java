@@ -76,11 +76,6 @@ public class RemIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public long getLong(Record rec) {
-            return getInt(rec);
-        }
-
-        @Override
         public Function getRight() {
             return right;
         }

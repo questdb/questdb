@@ -73,7 +73,8 @@ public class NegIntFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            return getInt(rec);
+            final int value = arg.getInt(rec);
+            return value != Numbers.INT_NULL ? -((long) value) : Numbers.LONG_NULL;
         }
 
         @Override

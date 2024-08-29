@@ -79,7 +79,7 @@ public class MulIntFunctionFactory implements FunctionFactory {
             if (l == Numbers.INT_NULL || r == Numbers.INT_NULL) {
                 return Numbers.LONG_NULL;
             }
-            return (long) l * r;
+            return ((long) l) * r;
         }
 
         @Override
