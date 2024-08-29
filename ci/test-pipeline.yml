@@ -95,13 +95,13 @@ stages:
           CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
           COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
           SHOULD_RUN: >-
-            ${{ if and(
+            $[ and(
               or(
                 eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
                 eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo')
               ),
               eq(variables['System.PullRequest.IsFork'], 'false')
-            ) 'true' else 'false'}} 
+            )] 
 
         # Coverage Job is required to run by a validation rule, but there's no point in running the steps
         # if there were no code changes. Therefore we define SHOULD_RUN and use it as a condition in all steps.
