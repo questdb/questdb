@@ -764,6 +764,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlOrderByRadixSortThreshold() {
+        return 600;
+    }
+
+    @Override
     public int getSqlPageFrameMaxRows() {
         return 1_000_000;
     }
@@ -1100,6 +1105,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isSqlJitDebugEnabled() {
         return false;
+    }
+
+    @Override
+    public boolean isSqlOrderBySortEnabled() {
+        return true;
     }
 
     @Override

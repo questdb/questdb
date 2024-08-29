@@ -36,8 +36,6 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.*;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
-import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.griffin.engine.functions.columns.*;
 import io.questdb.griffin.engine.functions.constants.*;
@@ -45,10 +43,7 @@ import io.questdb.griffin.engine.groupby.*;
 import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.*;
 import io.questdb.griffin.engine.join.*;
-import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
-import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
-import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
-import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
+import io.questdb.griffin.engine.orderby.*;
 import io.questdb.griffin.engine.table.*;
 import io.questdb.griffin.engine.union.*;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
@@ -2757,7 +2752,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // check if column type is supported
                     if (ColumnType.isBinary(metadata.getColumnType(index))) {
                         // find position of offending column
-
                         ObjList<ExpressionNode> nodes = model.getOrderBy();
                         int position = 0;
                         for (int j = 0, y = nodes.size(); j < y; j++) {
@@ -2800,9 +2794,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD) {
                                 return recordCursorFactory;
                             }
-                        } else { //orderByColumnCount > 1
-                            preSortedByTs = (orderByColumnNameToIndexMap.get(column) == QueryModel.ORDER_DIRECTION_ASCENDING && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) ||
-                                    (orderByColumnNameToIndexMap.get(column) == ORDER_DIRECTION_DESCENDING && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD);
+                        } else { // orderByColumnCount > 1
+                            preSortedByTs = (orderByColumnNameToIndexMap.get(column) == QueryModel.ORDER_DIRECTION_ASCENDING && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD)
+                                    || (orderByColumnNameToIndexMap.get(column) == ORDER_DIRECTION_DESCENDING && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD);
                         }
                     }
                 }
@@ -2833,6 +2827,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 baseCursorTimestampIndex
                         );
                     } else {
+                        final int columnType = orderedMetadata.getColumnType(firstOrderByColumnIndex);
+                        if (configuration.isSqlOrderBySortEnabled()
+                                && orderByColumnNames.size() == 1
+                                && LongSortedLightRecordCursorFactory.isSupportedColumnType(columnType)) {
+                            return new LongSortedLightRecordCursorFactory(
+                                    configuration,
+                                    orderedMetadata,
+                                    recordCursorFactory,
+                                    listColumnFilterA.copy()
+                            );
+                        }
+
                         return new SortedLightRecordCursorFactory(
                                 configuration,
                                 orderedMetadata,
@@ -5838,17 +5844,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final Function func = functionParser.parseFunction(limit, EmptyRecordMetadata.INSTANCE, executionContext);
         final int type = func.getType();
         if (limitTypes.excludes(type)) {
-            if (type == ColumnType.UNDEFINED) {
-                if (func instanceof IndexedParameterLinkFunction) {
-                    executionContext.getBindVariableService().setLong(((IndexedParameterLinkFunction) func).getVariableIndex(), defaultValue.getLong(null));
-                    return func;
-                }
-
-                if (func instanceof NamedParameterLinkFunction) {
-                    executionContext.getBindVariableService().setLong(((NamedParameterLinkFunction) func).getVariableName(), defaultValue.getLong(null));
-                    return func;
-                }
-            }
             throw SqlException.$(limit.position, "invalid type: ").put(ColumnType.nameOf(type));
         }
         return func;
@@ -6051,6 +6046,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         limitTypes.add(ColumnType.BYTE);
         limitTypes.add(ColumnType.SHORT);
         limitTypes.add(ColumnType.INT);
+        limitTypes.add(ColumnType.UNDEFINED);
     }
 
     static {

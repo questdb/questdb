@@ -213,7 +213,7 @@ public class ClickBenchTest extends AbstractCairoTest {
             new TestCase(
                     "Q7",
                     "SELECT AdvEngineID, COUNT(*) AS c FROM hits WHERE AdvEngineID <> 0 GROUP BY AdvEngineID ORDER BY c DESC;",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [c desc]\n" +
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [AdvEngineID]\n" +

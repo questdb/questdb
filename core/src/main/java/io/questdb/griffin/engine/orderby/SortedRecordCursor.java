@@ -31,7 +31,7 @@ import io.questdb.std.Misc;
 
 class SortedRecordCursor implements DelegatingRecordCursor {
     private final RecordTreeChain chain;
-    private RecordCursor base;
+    private RecordCursor baseCursor;
     private RecordTreeChain.TreeCursor chainCursor;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isChainBuilt;
@@ -46,9 +46,9 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     public void close() {
         if (isOpen) {
             isOpen = false;
-            Misc.free(chainCursor); // this call also closes base
+            chainCursor = Misc.free(chainCursor);
+            baseCursor = Misc.free(baseCursor);
             Misc.free(chain);
-            base = null;
         }
     }
 
@@ -82,14 +82,13 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     }
 
     @Override
-    public void of(RecordCursor base, SqlExecutionContext executionContext) {
+    public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) {
+        this.baseCursor = baseCursor;
         if (!isOpen) {
-            this.isOpen = true;
-            this.chain.reopen();
+            isOpen = true;
+            chain.reopen();
         }
-
-        this.base = base;
-        chainCursor = chain.getCursor(base);
+        chainCursor = chain.getCursor(baseCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
         isChainBuilt = false;
     }
@@ -101,7 +100,7 @@ class SortedRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public long size() {
-        return base.size();
+        return baseCursor.size();
     }
 
     @Override
@@ -110,8 +109,8 @@ class SortedRecordCursor implements DelegatingRecordCursor {
     }
 
     private void buildChain() {
-        final Record record = base.getRecord();
-        while (base.hasNext()) {
+        final Record record = baseCursor.getRecord();
+        while (baseCursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             // Tree chain is liable to re-position record to
             // other rows to do record comparison. We must use our
