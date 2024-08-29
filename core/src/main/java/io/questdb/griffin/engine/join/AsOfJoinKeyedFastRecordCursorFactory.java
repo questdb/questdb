@@ -237,10 +237,7 @@ public class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinRecordCurs
                 return false;
             }
             final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-            if (masterTimestamp < lookaheadTimestamp) {
-                isMasterHasNextPending = true;
-                return true;
-            }
+
             nextSlave(masterTimestamp);
             isMasterHasNextPending = true;
             boolean hasSlave = record.hasSlave();
