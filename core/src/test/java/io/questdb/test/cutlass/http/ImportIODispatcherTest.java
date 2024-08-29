@@ -190,6 +190,12 @@ public class ImportIODispatcherTest extends AbstractTest {
             REQUEST_FOOTER;
     private final String DdlCols1 = "(Col1+STRING,Pickup_DateTime+TIMESTAMP,DropOff_datetime+VARCHAR)";
     private final String DdlCols2 = "(Col1+STRING,Col2+STRING,Col3+STRING,Col4+STRING,Pickup_DateTime+TIMESTAMP)+timestamp(Pickup_DateTime)";
+    private final String ImportCreateParamRequestFalse = ValidImportRequest1
+            .replace("POST /upload?name=trips HTTP",
+                    "POST /upload?name=trips&timestamp=Pickup_DateTime&createTable=false HTTP");
+    private final String ImportCreateParamRequestTrue = ValidImportRequest1
+            .replace("POST /upload?name=trips HTTP",
+                    "POST /upload?name=trips&timestamp=Pickup_DateTime&createTable=true HTTP");
     private final String ValidImportResponse1 = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -299,6 +305,15 @@ public class ImportIODispatcherTest extends AbstractTest {
             "\r\n" +
             "00\r\n" +
             "\r\n";
+    private final String ImportCreateParamResponse = WarningValidImportResponse1
+            .replace(
+                    "\r\n" +
+                            "|   Partition by  |                                              NONE  |                 |         |  From Table  |\r\n" +
+                            "|      Timestamp  |                                              NONE  |                 |         |  From Table  |",
+                    "\r\n" +
+                            "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                            "|      Timestamp  |                                   Pickup_DateTime  |                 |         |              |"
+            );
     private final String WarningValidImportResponse1Json = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -322,21 +337,6 @@ public class ImportIODispatcherTest extends AbstractTest {
             "]}\r\n" +
             "00\r\n" +
             "\r\n";
-    private final String ImportCreateParamRequestTrue = ValidImportRequest1
-            .replace("POST /upload?name=trips HTTP",
-                    "POST /upload?name=trips&timestamp=Pickup_DateTime&createTable=true HTTP");
-    private final String ImportCreateParamRequestFalse = ValidImportRequest1
-            .replace("POST /upload?name=trips HTTP",
-                    "POST /upload?name=trips&timestamp=Pickup_DateTime&createTable=false HTTP");
-    private final String ImportCreateParamResponse = WarningValidImportResponse1
-            .replace(
-                    "\r\n" +
-                            "|   Partition by  |                                              NONE  |                 |         |  From Table  |\r\n" +
-                            "|      Timestamp  |                                              NONE  |                 |         |  From Table  |",
-                    "\r\n" +
-                            "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
-                            "|      Timestamp  |                                   Pickup_DateTime  |                 |         |              |"
-            );
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)
@@ -647,6 +647,101 @@ public class ImportIODispatcherTest extends AbstractTest {
                     new SendAndReceiveRequestBuilder().execute(requestJson, ValidImportResponse2Json);
                     new SendAndReceiveRequestBuilder().execute(ValidImportRequest1, ValidImportResponse1);
                 }));
+    }
+
+    @Test
+    public void testImportSingleRowWithSchema() throws Exception {
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder())
+                .withTelemetry(false)
+                .run(engine -> {
+                    setupSql(engine);
+                    final SOCountDownLatch waitForData = new SOCountDownLatch(1);
+                    engine.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                        if (event == PoolListener.EV_RETURN && Chars.equals("single_row_with_schema", name.getTableName())) {
+                            waitForData.countDown();
+                        }
+                    });
+
+                    new SendAndReceiveRequestBuilder().execute(
+                            "POST /upload?name=single_row_with_schema&partitionBy=NONE&forceHeader=fals[%E2%80%A6]v=false&delimiter=&atomicity=skipCol&maxUncommitedRows=500000 HTTP/1.1\r\n" +
+                                    "Host: localhost:9001\r\n" +
+                                    "User-Agent: curl/7.64.0\r\n" +
+                                    "Accept: */*\r\n" +
+                                    "Content-Length: 437760673\r\n" +
+                                    "Content-Type: multipart/form-data; boundary=------------------------27d997ca93d2689d\r\n" +
+                                    "Expect: 100-continue\r\n" +
+                                    "\r\n" +
+                                    "--------------------------27d997ca93d2689d\r\n" +
+                                    "Content-Disposition: form-data; name=\"schema\"; filename=\"schema.json\"\r\n" +
+                                    "Content-Type: application/octet-stream\r\n" +
+                                    "\r\n" +
+                                    "[\r\n" +
+                                    "  {\r\n" +
+                                    "    \"name\": \"a\",\r\n" +
+                                    "    \"type\": \"LONG\",\r\n" +
+                                    "    \"index\": \"false\"\r\n" +
+                                    "  },\r\n" +
+                                    "  {\r\n" +
+                                    "    \"name\": \"b\",\r\n" +
+                                    "    \"type\": \"SYMBOL\",\r\n" +
+                                    "    \"index\": \"false\"\r\n" +
+                                    "  },\r\n" +
+                                    "  {\r\n" +
+                                    "    \"name\": \"c\",\r\n" +
+                                    "    \"type\": \"LONG\",\r\n" +
+                                    "    \"index\": \"false\"\r\n" +
+                                    "  }\r\n" +
+                                    "]\r\n" +
+                                    "\r\n" +
+                                    "--------------------------27d997ca93d2689d\r\n" +
+                                    "Content-Disposition: form-data; name=\"data\"; filename=\"table2.csv\"\r\n" +
+                                    "Content-Type: application/octet-stream\r\n" +
+                                    "\r\n" +
+                                    "a,b,c\r\n" +
+                                    "1,a,2\r\n" +
+                                    "\r\n" +
+                                    "--------------------------27d997ca93d2689d--",
+                            "HTTP/1.1 200 OK\r\n" +
+                                    "Server: questDB/1.0\r\n" +
+                                    "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                                    "Transfer-Encoding: chunked\r\n" +
+                                    "Content-Type: text/plain; charset=utf-8\r\n" +
+                                    "\r\n" +
+                                    "057c\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|      Location:  |                            single_row_with_schema  |        Pattern  | Locale  |      Errors  |\r\n" +
+                                    "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                                    "|      Timestamp  |                                              NONE  |                 |         |              |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|   Rows handled  |                                                 1  |                 |         |              |\r\n" +
+                                    "|  Rows imported  |                                                 1  |                 |         |              |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+\r\n" +
+                                    "|              0  |                                                 a  |                     LONG  |           0  |\r\n" +
+                                    "|              1  |                                                 b  |                   SYMBOL  |           0  |\r\n" +
+                                    "|              2  |                                                 c  |                     LONG  |           0  |\r\n" +
+                                    "+-----------------------------------------------------------------------------------------------------------------+" +
+                                    "\r\n" +
+                                    "\r\n" +
+                                    "00\r\n" +
+                                    "\r\n"
+                    );
+                    if (!waitForData.await(TimeUnit.SECONDS.toNanos(30L))) {
+                        Assert.fail();
+                    }
+
+                    TableToken tableToken = new TableToken("single_row_with_schema", "single_row_with_schema", 0, false, false, false);
+                    try (TableReader reader = new TableReader(engine.getConfiguration(), tableToken)) {
+                        TableReaderMetadata meta = reader.getMetadata();
+                        Assert.assertEquals(5, meta.getColumnCount());
+                        Assert.assertEquals(ColumnType.LONG, meta.getColumnType("a"));
+                        Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("b"));
+                        Assert.assertFalse(meta.isColumnIndexed(1));
+                        Assert.assertEquals(ColumnType.LONG, meta.getColumnType("c"));
+                    }
+                });
     }
 
     @Test
