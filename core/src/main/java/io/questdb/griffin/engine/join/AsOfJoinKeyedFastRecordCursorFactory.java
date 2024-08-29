@@ -117,60 +117,61 @@ public class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinRecordCurs
                 masterHasNext = masterCursor.hasNext();
                 isMasterHasNextPending = false;
             }
-            if (masterHasNext) {
-                final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-                if (masterTimestamp < lookaheadTimestamp) {
-                    isMasterHasNextPending = true;
-                    return true;
-                }
-                nextSlave(masterTimestamp);
+            if (!masterHasNext) {
+                return false;
+            }
+            final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+            if (masterTimestamp < lookaheadTimestamp) {
                 isMasterHasNextPending = true;
-                boolean hasSlave = record.hasSlave();
-                if (!hasSlave) {
-                    return true;
-                }
-
-                long masterId = masterRecord.getLong(1);
-
-                TimeFrame timeFrame = slaveCursor.getTimeFrame();
-                assert timeFrame.isOpen();
-
-                long rowHi = timeFrame.getRowHi();
-                long rowLo = timeFrame.getRowLo();
-
-                assert slaveFrameRow >= rowLo && slaveFrameRow < rowHi;
-
-                long keyedRowId = slaveFrameRow;
-                int keyedFrameIndex = slaveFrameIndex;
-                for (; ; ) {
-                    long slaveId = slaveRecB.getLong(0);
-                    if (masterId == slaveId) {
-                        // we have a match, that's awesome, no need to traverse the slave cursor!
-                        break;
-                    }
-
-                    // let's try to move backwards in the slave cursor until we have a match
-                    keyedRowId--;
-                    if (keyedRowId < rowLo) {
-                        // ops, we exhausted this frame, let's try the previous one
-                        if (!slaveCursor.prev()) {
-                            // there is no previous frame, we are done, no match :(
-                            // if we are here, chances are we are also pretty slow because we are scanning the entire slave cursor!
-                            record.hasSlave(false);
-                            break;
-                        }
-                        slaveCursor.open();
-
-                        keyedFrameIndex = timeFrame.getIndex();
-                        keyedRowId = timeFrame.getRowHi() - 1; // should it be -1? I never know. inclusive, exclusive, it's all a blur. I assume this one is exclusive. to be checked.
-                        rowLo = timeFrame.getRowLo();
-                        // todo: shouldn't we return the frame back to the original slaveFrameIndex?
-                    }
-                    slaveCursor.recordAt(slaveRecB, Rows.toRowID(keyedFrameIndex, keyedRowId));
-                }
                 return true;
             }
-            return false;
+            nextSlave(masterTimestamp);
+            isMasterHasNextPending = true;
+            boolean hasSlave = record.hasSlave();
+            if (!hasSlave) {
+                return true;
+            }
+
+            // ok, the non-keyed matcher found a record with matching timestamps.
+            // we have to make sure the JOIN keys match as well.
+            long masterId = masterRecord.getLong(1); // todo: this should be a parameter received from SQLCodeGen
+            TimeFrame timeFrame = slaveCursor.getTimeFrame();
+            assert timeFrame.isOpen();
+
+            long rowHi = timeFrame.getRowHi();
+            long rowLo = timeFrame.getRowLo();
+
+            assert slaveFrameRow >= rowLo && slaveFrameRow < rowHi;
+
+            long keyedRowId = slaveFrameRow;
+            int keyedFrameIndex = slaveFrameIndex;
+            for (; ; ) {
+                long slaveId = slaveRecB.getLong(0); // todo: this should be a parameter received from SQLCodeGen
+                if (masterId == slaveId) {
+                    // we have a match, that's awesome, no need to traverse the slave cursor!
+                    break;
+                }
+
+                // let's try to move backwards in the slave cursor until we have a match
+                keyedRowId--;
+                if (keyedRowId < rowLo) {
+                    // ops, we exhausted this frame, let's try the previous one
+                    if (!slaveCursor.prev()) {
+                        // there is no previous frame, we are done, no match :(
+                        // if we are here, chances are we are also pretty slow because we are scanning the entire slave cursor!
+                        record.hasSlave(false);
+                        break;
+                    }
+                    slaveCursor.open();
+
+                    keyedFrameIndex = timeFrame.getIndex();
+                    keyedRowId = timeFrame.getRowHi() - 1; // should it be -1? I never know. inclusive, exclusive, it's all a blur. I assume this one is exclusive. to be checked.
+                    rowLo = timeFrame.getRowLo();
+                    // todo: shouldn't we return the frame back to the original slaveFrameIndex?
+                }
+                slaveCursor.recordAt(slaveRecB, Rows.toRowID(keyedFrameIndex, keyedRowId));
+            }
+            return true;
         }
     }
 }
