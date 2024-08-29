@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
@@ -40,7 +41,9 @@ public class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinRecordCurs
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
+            RecordSink masterSink,
             RecordCursorFactory slaveFactory,
+            RecordSink slaveSink,
             int columnSplit
     ) {
         super(metadata, null, masterFactory, slaveFactory);
