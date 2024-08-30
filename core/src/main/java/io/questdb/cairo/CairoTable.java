@@ -31,16 +31,11 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
-
-// designated timestamp and partition by are final
-// todo: intern column names
-// todo: update this to use column order map, column name index map etc.
 public class CairoTable implements Sinkable {
     // consider a versioned lock. consider more granular locking
     public LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     public IntList columnOrderMap = new IntList();
     public ObjList<CairoColumn> columns = new ObjList<>();
-    // todo: intern, its a column name
     private boolean isDedup;
     private boolean isSoftLink;
     private int maxUncommittedRows;

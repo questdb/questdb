@@ -34,8 +34,6 @@ import io.questdb.std.str.Path;
 import java.io.Closeable;
 
 
-// todo: potentially refactor some of the logic into static functions
-// todo: lots of cleanup
 public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
     public static final Log LOG = LogFactory.getLog(HydrateMetadataJob.class);
     public static boolean completed = false;
