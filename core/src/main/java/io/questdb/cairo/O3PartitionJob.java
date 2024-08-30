@@ -823,7 +823,39 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             columnTop
                     );
 
-                    if (columnTop < mergeDataLo + 1) {
+                    if (columnTop > mergeDataHi) {
+                        // column is all nulls because of column top
+                        dedupCommitAddresses.setColAddressValues(addr, DedupColumnCommitAddresses.NULL);
+
+                        if (columnSize > 0) {
+                            final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
+                            dedupCommitAddresses.setO3DataAddressValues(addr, oooColAddress);
+                            dedupCommitAddresses.setReservedValuesSet1(
+                                    addr,
+                                    -1,
+                                    -1,
+                                    -1
+                            );
+                        } else {
+                            // Var len columns
+                            final long oooVarColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
+                            final long oooVarColSize = oooColumns.get(getPrimaryColumnIndex(i)).size();
+                            final long oooAuxColAddress = oooColumns.get(getSecondaryColumnIndex(i)).addressOf(0);
+
+                            dedupCommitAddresses.setO3DataAddressValues(addr, oooAuxColAddress, oooVarColAddress, oooVarColSize);
+                            dedupCommitAddresses.setReservedValuesSet1(
+                                    addr,
+                                    -1,
+                                    -1,
+                                    -1
+                            );
+                            dedupCommitAddresses.setReservedValuesSet2(
+                                    addr,
+                                    0,
+                                    -1
+                            );
+                        }
+                    } else { // if (columnTop > mergeDataHi)
                         if (columnSize > 0) {
                             // Fixed length column
                             TableUtils.setSinkForPartition(tableRootPath.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, srcNameTxn);
@@ -900,42 +932,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     varFd
                             );
                         }
-                    } else {
-                        // column is all nulls because of column top
-                        dedupCommitAddresses.setColAddressValues(addr, DedupColumnCommitAddresses.NULL);
-
-                        if (columnSize > 0) {
-                            final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
-                            dedupCommitAddresses.setO3DataAddressValues(addr, oooColAddress);
-                            dedupCommitAddresses.setReservedValuesSet1(
-                                    addr,
-                                    -1,
-                                    -1,
-                                    -1
-                            );
-                        } else {
-                            // Var len columns
-                            final long oooVarColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
-                            final long oooVarColSize = oooColumns.get(getPrimaryColumnIndex(i)).size();
-                            final long oooAuxColAddress = oooColumns.get(getSecondaryColumnIndex(i)).addressOf(0);
-
-                            dedupCommitAddresses.setO3DataAddressValues(addr, oooAuxColAddress, oooVarColAddress, oooVarColSize);
-                            dedupCommitAddresses.setReservedValuesSet1(
-                                    addr,
-                                    -1,
-                                    -1,
-                                    -1
-                            );
-                            dedupCommitAddresses.setReservedValuesSet2(
-                                    addr,
-                                    0,
-                                    -1
-                            );
-                        }
                     }
-
                     dedupColumnIndex++;
-                }
+                } //if (columnType > 0 && metadata.isDedupKey(i) && i != metadata.getTimestampIndex())
             }
 
             return Vect.mergeDedupTimestampWithLongIndexIntKeys(

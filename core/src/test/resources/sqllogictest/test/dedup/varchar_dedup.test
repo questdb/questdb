@@ -1,5 +1,5 @@
-# description: Test dedup cases with varchar column type
-# group: [parquet]
+# description: Test dedup cases with varchar column type to
+# group: [dedup]
 
 control iso_timestamp on
 
