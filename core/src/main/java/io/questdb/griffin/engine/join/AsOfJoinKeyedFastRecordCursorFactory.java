@@ -127,7 +127,7 @@ public final class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinReco
         @Override
         public void close() {
             if (appendAddress != 0) {
-                Unsafe.free(heapStart, INITIAL_CAPACITY_BYTES, MemoryTag.NATIVE_JOIN_MAP);
+                Unsafe.free(heapStart, heapLimit - heapStart, MemoryTag.NATIVE_JOIN_MAP);
                 appendAddress = 0;
                 heapStart = 0;
             }
@@ -357,6 +357,8 @@ public final class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinReco
     }
 
     private class AsOfJoinKeyedFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
+        private int origFrameIndex = -1;
+        private long origRowId = -1;
 
         public AsOfJoinKeyedFastRecordCursor(
                 int columnSplit,
@@ -377,10 +379,15 @@ public final class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinReco
             if (!masterHasNext) {
                 return false;
             }
-            final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
-
-            nextSlave(masterTimestamp);
             isMasterHasNextPending = true;
+
+            if (origRowId != -1) {
+                slaveCursor.recordAt(slaveRecB, Rows.toRowID(origFrameIndex, origRowId));
+            }
+            final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
+            if (masterTimestamp >= lookaheadTimestamp) {
+                nextSlave(masterTimestamp);
+            }
             boolean hasSlave = record.hasSlave();
             if (!hasSlave) {
                 return true;
@@ -391,15 +398,33 @@ public final class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinReco
             masterSinkTarget.reset();
             masterKeySink.copy(masterRecord, masterSinkTarget);
             TimeFrame timeFrame = slaveCursor.getTimeFrame();
-            assert timeFrame.isOpen();
 
+
+            int slaveRecordIndex = ((PageFrameMemoryRecord) slaveRecB).getFrameIndex();
+            origFrameIndex = slaveRecordIndex;
+            int cursorPrevCounter = 0;
+            if (timeFrame.getIndex() != slaveRecordIndex) {
+                while (timeFrame.getIndex() < slaveRecordIndex) {
+                    slaveCursor.next();
+                    cursorPrevCounter--;
+                }
+                while (timeFrame.getIndex() > slaveRecordIndex) {
+                    slaveCursor.prev();
+                    cursorPrevCounter++;
+                }
+                slaveCursor.open();
+            }
+
+            slaveCursor.open();
+            assert timeFrame.isOpen();
             long rowHi = timeFrame.getRowHi();
             long rowLo = timeFrame.getRowLo();
 
-            assert slaveFrameRow >= rowLo && slaveFrameRow < rowHi;
+//            assert slaveFrameRow >= rowLo && slaveFrameRow < rowHi;
 
-            long keyedRowId = slaveFrameRow;
-            int keyedFrameIndex = slaveFrameIndex;
+            long keyedRowId = ((PageFrameMemoryRecord) slaveRecB).getRowIndex();
+            origRowId = keyedRowId;
+            int keyedFrameIndex = timeFrame.getIndex();
             for (; ; ) {
                 slaveSinkTarget.reset();
                 slaveKeySink.copy(slaveRecB, slaveSinkTarget);
@@ -412,6 +437,7 @@ public final class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinReco
                 keyedRowId--;
                 if (keyedRowId < rowLo) {
                     // ops, we exhausted this frame, let's try the previous one
+                    cursorPrevCounter++;
                     if (!slaveCursor.prev()) {
                         // there is no previous frame, we are done, no match :(
                         // if we are here, chances are we are also pretty slow because we are scanning the entire slave cursor!
@@ -423,11 +449,30 @@ public final class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinReco
                     keyedFrameIndex = timeFrame.getIndex();
                     keyedRowId = timeFrame.getRowHi() - 1; // should it be -1? I never know. inclusive, exclusive, it's all a blur. I assume this one is exclusive. to be checked.
                     rowLo = timeFrame.getRowLo();
-                    // todo: shouldn't we return the frame back to the original slaveFrameIndex?
                 }
                 slaveCursor.recordAt(slaveRecB, Rows.toRowID(keyedFrameIndex, keyedRowId));
             }
+
+            // rewind the slave cursor to the original position
+            if (cursorPrevCounter > 0) {
+                for (int i = 0; i < cursorPrevCounter; i++) {
+                    slaveCursor.next();
+                }
+            } else if (cursorPrevCounter < 0) {
+                for (int i = 0; i < -cursorPrevCounter; i++) {
+                    slaveCursor.prev();
+                }
+            }
+            assert slaveFrameIndex == timeFrame.getIndex();
+            slaveCursor.open();
             return true;
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            origFrameIndex = -1;
+            origRowId = -1;
         }
     }
 }
