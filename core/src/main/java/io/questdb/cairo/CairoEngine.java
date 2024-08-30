@@ -457,10 +457,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return writerPool.getBusyCount();
     }
 
-    public @NotNull CairoMetadata getCairoMetadata() {
-        return cairoMetadata;
-    }
-
     public DatabaseCheckpointStatus getCheckpointStatus() {
         return checkpointAgent;
     }
@@ -1126,10 +1122,6 @@ public class CairoEngine implements Closeable, WriterSource {
         try (SqlCompiler compiler = getSqlCompiler()) {
             return select(compiler, selectSql, sqlExecutionContext);
         }
-    }
-
-    public void setCairoMetadata(@NotNull CairoMetadata cairoMetadata) {
-        this.cairoMetadata = cairoMetadata;
     }
 
     @SuppressWarnings("unused")
