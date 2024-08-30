@@ -54,6 +54,7 @@ import io.questdb.griffin.engine.functions.lt.LtStrIPv4FunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory;
+import io.questdb.griffin.engine.functions.table.HydrateTableMetadataFunctionFactory;
 import io.questdb.griffin.engine.functions.table.ParquetScanFunctionFactory;
 import io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
@@ -2438,6 +2439,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                         args.add(new VarcharConstant(".a"));
                                         args.add(new IntConstant(ColumnType.INT));
                                     }
+                                } else if ((factory instanceof HydrateTableMetadataFunctionFactory)) {
+                                    args.add(new StrConstant("*"));
                                 } else if (Chars.equals(key, "approx_count_distinct") && sigArgCount == 2 && p == 1 && sigArgType == ColumnType.INT) {
                                     args.add(new IntConstant(4)); // precision has to be in the range of 4 to 18
                                 } else if (!useConst) {
