@@ -666,7 +666,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                     });
 
                     new SendAndReceiveRequestBuilder().execute(
-                            "POST /upload?name=single_row_with_schema&partitionBy=NONE&forceHeader=fals[%E2%80%A6]v=false&delimiter=&atomicity=skipCol&maxUncommitedRows=500000 HTTP/1.1\r\n" +
+                            "POST /upload?name=single_row_with_schema&partitionBy=NONE&forceHeader=true&delimiter=&atomicity=skipCol&maxUncommitedRows=500000 HTTP/1.1\r\n" +
                                     "Host: localhost:9001\r\n" +
                                     "User-Agent: curl/7.64.0\r\n" +
                                     "Accept: */*\r\n" +
@@ -735,7 +735,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                     TableToken tableToken = new TableToken("single_row_with_schema", "single_row_with_schema", 0, false, false, false);
                     try (TableReader reader = new TableReader(engine.getConfiguration(), tableToken)) {
                         TableReaderMetadata meta = reader.getMetadata();
-                        Assert.assertEquals(5, meta.getColumnCount());
+                        Assert.assertEquals(3, meta.getColumnCount());
                         Assert.assertEquals(ColumnType.LONG, meta.getColumnType("a"));
                         Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("b"));
                         Assert.assertFalse(meta.isColumnIndexed(1));
