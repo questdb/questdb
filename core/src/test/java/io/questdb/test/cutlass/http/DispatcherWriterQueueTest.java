@@ -276,6 +276,7 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
 
             ddl("ALTER TABLE foo ALTER COLUMN a CACHE");
             drainWalQueue();
+
             // check its true again
             assertSql(header + left + "true" + right, "table_columns('foo')");
 
