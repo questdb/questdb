@@ -35,14 +35,6 @@ import io.questdb.cairo.BitmapIndexReader;
  * should be used.
  */
 public interface PageFrame {
-    /**
-     * Page frame belonging to a partition in native QDB format.
-     */
-    byte NATIVE_FORMAT = 0;
-    /**
-     * Page frame belonging to a partition in Apache Parquet format.
-     */
-    byte PARQUET_FORMAT = 1;
 
     /**
      * Auxiliary index page for variable-length column types, such as Varchar, String, and Binary.
@@ -77,7 +69,7 @@ public interface PageFrame {
     /**
      * Returns page frame format.
      * <p>
-     * Possible values: {@link #NATIVE_FORMAT} and {@link #PARQUET_FORMAT}.
+     * Possible values: {@link PartitionFormat#NATIVE} and {@link PartitionFormat#PARQUET}.
      */
     byte getFormat();
 
@@ -102,6 +94,18 @@ public interface PageFrame {
      * @return size of column in bytes
      */
     long getPageSize(int columnIndex);
+
+    /**
+     * Return Parquet partition's fd open for reads or -1 in case of a native partition.
+     */
+    long getParquetFd();
+
+    /**
+     * Returns row group index corresponding to the Parquet page frame.
+     * <p>
+     * Possible values: {@link PartitionFormat#NATIVE} and {@link PartitionFormat#PARQUET}.
+     */
+    int getParquetRowGroup();
 
     /**
      * Return high row index within the frame's partition, exclusive.

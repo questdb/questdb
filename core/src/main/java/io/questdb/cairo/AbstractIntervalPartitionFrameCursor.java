@@ -284,10 +284,27 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     }
 
     protected static class IntervalPartitionFrame implements PartitionFrame {
-
+        protected byte format;
+        protected long parquetFd;
         protected int partitionIndex;
+        protected int rowGroupIndex;
         protected long rowHi;
         protected long rowLo = 0;
+
+        @Override
+        public long getParquetFd() {
+            return parquetFd;
+        }
+
+        @Override
+        public int getParquetRowGroup() {
+            return rowGroupIndex;
+        }
+
+        @Override
+        public byte getPartitionFormat() {
+            return format;
+        }
 
         @Override
         public int getPartitionIndex() {

@@ -108,7 +108,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             if (!last) {
                 try {
                     LOG.debug().$("would create [path=").$(path.slash$()).I$();
-                    TableUtils.setPathForPartition(path.trimTo(pathToTable.size()), partitionBy, partitionTimestamp, txn - 1);
+                    TableUtils.setPathForNativePartition(path.trimTo(pathToTable.size()), partitionBy, partitionTimestamp, txn - 1);
                     createDirsOrFail(ff, path.slash(), tableWriter.getConfiguration().getMkDirMode());
                 } catch (Throwable e) {
                     LOG.error().$("process new partition error [table=").utf8(tableWriter.getTableToken().getTableName())
@@ -196,7 +196,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // we need to read "low" and "high" boundaries of the partition. "low" being oldest timestamp
                     // and "high" being newest
 
-                    TableUtils.setPathForPartition(path.trimTo(pathToTable.size()), partitionBy, partitionTimestamp, srcNameTxn);
+                    TableUtils.setPathForNativePartition(path.trimTo(pathToTable.size()), partitionBy, partitionTimestamp, srcNameTxn);
 
                     // also track the fd that we need to eventually close
                     // Open src timestamp column as RW in case append happens
@@ -582,7 +582,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // to the existing one.
                     openColumnMode = OPEN_MID_PARTITION_FOR_APPEND;
                 } else {
-                    TableUtils.setPathForPartition(path.trimTo(pathToTable.size()), partitionBy, partitionTimestamp, txn);
+                    TableUtils.setPathForNativePartition(path.trimTo(pathToTable.size()), partitionBy, partitionTimestamp, txn);
                     createDirsOrFail(ff, path.slash(), tableWriter.getConfiguration().getMkDirMode());
                     if (last) {
                         openColumnMode = OPEN_LAST_PARTITION_FOR_MERGE;
@@ -818,7 +818,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     if (columnTop < mergeDataLo + 1) {
                         CharSequence columnName = metadata.getColumnName(i);
                         long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, i);
-                        TableUtils.setSinkForPartition(tableRootPath.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, srcNameTxn);
+                        TableUtils.setSinkForNativePartition(tableRootPath.trimTo(tableRootPathLen).slash(), tableWriter.getPartitionBy(), partitionTimestamp, srcNameTxn);
                         TableUtils.dFile(tableRootPath, columnName, columnNameTxn);
                         fd = TableUtils.openRO(ff, tableRootPath.$(), LOG);
 

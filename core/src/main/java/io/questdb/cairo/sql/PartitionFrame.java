@@ -27,16 +27,37 @@ package io.questdb.cairo.sql;
 /**
  * Interface for retrieving information about a partition frame.
  * <p>
- * Each partition frame holds a number of {@link PageFrame}s.
+ * Each native partition frame holds a number of {@link PageFrame}s.
  * Think, a partition or a slice of a partition.
+ * <p>
+ * Each Parquet partition frame corresponds to a single Parquet row group
+ * or a slice of a row group. A Parquet partition frame is mapped to
+ * a single {@link PageFrame}.
  * <p>
  * Partition frame is an internal API and shouldn't be used for data access.
  * Page frames are meant to be used for data access.
  */
+// TODO(puzpuzpuz): rename to data frame
 public interface PartitionFrame {
 
     /**
-     * @return numeric index of the current partition
+     * Return Parquet partition's fd open for reads or -1 in case of a native partition.
+     */
+    long getParquetFd();
+
+    /**
+     * @return numeric index of the row group within Parquet partition;
+     * shouldn't be called for native partitions
+     */
+    int getParquetRowGroup();
+
+    /**
+     * @return format of the frame's partition; set to {@link PartitionFormat#NATIVE} or {@link PartitionFormat#PARQUET}
+     */
+    byte getPartitionFormat();
+
+    /**
+     * @return numeric index of the frame's partition
      */
     int getPartitionIndex();
 

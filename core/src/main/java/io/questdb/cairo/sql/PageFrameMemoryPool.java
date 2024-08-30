@@ -24,9 +24,10 @@
 
 package io.questdb.cairo.sql;
 
-import io.questdb.std.LongList;
-import io.questdb.std.Mutable;
-import io.questdb.std.QuietCloseable;
+import io.questdb.cairo.Reopenable;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
+import io.questdb.std.*;
 
 /**
  * Provides addresses for page frames in both native and Parquet formats.
@@ -39,13 +40,32 @@ import io.questdb.std.QuietCloseable;
  * This pool is thread-unsafe as it may hold navigated Parquet partition data,
  * so it shouldn't be shared between multiple threads.
  */
-// TODO: add LRU cache for multiple frames
+// TODO(puzpuzpuz): add LRU cache for multiple frames
 public class PageFrameMemoryPool implements QuietCloseable {
-    private final PageFrameMemoryImpl frameMemory = new PageFrameMemoryImpl();
+    private final PageFrameMemoryImpl frameMemory;
+    // TODO(puzpuzpuz): this won't do for record A/B
+    private final ParquetBuffers parquetBuffers;
+    private final DirectIntList parquetColumnTypes;
+    private final PartitionDecoder parquetDecoder;
     private PageFrameAddressCache addressCache;
+
+    public PageFrameMemoryPool() {
+        try {
+            frameMemory = new PageFrameMemoryImpl();
+            parquetDecoder = new PartitionDecoder();
+            parquetBuffers = new ParquetBuffers();
+            parquetColumnTypes = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
 
     @Override
     public void close() {
+        Misc.free(parquetDecoder);
+        Misc.free(parquetBuffers);
+        Misc.free(parquetColumnTypes);
         frameMemory.clear();
         addressCache = null;
     }
@@ -60,18 +80,31 @@ public class PageFrameMemoryPool implements QuietCloseable {
             return;
         }
 
-        final byte frameFormat = addressCache.getFrameFormat(frameIndex);
-        assert frameFormat != PageFrame.PARQUET_FORMAT;
+        final byte format = addressCache.getFrameFormat(frameIndex);
+        if (format == PartitionFormat.NATIVE) {
+            record.init(
+                    frameIndex,
+                    format,
+                    addressCache.getRowIdOffset(frameIndex),
+                    addressCache.getPageAddresses(frameIndex),
+                    addressCache.getAuxPageAddresses(frameIndex),
+                    addressCache.getPageSizes(frameIndex),
+                    addressCache.getAuxPageSizes(frameIndex)
+            );
+        } else if (format == PartitionFormat.PARQUET) {
+            parquetDecoder.of(addressCache.getParquetFd(frameIndex));
+            parquetBuffers.decode(parquetDecoder, parquetColumnTypes, addressCache.getParquetRowGroup(frameIndex));
 
-        record.init(
-                frameIndex,
-                frameFormat,
-                addressCache.getRowIdOffset(frameIndex),
-                addressCache.getPageAddresses(frameIndex),
-                addressCache.getAuxPageAddresses(frameIndex),
-                addressCache.getPageSizes(frameIndex),
-                addressCache.getAuxPageSizes(frameIndex)
-        );
+            record.init(
+                    frameIndex,
+                    format,
+                    addressCache.getRowIdOffset(frameIndex),
+                    parquetBuffers.pageAddresses,
+                    parquetBuffers.auxPageAddresses,
+                    parquetBuffers.pageSizes,
+                    parquetBuffers.auxPageSizes
+            );
+        }
     }
 
     /**
@@ -88,22 +121,72 @@ public class PageFrameMemoryPool implements QuietCloseable {
             return frameMemory;
         }
 
-        frameMemory.frameIndex = frameIndex;
-        frameMemory.frameFormat = addressCache.getFrameFormat(frameIndex);
-        assert frameMemory.frameFormat != PageFrame.PARQUET_FORMAT;
+        final byte format = addressCache.getFrameFormat(frameIndex);
+        if (format == PartitionFormat.NATIVE) {
+            frameMemory.pageAddresses = addressCache.getPageAddresses(frameIndex);
+            frameMemory.auxPageAddresses = addressCache.getAuxPageAddresses(frameIndex);
+            frameMemory.pageSizes = addressCache.getPageSizes(frameIndex);
+            frameMemory.auxPageSizes = addressCache.getAuxPageSizes(frameIndex);
+        } else if (format == PartitionFormat.PARQUET) {
+            parquetDecoder.of(addressCache.getParquetFd(frameIndex));
+            parquetBuffers.decode(parquetDecoder, parquetColumnTypes, addressCache.getParquetRowGroup(frameIndex));
 
-        frameMemory.pageAddresses = addressCache.getPageAddresses(frameIndex);
-        frameMemory.auxPageAddresses = addressCache.getAuxPageAddresses(frameIndex);
-        frameMemory.pageSizes = addressCache.getPageSizes(frameIndex);
-        frameMemory.auxPageSizes = addressCache.getAuxPageSizes(frameIndex);
-        frameMemory.frameIndex = frameIndex;
+            frameMemory.pageAddresses = parquetBuffers.pageAddresses;
+            frameMemory.auxPageAddresses = parquetBuffers.auxPageAddresses;
+            frameMemory.pageSizes = parquetBuffers.pageSizes;
+            frameMemory.auxPageSizes = parquetBuffers.auxPageSizes;
+        }
 
+        frameMemory.frameIndex = frameIndex;
+        frameMemory.frameFormat = format;
         return frameMemory;
     }
 
     public void of(PageFrameAddressCache addressCache) {
         this.addressCache = addressCache;
         frameMemory.clear();
+        parquetBuffers.reopen();
+        parquetColumnTypes.reopen();
+        addressCache.copyColumnTypes(parquetColumnTypes);
+    }
+
+    private static class ParquetBuffers implements QuietCloseable, Reopenable, Mutable {
+        private final LongList auxPageAddresses = new LongList();
+        private final LongList auxPageSizes = new LongList();
+        private final LongList pageAddresses = new LongList();
+        private final LongList pageSizes = new LongList();
+        private final RowGroupBuffers rowGroupBuffers = new RowGroupBuffers();
+
+        @Override
+        public void clear() {
+            pageAddresses.clear();
+            pageSizes.clear();
+            auxPageAddresses.clear();
+            auxPageSizes.clear();
+        }
+
+        @Override
+        public void close() {
+            Misc.free(rowGroupBuffers);
+            clear();
+        }
+
+        public void decode(PartitionDecoder parquetDecoder, DirectIntList parquetColumnTypes, int rowGroup) {
+            parquetDecoder.decodeRowGroup(rowGroupBuffers, parquetColumnTypes, rowGroup);
+            // TODO(puzpuzpuz): we need to map Parquet columns to what's required by the query
+            clear();
+            for (int i = 0, n = parquetDecoder.getMetadata().columnCount(); i < n; i++) {
+                pageAddresses.add(rowGroupBuffers.getChunkDataPtr(i));
+                pageSizes.add(rowGroupBuffers.getChunkDataSize(i));
+                auxPageAddresses.add(rowGroupBuffers.getChunkAuxPtr(i));
+                auxPageSizes.add(rowGroupBuffers.getChunkAuxSize(i));
+            }
+        }
+
+        @Override
+        public void reopen() {
+            rowGroupBuffers.reopen();
+        }
     }
 
     private class PageFrameMemoryImpl implements PageFrameMemory, Mutable {

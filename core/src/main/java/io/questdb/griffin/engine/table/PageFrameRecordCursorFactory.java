@@ -163,6 +163,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     @Override
     protected void _close() {
         super._close();
+        Misc.free(cursor);
         Misc.free(filter);
         Misc.free(fwdPageFrameCursor);
         Misc.free(bwdPageFrameCursor);

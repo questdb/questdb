@@ -416,7 +416,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         // long list is a set of two longs per partition - (timestamp, partitionNamePosition)
         for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
             long partitionTimestamp = extraInfo.getQuick(i * 2);
-            if (!svc.convertPartition(partitionTimestamp)) {
+            if (!svc.convertPartitionToParquet(partitionTimestamp)) {
                 throw CairoException.partitionManipulationRecoverable()
                         .put("could not convert partition to parquet [table=").put(tableToken != null ? tableToken.getTableName() : "<null>")
                         .put(", partitionTimestamp=").ts(partitionTimestamp)

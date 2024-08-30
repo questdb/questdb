@@ -31,17 +31,18 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.Misc;
+import io.questdb.std.Rows;
 import org.jetbrains.annotations.Nullable;
 
 public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
     private final int columnCount;
     private final IntList columnIndexes;
-    private final LongList columnPageAddress = new LongList();
+    private final LongList columnPageAddresses = new LongList();
     private final LongList columnPageNextAddress = new LongList();
     private final IntList columnSizeShifts;
-    // Holds PageFrame#*_FORMAT per each partition.
-    private final ByteList formats = new ByteList();
     private final TableReaderPageFrame frame = new TableReaderPageFrame();
     private final int pageFrameMaxRows;
     private final int pageFrameMinRows;
@@ -50,9 +51,9 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
     private final IntList pages = new IntList();
     private final LongList topsRemaining = new LongList();
     private final int workerCount;
-    private long currentPageFrameRowLimit;
     private PartitionFrameCursor partitionFrameCursor;
     private TableReader reader;
+    private long reenterPageFrameRowLimit;
     private boolean reenterPartitionFrame = false;
     private long reenterPartitionHi;
     private int reenterPartitionIndex;
@@ -106,18 +107,32 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
     @Override
     public @Nullable PageFrame next() {
         if (reenterPartitionFrame) {
-            return computeFrame(reenterPartitionLo, reenterPartitionHi);
+            return computeNativeFrame(reenterPartitionLo, reenterPartitionHi);
         }
-        PartitionFrame partitionFrame = partitionFrameCursor.next();
+
+        final PartitionFrame partitionFrame = partitionFrameCursor.next();
         if (partitionFrame != null) {
-            reenterPartitionIndex = partitionFrame.getPartitionIndex();
+            if (partitionFrame.getPartitionFormat() == PartitionFormat.PARQUET) {
+                columnPageAddresses.clear();
+                pageSizes.clear();
+
+                frame.partitionLo = partitionFrame.getRowLo();
+                frame.partitionHi = partitionFrame.getRowHi();
+                frame.format = PartitionFormat.PARQUET;
+                frame.parquetFd = partitionFrame.getParquetFd();
+                frame.rowGroupIndex = partitionFrame.getParquetRowGroup();
+                frame.partitionIndex = partitionFrame.getPartitionIndex();
+                return frame;
+            }
+
             final long lo = partitionFrame.getRowLo();
             final long hi = partitionFrame.getRowHi();
-            currentPageFrameRowLimit = Math.min(
+            reenterPartitionIndex = partitionFrame.getPartitionIndex();
+            reenterPageFrameRowLimit = Math.min(
                     pageFrameMaxRows,
                     Math.max(pageFrameMinRows, (hi - lo) / workerCount)
             );
-            return computeFrame(lo, hi);
+            return computeNativeFrame(lo, hi);
         }
         return null;
     }
@@ -145,21 +160,19 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
         partitionFrameCursor.toTop();
         pages.setAll(columnCount, 0);
         topsRemaining.setAll(columnCount, 0);
-        columnPageAddress.setAll(2 * columnCount, 0);
+        columnPageAddresses.setAll(2 * columnCount, 0);
         columnPageNextAddress.setAll(2 * columnCount, 0);
         pageRowsRemaining.setAll(columnCount, -1L);
         pageSizes.setAll(2 * columnCount, -1L);
-        formats.setAll(formats.size(), (byte) -1);
-        formats.clear();
         reenterPartitionFrame = false;
     }
 
-    private TableReaderPageFrame computeFrame(final long partitionLo, final long partitionHi) {
+    private TableReaderPageFrame computeNativeFrame(final long partitionLo, final long partitionHi) {
         final int base = reader.getColumnBase(reenterPartitionIndex);
 
         // we may need to split this partition frame either along "top" lines, or along
         // max page frame sizes; to do this, we calculate min top value from given position
-        long adjustedLo = Math.max(partitionLo, partitionHi - currentPageFrameRowLimit);
+        long adjustedLo = Math.max(partitionLo, partitionHi - reenterPageFrameRowLimit);
         for (int i = 0; i < columnCount; i++) {
             final int columnIndex = columnIndexes.getQuick(i);
             long top = reader.getColumnTop(base, columnIndex);
@@ -185,7 +198,7 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
                     final long address = colMem.getPageAddress(0);
                     final long addressSize = partitionHiAdjusted << sh;
                     final long offset = partitionLoAdjusted << sh;
-                    columnPageAddress.setQuick(2 * i, address + offset);
+                    columnPageAddresses.setQuick(2 * i, address + offset);
                     pageSizes.setQuick(2 * i, addressSize - offset);
                 } else {
                     final int columnType = reader.getMetadata().getColumnType(columnIndex);
@@ -199,14 +212,14 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
                     // some var-size columns may not have data memory (fully inlined)
                     final long dataAddress = dataSize > 0 ? colMem.getPageAddress(0) : 0;
 
-                    columnPageAddress.setQuick(2 * i, dataAddress);
-                    columnPageAddress.setQuick(2 * i + 1, auxAddress + auxOffsetLo);
+                    columnPageAddresses.setQuick(2 * i, dataAddress);
+                    columnPageAddresses.setQuick(2 * i + 1, auxAddress + auxOffsetLo);
                     pageSizes.setQuick(2 * i, dataSize);
                     pageSizes.setQuick(2 * i + 1, auxOffsetHi - auxOffsetLo);
                 }
             } else { // column top
-                columnPageAddress.setQuick(2 * i, 0);
-                columnPageAddress.setQuick(2 * i + 1, 0);
+                columnPageAddresses.setQuick(2 * i, 0);
+                columnPageAddresses.setQuick(2 * i + 1, 0);
                 // data page size is used by VectorAggregateFunction as the size hint
                 // in the following way:
                 //   size = page_size >>> column_size_hint
@@ -215,9 +228,6 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
                 pageSizes.setQuick(2 * i + 1, 0);
             }
         }
-
-        // TODO(puzpuzpuz): we should get the format from table reader
-        formats.extendAndSet(reenterPartitionIndex, PageFrame.NATIVE_FORMAT);
 
         // it is possible that all columns in partition frame are empty, but it doesn't mean
         // the partition frame size is 0; sometimes we may want to imply nulls
@@ -231,18 +241,24 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
 
         frame.partitionLo = adjustedLo;
         frame.partitionHi = partitionHi;
+        frame.format = PartitionFormat.NATIVE;
+        frame.parquetFd = -1;
+        frame.rowGroupIndex = -1;
         frame.partitionIndex = reenterPartitionIndex;
         return frame;
     }
 
     private class TableReaderPageFrame implements PageFrame {
+        private byte format;
+        private long parquetFd;
         private long partitionHi;
         private int partitionIndex;
         private long partitionLo;
+        private int rowGroupIndex;
 
         @Override
         public long getAuxPageAddress(int columnIndex) {
-            return columnPageAddress.getQuick(2 * columnIndex + 1);
+            return columnPageAddresses.getQuick(2 * columnIndex + 1);
         }
 
         @Override
@@ -262,17 +278,27 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
 
         @Override
         public byte getFormat() {
-            return formats.getQuick(partitionIndex);
+            return format;
         }
 
         @Override
         public long getPageAddress(int columnIndex) {
-            return columnPageAddress.getQuick(2 * columnIndex);
+            return columnPageAddresses.getQuick(2 * columnIndex);
         }
 
         @Override
         public long getPageSize(int columnIndex) {
             return pageSizes.getQuick(2 * columnIndex);
+        }
+
+        @Override
+        public long getParquetFd() {
+            return parquetFd;
+        }
+
+        @Override
+        public int getParquetRowGroup() {
+            return rowGroupIndex;
         }
 
         @Override

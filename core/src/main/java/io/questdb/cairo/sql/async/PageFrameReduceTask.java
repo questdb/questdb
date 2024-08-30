@@ -33,11 +33,12 @@ import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Misc;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.StringSink;
 
 import java.io.Closeable;
 
-public class PageFrameReduceTask implements Closeable {
+public class PageFrameReduceTask implements QuietCloseable {
     public static final byte TYPE_FILTER = 0;
     public static final byte TYPE_GROUP_BY = 1;
     public static final byte TYPE_GROUP_BY_NOT_KEYED = 2;
@@ -188,14 +189,14 @@ public class PageFrameReduceTask implements Closeable {
 
     public void releaseFrameMemory() {
         frameMemory = null;
-        frameMemoryPool.close();
+        Misc.free(frameMemoryPool);
     }
 
     public void resetCapacities() {
         filteredRows.resetCapacity();
         dataAddresses.resetCapacity();
         auxAddresses.resetCapacity();
-        frameMemoryPool.close();
+        Misc.free(frameMemoryPool);
     }
 
     public void setErrorMsg(Throwable th) {

@@ -29,8 +29,10 @@ import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.CountDownLatchSPI;
+import io.questdb.std.Misc;
+import io.questdb.std.QuietCloseable;
 
-public class LatestByTask {
+public class LatestByTask implements QuietCloseable {
     private final PageFrameMemoryPool frameMemoryPool = new PageFrameMemoryPool();
     private long argsAddress;
     private ExecutionCircuitBreaker circuitBreaker;
@@ -48,6 +50,11 @@ public class LatestByTask {
     private long valueBaseAddress;
     private int valueBlockCapacity;
     private long valuesMemorySize;
+
+    @Override
+    public void close() {
+        Misc.free(frameMemoryPool);
+    }
 
     public void of(
             PageFrameAddressCache addressCache,

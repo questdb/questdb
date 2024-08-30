@@ -89,6 +89,19 @@ public interface MetadataService {
 
     void changeCacheFlag(int columnIndex, boolean isCacheOn);
 
+    void changeColumnType(
+            CharSequence columnName,
+            int newType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity,
+            boolean isSequential,
+            SecurityContext securityContext
+    );
+
+    boolean convertPartitionToParquet(long partitionTimestamp);
+
     AttachDetachStatus detachPartition(long partitionTimestamp);
 
     void disableDeduplication();
@@ -113,8 +126,6 @@ public interface MetadataService {
 
     boolean removePartition(long partitionTimestamp);
 
-    boolean convertPartition(long partitionTimestamp);
-
     default void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName) {
         renameColumn(columnName, newName, null);
     }
@@ -130,16 +141,5 @@ public interface MetadataService {
     void squashPartitions();
 
     void tick();
-
-    void changeColumnType(
-            CharSequence columnName,
-            int newType,
-            int symbolCapacity,
-            boolean symbolCacheFlag,
-            boolean isIndexed,
-            int indexValueBlockCapacity,
-            boolean isSequential,
-            SecurityContext securityContext
-    );
 
 }

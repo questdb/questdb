@@ -46,6 +46,7 @@ public abstract class AbstractPartitionFrameCursorFactory implements PartitionFr
     public void close() {
     }
 
+    @Override
     public RecordMetadata getMetadata() {
         return metadata;
     }

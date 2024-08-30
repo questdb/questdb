@@ -1,4 +1,4 @@
-use crate::parquet_read::{ColumnChunkBuffers, ColumnMeta, ParquetDecoder};
+use crate::parquet_read::{ColumnMeta, ParquetDecoder};
 use crate::parquet_write::schema::ColumnType;
 use crate::parquet_write::QDB_TYPE_META_PREFIX;
 use parquet2::metadata::Descriptor;
@@ -9,10 +9,11 @@ use parquet2::schema::types::{
 };
 use std::collections::HashMap;
 use std::fs::File;
+use std::mem::ManuallyDrop;
 
 impl ParquetDecoder {
-    pub fn read(mut reader: File) -> anyhow::Result<Self> {
-        let metadata = read_metadata(&mut reader)?;
+    pub fn read(mut file: File) -> anyhow::Result<Self> {
+        let metadata = read_metadata(&mut file)?;
         let col_len = metadata.schema_descr.columns().len();
         let additional_meta: Option<HashMap<String, Option<String>>> =
             metadata.key_value_metadata.as_ref().map(|vec| {
@@ -20,8 +21,12 @@ impl ParquetDecoder {
                     .map(|kv| (kv.key.to_string(), kv.value.to_owned()))
                     .collect()
             });
+        let mut row_group_sizes: Vec<i32> = Vec::with_capacity(metadata.row_groups.len());
         let mut columns = Vec::with_capacity(col_len);
-        let mut column_buffers = Vec::with_capacity(col_len);
+
+        for (_, row_group) in metadata.row_groups.iter().enumerate() {
+            row_group_sizes.push(row_group.num_rows() as i32)
+        }
 
         for (column_id, f) in metadata.schema_descr.columns().iter().enumerate() {
             // Some types are not supported, this will skip them.
@@ -35,12 +40,10 @@ impl ParquetDecoder {
                     typ: data_type,
                     column_type,
                     id: column_id as i32,
-                    name_size: name.len() as u32,
+                    name_size: name.len() as i32,
                     name_ptr: name.as_ptr(),
                     name_vec: name,
                 });
-
-                column_buffers.push(ColumnChunkBuffers::new());
             }
         }
 
@@ -49,12 +52,13 @@ impl ParquetDecoder {
             col_count: columns.len() as i32,
             row_count: metadata.num_rows,
             row_group_count: metadata.row_groups.len() as i32,
-            file: reader,
+            row_group_sizes_ptr: row_group_sizes.as_ptr(),
+            row_group_sizes,
+            file: ManuallyDrop::new(file),
             metadata,
-            decompress_buffer: vec![],
+            decompress_buf: vec![],
             columns_ptr: columns.as_ptr(),
             columns,
-            column_buffers,
         };
 
         Ok(decoder)

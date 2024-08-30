@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.table.parquet;
 
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
@@ -69,9 +70,10 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                     " timestamp_sequence(400000000000, 500) designated_ts" +
                     " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");
 
+            long fd = -1;
             try (
                     Path path = new Path();
-                    PartitionDecoder partitionDecoder = new PartitionDecoder(engine.getConfiguration().getFilesFacade());
+                    PartitionDecoder partitionDecoder = new PartitionDecoder();
                     PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
                     TableReader reader = engine.getReader("x")
             ) {
@@ -79,7 +81,8 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
                 PartitionEncoder.encode(partitionDescriptor, path);
 
-                partitionDecoder.of(path.$());
+                fd = TableUtils.openRO(ff, path.$(), LOG);
+                partitionDecoder.of(fd);
                 Assert.assertEquals(reader.getMetadata().getColumnCount(), partitionDecoder.getMetadata().columnCount());
                 Assert.assertEquals(rows, partitionDecoder.getMetadata().rowCount());
                 Assert.assertEquals(1, partitionDecoder.getMetadata().rowGroupCount());
@@ -92,6 +95,8 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                     Assert.assertEquals("column: " + i, i, partitionDecoder.getMetadata().columnId(i));
                     Assert.assertEquals("column: " + i, readerMeta.getColumnType(i), partitionDecoder.getMetadata().getColumnType(i));
                 }
+            } finally {
+                ff.close(fd);
             }
         });
     }

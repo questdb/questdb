@@ -361,7 +361,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
     public void init(PageFrameMemory frameMemory) {
         this.frameIndex = frameMemory.getFrameIndex();
         this.frameFormat = frameMemory.getFrameFormat();
-        this.stableStrings = (frameFormat == PageFrame.NATIVE_FORMAT);
+        this.stableStrings = (frameFormat == PartitionFormat.NATIVE);
         this.rowIdOffset = frameMemory.getRowIdOffset();
         this.pageAddresses = frameMemory.getPageAddresses();
         this.auxPageAddresses = frameMemory.getAuxPageAddresses();
@@ -532,7 +532,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
     ) {
         this.frameIndex = frameIndex;
         this.frameFormat = frameFormat;
-        this.stableStrings = (frameFormat == PageFrame.NATIVE_FORMAT);
+        this.stableStrings = (frameFormat == PartitionFormat.NATIVE);
         this.rowIdOffset = rowIdOffset;
         this.pageAddresses = pageAddresses;
         this.auxPageAddresses = auxPageAddresses;

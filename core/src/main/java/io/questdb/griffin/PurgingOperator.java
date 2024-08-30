@@ -91,7 +91,7 @@ public final class PurgingOperator {
                         if (!asyncOnly) {
                             if (partitionTimestamp != TABLE_ROOT_PARTITION) {
                                 path.trimTo(rootLen);
-                                TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
+                                TableUtils.setPathForNativePartition(path, partitionBy, partitionTimestamp, partitionNameTxn);
                                 int pathPartitionLen = path.size();
                                 TableUtils.dFile(path, columnName, columnVersion);
                                 columnPurged = ff.removeQuiet(path.$());

@@ -45,6 +45,8 @@ public class PageFrameAddressCache implements Mutable {
     private final long nativeCacheSizeThreshold;
     private final ObjList<LongList> pageAddresses = new ObjList<>();
     private final ObjList<LongList> pageSizes = new ObjList<>();
+    private final LongList parquetFds = new LongList();
+    private final IntList parquetRowGroups = new IntList();
     // Makes it possible to determine real row id, not the one relative to the page.
     private final LongList rowIdOffsets = new LongList();
     // Sum of all LongList sizes.
@@ -60,7 +62,7 @@ public class PageFrameAddressCache implements Mutable {
             return; // The page frame is already cached
         }
 
-        if (frame.getFormat() == PageFrame.NATIVE_FORMAT) {
+        if (frame.getFormat() == PartitionFormat.NATIVE) {
             final LongList framePageAddresses = longListPool.next();
             final LongList framePageSizes = longListPool.next();
             final LongList frameAuxPageAddresses = longListPool.next();
@@ -93,6 +95,8 @@ public class PageFrameAddressCache implements Mutable {
 
         frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
         frameFormats.add(frame.getFormat());
+        parquetFds.add(frame.getParquetFd());
+        parquetRowGroups.add(frame.getParquetRowGroup());
         rowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
     }
 
@@ -100,6 +104,8 @@ public class PageFrameAddressCache implements Mutable {
     public void clear() {
         frameSizes.clear();
         frameFormats.clear();
+        parquetFds.clear();
+        parquetRowGroups.clear();
         pageAddresses.clear();
         auxPageAddresses.clear();
         pageSizes.clear();
@@ -111,6 +117,12 @@ public class PageFrameAddressCache implements Mutable {
             longListPool.resetCapacity();
         }
         cacheSize = 0;
+    }
+
+    public void copyColumnTypes(DirectIntList columnTypesCopy) {
+        for (int i = 0; i < columnCount; i++) {
+            columnTypesCopy.add(columnTypes.getQuick(i));
+        }
     }
 
     public LongList getAuxPageAddresses(int frameIndex) {
@@ -145,13 +157,21 @@ public class PageFrameAddressCache implements Mutable {
         return pageSizes.getQuick(frameIndex);
     }
 
+    public long getParquetFd(int frameIndex) {
+        return parquetFds.getQuick(frameIndex);
+    }
+
+    public int getParquetRowGroup(int frameIndex) {
+        return parquetRowGroups.getQuick(frameIndex);
+    }
+
     public long getRowIdOffset(int frameIndex) {
         return rowIdOffsets.getQuick(frameIndex);
     }
 
     public boolean hasColumnTops(int frameIndex) {
         final byte frameFormat = frameFormats.getQuick(frameIndex);
-        assert frameFormat == PageFrame.NATIVE_FORMAT;
+        assert frameFormat == PartitionFormat.NATIVE;
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             if (pageAddresses.getQuick(frameIndex).getQuick(columnIndex) == 0
                     // VARCHAR column that contains short strings will have zero data vector,

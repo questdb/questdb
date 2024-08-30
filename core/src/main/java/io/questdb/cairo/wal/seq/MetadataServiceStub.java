@@ -49,7 +49,7 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default boolean convertPartition(long partitionTimestamp) {
+    default boolean convertPartitionToParquet(long partitionTimestamp) {
         throw CairoException.critical(0).put("convert partition to parquet does not update sequencer metadata");
     }
 

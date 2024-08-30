@@ -13,7 +13,7 @@ use crate::parquet_read::slicer::{
     BooleanBitmapSlicer, DataPageFixedSlicer, DeltaBinaryPackedSlicer, DeltaBytesArraySlicer,
     DeltaLengthArraySlicer, PlainVarSlicer, ValueConvertSlicer,
 };
-use crate::parquet_read::{ColumnChunkBuffers, ParquetDecoder};
+use crate::parquet_read::{ColumnChunkBuffers, ParquetDecoder, RowGroupBuffers};
 use crate::parquet_write::schema::ColumnType;
 use crate::parquet_write::ParquetResult;
 use anyhow::{anyhow, Context};
@@ -30,12 +30,25 @@ use parquet2::schema::types::{
 };
 use parquet2::write::Version;
 use std::collections::VecDeque;
+use std::ops::DerefMut;
 use std::ptr;
+
+impl RowGroupBuffers {
+    pub fn new() -> Self {
+        Self {
+            column_bufs_ptr: ptr::null_mut(),
+            column_bufs: Vec::new(),
+        }
+    }
+
+    pub fn refresh_ptrs(&mut self) {
+        self.column_bufs_ptr = self.column_bufs.as_mut_ptr();
+    }
+}
 
 impl ColumnChunkBuffers {
     pub fn new() -> Self {
         Self {
-            row_count: 0,
             data_vec: Vec::new(),
             data_ptr: ptr::null_mut(),
             data_size: 0,
@@ -43,6 +56,14 @@ impl ColumnChunkBuffers {
             aux_ptr: ptr::null_mut(),
             aux_size: 0,
         }
+    }
+
+    pub fn refresh_ptrs(&mut self) {
+        self.data_size = self.data_vec.len();
+        self.data_ptr = self.data_vec.as_mut_ptr();
+
+        self.aux_size = self.aux_vec.len();
+        self.aux_ptr = self.aux_vec.as_mut_ptr();
     }
 }
 
@@ -59,18 +80,22 @@ const TIMESTAMP_96_EMPTY: [u8; 12] = [0; 12];
 impl ParquetDecoder {
     pub fn decode_column_chunk(
         &mut self,
-        row_group: usize,
+        column_chunk_bufs: &mut ColumnChunkBuffers,
+        row_group_index: usize,
         file_column_index: usize,
-        column: usize,
         column_type: ColumnType,
-    ) -> anyhow::Result<()> {
-        let columns = self.metadata.row_groups[row_group].columns();
+    ) -> anyhow::Result<usize> {
+        let columns = self.metadata.row_groups[row_group_index].columns();
         let column_metadata = &columns[file_column_index];
-        let buffers = &mut self.column_buffers[column];
 
         let chunk_size = column_metadata.compressed_size().try_into()?;
-        let page_reader =
-            get_page_iterator(column_metadata, &mut self.file, None, vec![], chunk_size)?;
+        let page_reader = get_page_iterator(
+            column_metadata,
+            self.file.deref_mut(),
+            None,
+            vec![],
+            chunk_size,
+        )?;
 
         let version = match self.metadata.version {
             1 => Ok(Version::V1),
@@ -83,19 +108,25 @@ impl ParquetDecoder {
 
         let mut dict = None;
         let mut row_count = 0usize;
-        buffers.aux_vec.clear();
-        buffers.data_vec.clear();
+        column_chunk_bufs.aux_vec.clear();
+        column_chunk_bufs.data_vec.clear();
         for maybe_page in page_reader {
             let page = maybe_page?;
-            let page = decompress(page, &mut self.decompress_buffer)?;
+            let page = decompress(page, &mut self.decompress_buf)?;
 
             match page {
                 Page::Dict(page) => {
                     dict = Some(page);
                 }
                 Page::Data(page) => {
-                    row_count += decoder_page(version, &page, dict.as_ref(), buffers, column_type)
-                        .with_context(|| {
+                    row_count += decoder_page(
+                        version,
+                        &page,
+                        dict.as_ref(),
+                        column_chunk_bufs,
+                        column_type,
+                    )
+                    .with_context(|| {
                         format!(
                             "failed to decode row group [column={}, group={}]",
                             self.metadata.schema_descr.columns()[file_column_index]
@@ -103,21 +134,16 @@ impl ParquetDecoder {
                                 .primitive_type
                                 .field_info
                                 .name,
-                            row_group
+                            row_group_index
                         )
                     })?
                 }
             };
         }
 
-        buffers.data_size = buffers.data_vec.len();
-        buffers.data_ptr = buffers.data_vec.as_mut_ptr();
+        column_chunk_bufs.refresh_ptrs();
 
-        buffers.aux_size = buffers.aux_vec.len();
-        buffers.aux_ptr = buffers.aux_vec.as_mut_ptr();
-        buffers.row_count = row_count;
-
-        Ok(())
+        Ok(row_count)
     }
 }
 
@@ -125,7 +151,7 @@ pub fn decoder_page(
     version: Version,
     page: &DataPage,
     dict: Option<&DictPage>,
-    buffers: &mut ColumnChunkBuffers,
+    bufs: &mut ColumnChunkBuffers,
     column_type: ColumnType,
 ) -> anyhow::Result<usize> {
     let (_rep_levels, _, values_buffer) = split_buffer(page)?;
@@ -151,7 +177,7 @@ pub fn decoder_page(
                         row_count,
                         &mut FixedInt2ShortColumnSink::new(
                             &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
-                            buffers,
+                            bufs,
                             &SHORT_NULL,
                         ),
                     )?;
@@ -169,7 +195,7 @@ pub fn decoder_page(
                         row_count,
                         &mut FixedInt2ShortColumnSink::new(
                             &mut DeltaBinaryPackedSlicer::<2>::try_new(values_buffer, row_count)?,
-                            buffers,
+                            bufs,
                             &SHORT_NULL,
                         ),
                     )?;
@@ -182,7 +208,7 @@ pub fn decoder_page(
                         row_count,
                         &mut FixedInt2ByteColumnSink::new(
                             &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
-                            buffers,
+                            bufs,
                             &BYTE_NULL,
                         ),
                     )?;
@@ -195,7 +221,7 @@ pub fn decoder_page(
                         row_count,
                         &mut FixedInt2ByteColumnSink::new(
                             &mut DeltaBinaryPackedSlicer::<1>::try_new(values_buffer, row_count)?,
-                            buffers,
+                            bufs,
                             &BYTE_NULL,
                         ),
                     )?;
@@ -213,7 +239,7 @@ pub fn decoder_page(
                         row_count,
                         &mut FixedIntColumnSink::new(
                             &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
-                            buffers,
+                            bufs,
                             &INT_NULL,
                         ),
                     )?;
@@ -235,7 +261,7 @@ pub fn decoder_page(
                                     buff.copy_from_slice(&date.to_le_bytes());
                                 },
                             ),
-                            buffers,
+                            bufs,
                             &LONG_NULL,
                         ),
                     )?;
@@ -253,7 +279,7 @@ pub fn decoder_page(
                         row_count,
                         &mut FixedIntColumnSink::new(
                             &mut DeltaBinaryPackedSlicer::<4>::try_new(values_buffer, row_count)?,
-                            buffers,
+                            bufs,
                             &INT_NULL,
                         ),
                     )?;
@@ -276,7 +302,7 @@ pub fn decoder_page(
                         version,
                         page,
                         row_count,
-                        &mut FixedIntColumnSink::new(&mut slicer, buffers, &INT_NULL),
+                        &mut FixedIntColumnSink::new(&mut slicer, bufs, &INT_NULL),
                     )?;
 
                     Ok(row_count)
@@ -305,7 +331,7 @@ pub fn decoder_page(
                                 row_count,
                                 &mut IntDecimalColumnSink::new(
                                     &mut slicer,
-                                    buffers,
+                                    bufs,
                                     &DOUBLE_NULL,
                                     scale as i32,
                                 ),
@@ -320,7 +346,7 @@ pub fn decoder_page(
                                 row_count,
                                 &mut IntDecimalColumnSink::new(
                                     &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
-                                    buffers,
+                                    bufs,
                                     &DOUBLE_NULL,
                                     scale as i32,
                                 ),
@@ -347,7 +373,7 @@ pub fn decoder_page(
                         version,
                         page,
                         row_count,
-                        &mut FixedInt2ShortColumnSink::new(&mut slicer, buffers, &SHORT_NULL),
+                        &mut FixedInt2ShortColumnSink::new(&mut slicer, bufs, &SHORT_NULL),
                     )?;
 
                     Ok(row_count)
@@ -389,7 +415,7 @@ pub fn decoder_page(
                             version,
                             page,
                             row_count,
-                            &mut FixedLongColumnSink::new(&mut slicer, buffers, &LONG_NULL),
+                            &mut FixedLongColumnSink::new(&mut slicer, bufs, &LONG_NULL),
                         )?;
                     } else {
                         unreachable!("Timestamp logical type must be set");
@@ -411,7 +437,7 @@ pub fn decoder_page(
                         row_count,
                         &mut FixedLongColumnSink::new(
                             &mut DataPageFixedSlicer::<8>::new(values_buffer, row_count),
-                            buffers,
+                            bufs,
                             &LONG_NULL,
                         ),
                     )?;
@@ -432,7 +458,7 @@ pub fn decoder_page(
                         row_count,
                         &mut FixedLongColumnSink::new(
                             &mut DeltaBinaryPackedSlicer::<8>::try_new(values_buffer, row_count)?,
-                            buffers,
+                            bufs,
                             &LONG_NULL,
                         ),
                     )?;
@@ -458,7 +484,7 @@ pub fn decoder_page(
                         version,
                         page,
                         row_count,
-                        &mut FixedLongColumnSink::new(&mut slicer, buffers, &LONG_NULL),
+                        &mut FixedLongColumnSink::new(&mut slicer, bufs, &LONG_NULL),
                     )?;
 
                     Ok(row_count)
@@ -475,7 +501,7 @@ pub fn decoder_page(
                         row_count,
                         &mut ReverseFixedColumnSink::new(
                             &mut DataPageFixedSlicer::<16>::new(values_buffer, row_count),
-                            buffers,
+                            bufs,
                             UUID_NULL,
                         ),
                     )?;
@@ -493,7 +519,7 @@ pub fn decoder_page(
                         row_count,
                         &mut FixedLong256ColumnSink::new(
                             &mut DataPageFixedSlicer::<32>::new(values_buffer, row_count),
-                            buffers,
+                            bufs,
                             &LONG256_NULL,
                         ),
                     )?;
@@ -513,7 +539,7 @@ pub fn decoder_page(
                         version,
                         page,
                         row_count,
-                        &mut StringColumnSink::new(&mut slicer, buffers),
+                        &mut StringColumnSink::new(&mut slicer, bufs),
                     )?;
                     Ok(row_count)
                 }
@@ -524,7 +550,7 @@ pub fn decoder_page(
                         version,
                         page,
                         row_count,
-                        &mut VarcharColumnSink::new(&mut slicer, buffers),
+                        &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
                     Ok(row_count)
                 }
@@ -545,7 +571,7 @@ pub fn decoder_page(
                         version,
                         page,
                         row_count,
-                        &mut VarcharColumnSink::new(&mut slicer, buffers),
+                        &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
                     Ok(row_count)
                 }
@@ -556,7 +582,7 @@ pub fn decoder_page(
                         version,
                         page,
                         row_count,
-                        &mut StringColumnSink::new(&mut slicer, buffers),
+                        &mut StringColumnSink::new(&mut slicer, bufs),
                     )?;
                     Ok(row_count)
                 }
@@ -567,7 +593,7 @@ pub fn decoder_page(
                         version,
                         page,
                         row_count,
-                        &mut VarcharColumnSink::new(&mut slicer, buffers),
+                        &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
                     Ok(row_count)
                 }
@@ -578,7 +604,7 @@ pub fn decoder_page(
                         version,
                         page,
                         row_count,
-                        &mut VarcharColumnSink::new(&mut slicer, buffers),
+                        &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
                     Ok(row_count)
                 }
@@ -595,7 +621,7 @@ pub fn decoder_page(
                         version,
                         page,
                         row_count,
-                        &mut BinaryColumnSink::new(&mut slicer, buffers),
+                        &mut BinaryColumnSink::new(&mut slicer, bufs),
                     )?;
                     Ok(row_count)
                 }
@@ -605,7 +631,7 @@ pub fn decoder_page(
                         version,
                         page,
                         row_count,
-                        &mut BinaryColumnSink::new(&mut slicer, buffers),
+                        &mut BinaryColumnSink::new(&mut slicer, bufs),
                     )?;
                     Ok(row_count)
                 }
@@ -621,7 +647,7 @@ pub fn decoder_page(
                         version,
                         page,
                         row_count,
-                        &mut BinaryColumnSink::new(&mut slicer, buffers),
+                        &mut BinaryColumnSink::new(&mut slicer, bufs),
                     )?;
                     Ok(row_count)
                 }
@@ -638,7 +664,7 @@ pub fn decoder_page(
                         row_count,
                         &mut NanoTimestampColumnSink::new(
                             &mut DataPageFixedSlicer::<12>::new(values_buffer, row_count),
-                            buffers,
+                            bufs,
                             &LONG_NULL,
                         ),
                     )?;
@@ -661,7 +687,7 @@ pub fn decoder_page(
                         version,
                         page,
                         row_count,
-                        &mut NanoTimestampColumnSink::new(&mut slicer, buffers, &LONG_NULL),
+                        &mut NanoTimestampColumnSink::new(&mut slicer, bufs, &LONG_NULL),
                     )?;
                     Ok(row_count)
                 }
@@ -669,8 +695,8 @@ pub fn decoder_page(
             }
         }
         (typ, None, _) => {
-            buffers.aux_vec.clear();
-            buffers.aux_ptr = ptr::null_mut();
+            bufs.aux_vec.clear();
+            bufs.aux_ptr = ptr::null_mut();
 
             match (page.encoding(), dict, typ, column_type) {
                 (Encoding::Plain, None, PhysicalType::Double, ColumnType::Double) => {
@@ -680,7 +706,7 @@ pub fn decoder_page(
                         row_count,
                         &mut FixedDoubleColumnSink::new(
                             &mut DataPageFixedSlicer::<8>::new(values_buffer, row_count),
-                            buffers,
+                            bufs,
                             &DOUBLE_NULL,
                         ),
                     )?;
@@ -704,7 +730,7 @@ pub fn decoder_page(
                         version,
                         page,
                         row_count,
-                        &mut FixedDoubleColumnSink::new(&mut slicer, buffers, &DOUBLE_NULL),
+                        &mut FixedDoubleColumnSink::new(&mut slicer, bufs, &DOUBLE_NULL),
                     )?;
                     Ok(row_count)
                 }
@@ -725,7 +751,7 @@ pub fn decoder_page(
                         version,
                         page,
                         row_count,
-                        &mut FixedFloatColumnSink::new(&mut slicer, buffers, &FLOAT_NULL),
+                        &mut FixedFloatColumnSink::new(&mut slicer, bufs, &FLOAT_NULL),
                     )?;
                     Ok(row_count)
                 }
@@ -736,7 +762,7 @@ pub fn decoder_page(
                         row_count,
                         &mut FixedFloatColumnSink::new(
                             &mut DataPageFixedSlicer::<4>::new(values_buffer, row_count),
-                            buffers,
+                            bufs,
                             &FLOAT_NULL,
                         ),
                     )?;
@@ -750,7 +776,7 @@ pub fn decoder_page(
                         row_count,
                         &mut FixedBooleanColumnSink::new(
                             &mut BooleanBitmapSlicer::new(values_buffer, row_count),
-                            buffers,
+                            bufs,
                             &[0],
                         ),
                     )?;
@@ -764,7 +790,7 @@ pub fn decoder_page(
                         row_count,
                         &mut FixedBooleanColumnSink::new(
                             &mut BooleanBitmapSlicer::new(values_buffer, row_count),
-                            buffers,
+                            bufs,
                             &[0],
                         ),
                     )?;
@@ -876,7 +902,7 @@ fn _decode_bitmap_v1(buffer: &[u8], count: usize) -> anyhow::Result<bitpacked::D
 #[cfg(test)]
 mod tests {
     use crate::parquet_read::decode::{INT_NULL, LONG_NULL, UUID_NULL};
-    use crate::parquet_read::ParquetDecoder;
+    use crate::parquet_read::{ColumnChunkBuffers, ParquetDecoder};
     use crate::parquet_write::file::ParquetWriter;
     use crate::parquet_write::schema::{Column, ColumnType, Partition};
     use crate::parquet_write::varchar::{append_varchar, append_varchar_null};
@@ -912,18 +938,18 @@ mod tests {
         assert_eq!(decoder.columns.len(), column_count);
         assert_eq!(decoder.row_count, row_count);
         let row_group_count = decoder.row_group_count as usize;
+        let bufs = &mut ColumnChunkBuffers::new();
 
         for column_index in 0..column_count {
             let column_typ = decoder.columns[column_index].typ;
             for row_group_index in 0..row_group_count {
                 decoder
-                    .decode_column_chunk(row_group_index, column_index, column_index, column_typ)
+                    .decode_column_chunk(bufs, row_group_index, column_index, column_typ)
                     .unwrap();
 
-                let ccb = &decoder.column_buffers[column_index];
-                assert_eq!(ccb.data_size, expected_buff.data_vec.len());
-                assert_eq!(ccb.aux_size, 0);
-                assert_eq!(ccb.data_vec, expected_buff.data_vec);
+                assert_eq!(bufs.data_size, expected_buff.data_vec.len());
+                assert_eq!(bufs.aux_size, 0);
+                assert_eq!(bufs.data_vec, expected_buff.data_vec);
             }
         }
     }
@@ -1110,6 +1136,7 @@ mod tests {
         assert_eq!(decoder.columns.len(), column_count);
         assert_eq!(decoder.row_count, row_count);
         let row_group_count = decoder.row_group_count as usize;
+        let bufs = &mut ColumnChunkBuffers::new();
 
         for (column_index, (column_buffs, column_type)) in expected_buffs.iter().enumerate() {
             let column_type = *column_type;
@@ -1125,27 +1152,26 @@ mod tests {
                 .or(column_buffs.aux_vec.as_ref());
 
             for row_group_index in 0..row_group_count {
-                decoder
-                    .decode_column_chunk(row_group_index, column_index, column_index, column_type)
+                let row_count = decoder
+                    .decode_column_chunk(bufs, row_group_index, column_index, column_type)
                     .unwrap();
 
-                let ccb = &decoder.column_buffers[column_index];
-                assert_eq!(ccb.data_vec.len(), ccb.data_size);
+                assert_eq!(bufs.data_vec.len(), bufs.data_size);
 
                 assert!(
-                    data_offset + ccb.data_size <= expected.len(),
-                    "Assertion failed: {} + {} < {}, where read_row_offset = {}, ccb.data_size = {}, expected.len() = {}",
-                    data_offset, ccb.data_size, expected.len(), data_offset, ccb.data_size, expected.len()
+                    data_offset + bufs.data_size <= expected.len(),
+                    "Assertion failed: {} + {} < {}, where read_row_offset = {}, bufs.data_size = {}, expected.len() = {}",
+                    data_offset, bufs.data_size, expected.len(), data_offset, bufs.data_size, expected.len()
                 );
 
                 assert_eq!(
-                    expected[data_offset..data_offset + ccb.data_size],
-                    ccb.data_vec
+                    expected[data_offset..data_offset + bufs.data_size],
+                    bufs.data_vec
                 );
 
                 if let Some(expected_aux_data) = expected_aux {
                     if col_row_count == 0 {
-                        assert_eq!(&expected_aux_data[0..ccb.aux_size], ccb.aux_vec);
+                        assert_eq!(&expected_aux_data[0..bufs.aux_size], bufs.aux_vec);
                     } else if column_type == ColumnType::String {
                         let mut expected_aux_data_slice = vec![];
                         let vec_i64_ref = unsafe {
@@ -1155,19 +1181,19 @@ mod tests {
                             )
                         };
                         expected_aux_data_slice.extend_from_slice(&0u64.to_le_bytes());
-                        for i in 0..ccb.row_count {
+                        for i in 0..row_count {
                             let row_data_offset = vec_i64_ref[col_row_count + 1 + i];
                             expected_aux_data_slice.extend_from_slice(
                                 &(row_data_offset - data_offset as i64).to_le_bytes(),
                             );
                         }
-                        assert_eq!(expected_aux_data_slice, ccb.aux_vec);
+                        assert_eq!(expected_aux_data_slice, bufs.aux_vec);
                     }
                 } else {
-                    assert_eq!(ccb.aux_size, 0);
+                    assert_eq!(bufs.aux_size, 0);
                 }
-                col_row_count += ccb.row_count;
-                data_offset += ccb.data_vec.len();
+                col_row_count += row_count;
+                data_offset += bufs.data_vec.len();
             }
 
             assert_eq!(expected.len(), data_offset);

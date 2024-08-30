@@ -27,16 +27,20 @@ package io.questdb.griffin.engine.functions.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
 
 public class ReadParquetFunctionFactory implements FunctionFactory {
+    private static final Log LOG = LogFactory.getLog(ReadParquetFunctionFactory.class);
 
     @Override
     public String getSignature() {
@@ -48,7 +52,13 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPos, CairoConfiguration config, SqlExecutionContext context) throws SqlException {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPos,
+            CairoConfiguration config,
+            SqlExecutionContext context
+    ) throws SqlException {
         CharSequence filePath;
         try {
             filePath = args.getQuick(0).getStrA(null);
@@ -59,16 +69,21 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
         try {
             Path path = Path.getThreadLocal2("");
             checkPathIsSafeToRead(path, filePath, argPos.getQuick(0), config);
-            try (PartitionDecoder file = new PartitionDecoder(config.getFilesFacade())) {
-                file.of(path.$());
+            long fd = TableUtils.openRO(config.getFilesFacade(), path.$(), LOG);
+            try (PartitionDecoder decoder = new PartitionDecoder()) {
+                decoder.of(fd);
+                // TODO(puzpuzpuz): we must read Parquet metadata on each read_parquet function call
+                //                  instead of reading it once and caching it.
                 GenericRecordMetadata metadata = new GenericRecordMetadata();
-                file.getMetadata().copyTo(metadata);
+                decoder.getMetadata().copyTo(metadata);
                 return new CursorFunction(new ReadParquetRecordCursorFactory(path, metadata, config.getFilesFacade()));
+            } finally {
+                config.getFilesFacade().close(fd);
             }
         } catch (CairoException e) {
             throw SqlException.$(argPos.getQuick(0), "error reading parquet file ").put('[').put(e.getErrno()).put("]: ").put(e.getFlyweightMessage());
         } catch (Throwable e) {
-            throw SqlException.$(argPos.getQuick(0), "filed to read parquet file: ").put(filePath).put(": ").put(e.getMessage());
+            throw SqlException.$(argPos.getQuick(0), "failed to read parquet file: ").put(filePath).put(": ").put(e.getMessage());
         }
     }
 

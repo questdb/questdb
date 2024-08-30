@@ -228,7 +228,6 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 PartitionEncoder.encode(partitionDescriptor, path);
                 Assert.assertTrue(Files.exists(path.$()));
 
-
                 // Assert 0 rows, header only
                 sink.clear();
                 sink.put("select * from read_parquet('x.parquet')");

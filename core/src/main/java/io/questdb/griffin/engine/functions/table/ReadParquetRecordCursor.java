@@ -32,31 +32,53 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
 public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
+    private static final Log LOG = LogFactory.getLog(ReadParquetRecordCursor.class);
     private final LongList auxPtrs = new LongList();
-    private final LongList columnChunkBufferPtrs = new LongList();
+    private final DirectIntList columnTypes;
     private final LongList dataPtrs = new LongList();
     private final PartitionDecoder decoder;
+    private final FilesFacade ff;
     private final RecordMetadata metadata;
     private final ParquetRecord record;
+    private final RowGroupBuffers rowGroupBuffers;
     private int currentRowInRowGroup;
-    private int rowGroup;
+    private long fd = -1;
+    private int rowGroupIndex;
     private long rowGroupRowCount;
 
     public ReadParquetRecordCursor(FilesFacade ff, RecordMetadata metadata) {
-        this.metadata = metadata;
-        this.decoder = new PartitionDecoder(ff);
-        this.record = new ParquetRecord();
+        try {
+            this.ff = ff;
+            this.metadata = metadata;
+            this.decoder = new PartitionDecoder();
+            this.rowGroupBuffers = new RowGroupBuffers();
+            this.columnTypes = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
+            this.record = new ParquetRecord();
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
+    @Override
     public void close() {
         Misc.free(decoder);
+        Misc.free(rowGroupBuffers);
+        Misc.free(columnTypes);
+        if (fd != -1) {
+            ff.close(fd);
+            fd = -1;
+        }
     }
 
     @Override
@@ -77,11 +99,17 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         }
     }
 
-    public void of(SqlExecutionContext executionContext, LPSZ path) {
+    public void of(LPSZ path) throws SqlException {
         try {
             // Reopen the file, it could have changed
-            decoder.of(path);
+            this.fd = TableUtils.openRO(ff, path, LOG);
+            decoder.of(fd);
             assertMetadataSame(metadata, decoder);
+            rowGroupBuffers.reopen();
+            columnTypes.reopen();
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                columnTypes.add(metadata.getColumnType(i));
+            }
             toTop();
         } catch (DataUnavailableException e) {
             throw new RuntimeException(e);
@@ -95,19 +123,19 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public void toTop() {
-        rowGroup = -1;
+        rowGroupIndex = -1;
         rowGroupRowCount = -1;
         currentRowInRowGroup = -1;
     }
 
-    private void assertMetadataSame(RecordMetadata metadata, PartitionDecoder decoder) {
+    private void assertMetadataSame(RecordMetadata metadata, PartitionDecoder decoder) throws SqlException {
         if (metadata.getColumnCount() != decoder.getMetadata().columnCount()) {
-            throw CairoException.nonCritical().put("parquet file mismatch vs. the schema read earlier");
+            throw SqlException.$(0, "parquet file mismatch vs. the schema read earlier");
         }
 
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             if (metadata.getColumnType(i) != decoder.getMetadata().getColumnType(i)) {
-                throw new RuntimeException("parquet file mismatch vs. the schema read earlier");
+                throw SqlException.$(0, "parquet file mismatch vs. the schema read earlier");
             }
         }
     }
@@ -115,29 +143,19 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private long getStrAddr(int col) {
         long auxPtr = auxPtrs.get(col);
         long dataPtr = dataPtrs.get(col);
-        long data_offset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
-        return dataPtr + data_offset;
+        long dataOffset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
+        return dataPtr + dataOffset;
     }
 
     private boolean switchToNextRowGroup() {
-        columnChunkBufferPtrs.clear();
         dataPtrs.clear();
         auxPtrs.clear();
-        if (++rowGroup < decoder.getMetadata().rowGroupCount()) {
-            rowGroupRowCount = -1;
-            for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
-                int columnType = metadata.getColumnType(columnIndex);
-                long columnChunkBufferPtr = decoder.decodeColumnChunk(rowGroup, columnIndex, columnType);
-                columnChunkBufferPtrs.add(columnChunkBufferPtr);
-                dataPtrs.add(PartitionDecoder.getChunkDataPtr(columnChunkBufferPtr));
-                auxPtrs.add(PartitionDecoder.getChunkAuxPtr(columnChunkBufferPtr));
+        if (++rowGroupIndex < decoder.getMetadata().rowGroupCount()) {
+            rowGroupRowCount = decoder.decodeRowGroup(rowGroupBuffers, columnTypes, rowGroupIndex);
 
-                long rowCount = PartitionDecoder.getRowGroupRowCount(columnChunkBufferPtr);
-                if (rowGroupRowCount == -1) {
-                    rowGroupRowCount = rowCount;
-                } else if (rowGroupRowCount != rowCount) {
-                    throw new RuntimeException("Row count mismatch");
-                }
+            for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
+                dataPtrs.add(rowGroupBuffers.getChunkDataPtr(columnIndex));
+                auxPtrs.add(rowGroupBuffers.getChunkAuxPtr(columnIndex));
             }
             currentRowInRowGroup = 0;
             return true;

@@ -178,6 +178,16 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public long getParquetFd() {
+            return baseFrame.getParquetFd();
+        }
+
+        @Override
+        public int getParquetRowGroup() {
+            return baseFrame.getParquetRowGroup();
+        }
+
+        @Override
         public long getPartitionHi() {
             return baseFrame.getPartitionHi();
         }
