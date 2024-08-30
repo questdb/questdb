@@ -67,9 +67,11 @@ public class FuzzStableInsertOperation implements FuzzTransactionOperation {
                 break;
             case ColumnType.VARCHAR:
                 String sym = getSymbol();
-                utf8String.clear();
-                utf8String.put(sym);
-                row.putVarchar(2, utf8String);
+                if (sym != null) {
+                    utf8String.clear();
+                    utf8String.put(sym);
+                    row.putVarchar(2, utf8String);
+                }
                 break;
             case ColumnType.STRING:
                 row.putStr(2, getSymbol());
