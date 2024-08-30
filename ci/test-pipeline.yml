@@ -103,8 +103,6 @@ stages:
             fetchDepth: 1
             lfs: false
             submodules: false
-          - bash: echo "$(SHOULD_RUN)"
-            displayName: Print SHOULD_RUN value
           - download: current
             artifact: jacoco-coverage
             condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
