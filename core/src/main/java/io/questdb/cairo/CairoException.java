@@ -152,13 +152,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return nonCritical().put("timeout, query aborted").setInterruption(true);
     }
 
-    public static CairoException staleTableMetadata(CharSequence tableName, long lastVersion, long newVersion) {
-        return nonCritical().put("stale table metadata [table=").put(tableName)
-                .put(",last=").put(lastVersion)
-                .put(",new=")
-                .put(newVersion).put(']');
-    }
-
     public static CairoException tableDoesNotExist(CharSequence tableName) {
         return nonCritical().put("table does not exist [table=").put(tableName).put(']');
     }
