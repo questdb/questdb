@@ -49,14 +49,6 @@ public class CairoMetadata implements Sinkable {
         tables.clear();
     }
 
-    public @NotNull CairoTable getTableQuick(@NotNull TableToken tableToken) {
-        final CairoTable table = getTableQuiet(tableToken);
-        if (table == null) {
-            throw CairoException.tableDoesNotExist(tableToken.getTableName());
-        }
-        return table;
-    }
-
     public CairoTable getTableQuiet(@NotNull TableToken tableToken) {
         return tables.get(tableToken.getDirName());
     }
