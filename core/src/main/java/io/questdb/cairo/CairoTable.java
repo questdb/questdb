@@ -32,7 +32,6 @@ import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
 public class CairoTable implements Sinkable {
-    // consider a versioned lock. consider more granular locking
     public LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     public IntList columnOrderMap = new IntList();
     public ObjList<CairoColumn> columns = new ObjList<>();
@@ -227,10 +226,6 @@ public class CairoTable implements Sinkable {
             final int denseIndex = columns.size() - 1;
             columnNameIndexMap.put(columnName, denseIndex);
         }
-    }
-
-    private CairoColumn getColumnQuick(int position) {
-        return columns.getQuick(position);
     }
 
     private CairoColumn getColumnQuiet(int position) {
