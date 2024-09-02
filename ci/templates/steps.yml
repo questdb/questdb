@@ -169,7 +169,7 @@ steps:
       artifactName: jacoco-coverage
   - bash: |
       set -eux
-      export PATH=/usr/lib/llvm-$LLVM_VERSION/bin:$PATH
+      export PATH=$LLVM_TOOLS_PATH:$PATH
       # List profraw files for debugging purposes
       find . -name \*.profraw
       CANDIDATE_FILES="core/rust/qdbr/questdbr-cargo-test.profraw core/questdbr-junit.profraw"
