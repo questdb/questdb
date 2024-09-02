@@ -3927,11 +3927,9 @@ if __name__ == "__main__":
                         sink,
                         rs
                 );
-            }
 
-            try (PreparedStatement stmt = connection.prepareStatement("select netmask(?)")) {
                 stmt.setString(1, "256.256.256.256/20");
-                ResultSet rs = stmt.executeQuery();
+                rs = stmt.executeQuery();
                 sink.clear();
                 assertResultSet(
                         "netmask[VARCHAR]\n" +
@@ -3951,11 +3949,9 @@ if __name__ == "__main__":
                         sink,
                         rs
                 );
-            }
 
-            try (PreparedStatement stmt = connection.prepareStatement("x where a << ?")) {
                 stmt.setString(1, "1.1.1.1/30");
-                ResultSet rs = stmt.executeQuery();
+                rs = stmt.executeQuery();
                 sink.clear();
                 assertResultSet(
                         "a[VARCHAR]\n" +
@@ -3975,11 +3971,9 @@ if __name__ == "__main__":
                         sink,
                         rs
                 );
-            }
 
-            try (PreparedStatement stmt = connection.prepareStatement("x where a <<= ?")) {
                 stmt.setString(1, "2.2.2.2/30");
-                ResultSet rs = stmt.executeQuery();
+                rs = stmt.executeQuery();
                 sink.clear();
                 assertResultSet(
                         "a[VARCHAR]\n" +
@@ -3999,11 +3993,9 @@ if __name__ == "__main__":
                         sink,
                         rs
                 );
-            }
 
-            try (PreparedStatement stmt = connection.prepareStatement("x where ? >> a")) {
                 stmt.setString(1, "3.3.3.3/31");
-                ResultSet rs = stmt.executeQuery();
+                rs = stmt.executeQuery();
                 sink.clear();
                 assertResultSet(
                         "a[VARCHAR]\n" +
@@ -4023,11 +4015,9 @@ if __name__ == "__main__":
                         sink,
                         rs
                 );
-            }
 
-            try (PreparedStatement stmt = connection.prepareStatement("x where ? >>= a")) {
                 stmt.setString(1, "1.1.1.1/32");
-                ResultSet rs = stmt.executeQuery();
+                rs = stmt.executeQuery();
                 sink.clear();
                 assertResultSet(
                         "a[VARCHAR]\n" +
