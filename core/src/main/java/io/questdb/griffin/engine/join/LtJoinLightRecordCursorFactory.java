@@ -41,7 +41,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 
-//merge join of two cursors ordered by timestamp plus additional conditions 
+// merge join of two cursors ordered by timestamp plus additional conditions
 public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final LtJoinLightRecordCursor cursor;
     private final RecordSink masterKeySink;
@@ -53,7 +53,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             @Transient ColumnTypes joinColumnTypes,
-            @Transient ColumnTypes valueTypes, // this expected to be just LONG, we store chain references in map
+            @Transient ColumnTypes valueTypes, // this expected to be just 2 LONGs, we store chain references in map
             RecordSink masterKeySink,
             RecordSink slaveKeySink,
             int columnSplit,

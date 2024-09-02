@@ -1770,12 +1770,15 @@ public class GroupByTest extends AbstractCairoTest {
                     "1970-01-01T00:00:01.099957Z\t19\t501.01901034386356\t1792145.0\t712.0\n" +
                     "1970-01-01T00:00:01.099987Z\t20\t498.1350566366541\t1715079.0\t188.0\n";
 
-            String query1 = " select max(data.ts) as ts, data.i as i, avg(data.j) as avg, sum(data.j::double) as sum, first(data.j::double) as first_value " +
-                    "from " +
-                    "( select i, max(ts) as max from tab group by i) cnt " +
-                    "join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
-                    "group by data.i " +
-                    "order by data.i ";
+            String query1 = "select max(ts) as ts, i, avg(j) as avg, sum(j::double) as sum, first(j::double) as first_value " +
+                    "from (" +
+                    "  select data.ts, data.i, data.j " +
+                    "  from (select i, max(ts) as max from tab group by i) cnt " +
+                    "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
+                    "  order by data.i, ts" +
+                    ")" +
+                    "group by i " +
+                    "order by i ";
 
             // cross-check with re-write using aggregate functions
             assertSql(
@@ -1792,21 +1795,23 @@ public class GroupByTest extends AbstractCairoTest {
                             "        GroupBy vectorized: false\n" +
                             "          keys: [i]\n" +
                             "          values: [max(ts),avg(j),sum(j::double),first(j::double)]\n" +
-                            "            SelectedRecord\n" +
-                            "                Filter filter: data.ts>=cnt.max-80000\n" +
-                            "                    Hash Join Light\n" +
-                            "                      condition: data.i=cnt.i\n" +
-                            "                        Async Group By workers: 1\n" +
-                            "                          keys: [i]\n" +
-                            "                          values: [max(ts)]\n" +
-                            "                          filter: null\n" +
-                            "                            PageFrame\n" +
-                            "                                Row forward scan\n" +
-                            "                                Frame forward scan on: tab\n" +
-                            "                        Hash\n" +
-                            "                            PageFrame\n" +
-                            "                                Row forward scan\n" +
-                            "                                Frame forward scan on: tab\n"
+                            "            Sort\n" +
+                            "              keys: [i, ts]\n" +
+                            "                SelectedRecord\n" +
+                            "                    Filter filter: data.ts>=cnt.max-80000\n" +
+                            "                        Hash Join Light\n" +
+                            "                          condition: data.i=cnt.i\n" +
+                            "                            Async Group By workers: 1\n" +
+                            "                              keys: [i]\n" +
+                            "                              values: [max(ts)]\n" +
+                            "                              filter: null\n" +
+                            "                                PageFrame\n" +
+                            "                                    Row forward scan\n" +
+                            "                                    Frame forward scan on: tab\n" +
+                            "                            Hash\n" +
+                            "                                PageFrame\n" +
+                            "                                    Row forward scan\n" +
+                            "                                    Frame forward scan on: tab\n"
             );
 
             String query2 = "select last(ts) as ts, " +

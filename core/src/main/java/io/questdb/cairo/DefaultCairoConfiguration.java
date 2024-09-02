@@ -675,7 +675,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getSqlHashJoinLightValuePageSize() {
-        return Numbers.SIZE_1MB;
+        return 128 * 1024;
     }
 
     @Override

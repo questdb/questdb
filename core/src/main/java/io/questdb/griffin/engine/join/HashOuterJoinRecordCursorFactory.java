@@ -49,7 +49,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             @Transient ColumnTypes joinColumnTypes,
-            @Transient ColumnTypes valueTypes, // this expected to be just LONG, we store chain references in map
+            @Transient ColumnTypes valueTypes, // this expected to be just 3 INTs, we store chain references in map
             RecordSink masterSink,
             RecordSink slaveKeySink,
             RecordSink slaveChainSink,
@@ -174,7 +174,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
                 key.put(masterRecord, masterSink);
                 MapValue value = key.findValue();
                 if (value != null) {
-                    slaveChain.of(value.getLong(0));
+                    slaveChain.of(value.getInt(0));
                     // we know cursor has values
                     // advance to get first value
                     slaveChain.hasNext();
