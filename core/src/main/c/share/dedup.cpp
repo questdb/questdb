@@ -449,7 +449,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                                 src, data_lo, data_hi,
                                 index, index_lo, index_hi,
                                 index_tmp,
-                                *reinterpret_cast<const MergeStrBinColumnComparer<int32_t> *>(src_keys)
+                                *reinterpret_cast<const MergeStrBinColumnComparer<int32_t, 2> *>(src_keys)
                         );
                     }
                     case (int) ColumnType::BINARY: {
@@ -457,7 +457,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                                 src, data_lo, data_hi,
                                 index, index_lo, index_hi,
                                 index_tmp,
-                                *reinterpret_cast<const MergeStrBinColumnComparer<int64_t> *>(src_keys)
+                                *reinterpret_cast<const MergeStrBinColumnComparer<int64_t, 1> *>(src_keys)
                         );
                     }
                     default: {
@@ -516,12 +516,12 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                             break;
                         }
                         case (int) ColumnType::STRING: {
-                            auto comparer{*reinterpret_cast<const MergeStrBinColumnComparer<int32_t> *>(col_key)};
+                            auto comparer{*reinterpret_cast<const MergeStrBinColumnComparer<int32_t, 2> *>(col_key)};
                             diff = comparer(l, r);
                             break;
                         }
                         case (int) ColumnType::BINARY: {
-                            auto comparer{*reinterpret_cast<const MergeStrBinColumnComparer<int64_t> *>(col_key)};
+                            auto comparer{*reinterpret_cast<const MergeStrBinColumnComparer<int64_t, 1> *>(col_key)};
                             diff = comparer(l, r);
                             break;
                         }
@@ -609,12 +609,12 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                         case (int) ColumnType::STRING:
                             return dedup_sorted_timestamp_index_with_keys(
                                     index_in, index_count, index_out, index_temp,
-                                    *reinterpret_cast<const SortStrBinColumnComparer<int32_t> *>(src_keys)
+                                    *reinterpret_cast<const SortStrBinColumnComparer<int32_t, 2> *>(src_keys)
                             );
                         case (int) ColumnType::BINARY:
                             return dedup_sorted_timestamp_index_with_keys(
                                     index_in, index_count, index_out, index_temp,
-                                    *reinterpret_cast<const SortStrBinColumnComparer<int64_t> *>(src_keys)
+                                    *reinterpret_cast<const SortStrBinColumnComparer<int64_t, 1> *>(src_keys)
                             );
                         default:
                             assertm(false, "unsupported column type");
@@ -670,12 +670,12 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                                 break;
                             }
                             case (int) ColumnType::STRING: {
-                                auto comparer{*reinterpret_cast<const SortStrBinColumnComparer<int32_t> *>(col_key)};
+                                auto comparer{*reinterpret_cast<const SortStrBinColumnComparer<int32_t, 2> *>(col_key)};
                                 diff = comparer(l, r);
                                 break;
                             }
                             case (int) ColumnType::BINARY: {
-                                auto comparer{*reinterpret_cast<const SortStrBinColumnComparer<int64_t> *>(col_key)};
+                                auto comparer{*reinterpret_cast<const SortStrBinColumnComparer<int64_t, 1> *>(col_key)};
                                 diff = comparer(l, r);
                                 break;
                             }

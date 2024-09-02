@@ -27,9 +27,9 @@ select wait_wal_table('x');
 query TIT
 select base64(s, 100), x, ts from x order by ts, x;
 ----
-NULL        -1  2020-01-01T00:00:00.000000Z
-MTIzNA==     3  2020-01-01T00:00:00.000000Z
-MTIzNA==    20  2020-01-03T00:00:00.000000Z
+NULL      -1  2020-01-01T00:00:00.000000Z
+MTIzNA==   3  2020-01-01T00:00:00.000000Z
+MTIzNA==  20  2020-01-03T00:00:00.000000Z
 
 
 # Insert partially matched data

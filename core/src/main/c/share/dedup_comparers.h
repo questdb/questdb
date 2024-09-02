@@ -146,7 +146,7 @@ public:
     }
 };
 
-template<typename T>
+template<typename T, int item_size>
 inline int compare_str_bin(const void *l_val, const void *r_val) {
     T l_size = reinterpret_cast<const T *>(l_val)[0];
     T r_size = reinterpret_cast<const T *>(r_val)[0];
@@ -156,7 +156,7 @@ inline int compare_str_bin(const void *l_val, const void *r_val) {
         auto diff = std::memcmp(
                 reinterpret_cast<const char *>(l_val) + sizeof(T),
                 reinterpret_cast<const char *>(r_val) + sizeof(T),
-                min_size
+                min_size * item_size
         );
         return diff != 0 ? diff : l_size - r_size;
     }
@@ -165,7 +165,7 @@ inline int compare_str_bin(const void *l_val, const void *r_val) {
 
 
 
-template<typename T>
+template<typename T, int item_size>
 class SortStrBinColumnComparer : dedup_column {
 
 #pragma pack (push, 1)
@@ -188,14 +188,14 @@ public:
         const auto r_val_offset = reinterpret_cast<int64_t *>(r_col->column_data)[r < 0 ? r & ~(1ull << 63) : r];
         assertm(r_val_offset < r_col->column_var_data_len, "ERROR: column aux data point beyond var data buffer");
 
-        return compare_str_bin<T>(
+        return compare_str_bin<T, item_size>(
                 reinterpret_cast<const char *>(l_col->column_var_data) + l_val_offset,
                 reinterpret_cast<const char *>(r_col->column_var_data) + r_val_offset
         );
     }
 };
 
-template<typename T>
+template<typename T, int item_size>
 class MergeStrBinColumnComparer : dedup_column {
 public:
     inline int operator()(int64_t col_index, int64_t index_index) const {
@@ -213,7 +213,7 @@ public:
         assertm(r_val_offset < dedup_column::o3_var_data_len, "ERROR: column aux data point beyond var data buffer");
         const char *r_val_ptr = reinterpret_cast<const char *>(dedup_column::o3_var_data) + r_val_offset;
 
-        return compare_str_bin<T>(l_val_ptr, r_val_ptr);
+        return compare_str_bin<T, item_size>(l_val_ptr, r_val_ptr);
     }
 };
 
