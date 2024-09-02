@@ -19,7 +19,6 @@ async-trait = "0.1.81"
 clap = "4.5.9"
 tokio = "1.38.0"
 log = "0.4.22"
-fail = "0.5"
 
 [dev-dependencies]
 parquet = "51.0.0"
