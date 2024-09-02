@@ -53,6 +53,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     private final int maxHash;
     private final int symbolCapacity;
     private final SymbolValueCountCollector valueCountCollector;
+    private boolean cachedFlag;
     private boolean nullValue = false;
     private MemoryMARW offsetMem;
     private int symbolIndexInTxWriter;
@@ -125,8 +126,10 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
             if (useCache) {
                 this.cache = new CharSequenceIntHashMap(symbolCapacity, 0.3, CharSequenceIntHashMap.NO_ENTRY_VALUE);
+                cachedFlag = true;
             } else {
                 this.cache = null;
+                cachedFlag = false;
             }
 
             this.symbolIndexInTxWriter = symbolIndexInTxWriter;
@@ -198,7 +201,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     }
 
     public boolean isCached() {
-        return cache != null;
+        return cachedFlag;
     }
 
     @Override
@@ -268,6 +271,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     @Override
     public void updateCacheFlag(boolean flag) {
         offsetMem.putBool(HEADER_CACHE_ENABLED, flag);
+        cachedFlag = flag;
     }
 
     @Override

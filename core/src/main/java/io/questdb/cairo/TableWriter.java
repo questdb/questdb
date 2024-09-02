@@ -825,11 +825,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final MapWriter symbolMapWriter = symbolMapWriters.getQuick(columnIndex);
         if (symbolMapWriter.isCached() != cache) {
             symbolMapWriter.updateCacheFlag(cache);
-        } else {
-            return;
+            updateMetaStructureVersion();
+            txWriter.bumpTruncateVersion();
+            CairoMetadata.INSTANCE.hydrateTable(tableToken, configuration, true, true);
         }
-        updateMetaStructureVersion();
-        CairoMetadata.INSTANCE.hydrateTable(tableToken, configuration, true, true);
     }
 
     @Override
