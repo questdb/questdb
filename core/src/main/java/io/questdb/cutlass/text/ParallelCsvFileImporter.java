@@ -1417,7 +1417,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     cairoEngine.registerTableToken(tableToken);
                     targetTableCreated = true;
                     writer = cairoEngine.getWriter(tableToken, LOCK_REASON);
-                    CairoMetadata.INSTANCE.hydrateTable(tableToken, cairoEngine.getConfiguration(), true, true);
+                    cairoEngine.getCairoMetadata().hydrateTable(tableToken, cairoEngine.getConfiguration(), true, true);
                     metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
                     partitionBy = writer.getPartitionBy();
                     break;

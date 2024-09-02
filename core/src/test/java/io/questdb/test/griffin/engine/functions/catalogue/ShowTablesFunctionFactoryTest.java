@@ -106,10 +106,11 @@ public class ShowTablesFunctionFactoryTest extends AbstractCairoTest {
                     "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
             );
 
-            CairoMetadata.INSTANCE.clear();
+            final CairoMetadata cairoMetadata = sqlExecutionContext.getCairoEngine().getCairoMetadata();
+            cairoMetadata.clear();
 
             try {
-                CairoMetadata.INSTANCE.hydrateAllTables(engine);
+                cairoMetadata.hydrateAllTables(engine);
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getMessage(), "could not open, file does not exist");
             }

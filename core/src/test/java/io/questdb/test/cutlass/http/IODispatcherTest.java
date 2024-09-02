@@ -8328,7 +8328,7 @@ public class IODispatcherTest extends AbstractTest {
         model.col("j", ColumnType.SYMBOL);
         TestUtils.create(model, engine);
 
-        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("y"))) {
+        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("y"), engine.getCairoMetadata())) {
             for (int i = 0; i < 20; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putSym(0, "ok\0ok");

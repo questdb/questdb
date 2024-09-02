@@ -36,7 +36,6 @@ import java.lang.ThreadLocal;
 
 
 public class CairoMetadata implements Sinkable {
-    public static final CairoMetadata INSTANCE = new CairoMetadata();
     public static final Log LOG = LogFactory.getLog(CairoMetadata.class);
     private final ConcurrentHashMap<CairoTable> tables = new ConcurrentHashMap<>();
     ThreadLocal<ColumnVersionReader> tlColumnVersionReader = ThreadLocal.withInitial(ColumnVersionReader::new);
@@ -71,7 +70,7 @@ public class CairoMetadata implements Sinkable {
             for (int i = 0, n = tableTokens.size(); i < n; i++) {
                 tableToken = tableTokens.getQuick(i);
                 if (!tableToken.isSystem()) {
-                    CairoMetadata.INSTANCE.hydrateTable(tableTokens.getQuick(i), engine.getConfiguration(), true, true);
+                    engine.getCairoMetadata().hydrateTable(tableTokens.getQuick(i), engine.getConfiguration(), true, true);
                 }
             }
             return true;

@@ -111,6 +111,7 @@ public class HydrateTableMetadataFunctionFactory implements FunctionFactory {
     private static class HydrateTableMetadataFunction extends BooleanFunction {
         private final CairoConfiguration configuration;
         private final ObjList<TableToken> tableTokens;
+        private CairoMetadata metadata;
 
         public HydrateTableMetadataFunction(@NotNull ObjList<TableToken> tableTokens, @NotNull CairoConfiguration configuration) {
             this.tableTokens = tableTokens;
@@ -123,7 +124,7 @@ public class HydrateTableMetadataFunctionFactory implements FunctionFactory {
                 final TableToken tableToken = tableTokens.getQuick(i);
                 if (!tableToken.isSystem()) {
                     try {
-                        CairoMetadata.INSTANCE.hydrateTable(tableTokens.getQuick(i), configuration, true, true);
+                        metadata.hydrateTable(tableTokens.getQuick(i), configuration, true, true);
                     } catch (CairoException ex) {
                         LOG.error().$("could not hydrate metadata: [table=").$(tableToken).I$();
                         return false;
@@ -136,6 +137,7 @@ public class HydrateTableMetadataFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             executionContext.getSecurityContext().authorizeAdminAction();
+            metadata = executionContext.getCairoEngine().getCairoMetadata();
             super.init(symbolTableSource, executionContext);
         }
 

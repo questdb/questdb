@@ -95,7 +95,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
-    private @NotNull CairoMetadata cairoMetadata = CairoMetadata.INSTANCE;
+    private @NotNull CairoMetadata cairoMetadata;
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
@@ -144,6 +144,8 @@ public class CairoEngine implements Closeable, WriterSource {
             tableNameRegistry.reload();
 
             this.sqlCompilerPool = new SqlCompilerPool(this);
+
+            this.cairoMetadata = new CairoMetadata();
         } catch (Throwable th) {
             close();
             throw th;
@@ -391,7 +393,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     }
                 } finally {
                     unlockTableUnsafe(tableToken, null, false);
-                    CairoMetadata.INSTANCE.removeTable(tableToken);
+                    cairoMetadata.removeTable(tableToken);
                 }
 
                 tableNameRegistry.dropTable(tableToken);
@@ -443,7 +445,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 backupDirName,
                 getDdlListener(tableToken),
                 checkpointAgent,
-                Metrics.disabled()
+                Metrics.disabled(),
+                cairoMetadata
         );
     }
 
@@ -455,6 +458,10 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public int getBusyWriterCount() {
         return writerPool.getBusyCount();
+    }
+
+    public @NotNull CairoMetadata getCairoMetadata() {
+        return cairoMetadata;
     }
 
     public DatabaseCheckpointStatus getCheckpointStatus() {
@@ -814,7 +821,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void load() {
         // Convert tables to WAL/non-WAL, if necessary.
-        final ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, tableSequencerAPI, tableFlagResolver);
+        final ObjList<TableToken> convertedTables = TableConverter.convertTables(this, tableSequencerAPI, tableFlagResolver);
         tableNameRegistry.reload(convertedTables);
     }
 
@@ -1373,7 +1380,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
             getDdlListener(tableToken).onTableCreated(securityContext, tableToken);
 
-            CairoMetadata.INSTANCE.hydrateTable(tableToken, configuration, true, true);
+            cairoMetadata.hydrateTable(tableToken, configuration, true, true);
 
             return tableToken;
         }

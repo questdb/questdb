@@ -190,6 +190,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private TxReader attachTxReader;
     private long avgRecordSize;
     private boolean avoidIndexOnCommit = false;
+    private CairoMetadata cairoMetadata;
     private int columnCount;
     private long committedMasterRef;
     private ConvertOperatorImpl convertOperatorImpl;
@@ -257,7 +258,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             CharSequence root,
             DdlListener ddlListener,
             DatabaseCheckpointStatus checkpointStatus,
-            Metrics metrics
+            Metrics metrics,
+            CairoMetadata cairoMetadata
     ) {
         LOG.info().$("open '").utf8(tableToken.getTableName()).$('\'').$();
         this.configuration = configuration;
@@ -276,6 +278,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableToken = tableToken;
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
+        this.cairoMetadata = cairoMetadata;
         try {
             this.path = new Path().of(root);
             this.pathRootSize = path.size();
@@ -579,7 +582,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlListener.onColumnAdded(securityContext, tableToken, columnName);
         }
 
-        CairoMetadata.INSTANCE.hydrateTable(metadata, true, true);
+        cairoMetadata.hydrateTable(metadata, true, true);
     }
 
     @Override
@@ -622,7 +625,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnMetadata.setIndexed(true);
         columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
-        CairoMetadata.INSTANCE.hydrateTable(metadata, true, true);
+        cairoMetadata.hydrateTable(metadata, true, true);
         LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$substr(pathRootSize, path).$();
     }
 
@@ -827,7 +830,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             symbolMapWriter.updateCacheFlag(cache);
             updateMetaStructureVersion();
             txWriter.bumpTruncateVersion();
-            CairoMetadata.INSTANCE.hydrateTable(tableToken, configuration, true, true);
+            cairoMetadata.hydrateTable(tableToken, configuration, true, true);
         }
     }
 
@@ -945,7 +948,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     dedupColumnCommitAddresses.setDedupColumnCount(dedupColumnCommitAddresses.getColumnCount() - 1);
                 }
 
-                CairoMetadata.INSTANCE.hydrateTable(metadata, true, true);
+                cairoMetadata.hydrateTable(metadata, true, true);
             } finally {
                 // clear temp resources
                 convertOperator.finishColumnConversion();
@@ -1479,7 +1482,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         checkDistressed();
         LOG.info().$("disabling row deduplication [table=").utf8(tableToken.getTableName()).I$();
         updateMetadataWithDeduplicationUpsertKeys(false, null);
-        CairoMetadata.INSTANCE.hydrateTable(metadata, true, true);
+        cairoMetadata.hydrateTable(metadata, true, true);
     }
 
     @Override
@@ -1533,7 +1536,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             finishColumnPurge();
             LOG.info().$("REMOVED index [txn=").$(txWriter.getTxn()).$();
 
-            CairoMetadata.INSTANCE.hydrateTable(metadata, true, true);
+            cairoMetadata.hydrateTable(metadata, true, true);
 
             LOG.info().$("END DROP INDEX [txn=").$(txWriter.getTxn())
                     .$(", table=").utf8(tableToken.getTableName())
@@ -1582,7 +1585,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             logRec.I$();
         }
         updateMetadataWithDeduplicationUpsertKeys(true, columnsIndexes);
-        CairoMetadata.INSTANCE.hydrateTable(metadata, true, true);
+        cairoMetadata.hydrateTable(metadata, true, true);
     }
 
     public long getAppliedSeqTxn() {
@@ -2331,7 +2334,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         finishColumnPurge();
 
-        CairoMetadata.INSTANCE.hydrateTable(metadata, true, true);
+        cairoMetadata.hydrateTable(metadata, true, true);
         LOG.info().$("REMOVED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' from ").$substr(pathRootSize, path).$();
     }
 
@@ -2420,7 +2423,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlListener.onColumnRenamed(securityContext, tableToken, currentName, newName);
         }
 
-        CairoMetadata.INSTANCE.hydrateTable(metadata, true, true);
+        cairoMetadata.hydrateTable(metadata, true, true);
 
         LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$substr(pathRootSize, path).$();
     }
@@ -2438,7 +2441,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Record column structure version bump in txn file for WAL sequencer structure version to match writer structure version.
         bumpColumnStructureVersion();
 
-        CairoMetadata.INSTANCE.hydrateTable(metadata, true, true);
+        cairoMetadata.hydrateTable(metadata, true, true);
     }
 
     @Override
@@ -2497,7 +2500,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             finishMetaSwapUpdate();
             metadata.setMaxUncommittedRows(maxUncommittedRows);
-            CairoMetadata.INSTANCE.hydrateTable(tableToken, configuration, true, true);
+            cairoMetadata.hydrateTable(tableToken, configuration, true, true);
 
         } finally {
             ddlMem.close();
@@ -2520,7 +2523,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             finishMetaSwapUpdate();
             metadata.setO3MaxLag(o3MaxLagUs);
-            CairoMetadata.INSTANCE.hydrateTable(tableToken, configuration, true, true);
+            cairoMetadata.hydrateTable(tableToken, configuration, true, true);
         } finally {
             ddlMem.close();
         }
@@ -7793,7 +7796,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         LOG.info().$("truncated [name=").utf8(tableToken.getTableName()).I$();
 
-        CairoMetadata.INSTANCE.hydrateTable(metadata, true, true);
+        cairoMetadata.hydrateTable(metadata, true, true);
     }
 
     private void truncateColumns() {
