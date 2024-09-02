@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.engine.table.parquet;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -274,7 +271,13 @@ public class PartitionDecoder implements QuietCloseable {
             metadata.clear();
             final int columnCount = columnCount();
             for (int i = 0; i < columnCount; i++) {
-                metadata.add(new TableColumnMetadata(Chars.toString(columnName(i)), getColumnType(i)));
+                final String columnName = Chars.toString(columnName(i));
+                final int columnType = getColumnType(i);
+                if (ColumnType.isSymbol(columnType)) {
+                    metadata.add(new TableColumnMetadata(columnName, columnType, true, 1024, true, null));
+                } else {
+                    metadata.add(new TableColumnMetadata(columnName, columnType));
+                }
             }
         }
 
