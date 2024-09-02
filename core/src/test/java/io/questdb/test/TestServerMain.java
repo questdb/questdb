@@ -91,6 +91,7 @@ public class TestServerMain extends ServerMain {
         engine.getTableIdGenerator().open();
         engine.getTableIdGenerator().reset();
         engine.resetNameRegistryMemory();
+        resetQueryCache();
         engine.setUp();
     }
 

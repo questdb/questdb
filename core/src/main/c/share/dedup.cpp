@@ -443,7 +443,22 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                                 index_tmp,
                                 *reinterpret_cast<const MergeVarcharColumnComparer *>(src_keys)
                         );
-
+                    }
+                    case (int) ColumnType::STRING: {
+                        return merge_dedup_long_index_int_keys(
+                                src, data_lo, data_hi,
+                                index, index_lo, index_hi,
+                                index_tmp,
+                                *reinterpret_cast<const MergeStrBinColumnComparer<int32_t> *>(src_keys)
+                        );
+                    }
+                    case (int) ColumnType::BINARY: {
+                        return merge_dedup_long_index_int_keys(
+                                src, data_lo, data_hi,
+                                index, index_lo, index_hi,
+                                index_tmp,
+                                *reinterpret_cast<const MergeStrBinColumnComparer<int64_t> *>(src_keys)
+                        );
                     }
                     default: {
                         assertm(false, "unsupported column type");
@@ -497,6 +512,16 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                     switch (col_key->column_type) {
                         case (int) ColumnType::VARCHAR: {
                             auto comparer{*reinterpret_cast<const MergeVarcharColumnComparer *>(col_key)};
+                            diff = comparer(l, r);
+                            break;
+                        }
+                        case (int) ColumnType::STRING: {
+                            auto comparer{*reinterpret_cast<const MergeStrBinColumnComparer<int32_t> *>(col_key)};
+                            diff = comparer(l, r);
+                            break;
+                        }
+                        case (int) ColumnType::BINARY: {
+                            auto comparer{*reinterpret_cast<const MergeStrBinColumnComparer<int64_t> *>(col_key)};
                             diff = comparer(l, r);
                             break;
                         }
@@ -581,6 +606,16 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                                     index_in, index_count, index_out, index_temp,
                                     *reinterpret_cast<const SortVarcharColumnComparer *>(src_keys)
                             );
+                        case (int) ColumnType::STRING:
+                            return dedup_sorted_timestamp_index_with_keys(
+                                    index_in, index_count, index_out, index_temp,
+                                    *reinterpret_cast<const SortStrBinColumnComparer<int32_t> *>(src_keys)
+                            );
+                        case (int) ColumnType::BINARY:
+                            return dedup_sorted_timestamp_index_with_keys(
+                                    index_in, index_count, index_out, index_temp,
+                                    *reinterpret_cast<const SortStrBinColumnComparer<int64_t> *>(src_keys)
+                            );
                         default:
                             assertm(false, "unsupported column type");
                             return -1;
@@ -631,6 +666,16 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                         switch (col_key->column_type) {
                             case (int) ColumnType::VARCHAR: {
                                 auto comparer{*reinterpret_cast<const SortVarcharColumnComparer *>(col_key)};
+                                diff = comparer(l, r);
+                                break;
+                            }
+                            case (int) ColumnType::STRING: {
+                                auto comparer{*reinterpret_cast<const SortStrBinColumnComparer<int32_t> *>(col_key)};
+                                diff = comparer(l, r);
+                                break;
+                            }
+                            case (int) ColumnType::BINARY: {
+                                auto comparer{*reinterpret_cast<const SortStrBinColumnComparer<int64_t> *>(col_key)};
                                 diff = comparer(l, r);
                                 break;
                             }

@@ -81,11 +81,12 @@ read_varchar(int64_t offset, const void *column_data, const void *column_var_dat
 
     const uint8_t *data = &reinterpret_cast<const uint8_t *>(column_var_data)[data_offset];
 
-    assertm(std::memcmp(aux_data->chars, data, MIN_INLINE_CHARS) == 0, "ERROR: varchar inline prefix does not match the data");
+    assertm(std::memcmp(aux_data->chars, data, MIN_INLINE_CHARS) == 0,
+            "ERROR: varchar inline prefix does not match the data");
     return VarcharDataView{aux_data->chars, &data[MIN_INLINE_CHARS], size};
 }
 
-inline int compare(const VarcharDataView &l_val, const VarcharDataView &r_val) {
+inline int compare_varchar(const VarcharDataView &l_val, const VarcharDataView &r_val) {
     const auto min_size = std::min(l_val.size, r_val.size);
     switch (min_size) {
         case -1:
@@ -125,7 +126,7 @@ public:
                            ? read_varchar(r, this->column_data, this->column_var_data, this->column_var_data_len)
                            : read_varchar(r & ~(1ull << 63), this->o3_data, this->o3_var_data, this->o3_var_data_len);
 
-        return compare(l_val, r_val);
+        return compare_varchar(l_val, r_val);
     }
 };
 
@@ -141,7 +142,78 @@ public:
         const VarcharDataView r_val = read_varchar(index_index, this->o3_data, this->o3_var_data,
                                                    this->o3_var_data_len);
 
-        return compare(l_val, r_val);
+        return compare_varchar(l_val, r_val);
+    }
+};
+
+template<typename T>
+inline int compare_str_bin(const void *l_val, const void *r_val) {
+    T l_size = reinterpret_cast<const T *>(l_val)[0];
+    T r_size = reinterpret_cast<const T *>(r_val)[0];
+
+    auto min_size = std::min(l_size, r_size);
+    if (min_size > 0) {
+        auto diff = std::memcmp(
+                reinterpret_cast<const char *>(l_val) + sizeof(T),
+                reinterpret_cast<const char *>(r_val) + sizeof(T),
+                min_size
+        );
+        return diff != 0 ? diff : l_size - r_size;
+    }
+    return l_size - r_size;
+};
+
+
+
+template<typename T>
+class SortStrBinColumnComparer : dedup_column {
+
+#pragma pack (push, 1)
+    struct data_point {
+        void *column_data;
+        void *column_var_data;
+        int64_t column_var_data_len;
+    };
+#pragma pack(pop)
+
+public:
+    inline int operator()(int64_t l, int64_t r) const {
+        const auto cols = reinterpret_cast<const data_point *>(&this->column_data);
+        const auto l_col = &cols[l < 0];
+        const auto r_col = &cols[r < 0];
+
+        const auto l_val_offset = reinterpret_cast<int64_t *>(l_col->column_data)[l < 0 ? l & ~(1ull << 63) : l];
+        assertm(l_val_offset < l_col->column_var_data_len, "ERROR: column aux data point beyond var data buffer");
+
+        const auto r_val_offset = reinterpret_cast<int64_t *>(r_col->column_data)[r < 0 ? r & ~(1ull << 63) : r];
+        assertm(r_val_offset < r_col->column_var_data_len, "ERROR: column aux data point beyond var data buffer");
+
+        return compare_str_bin<T>(
+                reinterpret_cast<const char *>(l_col->column_var_data) + l_val_offset,
+                reinterpret_cast<const char *>(r_col->column_var_data) + r_val_offset
+        );
+    }
+};
+
+template<typename T>
+class MergeStrBinColumnComparer : dedup_column {
+public:
+    inline int operator()(int64_t col_index, int64_t index_index) const {
+        const auto l_val_offset = col_index >= dedup_column::column_top
+                                  ? reinterpret_cast<int64_t *>(dedup_column::column_data)[col_index]
+                                  : -1;
+
+        assertm(l_val_offset < dedup_column::column_var_data_len,
+                "ERROR: column aux data point beyond var data buffer");
+        const char *l_val_ptr = col_index >= dedup_column::column_top ?
+                                reinterpret_cast<const char *>(dedup_column::column_var_data) + l_val_offset
+                                                                      : dedup_column::null_value;
+
+        const auto r_val_offset = reinterpret_cast<int64_t *>(dedup_column::o3_data)[index_index];
+        assertm(r_val_offset < dedup_column::o3_var_data_len, "ERROR: column aux data point beyond var data buffer");
+        const char *r_val_ptr = reinterpret_cast<const char *>(dedup_column::o3_var_data) + r_val_offset;
+
+        return compare_str_bin<T>(l_val_ptr, r_val_ptr);
     }
 };
 

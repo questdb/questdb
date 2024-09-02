@@ -915,8 +915,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             long auxRecSize = driver.auxRowsToBytes(1);
                             dedupCommitAddresses.setColAddressValues(addr, auxMappedAddress - columnTop * auxRecSize, varMappedAddress, varMapSize);
 
-                            final long oooVarColAddress = oooColumns.get(getPrimaryColumnIndex(i)).addressOf(0);
-                            final long oooVarColSize = oooColumns.get(getPrimaryColumnIndex(i)).size();
+                            MemoryCR oooVarCol = oooColumns.get(getPrimaryColumnIndex(i));
+                            final long oooVarColAddress = oooVarCol.addressOf(0);
+                            final long oooVarColSize = oooVarCol.addressHi() - oooVarColAddress;
                             final long oooAuxColAddress = oooColumns.get(getSecondaryColumnIndex(i)).addressOf(0);
 
                             dedupCommitAddresses.setO3DataAddressValues(addr, oooAuxColAddress, oooVarColAddress, oooVarColSize);

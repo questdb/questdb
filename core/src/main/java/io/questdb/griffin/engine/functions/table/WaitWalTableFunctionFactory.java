@@ -49,22 +49,26 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final CharSequence tableName = args.getQuick(0).getStrA(null);
-        return new WaitWFunction(tableName);
+        return new WaitWalFunction(tableName);
     }
 
-    private static class WaitWFunction extends BooleanFunction implements ScalarFunction {
+    private static class WaitWalFunction extends BooleanFunction implements ScalarFunction {
         private final CharSequence tableName;
         private SeqTxnTracker seqTxnTracker;
         private long seqTxn;
+        private SqlExecutionContext executionContext;
 
-        public WaitWFunction(CharSequence tableName) {
+        public WaitWalFunction(CharSequence tableName) {
             this.tableName = tableName;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            while (seqTxnTracker.getWriterTxn() < seqTxn) {
-                Os.sleep(1);
+            if (seqTxnTracker != null) {
+                while (seqTxnTracker.getWriterTxn() < seqTxn) {
+                    Os.sleep(1);
+                    executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
+                }
             }
             return true;
         }
@@ -72,8 +76,14 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             TableToken tt = executionContext.getCairoEngine().verifyTableName(tableName);
-            seqTxnTracker = executionContext.getCairoEngine().getTableSequencerAPI().getTxnTracker(tt);
-            seqTxn = seqTxnTracker.getSeqTxn();
+            if (tt.isWal()) {
+                seqTxnTracker = executionContext.getCairoEngine().getTableSequencerAPI().getTxnTracker(tt);
+                seqTxn = seqTxnTracker.getSeqTxn();
+                this.executionContext = executionContext;
+            } else {
+                seqTxnTracker = null;
+                this.executionContext = null;
+            }
             super.init(symbolTableSource, executionContext);
         }
 

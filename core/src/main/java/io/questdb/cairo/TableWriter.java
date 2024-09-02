@@ -4547,8 +4547,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             ColumnTypeDriver driver = ColumnType.getDriver(columnType);
                             MemoryCR o3VarColumn = o3Columns.get(getPrimaryColumnIndex(i));
                             long o3ColumnVarDataAddr = o3VarColumn.addressOf(0);
-                            long o3ColumnVarDataSize = o3VarColumn.size();
                             long o3ColumnVarAuxAddr = o3Columns.get(getSecondaryColumnIndex(i)).addressOf(0);
+                            long o3ColumnVarDataSize = o3VarColumn.addressHi() - o3ColumnVarDataAddr;
                             dedupColumnCommitAddresses.setColAddressValues(addr, o3ColumnVarAuxAddr, o3ColumnVarDataAddr, o3ColumnVarDataSize);
 
                             if (lagRows > 0) {
