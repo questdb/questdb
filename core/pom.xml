@@ -40,6 +40,11 @@
         <web.console.version>0.5.1</web.console.version>
         <qdbr.path>rust/qdbr</qdbr.path>
         <qdbr.release>false</qdbr.release>
+
+        <!--
+        For production builds, use -P qdbr-release
+        -->
+        <qdbr.rustflags>-D warnings</qdbr.rustflags>
     </properties>
 
     <version>8.1.1-SNAPSHOT</version>
@@ -691,6 +696,60 @@
                     <scope>provided</scope>
                 </dependency>
             </dependencies>
+        </profile>
+        <profile>
+            <id>qdbr-release</id>
+            <properties>
+                <qdbr.release>true</qdbr.release>
+            </properties>
+        </profile>
+        <profile>
+            <id>qdbr-coverage</id>
+            <properties>
+                <qdr.release>false</qdr.release>
+                <qdbr.rustflags>-D warnings -C instrument-coverage</qdbr.rustflags>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.questdb</groupId>
+                        <artifactId>rust-maven-plugin</artifactId>
+                        <version>1.2.0</version>
+                        <executions>
+                            <execution>
+                                <id>qdbr-build</id>
+                                <goals>
+                                    <goal>build</goal>
+                                </goals>
+                                <configuration>
+                                    <path>rust/qdbr</path>
+                                    <release>${qdbr.release}</release>
+                                    <copyTo>${project.build.directory}/classes/io/questdb/bin</copyTo>
+                                    <copyWithPlatformDir>true</copyWithPlatformDir>
+                                    <environmentVariables>
+                                        <RUSTFLAGS>${qdbr.rustflags}</RUSTFLAGS>
+                                    </environmentVariables>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>qdbr-test</id>
+                                <goals>
+                                    <goal>test</goal>
+                                </goals>
+                                <phase>test</phase>
+                                <configuration>
+                                    <path>rust/qdbr</path>
+                                    <release>${qdbr.release}</release>
+                                    <environmentVariables>
+                                        <RUSTFLAGS>${qdbr.rustflags}</RUSTFLAGS>
+                                        <LLVM_PROFILE_FILE>questdbr-cargo-test.profraw</LLVM_PROFILE_FILE>
+                                    </environmentVariables>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
         </profile>
     </profiles>
 

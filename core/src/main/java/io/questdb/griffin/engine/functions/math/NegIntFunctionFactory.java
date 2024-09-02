@@ -72,6 +72,12 @@ public class NegIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public long getLong(Record rec) {
+            final int value = arg.getInt(rec);
+            return value != Numbers.INT_NULL ? -((long) value) : Numbers.LONG_NULL;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val('-').val(arg);
         }
