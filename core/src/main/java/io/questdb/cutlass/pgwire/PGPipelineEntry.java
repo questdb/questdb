@@ -48,6 +48,7 @@ import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TI
 
 public class PGPipelineEntry implements QuietCloseable {
     private final CompiledQueryImpl compiledQuery;
+    private final CairoEngine engine;
     private final StringSink errorMessageSink = new StringSink();
     // stores result format codes (0=Text,1=Binary) from the latest bind message
     // we need it in case cursor gets invalidated and bind used non-default binary format for some column(s)
@@ -76,9 +77,17 @@ public class PGPipelineEntry implements QuietCloseable {
     // PostgresSQL wire.
     private CharSequence preparedStatementName;
     private long sqlAffectedRowCount = 0;
+    // The count of rows sent that have been sent to the client per fetch. Client can either
+    // fetch all rows at once, or in batches. In case of full fetch, this is the
+    // count of rows in the cursor. If client fetches in batches, this is the count
+    // of rows we sent so far in the current batch.
+    // It is important to know this is NOT the count to be sent, this is the count we HAVE sent.
     private long sqlReturnRowCount = 0;
+    // The row count sent to us by the client. This is the size of the batch the client wants to
+    // receive from us.
+    // todo: rename to batch size perhaps or client fetch size
     private long sqlReturnRowCountLimit = 0;
-    private long sqlReturnRowCountLimitComputed = 0;
+    private long sqlReturnRowCountToBeSent = 0;
     private CharSequence sqlTag = null;
     private CharSequence sqlText = null;
     private boolean sqlTextHasSecret = false;
@@ -89,11 +98,13 @@ public class PGPipelineEntry implements QuietCloseable {
     private boolean stateExec = false;
     // boolean state, bitset?
     private boolean stateParse;
+    private boolean stateParseExecuted = false;
     private int stateSync = 0;
     private TypesAndInsert tai = null;
     private TypesAndSelect tas = null;
 
     public PGPipelineEntry(CairoEngine engine) {
+        this.engine = engine;
         this.compiledQuery = new CompiledQueryImpl(engine);
     }
 
@@ -114,11 +125,14 @@ public class PGPipelineEntry implements QuietCloseable {
             WriterSource writerSource,
             CharSequenceObjHashMap<PGPipelineEntry> namedStatements
     ) {
+        // do not execute anything, that has been parse-executed
+        if (stateParseExecuted) {
+            stateParseExecuted = false;
+            return transactionState;
+        }
+
         try {
             switch (this.sqlType) {
-                case CompiledQuery.CREATE_TABLE_AS_SELECT:
-                    //  nothing to do, this SQL executes at compilation
-                    break;
                 case CompiledQuery.EXPLAIN:
                 case CompiledQuery.SELECT:
                 case CompiledQuery.PSEUDO_SELECT:
@@ -152,6 +166,8 @@ public class PGPipelineEntry implements QuietCloseable {
                     freePendingWriters(pendingWriters, this.sqlType == CompiledQuery.COMMIT);
                     return NO_TRANSACTION;
                 default:
+                    // execute DDL that has not been parse-executed
+                    engine.ddl(sqlText, sqlExecutionContext);
                     break;
             }
         } catch (Throwable e) {
@@ -166,6 +182,14 @@ public class PGPipelineEntry implements QuietCloseable {
 
     public StringSink getErrorMessageSink() {
         return errorMessageSink;
+    }
+
+    public int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
+        if (address + Integer.BYTES <= msgLimit) {
+            return getIntUnsafe(address);
+        }
+        getErrorMessageSink().put(errorMessage);
+        throw BadProtocolException.INSTANCE;
     }
 
     public PGPipelineEntry getParentPreparedStatementPipelineEntry() {
@@ -202,6 +226,10 @@ public class PGPipelineEntry implements QuietCloseable {
 
     public boolean isPreparedStatement() {
         return preparedStatement;
+    }
+
+    public boolean isStateParseExecuted() {
+        return stateParseExecuted;
     }
 
     public void msgBindCopyParameterFormatCodes(long lo, long msgLimit, short formatCodeCount) throws BadProtocolException {
@@ -406,14 +434,9 @@ public class PGPipelineEntry implements QuietCloseable {
         this.stateParse = stateParse;
     }
 
-    public int getInt(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
-        if (address + Integer.BYTES <= msgLimit) {
-            return getIntUnsafe(address);
-        }
-        getErrorMessageSink().put(errorMessage);
-        throw BadProtocolException.INSTANCE;
+    public void setStateParseExecuted(boolean stateParseExecuted) {
+        this.stateParseExecuted = stateParseExecuted;
     }
-
 
     /**
      * This method writes the response to the provided sink. The response is typically
@@ -485,55 +508,57 @@ public class PGPipelineEntry implements QuietCloseable {
                     outEmptyQuery(utf8Sink);
                     stateSync = 6;
                 } else {
-                    if (!stateExec) {
-                        execute(sqlExecutionContext, transactionState, taiCache, pendingWriters, writerSource, namedStatements);
-                        stateExec = true;
-                    }
-                    switch (sqlType) {
-                        case CompiledQuery.CREATE_TABLE_AS_SELECT:
-                            break;
-                        case CompiledQuery.SET:
-                        case CompiledQuery.BEGIN:
-                        case CompiledQuery.COMMIT:
-                        case CompiledQuery.ROLLBACK:
-                        case CompiledQuery.ALTER_USER:
-                        case CompiledQuery.CREATE_USER:
-                        case CompiledQuery.DEALLOCATE:
-                        case CompiledQuery.ALTER: {
-                            // create table is just "OK"
-                            utf8Sink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
-                            long addr = utf8Sink.skipInt();
-                            utf8Sink.put(sqlTag).put((byte) 0);
-                            utf8Sink.putLen(addr);
-                            stateSync = 6;
-                            break;
-                        }
-                        case CompiledQuery.EXPLAIN:
-                        case CompiledQuery.SELECT:
-                        case CompiledQuery.PSEUDO_SELECT:
-                            // This is a long response (data set) and because of
-                            // this we are entering the interruptible state machine here. In that,
-                            // this call may end up in an exception and the code will have to be re-entered
-                            // at some point. Our own completion callback will invoke the pipeline callback
-                            outCursor(sqlExecutionContext, utf8Sink);
-                            // the above method changes state
-                            break;
-                        case CompiledQuery.INSERT_AS_SELECT:
-                        case CompiledQuery.INSERT: {
-                            utf8Sink.bookmark();
-                            // todo: if we get sent a log of inserts as the pipeline, we might run out of buffer
-                            //           sending the replies. We should handle this
-                            utf8Sink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
-                            long addr = utf8Sink.skipInt();
-                            utf8Sink.put(sqlTag).putAscii(" 0 ").put(sqlAffectedRowCount).put((byte) 0);
-                            utf8Sink.putLen(addr);
-                            stateSync = 6;
-                            break;
-                        }
-                        case CompiledQuery.UPDATE: {
-                            outCommandComplete(utf8Sink, sqlAffectedRowCount);
-                            stateSync = 6;
-                            break;
+//                    if (!stateExec) {
+//                        execute(sqlExecutionContext, transactionState, taiCache, pendingWriters, writerSource, namedStatements);
+//                        stateExec = true;
+//                    }
+                    if (stateExec) {
+                        // the flow when the pipeline entry was executed
+                        switch (sqlType) {
+                            case CompiledQuery.CREATE_TABLE_AS_SELECT:
+                            case CompiledQuery.SET:
+                            case CompiledQuery.BEGIN:
+                            case CompiledQuery.COMMIT:
+                            case CompiledQuery.ROLLBACK:
+                            case CompiledQuery.ALTER_USER:
+                            case CompiledQuery.CREATE_USER:
+                            case CompiledQuery.DEALLOCATE:
+                            case CompiledQuery.ALTER: {
+                                // create table is just "OK"
+                                utf8Sink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
+                                long addr = utf8Sink.skipInt();
+                                utf8Sink.put(sqlTag).put((byte) 0);
+                                utf8Sink.putLen(addr);
+                                stateSync = 6;
+                                break;
+                            }
+                            case CompiledQuery.EXPLAIN:
+                            case CompiledQuery.SELECT:
+                            case CompiledQuery.PSEUDO_SELECT:
+                                // This is a long response (data set) and because of
+                                // this we are entering the interruptible state machine here. In that,
+                                // this call may end up in an exception and the code will have to be re-entered
+                                // at some point. Our own completion callback will invoke the pipeline callback
+                                outCursor(sqlExecutionContext, utf8Sink);
+                                // the above method changes state
+                                break;
+                            case CompiledQuery.INSERT_AS_SELECT:
+                            case CompiledQuery.INSERT: {
+                                utf8Sink.bookmark();
+                                // todo: if we get sent a lot of inserts as the pipeline, we might run out of buffer
+                                //           sending the replies. We should handle this
+                                utf8Sink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
+                                long addr = utf8Sink.skipInt();
+                                utf8Sink.put(sqlTag).putAscii(" 0 ").put(sqlAffectedRowCount).put((byte) 0);
+                                utf8Sink.putLen(addr);
+                                stateSync = 6;
+                                break;
+                            }
+                            case CompiledQuery.UPDATE: {
+                                outCommandComplete(utf8Sink, sqlAffectedRowCount);
+                                stateSync = 6;
+                                break;
+                            }
                         }
                     }
                 }
@@ -552,12 +577,23 @@ public class PGPipelineEntry implements QuietCloseable {
 
         switch (stateSync) {
             case 20:
+                cursor = Misc.free(cursor);
                 outCommandComplete(utf8Sink, sqlReturnRowCount);
                 break;
             case 30:
                 outPortalSuspended(utf8Sink);
                 break;
         }
+
+        // after the pipeline entry is synchronized we should prepare it for the next
+        // execution iteration, in case the entry is a prepared statement or a portal
+
+        stateSync = 0;
+        stateParse = false;
+        stateBind = false;
+        stateDesc = 0;
+        stateExec = false;
+        stateClosed = false;
 
         return transactionState;
     }
@@ -613,6 +649,13 @@ public class PGPipelineEntry implements QuietCloseable {
                     .put(']');
         }
         bindVariableService.setBoolean(variableIndex, valueSize == 4);
+    }
+
+    private void applyBindSelectFormatCodes() {
+        for (int i = 0; i < msgBindSelectFormatCodes.size(); i++) {
+            int newValue = toColumnBinaryType((short) msgBindSelectFormatCodes.get(i), toColumnType(pgResultSetColumnTypes.getQuick(2 * i)));
+            pgResultSetColumnTypes.setQuick(2 * i, newValue);
+        }
     }
 
     private void buildResultSetColumnTypes() {
@@ -705,6 +748,8 @@ public class PGPipelineEntry implements QuietCloseable {
             sqlExecutionContext.setCacheHit(cacheHit);
             try {
                 cursor = factory.getCursor(sqlExecutionContext);
+                // move binary/text flags, which we received from the "bind" onto the result set column types
+                applyBindSelectFormatCodes();
             } catch (Throwable e) {
                 // un-cache the erroneous SQL
                 tas = Misc.free(tas);
@@ -1230,16 +1275,12 @@ public class PGPipelineEntry implements QuietCloseable {
         utf8Sink.putLen(addr);
     }
 
-    private void outComputeCursorSize(SqlExecutionContext sqlExecutionContext) throws QueryPausedException {
-        try {
-            final long cursorRowCount = cursor.size();
-            if (sqlReturnRowCountLimit > 0) {
-                this.sqlReturnRowCountLimitComputed = cursorRowCount > 0 ? Long.min(sqlReturnRowCountLimit, cursorRowCount) : sqlReturnRowCountLimit;
-            } else {
-                this.sqlReturnRowCountLimitComputed = Long.MAX_VALUE;
-            }
-        } catch (DataUnavailableException e) {
-            throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
+    private void outComputeCursorSize() {
+        this.sqlReturnRowCount = 0;
+        if (sqlReturnRowCountLimit > 0) {
+            sqlReturnRowCountToBeSent = sqlReturnRowCountLimit;
+        } else {
+            this.sqlReturnRowCountToBeSent = Long.MAX_VALUE;
         }
     }
 
@@ -1247,7 +1288,7 @@ public class PGPipelineEntry implements QuietCloseable {
             throws QueryPausedException, PeerIsSlowToReadException, PeerDisconnectedException, BadProtocolException {
         switch (stateSync) {
             case 4:
-                outComputeCursorSize(sqlExecutionContext);
+                outComputeCursorSize();
                 stateSync = 5;
             case 5:
                 utf8Sink.bookmark();
@@ -1277,23 +1318,28 @@ public class PGPipelineEntry implements QuietCloseable {
         try {
 
             if (outRecordPending) {
+                utf8Sink.resetToBookmark();
                 outRecord(utf8Sink, record, columnCount);
-                outRecordPending = false;
             }
 
-            while (cursor.hasNext()) {
+            while (sqlReturnRowCount < sqlReturnRowCountToBeSent && cursor.hasNext()) {
                 try {
                     outRecordPending = true;
                     outRecord(utf8Sink, record, columnCount);
-                    outRecordPending = false;
-                    utf8Sink.bookmark();
                 } catch (NoSpaceLeftInResponseBufferException e) {
                     utf8Sink.resetToBookmark();
                     utf8Sink.sendBufferAndReset();
-                    outRecordOrFail(utf8Sink, record, columnCount);
-                    utf8Sink.bookmark();
+                    try {
+                        outRecord(utf8Sink, record, columnCount);
+                    } catch (NoSpaceLeftInResponseBufferException e1) {
+                        // oopsie, buffer is too small for single record
+                        getErrorMessageSink()
+                                .put("not enough space in buffer for row data [sendBufferSize=").put(utf8Sink.getSendBufferSize()).put(']');
+                        utf8Sink.reset();
+                        throw BadProtocolException.INSTANCE;
+                    }
                 }
-                if (sqlReturnRowCount >= sqlReturnRowCountLimitComputed) {
+                if (sqlReturnRowCount >= sqlReturnRowCountToBeSent) {
                     break;
                 }
             }
@@ -1307,7 +1353,7 @@ public class PGPipelineEntry implements QuietCloseable {
         // either way, the result set was sent out as intended. The difference is in what we
         // send as the suffix.
 
-        if (sqlReturnRowCountLimitComputed == Long.MAX_VALUE || sqlReturnRowCount < sqlReturnRowCountLimitComputed) {
+        if (sqlReturnRowCount < sqlReturnRowCountToBeSent) {
             // the limit was not set, we sent all we had
             stateSync = 20;
         } else {
@@ -1447,23 +1493,15 @@ public class PGPipelineEntry implements QuietCloseable {
             }
         }
         utf8Sink.putLen(offset);
+        utf8Sink.bookmark();
+        outRecordPending = false;
+
         // todo: may be we can count outside?
         sqlReturnRowCount++;
     }
 
-    private void outRecordOrFail(PGResponseSink utf8Sink, Record record, int columnCount) throws BadProtocolException {
-        try {
-            outRecord(utf8Sink, record, columnCount);
-        } catch (NoSpaceLeftInResponseBufferException e) {
-            // oopsie, buffer is too small for single record
-            getErrorMessageSink()
-                    .put("not enough space in buffer for row data [sendBufferSize=").put(utf8Sink.getSendBufferSize()).put(']');
-            utf8Sink.reset();
-            throw BadProtocolException.INSTANCE;
-        }
-    }
-
     private void outRowDescription(PGResponseSink utf8Sink) {
+        //todo: wide table metadata can overflow the send buffer and corrupt communication
         final RecordMetadata metadata = factory.getMetadata();
         utf8Sink.put(MESSAGE_TYPE_ROW_DESCRIPTION);
         final long addr = utf8Sink.skipInt();
@@ -1508,8 +1546,9 @@ public class PGPipelineEntry implements QuietCloseable {
 
             switch (sqlType) {
                 case CompiledQuery.CREATE_TABLE_AS_SELECT:
-                    sqlTag = TAG_CTAS;
+                    sqlTag = TAG_OK;
                     sqlAffectedRowCount = cq.getAffectedRowsCount();
+                    stateParseExecuted = true;
                     break;
                 case CompiledQuery.EXPLAIN:
                     this.factory = cq.getRecordCursorFactory();
@@ -1588,6 +1627,7 @@ public class PGPipelineEntry implements QuietCloseable {
                 default:
                     // DDL
                     sqlTag = TAG_OK;
+                    stateParseExecuted = true;
                     break;
             }
         }

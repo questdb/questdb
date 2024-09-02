@@ -464,7 +464,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     // processes one or more queries (batch/script). "Simple Query" in PostgreSQL docs.
-    private void cmdQuery(long lo, long limit)  {
+    private void cmdQuery(long lo, long limit) {
 /*
         sendRNQ = true;
         prepareForNewQuery();
@@ -770,6 +770,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         // statement. We will also be required to close all the portals.
                         pipelineCurrentEntry.bindPortalName(portalName);
                         pipelineCurrentEntry = pe;
+                        pipelineCurrentEntry.setStateBind(true);
                     }
                     // else:
                     // portal is being created from "parse" message (i am not 100% the client will be
@@ -884,7 +885,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     final int index = namedPortals.keyIndex(portalName);
                     if (index < 0) {
                         PGPipelineEntry pe = namedStatements.valueAt(index);
-                        ;
                         PGPipelineEntry peParent = pe.getParentPreparedStatementPipelineEntry();
                         if (peParent != null) {
                             int parentIndex = peParent.getPortalNames().indexOf(portalName);
@@ -1086,13 +1086,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (sendBufferLimit - sendBufferPtr < PROTOCOL_TAIL_COMMAND_LENGTH) {
             responseUtf8Sink.sendBufferAndReset();
         }
-
         outReadForNewQuery();
+        resumeCallback = null;
         responseUtf8Sink.sendBufferAndReset();
 
         // todo: this is a wrap, prepare for new query execution
         prepareForNewQuery();
-        resumeCallback = null;
     }
 
     private void outReadForNewQuery() {

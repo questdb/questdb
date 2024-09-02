@@ -87,6 +87,9 @@ public abstract class BasePGTest extends AbstractCairoTest {
                     | CONN_AWARE_EXTENDED_PREPARED_TEXT
                     | CONN_AWARE_EXTENDED_CACHED_BINARY
                     | CONN_AWARE_EXTENDED_CACHED_TEXT;
+    public static final int CONN_AWARE_ALL_SANS_Q =
+                    CONN_AWARE_EXTENDED_BINARY
+                    | CONN_AWARE_EXTENDED_TEXT;
     protected CopyRequestJob copyRequestJob = null;
     protected int forceRecvFragmentationChunkSize = 1024 * 1024;
     protected int forceSendFragmentationChunkSize = 1024 * 1024;
@@ -374,7 +377,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
 
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_BINARY) == BasePGTest.CONN_AWARE_EXTENDED_BINARY) {
             LOG.info().$("Mode: asserting extended binary").$();
-//            assertWithPgServer(Mode.EXTENDED, true, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED, true, runnable, -2, queryTimeout);
             assertWithPgServer(Mode.EXTENDED, true, runnable, -1, queryTimeout);
         }
 
@@ -488,6 +491,11 @@ public abstract class BasePGTest extends AbstractCairoTest {
             @Override
             public int getWorkerCount() {
                 return workerCount;
+            }
+
+            @Override
+            public IODispatcherConfiguration getDispatcherConfiguration() {
+                return super.getDispatcherConfiguration();
             }
         };
 

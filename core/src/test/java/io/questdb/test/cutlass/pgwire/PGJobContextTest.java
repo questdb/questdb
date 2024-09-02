@@ -2654,7 +2654,7 @@ if __name__ == "__main__":
     @Test
     public void testCreateTableAsSelectExtendedPrepared() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
                     "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(10))")) {
@@ -2739,7 +2739,7 @@ if __name__ == "__main__":
     @Test
     public void testCreateTableExtendedPrepared() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             try (PreparedStatement pstmt = connection.prepareStatement("create table t (\n" +
                     "  a SYMBOL,\n" +
@@ -2758,7 +2758,7 @@ if __name__ == "__main__":
         // This test doesn't use partitioned tables.
         Assume.assumeFalse(walEnabled);
 
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_TEXT & ~CONN_AWARE_SIMPLE_BINARY, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 10000;
             int fetchSize = 993;
@@ -2803,7 +2803,7 @@ if __name__ == "__main__":
     @Test
     public void testDDL() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
             try (final PreparedStatement statement = connection.prepareStatement("create table x (a int)")) {
                 statement.execute();
                 try (
@@ -2923,7 +2923,7 @@ if __name__ == "__main__":
     @Test
     public void testEmptySql() throws Exception {
         skipOnWalRun(); // table not created
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement("")) {
                 statement.execute();
             }
@@ -2986,7 +2986,7 @@ if __name__ == "__main__":
             DelayedListener registryListener = new DelayedListener();
             engine.getQueryRegistry().setListener(registryListener);
 
-            assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
                 SOCountDownLatch started = new SOCountDownLatch(1);
                 SOCountDownLatch stopped = new SOCountDownLatch(1);
                 AtomicReference<Exception> queryError = new AtomicReference<>();
@@ -3242,7 +3242,7 @@ if __name__ == "__main__":
 
     @Test
     public void testExplainPlan() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
             try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
                     "select x," +
                     " timestamp_sequence(0, 1000) ts" +
@@ -3269,7 +3269,7 @@ if __name__ == "__main__":
 
     @Test
     public void testExplainPlanWithBindVariables() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_TEXT & ~CONN_AWARE_SIMPLE_BINARY, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
             try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
                     "select x," +
                     " timestamp_sequence(0, 1000) ts" +
@@ -3279,6 +3279,7 @@ if __name__ == "__main__":
 
             try (PreparedStatement statement = connection.prepareStatement("explain select * from xx where x > ? and x < ?::double limit 10")) {
                 for (int i = 0; i < 3; i++) {
+                    System.out.println(i);
                     statement.setLong(1, i);
                     statement.setDouble(2, (i + 1) * 10);
                     statement.execute();
