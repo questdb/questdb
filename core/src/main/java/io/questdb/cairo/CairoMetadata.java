@@ -207,6 +207,8 @@ public class CairoMetadata implements Sinkable {
                         columnVersionReader.ofRO(configuration.getFilesFacade(),
                                 path.$());
 
+
+                        columnVersionReader.readUnsafe();
                         final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
                         columnVersionReader.close();
 

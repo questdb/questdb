@@ -947,11 +947,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // effectively removes that column from being a dedup flag.
                     dedupColumnCommitAddresses.setDedupColumnCount(dedupColumnCommitAddresses.getColumnCount() - 1);
                 }
+                cairoMetadata.hydrateTable(tableToken, true, true);
             } finally {
                 // clear temp resources
                 convertOperator.finishColumnConversion();
                 path.trimTo(pathSize);
-                cairoMetadata.hydrateTable(tableToken, true, true);
             }
         } catch (Throwable th) {
             LOG.error().$("could not change column type [table=").$(tableToken.getTableName()).$(", column=").utf8(columnName)

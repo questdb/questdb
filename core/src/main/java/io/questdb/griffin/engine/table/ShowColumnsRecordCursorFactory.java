@@ -58,7 +58,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        return cursor.of(executionContext, tableToken);
+        return cursor.of(executionContext, tableToken, tokenPosition);
     }
 
     @Override
@@ -101,19 +101,19 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             return false;
         }
 
-        public ShowColumnsCursor of(SqlExecutionContext executionContext, CairoTable table) {
+        public ShowColumnsCursor of(CairoTable table) {
             cairoTable = table;
             names = cairoTable.getColumnNames();
             toTop();
             return this;
         }
 
-        public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken) {
+        public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition) {
             CairoTable table = executionContext.getCairoEngine().getCairoMetadata().getTable(tableToken);
             if (table == null) {
-                throw CairoException.tableDoesNotExist(tableToken.getTableName());
+                throw CairoException.tableDoesNotExist(tableToken.getTableName()).position(tokenPosition);
             } else {
-                return of(executionContext, table);
+                return of(table);
             }
         }
 
@@ -121,7 +121,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         public ShowColumnsCursor of(SqlExecutionContext executionContext, CharSequence tableName) {
             final CairoEngine engine = executionContext.getCairoEngine();
             final TableToken tableToken = engine.getTableTokenIfExists(tableName);
-            return of(executionContext, tableToken);
+            return of(executionContext, tableToken, -1);
         }
 
         @Override
