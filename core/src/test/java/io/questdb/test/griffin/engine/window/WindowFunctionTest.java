@@ -305,15 +305,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "1970-01-01T00:00:00.459998Z\t2\t459998\t419998.0\t8.400379998E9\t379998.0\n" +
                     "1970-01-01T00:00:00.459999Z\t3\t459999\t419999.0\t8.400399999E9\t379999.0\n";
 
-            // cross-check with  re-write using aggregate functions
+            // cross-check with re-write using aggregate functions
             assertSql(
                     expected,
-                    " select max(data.ts) as ts, data.i as i, max(data.j) as j, avg(data.j) as avg, sum(data.j::double) as sum, first(data.j::double) as first_value " +
-                            "from " +
-                            "( select i, max(ts) as max from tab group by i) cnt " +
-                            "join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
-                            "group by data.i " +
-                            "order by data.i"
+                    "select max(ts) as ts, i, max(j) as j, avg(j) as avg, sum(j::double) as sum, first(j::double) as first_value " +
+                            "from (" +
+                            "  select data.ts, data.i, data.j " +
+                            "  from ( select i, max(ts) as max from tab group by i) cnt " +
+                            "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
+                            "  order by data.i, ts " +
+                            ") " +
+                            "group by i " +
+                            "order by i"
             );
 
             assertQueryNoLeakCheck(
@@ -371,12 +374,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // cross-check with re-write using aggregate functions
             assertSql(
                     expected,
-                    " select max(data.ts) as ts, data.i as i, avg(data.j) as avg, sum(data.j::double) as sum, first(data.j::double) as first_value " +
-                            "from " +
-                            "( select i, max(ts) as max from tab group by i) cnt " +
-                            "join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
-                            "group by data.i " +
-                            "order by data.i "
+                    "select max(ts) as ts, i, avg(j) as avg, sum(j::double) as sum, first(j::double) as first_value " +
+                            "from (" +
+                            "  select data.ts, data.i, data.j " +
+                            "  from (select i, max(ts) as max from tab group by i) cnt " +
+                            "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
+                            "  order by data.i, ts " +
+                            ") " +
+                            "group by i " +
+                            "order by i "
             );
 
             assertQueryNoLeakCheck(
