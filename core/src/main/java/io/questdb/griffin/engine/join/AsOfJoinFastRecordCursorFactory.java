@@ -358,8 +358,8 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
     }
 
     private class AsOfJoinKeyedFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
-        private int origFrameIndex = -1;
-        private long origRowId = -1;
+        private int origSlaveFrameIndex = -1;
+        private long origSlaveRowId = -1;
 
         public AsOfJoinKeyedFastRecordCursor(
                 int columnSplit,
@@ -381,16 +381,17 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 return false;
             }
 
-            if (origRowId != -1) {
-                slaveCursor.recordAt(slaveRecB, Rows.toRowID(origFrameIndex, origRowId));
+            if (origSlaveRowId != -1) {
+                slaveCursor.recordAt(slaveRecB, Rows.toRowID(origSlaveFrameIndex, origSlaveRowId));
             }
             final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
             if (masterTimestamp >= lookaheadTimestamp) {
                 nextSlave(masterTimestamp);
             }
 
-            // we have to set the `isMasterHasNextPending` only now since `nextSlave()` might throw DataUnavailableException
-            // and in this case we do not want to call `masterCursor.hasNext()` during the next call to `this.hasNext()`
+            // we have to set the `isMasterHasNextPending` only now since `nextSlave()` may throw DataUnavailableException
+            // and in such case we do not want to call `masterCursor.hasNext()` during the next call to `this.hasNext()`.
+            // if we are here then it's clear nestSlave() did not throw DataUnavailableException.
             isMasterHasNextPending = true;
 
             boolean hasSlave = record.hasSlave();
@@ -398,34 +399,22 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 return true;
             }
 
-            // ok, the non-keyed matcher found a record with matching timestamps.
+            // ok, the non-keyed matcher found a record with a matching timestamp.
             // we have to make sure the JOIN keys match as well.
             masterSinkTarget.reset();
             masterKeySink.copy(masterRecord, masterSinkTarget);
-            TimeFrame timeFrame = slaveCursor.getTimeFrame();
-
 
             // make sure the cursor points to the right frame - since `nextSlave()` might have moved it under our feet
+            TimeFrame timeFrame = slaveCursor.getTimeFrame();
             int slaveRecordIndex = ((PageFrameMemoryRecord) slaveRecB).getFrameIndex();
-            origFrameIndex = slaveRecordIndex;
-            int cursorPrevCounter = 0;
-            if (timeFrame.getIndex() != slaveRecordIndex) {
-                while (timeFrame.getIndex() < slaveRecordIndex) {
-                    slaveCursor.next();
-                    cursorPrevCounter--;
-                }
-                while (timeFrame.getIndex() > slaveRecordIndex) {
-                    slaveCursor.prev();
-                    cursorPrevCounter++;
-                }
-                slaveCursor.open();
-            }
+            origSlaveFrameIndex = slaveRecordIndex;
+            int cursorFrameIndex = timeFrame.getIndex();
+            slaveCursor.toFrameIndex(slaveRecordIndex);
             slaveCursor.open();
-
 
             long rowLo = timeFrame.getRowLo();
             long keyedRowId = ((PageFrameMemoryRecord) slaveRecB).getRowIndex();
-            origRowId = keyedRowId;
+            origSlaveRowId = keyedRowId;
             int keyedFrameIndex = timeFrame.getIndex();
             for (; ; ) {
                 slaveSinkTarget.reset();
@@ -439,7 +428,6 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 keyedRowId--;
                 if (keyedRowId < rowLo) {
                     // ops, we exhausted this frame, let's try the previous one
-                    cursorPrevCounter++;
                     if (!slaveCursor.prev()) {
                         // there is no previous frame, we are done, no match :(
                         // if we are here, chances are we are also pretty slow because we are scanning the entire slave cursor!
@@ -456,15 +444,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             }
 
             // rewind the slave cursor to the original position so the next call to `nextSlave()` will not be affected
-            if (cursorPrevCounter > 0) {
-                for (int i = 0; i < cursorPrevCounter; i++) {
-                    slaveCursor.next();
-                }
-            } else if (cursorPrevCounter < 0) {
-                for (int i = 0; i < -cursorPrevCounter; i++) {
-                    slaveCursor.prev();
-                }
-            }
+            slaveCursor.toFrameIndex(cursorFrameIndex);
             assert slaveFrameIndex == timeFrame.getIndex();
             slaveCursor.open();
             return true;
@@ -473,8 +453,8 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         @Override
         public void toTop() {
             super.toTop();
-            origFrameIndex = -1;
-            origRowId = -1;
+            origSlaveFrameIndex = -1;
+            origSlaveRowId = -1;
         }
     }
 }

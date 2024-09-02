@@ -170,6 +170,21 @@ public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     }
 
     @Override
+    public boolean toFrameIndex(int frameIndex) {
+        buildFrameCache();
+
+        if (frameIndex < frameCount) {
+            int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
+            long timestampLo = reader.getPartitionTimestampByIndex(partitionIndex);
+            long maxTimestampHi = partitionIndex < partitionHi - 2 ? reader.getPartitionTimestampByIndex(partitionIndex + 1) : Long.MAX_VALUE;
+            timeFrame.of(frameIndex, timestampLo, estimatePartitionHi(timestampLo, maxTimestampHi));
+            return true;
+        }
+        timeFrame.of(-1, Long.MIN_VALUE, Long.MIN_VALUE);
+        return false;
+    }
+
+    @Override
     public void toTop() {
         timeFrame.clear();
         if (!isFrameCacheBuilt) {
