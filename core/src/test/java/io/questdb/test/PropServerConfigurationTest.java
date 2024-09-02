@@ -258,6 +258,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(100_000_000, configuration.getCairoConfiguration().getGroupByPresizeMaxSize());
         Assert.assertEquals(Numbers.SIZE_1GB, configuration.getCairoConfiguration().getGroupByPresizeMaxHeapSize());
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getGroupByAllocatorDefaultChunkSize());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlOrderBySortEnabled());
+        Assert.assertEquals(600, configuration.getCairoConfiguration().getSqlOrderByRadixSortThreshold());
 
         Assert.assertEquals(SqlJitMode.JIT_MODE_ENABLED, configuration.getCairoConfiguration().getSqlJitMode());
         Assert.assertEquals(8192, configuration.getCairoConfiguration().getSqlJitIRMemoryPageSize());
@@ -578,6 +580,20 @@ public class PropServerConfigurationTest {
                 "Replaced by `http.min.net.connection.rcvbuf` and `http.net.connection.rcvbuf`"));
     }
 
+    @Test(expected = ServerConfigurationException.class)
+    public void testDoubleCastScaleGreaterThanMax() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.double.cast.scale", Integer.toString(Numbers.MAX_DOUBLE_SCALE + 1));
+        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testDoubleScaleGreaterThanMax() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("http.json.query.double.scale", Integer.toString(Numbers.MAX_DOUBLE_SCALE + 1));
+        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+    }
+
     @Test
     public void testEnvOverrides() throws Exception {
         final Properties properties = new Properties();
@@ -634,6 +650,20 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(9663676416L, configuration.getCairoConfiguration().getDataAppendPageSize());
         Assert.assertEquals(60_000, configuration.getCairoConfiguration().getO3MaxLag());
         Assert.assertTrue(configuration.getCairoConfiguration().getTextConfiguration().isUseLegacyStringDefault());
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testFloatCastScaleGreaterThanMax() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.float.cast.scale", Integer.toString(Numbers.MAX_FLOAT_SCALE + 1));
+        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testFloatScaleGreaterThanMax() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("http.json.query.float.scale", Integer.toString(Numbers.MAX_FLOAT_SCALE + 1));
+        newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
     }
 
     @Test
@@ -1397,6 +1427,8 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isSqlParallelFilterEnabled());
         Assert.assertFalse(configuration.isSqlParallelFilterPreTouchEnabled());
         Assert.assertFalse(configuration.isSqlParallelGroupByEnabled());
+        Assert.assertFalse(configuration.isSqlOrderBySortEnabled());
+        Assert.assertEquals(100, configuration.getSqlOrderByRadixSortThreshold());
         Assert.assertEquals(32, configuration.getSqlParallelWorkStealingThreshold());
         Assert.assertEquals(1000, configuration.getSqlPageFrameMaxRows());
         Assert.assertEquals(100, configuration.getSqlPageFrameMinRows());

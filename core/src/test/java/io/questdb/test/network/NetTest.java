@@ -44,6 +44,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.Assert.fail;
 
@@ -52,7 +53,7 @@ public class NetTest {
 
     @Test
     public void testBindAndListenTcpToLocalhost() {
-        int fd = Net.socketTcp(false);
+        long fd = Net.socketTcp(false);
         try {
             if (!Net.bindTcp(fd, "127.0.0.1", 9005)) {
                 fail("Failed to bind tcp socket to localhost. Errno=" + Os.errno());
@@ -66,7 +67,7 @@ public class NetTest {
 
     @Test
     public void testBindAndListenUdpToLocalhost() {
-        int fd = Net.socketUdp();
+        long fd = Net.socketUdp();
         try {
             if (!Net.bindUdp(fd, Net.parseIPv4("127.0.0.1"), 9005)) {
                 fail("Failed to bind udp socket to localhost. Errno=" + Os.errno());
@@ -83,7 +84,7 @@ public class NetTest {
         NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
         final long pAddrInfo = nf.getAddrInfo("questdb.io", 443);
         Assert.assertNotEquals(-1, pAddrInfo);
-        int fd = nf.socketTcp(true);
+        long fd = nf.socketTcp(true);
         try {
             Assert.assertEquals(0, nf.connectAddrInfo(fd, pAddrInfo));
         } finally {
@@ -94,12 +95,12 @@ public class NetTest {
 
     @Test
     public void testGetAddrInfoConnectLocalhost() {
-        int acceptFd = Net.socketTcp(true);
+        long acceptFd = Net.socketTcp(true);
         Assert.assertTrue(acceptFd > 0);
         int port = assertCanBind(acceptFd);
         Net.listen(acceptFd, 1);
 
-        int clientFd = Net.socketTcp(true);
+        long clientFd = Net.socketTcp(true);
         Assert.assertTrue(clientFd > 0);
         long addrInfo = Net.getAddrInfo("localhost", port);
         Assert.assertTrue(addrInfo > 0);
@@ -158,7 +159,7 @@ public class NetTest {
     @Test
     @Ignore
     public void testMulticast() {
-        int fd = Net.socketUdp();
+        long fd = Net.socketUdp();
         System.out.println(fd);
         bindSocket(fd);
         System.out.println(Net.setMulticastInterface(fd, Net.parseIPv4("192.168.1.156")));
@@ -175,11 +176,11 @@ public class NetTest {
 
     @Test
     public void testReusePort() {
-        int fd1 = Net.socketUdp();
+        long fd1 = Net.socketUdp();
         try {
             bindSocket(fd1);
             Os.sleep(1000L);
-            int fd2 = Net.socketUdp();
+            long fd2 = Net.socketUdp();
             try {
                 bindSocket(fd2);
             } finally {
@@ -197,19 +198,19 @@ public class NetTest {
         try (Path msgSink = new Path().of(msg)) {
             int msgLen = msgSink.size() + 1;
 
-            int acceptFd = Net.socketTcp(true);
+            long acceptFd = Net.socketTcp(true);
             Assert.assertTrue(acceptFd > 0);
             int port = assertCanBind(acceptFd);
             Net.listen(acceptFd, 1024);
 
-            int clientFd = Net.socketTcp(true);
+            long clientFd = Net.socketTcp(true);
             long sockAddr = Net.sockaddr("127.0.0.1", port);
             TestUtils.assertConnect(clientFd, sockAddr);
             Assert.assertEquals(msgLen, Net.send(clientFd, msgSink.$().ptr(), msgLen));
             Net.close(clientFd);
             Net.freeSockAddr(sockAddr);
 
-            int serverFd = Net.accept(acceptFd);
+            long serverFd = Net.accept(acceptFd);
             long serverBuf = Unsafe.malloc(msgLen, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
             Assert.assertEquals(msgLen, Net.peek(serverFd, serverBuf, msgLen));
             Utf8s.utf8ToUtf16Z(serverBuf, sink);
@@ -227,7 +228,7 @@ public class NetTest {
 
     @Test
     public void testSendAndRecvBuffer() throws InterruptedException, BrokenBarrierException {
-        int fd = Net.socketTcp(true);
+        long fd = Net.socketTcp(true);
         Assert.assertTrue(fd > 0);
         int port = assertCanBind(fd);
         Net.listen(fd, 1024);
@@ -243,7 +244,7 @@ public class NetTest {
         new Thread(() -> {
             try {
                 barrier.await();
-                int clientFd = Net.accept(fd);
+                long clientFd = Net.accept(fd);
                 Net.appendIP4(sink, Net.getPeerIP(clientFd));
                 ipCollectedLatch.countDown();
                 Net.configureNoLinger(clientFd);
@@ -261,7 +262,7 @@ public class NetTest {
         }).start();
 
         barrier.await();
-        int clientFd = Net.socketTcp(true);
+        long clientFd = Net.socketTcp(true);
         long sockAddr = Net.sockaddr("127.0.0.1", port);
         TestUtils.assertConnect(clientFd, sockAddr);
         Assert.assertEquals(0, Net.setSndBuf(clientFd, 256));
@@ -298,10 +299,10 @@ public class NetTest {
     public void testSocketShutdown() throws BrokenBarrierException, InterruptedException {
         final CyclicBarrier barrier = new CyclicBarrier(2);
         final CountDownLatch haltLatch = new CountDownLatch(1);
-        final AtomicInteger fileDescriptor = new AtomicInteger();
+        final AtomicLong fileDescriptor = new AtomicLong();
 
         new Thread(() -> {
-            int fd = Net.socketTcp(true);
+            long fd = Net.socketTcp(true);
             try {
                 Net.configureNoLinger(fd);
                 Assert.assertTrue(Net.bindTcp(fd, 0, 19004));
@@ -325,7 +326,7 @@ public class NetTest {
 
     @Test
     public void testTcpNoDelay() {
-        int fd = Net.socketTcp(true);
+        long fd = Net.socketTcp(true);
         try {
             Assert.assertEquals(0, Net.setTcpNoDelay(fd, false));
             Assert.assertEquals(0, Net.getTcpNoDelay(fd));
@@ -336,7 +337,7 @@ public class NetTest {
         }
     }
 
-    private int assertCanBind(int fd) {
+    private int assertCanBind(long fd) {
         boolean bound = false;
         for (int i = 0; i < 1000 && !bound; i++) {
             bound = Net.bindTcp(fd, 0, ++port);
@@ -346,7 +347,7 @@ public class NetTest {
     }
 
     private void bindAcceptConnectClose() throws InterruptedException, BrokenBarrierException {
-        int fd = Net.socketTcp(true);
+        long fd = Net.socketTcp(true);
         Assert.assertTrue(fd > 0);
         int port = assertCanBind(fd);
         Net.listen(fd, 1024);
@@ -361,7 +362,7 @@ public class NetTest {
         new Thread(() -> {
             try {
                 barrier.await();
-                int clientFd = Net.accept(fd);
+                long clientFd = Net.accept(fd);
                 Net.appendIP4(sink, Net.getPeerIP(clientFd));
                 Net.configureNoLinger(clientFd);
                 Net.close(clientFd);
@@ -374,7 +375,7 @@ public class NetTest {
         }).start();
 
         barrier.await();
-        int clientFd = Net.socketTcp(true);
+        long clientFd = Net.socketTcp(true);
         long sockAddr = Net.sockaddr("127.0.0.1", port);
         long sockFd = -1;
         for (int i = 0; i < 2000; i++) {
@@ -394,7 +395,7 @@ public class NetTest {
         Assert.assertFalse(threadFailed.get());
     }
 
-    private void bindSocket(int fd) {
+    private void bindSocket(long fd) {
         Assert.assertTrue(fd > 0);
         Assert.assertEquals(0, Net.setReuseAddress(fd));
         Assert.assertEquals(0, Net.setReusePort(fd));

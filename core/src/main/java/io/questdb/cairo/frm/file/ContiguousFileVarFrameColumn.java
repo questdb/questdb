@@ -43,13 +43,13 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     private final long fileOpts;
     private final boolean mixedIOFlag;
     private long appendOffsetRowCount = -1;
-    private int auxFd = -1;
+    private long auxFd = -1;
     private int columnIndex;
     private long columnTop;
     private int columnType;
     private ColumnTypeDriver columnTypeDriver;
     private long dataAppendOffsetBytes = -1;
-    private int dataFd = -1;
+    private long dataFd = -1;
     private RecycleBin<ContiguousFileVarFrameColumn> recycleBin;
 
     public ContiguousFileVarFrameColumn(CairoConfiguration configuration) {
@@ -257,12 +257,12 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     }
 
     @Override
-    public int getPrimaryFd() {
+    public long getPrimaryFd() {
         return dataFd;
     }
 
     @Override
-    public int getSecondaryFd() {
+    public long getSecondaryFd() {
         return auxFd;
     }
 

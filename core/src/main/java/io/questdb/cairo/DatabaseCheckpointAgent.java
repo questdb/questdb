@@ -38,6 +38,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SimpleWaitingLock;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -47,8 +48,8 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
@@ -61,11 +62,12 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final FilesFacade ff;
-    private final AtomicBoolean inProgress = new AtomicBoolean();
     private final ReentrantLock lock = new ReentrantLock();
     private final WalWriterMetadata metadata; // protected with #lock
+    private final MicrosecondClock microClock;
     private final StringSink nameSink = new StringSink(); // protected with #lock
     private final Path path = new Path(); // protected with #lock
+    private final AtomicLong startedAtTimestamp = new AtomicLong(Numbers.LONG_NULL); // Numbers.LONG_NULL means no ongoing checkpoint
     private final SymbolMapUtil symbolMapUtil = new SymbolMapUtil();
     private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
@@ -81,6 +83,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     DatabaseCheckpointAgent(CairoEngine engine) {
         this.engine = engine;
         this.configuration = engine.getConfiguration();
+        this.microClock = configuration.getMicrosecondClock();
         this.ff = configuration.getFilesFacade();
         this.metadata = new WalWriterMetadata(ff);
         this.tableNameRegistryStore = new GrowOnlyTableNameRegistryStore(ff);
@@ -108,13 +111,13 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
     }
 
-    @Override
-    public boolean isInProgress() {
-        return inProgress.get();
-    }
-
     public void setWalPurgeJobRunLock(@Nullable SimpleWaitingLock walPurgeJobRunLock) {
         this.walPurgeJobRunLock = walPurgeJobRunLock;
+    }
+
+    @Override
+    public long startedAtTimestamp() {
+        return startedAtTimestamp.get();
     }
 
     private static void copyOrError(Path srcPath, Path dstPath, FilesFacade ff, AtomicInteger counter, String fileName) {
@@ -255,32 +258,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
     }
 
-    void checkpointRelease() throws SqlException {
-        if (!lock.tryLock()) {
-            throw SqlException.position(0).put("Another checkpoint command is in progress");
-        }
-        try {
-            // Delete checkpoint's "db" directory.
-            path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).$();
-            ff.rmdir(path); // it's fine to ignore errors here
-
-            // Resume the WalPurgeJob
-            if (walPurgeJobRunLock != null) {
-                try {
-                    walPurgeJobRunLock.unlock();
-                } catch (IllegalStateException ignore) {
-                    // not an error here
-                    // checkpointRelease() can be called several time in a row.
-                }
-            }
-
-            // reset checkpoint in-flight flag.
-            inProgress.set(false);
-        } finally {
-            lock.unlock();
-        }
-    }
-
     void checkpointCreate(SqlExecutionContext executionContext) throws SqlException {
         // Windows doesn't support sync() system call.
         if (Os.isWindows()) {
@@ -291,7 +268,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             throw SqlException.position(0).put("Another checkpoint command is in progress");
         }
         try {
-            if (!inProgress.compareAndSet(false, true)) {
+            final long startedAt = microClock.getTicks();
+            if (!startedAtTimestamp.compareAndSet(Numbers.LONG_NULL, startedAt)) {
                 throw SqlException.position(0).put("Waiting for CHECKPOINT RELEASE to be called");
             }
 
@@ -438,9 +416,35 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     tableNameRegistryStore.close();
                 }
             } catch (Throwable e) {
-                inProgress.set(false);
+                startedAtTimestamp.set(Numbers.LONG_NULL);
                 throw e;
             }
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    void checkpointRelease() throws SqlException {
+        if (!lock.tryLock()) {
+            throw SqlException.position(0).put("Another checkpoint command is in progress");
+        }
+        try {
+            // Delete checkpoint's "db" directory.
+            path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).$();
+            ff.rmdir(path); // it's fine to ignore errors here
+
+            // Resume the WalPurgeJob
+            if (walPurgeJobRunLock != null) {
+                try {
+                    walPurgeJobRunLock.unlock();
+                } catch (IllegalStateException ignore) {
+                    // not an error here
+                    // checkpointRelease() can be called several time in a row.
+                }
+            }
+
+            // reset checkpoint in-flight flag.
+            startedAtTimestamp.set(Numbers.LONG_NULL);
         } finally {
             lock.unlock();
         }

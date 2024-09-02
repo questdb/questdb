@@ -130,3 +130,5 @@ def parse_args():
 if __name__ == '__main__':
     args = parse_args()
     ensure_rust(args.components)
+    if args.export_cargo_install_env:
+        export_cargo_install_env()

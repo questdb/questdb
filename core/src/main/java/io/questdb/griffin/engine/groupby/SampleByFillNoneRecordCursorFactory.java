@@ -99,12 +99,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
-        try {
-            return initFunctionsAndCursor(executionContext, baseCursor);
-        } catch (Throwable ex) {
-            Misc.free(cursor);
-            throw ex;
-        }
+        return initFunctionsAndCursor(executionContext, baseCursor);
     }
 
     @Override

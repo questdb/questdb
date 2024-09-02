@@ -86,7 +86,7 @@ public class HttpServerConfigurationBuilder {
 
                 @Override
                 public int getDoubleScale() {
-                    return Numbers.MAX_SCALE;
+                    return Numbers.MAX_DOUBLE_SCALE;
                 }
 
                 @Override
@@ -101,7 +101,7 @@ public class HttpServerConfigurationBuilder {
 
                 @Override
                 public int getFloatScale() {
-                    return 10;
+                    return Numbers.MAX_FLOAT_SCALE;
                 }
 
                 @Override

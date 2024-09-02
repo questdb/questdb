@@ -64,7 +64,7 @@ public final class MimeTypesCache extends Utf8SequenceObjHashMap<CharSequence> {
     }
 
     public MimeTypesCache(@Transient FilesFacade ff, @Transient LPSZ path) {
-        final int fd = ff.openRO(path);
+        final long fd = ff.openRO(path);
         if (fd < 0) {
             throw HttpException.instance("could not open [file=").put(path).put(", errno=").put(ff.errno()).put(']');
         }

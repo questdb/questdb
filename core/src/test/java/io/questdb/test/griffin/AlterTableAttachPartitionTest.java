@@ -408,7 +408,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         engine.clear();
                         TableToken tableToken = engine.verifyTableName(s.getName());
                         path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01").concat("sh.i").$();
-                        int fd = TestFilesFacadeImpl.INSTANCE.openRW(path.$(), CairoConfiguration.O_NONE);
+                        long fd = TestFilesFacadeImpl.INSTANCE.openRW(path.$(), CairoConfiguration.O_NONE);
                         Files.truncate(fd, Files.length(fd) / 4);
                         TestFilesFacadeImpl.INSTANCE.close(fd);
                     },
@@ -474,7 +474,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         engine.clear();
                         TableToken tableToken = engine.verifyTableName(s.getName());
                         path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01").concat("sh.v").$();
-                        int fd = TestFilesFacadeImpl.INSTANCE.openRW(path.$(), CairoConfiguration.O_NONE);
+                        long fd = TestFilesFacadeImpl.INSTANCE.openRW(path.$(), CairoConfiguration.O_NONE);
                         Files.truncate(fd, Files.length(fd) / 2);
                         TestFilesFacadeImpl.INSTANCE.close(fd);
                     },
@@ -964,7 +964,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         FilesFacadeImpl ff = new TestFilesFacadeImpl() {
 
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (this.fd != fd) {
                     return super.mmap(fd, len, offset, flags, memoryTag);
                 }
@@ -973,8 +973,8 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
             }
 
             @Override
-            public int openRO(LPSZ name) {
-                int fd = super.openRO(name);
+            public long openRO(LPSZ name) {
+                long fd = super.openRO(name);
                 if (Utf8s.endsWithAscii(name, "ts.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
                 }
@@ -990,7 +990,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         AtomicInteger counter = new AtomicInteger(1);
         FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, "ts.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
@@ -1006,7 +1006,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         AtomicInteger counter = new AtomicInteger(1);
         FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, "ts.d") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
@@ -1038,7 +1038,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
         AtomicInteger counter = new AtomicInteger(1);
         FilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, "dst" + testName.getMethodName()) && Utf8s.containsAscii(name, "2020-01-01") && counter.decrementAndGet() == 0) {
                     return -1;
                 }
@@ -1355,7 +1355,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                         engine.clear();
                         TableToken tableToken = engine.verifyTableName(s.getName());
                         path.of(configuration.getRoot()).concat(tableToken).concat("2022-08-01").concat("t.d").$();
-                        int fd = TestFilesFacadeImpl.INSTANCE.openRW(path.$(), CairoConfiguration.O_NONE);
+                        long fd = TestFilesFacadeImpl.INSTANCE.openRW(path.$(), CairoConfiguration.O_NONE);
                         Files.truncate(fd, Files.length(fd) / 10);
                         TestFilesFacadeImpl.INSTANCE.close(fd);
                     },
@@ -1413,7 +1413,7 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
 
     private void writeToStrIndexFile(TableModel src, String partition, String columnFileName, long value, long offset) {
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
-        int fd = -1;
+        long fd = -1;
         long writeBuff = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         try {
             // .i file

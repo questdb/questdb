@@ -64,7 +64,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private final WorkStealingStrategy workStealingStrategy;
     public volatile boolean done;
     private SqlExecutionCircuitBreaker circuitBreaker;
-    private int circuitBreakerFd;
+    private long circuitBreakerFd;
     private SCSequence collectSubSeq;
     private int collectedFrameIndex = -1;
     private int dispatchStartFrameIndex;
@@ -214,7 +214,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         return cancelReason.get();
     }
 
-    public int getCircuitBreakerFd() {
+    public long getCircuitBreakerFd() {
         return circuitBreakerFd;
     }
 

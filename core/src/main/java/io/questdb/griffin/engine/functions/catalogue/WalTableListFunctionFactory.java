@@ -244,8 +244,8 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         tableName = tableToken.getTableName();
                         final int rootLen = rootPath.size();
                         rootPath.concat(tableToken).concat(SEQ_DIR);
-                        int metaFd = -1;
-                        int txnFd = -1;
+                        long metaFd = -1;
+                        long txnFd = -1;
                         try {
                             metaFd = TableUtils.openRO(ff, rootPath, META_FILE_NAME, LOG);
                             txnFd = TableUtils.openRO(ff, rootPath, TXNLOG_FILE_NAME, LOG);

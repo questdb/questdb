@@ -68,7 +68,7 @@ public class FilesTest {
                 Assert.assertTrue(Files.exists(path.$()));
                 Assert.assertEquals(5, Files.length(path.$()));
 
-                int fd = Files.openRW(path.$());
+                long fd = Files.openRW(path.$());
                 try {
                     Files.allocate(fd, 10);
                     Assert.assertEquals(10, Files.length(path.$()));
@@ -77,6 +77,45 @@ public class FilesTest {
                 } finally {
                     Files.close(fd);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testAllocateLoop() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+            TestUtils.writeStringToFile(temp, "abcde");
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                Assert.assertTrue(Files.exists(path.$()));
+                Assert.assertEquals(5, Files.length(path.$()));
+                long fd = Files.openRW(path.$());
+
+                long M50 = 100 * 1024L * 1024L;
+                try {
+                    // If allocate tries to allocate by the given size
+                    // instead of to the size this will allocate 2TB and suppose to fail
+                    for (int i = 0; i < 20000; i++) {
+                        Files.allocate(fd, M50 + i);
+                        Assert.assertEquals(M50 + i, Files.length(path.$()));
+                    }
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDeleteOpenFile() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                File f = temporaryFolder.newFile();
+                long fd = Files.openRW(path.of(f.getAbsolutePath()).$());
+                Assert.assertTrue(Files.exists(fd));
+                Assert.assertTrue(Files.remove(path.$()));
+                Assert.assertFalse(Files.exists(fd));
+                Files.close(fd);
             }
         });
     }
@@ -106,23 +145,19 @@ public class FilesTest {
     }
 
     @Test
-    public void testAllocateLoop() throws Exception {
+    public void testFailsToAllocateWhenNotEnoughSpace() throws Exception {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.newFile();
             TestUtils.writeStringToFile(temp, "abcde");
             try (Path path = new Path().of(temp.getAbsolutePath())) {
                 Assert.assertTrue(Files.exists(path.$()));
+                long fd = Files.openRW(path.$());
                 Assert.assertEquals(5, Files.length(path.$()));
-                int fd = Files.openRW(path.$());
 
-                long M50 = 100 * 1024L * 1024L;
                 try {
-                    // If allocate tries to allocate by the given size
-                    // instead of to the size this will allocate 2TB and suppose to fail
-                    for (int i = 0; i < 20000; i++) {
-                        Files.allocate(fd, M50 + i);
-                        Assert.assertEquals(M50 + i, Files.length(path.$()));
-                    }
+                    long tb10 = 1024L * 1024L * 1024L * 1024L * 10; // 10TB
+                    boolean success = Files.allocate(fd, tb10);
+                    Assert.assertFalse("Allocation should fail on reasonable hard disk size", success);
                 } finally {
                     Files.close(fd);
                 }
@@ -294,17 +329,9 @@ public class FilesTest {
     }
 
     @Test
-    public void testDeleteOpenFile() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Path path = new Path()) {
-                File f = temporaryFolder.newFile();
-                int fd = Files.openRW(path.of(f.getAbsolutePath()).$());
-                Assert.assertTrue(Files.exists(fd));
-                Assert.assertTrue(Files.remove(path.$()));
-                Assert.assertFalse(Files.exists(fd));
-                Files.close(fd);
-            }
-        });
+    public void testLongFd() throws Exception {
+        long unuqFd = Numbers.encodeLowHighInts(1000, -1);
+        Assert.assertTrue(unuqFd < 0);
     }
 
     @Test
@@ -442,24 +469,9 @@ public class FilesTest {
     }
 
     @Test
-    public void testFailsToAllocateWhenNotEnoughSpace() throws Exception {
-        assertMemoryLeak(() -> {
-            File temp = temporaryFolder.newFile();
-            TestUtils.writeStringToFile(temp, "abcde");
-            try (Path path = new Path().of(temp.getAbsolutePath())) {
-                Assert.assertTrue(Files.exists(path.$()));
-                int fd = Files.openRW(path.$());
-                Assert.assertEquals(5, Files.length(path.$()));
-
-                try {
-                    long tb10 = 1024L * 1024L * 1024L * 1024L * 10; // 10TB
-                    boolean success = Files.allocate(fd, tb10);
-                    Assert.assertFalse("Allocation should fail on reasonable hard disk size", success);
-                } finally {
-                    Files.close(fd);
-                }
-            }
-        });
+    public void testLongFd2() throws Exception {
+        long unuqFd = Numbers.encodeLowHighInts(Integer.MAX_VALUE, 1000);
+        Assert.assertTrue(unuqFd > 0);
     }
 
     @Test
@@ -598,14 +610,14 @@ public class FilesTest {
         long srcMem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         Unsafe.getUnsafe().putLong(srcMem, valueInMem);
 
-        int fd = -1;
+        long fd = -1;
         long mmapMem = 0;
         try (Path dstPath = new Path().of(file.getAbsolutePath())) {
             Assert.assertTrue(Files.exists(dstPath.$()));
             fd = Files.openRW(dstPath.$());
             mmapMem = TableUtils.mapRW(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
 
-            final int finalFd = fd;
+            final long finalFd = fd;
             long finalMmapMem = mmapMem;
             Thread th1 = new Thread(() -> {
                 for (long offset = 0; offset < fileSize; offset += 2 * Long.BYTES) {
@@ -666,11 +678,11 @@ public class FilesTest {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.getRoot();
             try (Path path = new Path().of(temp.getAbsolutePath()).concat("openCleanRWParallel")) {
-                int fd = Files.openCleanRW(path.$(), 1024);
+                long fd = Files.openCleanRW(path.$(), 1024);
                 Assert.assertTrue(Files.exists(path.$()));
                 Assert.assertEquals(1024, Files.length(path.$()));
 
-                int fd2 = Files.openCleanRW(path.$(), 2048);
+                long fd2 = Files.openCleanRW(path.$(), 2048);
                 Assert.assertEquals(2048, Files.length(path.$()));
 
                 Files.close(fd);
@@ -682,7 +694,7 @@ public class FilesTest {
     @Test
     public void testOpenCleanRWFailsWhenCalledOnDir() throws Exception {
         assertMemoryLeak(() -> {
-            int fd = -1;
+            long fd = -1;
             try (Path path = new Path()) {
                 fd = Files.openCleanRW(path.of(temporaryFolder.getRoot().getAbsolutePath()).$(), 32);
                 Assert.assertTrue(fd < 0);
@@ -712,7 +724,7 @@ public class FilesTest {
                         try {
                             barrier.await();
                             for (int i = 0; i < iteration; i++) {
-                                int fd = Files.openCleanRW(path.$(), fileSize);
+                                long fd = Files.openCleanRW(path.$(), fileSize);
                                 if (fd < 0) {
                                     errors.incrementAndGet();
                                 }
@@ -741,7 +753,7 @@ public class FilesTest {
     @Test
     public void testOpenRWFailsWhenCalledOnDir() throws Exception {
         assertMemoryLeak(() -> {
-            int fd = -1;
+            long fd = -1;
             try (Path path = new Path()) {
                 fd = Files.openRW(path.of(temporaryFolder.getRoot().getAbsolutePath()).$());
                 Assert.assertTrue(fd < 0);
@@ -757,7 +769,7 @@ public class FilesTest {
             File temp = temporaryFolder.newFile();
 
             try (Path path = new Path().of(temp.getAbsolutePath())) {
-                int fd1 = Files.openRW(path.$());
+                long fd1 = Files.openRW(path.$());
                 long fileSize = 4096;
                 long mem = Unsafe.malloc(fileSize, MemoryTag.NATIVE_DEFAULT);
 
@@ -790,7 +802,7 @@ public class FilesTest {
             File temp = temporaryFolder.newFile();
 
             try (Path path = new Path().of(temp.getAbsolutePath())) {
-                int fd1 = Files.openRW(path.$());
+                long fd1 = Files.openRW(path.$());
                 long size2Gb = (2L << 30) + 4096;
                 long mem = Unsafe.malloc(size2Gb, MemoryTag.NATIVE_DEFAULT);
 
@@ -861,9 +873,9 @@ public class FilesTest {
                     Path path1 = new Path().of(temp.getAbsolutePath());
                     Path path2 = new Path().of(temp.getAbsolutePath())
             ) {
-                int fd1 = Files.openRW(path1.$());
+                long fd1 = Files.openRW(path1.$());
                 path2.put(".2");
-                int fd2 = 0;
+                long fd2 = 0;
 
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
 
@@ -916,9 +928,9 @@ public class FilesTest {
                     Path path1 = new Path().of(temp.getAbsolutePath());
                     Path path2 = new Path().of(temp.getAbsolutePath())
             ) {
-                int fd1 = Files.openRW(path1.$());
+                long fd1 = Files.openRW(path1.$());
                 path2.put(".2");
-                int fd2 = Files.openRW(path2.$());
+                long fd2 = Files.openRW(path2.$());
 
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
 
@@ -1096,7 +1108,7 @@ public class FilesTest {
                 Assert.assertTrue(Files.exists(path.$()));
                 Assert.assertEquals(5, Files.length(path.$()));
 
-                int fd = Files.openRW(path.$());
+                long fd = Files.openRW(path.$());
                 try {
                     Files.truncate(fd, 3);
                     Assert.assertEquals(3, Files.length(path.$()));
@@ -1180,7 +1192,7 @@ public class FilesTest {
             File temp = temporaryFolder.newFile();
 
             try (Path path = new Path().of(temp.getAbsolutePath())) {
-                int fd1 = Files.openRW(path.$());
+                long fd1 = Files.openRW(path.$());
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
 
                 long testValue = 0x1234567890ABCDEFL;
@@ -1212,8 +1224,8 @@ public class FilesTest {
             File temp = temporaryFolder.newFile();
 
             try (Path path = new Path().of(temp.getAbsolutePath())) {
-                int fd1 = Files.openRW(path.$());
-                int fd2 = Files.openRW(path.put(".2").$());
+                long fd1 = Files.openRW(path.$());
+                long fd2 = Files.openRW(path.put(".2").$());
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
                 long mmap = 0;
 
@@ -1256,7 +1268,7 @@ public class FilesTest {
     private static void assertEqualsFileContent(Path path, String fileContent) {
         final int buffSize = 2048;
         final long buffPtr = Unsafe.malloc(buffSize, MemoryTag.NATIVE_DEFAULT);
-        int fd = -1;
+        long fd = -1;
         try {
             fd = Files.openRO(path.$());
             Assert.assertTrue(Files.exists(fd));
@@ -1296,7 +1308,7 @@ public class FilesTest {
             Unsafe.getUnsafe().putByte(p++, bytes[i]);
         }
         Unsafe.getUnsafe().putByte(p, (byte) 0);
-        int fd = -1;
+        long fd = -1;
         try {
             fd = Files.openAppend(path.concat(fileName).$());
             if (fd > -1) {
@@ -1316,7 +1328,7 @@ public class FilesTest {
                 Path path = new Path().of(pathName).concat("hello.").put(index).put(".txt");
                 Path p2 = new Path().of(pathName)
         ) {
-            int fd = -1;
+            long fd = -1;
             long mem = -1;
             long diskSize = ff.getDiskFreeSpace(p2.$());
             Assert.assertNotEquals(-1, diskSize);

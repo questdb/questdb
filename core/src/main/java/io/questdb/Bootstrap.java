@@ -443,7 +443,7 @@ public class Bootstrap {
     private static void verifyFileOpts(Path path, CairoConfiguration cairoConfiguration) {
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         path.of(cairoConfiguration.getRoot()).concat("_verify_").put(cairoConfiguration.getRandom().nextPositiveInt()).put(".d").$();
-        int fd = ff.openRW(path.$(), cairoConfiguration.getWriterFileOpenOpts());
+        long fd = ff.openRW(path.$(), cairoConfiguration.getWriterFileOpenOpts());
         try {
             if (fd > -1) {
                 long mem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);

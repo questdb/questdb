@@ -362,7 +362,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         final Path path = Path.getThreadLocal(pathToTable);
 
-        int srcTimestampFd = 0;
+        long srcTimestampFd = 0;
         long dataTimestampLo;
         long dataTimestampHi;
         final FilesFacade ff = tableWriter.getFilesFacade();
@@ -1092,7 +1092,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final int columnSize = ColumnType.sizeOf(columnType);
 
                     final long columnTop = tableWriter.getColumnTop(partitionTimestamp, i, mergeDataHi + 1);
-                    final int fd;
+                    final long fd;
                     final long mapSize, mappedAddress;
 
                     if (columnTop < mergeDataLo + 1) {
@@ -1153,7 +1153,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 if (mappedAddressSize > 0) {
                     TableUtils.mapAppendColumnBufferRelease(ff, mappedAddress, 0, mappedAddressSize, mapMemTag);
                 }
-                final int fd = (int) dedupCommitAddresses.getColReserved3(dedupColSinkAddr, i);
+                final long fd = dedupCommitAddresses.getColReserved3(dedupColSinkAddr, i);
                 if (fd > 0) {
                     ff.close(fd);
                 }
@@ -1194,12 +1194,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int suffixType,
             long suffixLo,
             long suffixHi,
-            int srcTimestampFd,
+            long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             int indexBlockCapacity,
-            int activeFixFd,
-            int activeVarFd,
+            long activeFixFd,
+            long activeVarFd,
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
@@ -1347,11 +1347,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long suffixLo,
             long suffixHi,
             int indexBlockCapacity,
-            int srcTimestampFd,
+            long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
-            int activeFixFd,
-            int activeVarFd,
+            long activeFixFd,
+            long activeVarFd,
             long srcDataNewPartitionSize,
             long srcDataOldPartitionSize,
             long o3SplitPartitionSize,
@@ -1438,7 +1438,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcDataMax,
             long srcNameTxn,
             int openColumnMode,
-            int srcTimestampFd,
+            long srcTimestampFd,
             long srcTimestampAddr,
             long srcTimestampSize,
             int timestampIndex,
@@ -1570,8 +1570,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final MemoryCR oooMem2 = oooColumns.getQuick(colOffset + 1);
                 final MemoryMA mem1 = columns.getQuick(colOffset);
                 final MemoryMA mem2 = columns.getQuick(colOffset + 1);
-                final int activeFixFd;
-                final int activeVarFd;
+                final long activeFixFd;
+                final long activeVarFd;
                 final long srcDataTop;
                 final long srcOooFixAddr;
                 final long srcOooVarAddr;

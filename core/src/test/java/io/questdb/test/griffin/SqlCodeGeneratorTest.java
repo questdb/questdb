@@ -3672,7 +3672,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
-                public int openRO(LPSZ name) {
+                public long openRO(LPSZ name) {
                     if (Utf8s.endsWithAscii(name, "b.d")) {
                         return -1;
                     }
@@ -6842,7 +6842,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select min(x), sym timestamp from test1 sample by 15s align to calendar order by min",
                     "SelectedRecord\n" +
-                            "    Sort light\n" +
+                            "    Radix sort light\n" +
                             "      keys: [min]\n" +
                             "        Async Group By workers: 1\n" +
                             "          keys: [timestamp,timestamp1]\n" +

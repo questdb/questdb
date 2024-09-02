@@ -485,10 +485,13 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("timestamp\td\n" +
-                    "2044-02-24T00:00:00.000000Z\t1.0000\n" +
-                    "2044-02-25T00:00:00.000000Z\t1.2000\n" +
-                    "2044-02-25T00:00:00.000000Z\t1.0000\n", "select timestamp, d from x limit -3");
+            assertSql(
+                    "timestamp\td\n" +
+                            "2044-02-24T00:00:00.000000Z\t1.0000\n" +
+                            "2044-02-25T00:00:00.000000Z\t1.0000\n" +
+                            "2044-02-25T00:00:00.000000Z\t1.2000\n",
+                    "select timestamp, d from x order by timestamp, d limit -3"
+            );
         });
     }
 
@@ -499,7 +502,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (fail.get() != null && Misc.getThreadLocalUtf8Sink().put(name).toString().endsWith(fail.get())) {
                     fail.set(null);
                     return -1;
@@ -508,7 +511,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (fail.get() != null && Misc.getThreadLocalUtf8Sink().put(name).toString().endsWith(fail.get())) {
                     fail.set(null);
                     return -1;

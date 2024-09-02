@@ -266,7 +266,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                         try {
                             final int walId = Numbers.parseInt(walName, 3, walName.size());
                             onDiskWalIDSet.add(walId);
-                            int walLockFd = TableUtils.lock(ff, setWalLockPath(tableToken, walId).$(), false);
+                            long walLockFd = TableUtils.lock(ff, setWalLockPath(tableToken, walId).$(), false);
                             boolean walHasPendingTasks = false;
 
                             // Search for segments.
@@ -287,7 +287,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                                             }
                                             path.trimTo(walPathLen);
                                             final Path segmentPath = setSegmentLockPath(tableToken, walId, segmentId);
-                                            int lockFd = TableUtils.lock(ff, segmentPath.$(), false);
+                                            long lockFd = TableUtils.lock(ff, segmentPath.$(), false);
                                             if (lockFd > -1) {
                                                 final boolean pendingTasks = segmentHasPendingTasks(walId, segmentId);
                                                 if (pendingTasks) {
@@ -457,18 +457,18 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     public interface Deleter {
-        void deleteSegmentDirectory(int walId, int segmentId, int lockFd);
+        void deleteSegmentDirectory(int walId, int segmentId, long lockFd);
 
         void deleteSequencerPart(int seqPart);
 
-        void deleteWalDirectory(int walId, int lockFd);
+        void deleteWalDirectory(int walId, long lockFd);
 
-        void unlock(int lockFd);
+        void unlock(long lockFd);
     }
 
     public static class Logic {
         private final Deleter deleter;
-        private final IntList discovered = new IntList();
+        private final LongList discovered = new LongList();
         private final IntIntHashMap nextToApply = new IntIntHashMap();
         private final int waitBeforeDelete;
         private long currentSeqPart;
@@ -521,7 +521,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
             try {
                 for (; i < n; i++) {
-                    int lockFd = getLockFd(i);
+                    long lockFd = getLockFd(i);
                     final int walId = getWalId(i);
                     final int segmentId = getSegmentId(i);
                     final int nextToApplySegmentId = nextToApply.get(walId);  // -1 if not found
@@ -570,13 +570,13 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             currentSeqPart = partNo;
         }
 
-        public void trackDiscoveredSegment(int walId, int segmentId, int lockFd) {
+        public void trackDiscoveredSegment(int walId, int segmentId, long lockFd) {
             discovered.add(walId);
             discovered.add(segmentId);
             discovered.add(lockFd);
         }
 
-        public void trackDiscoveredWal(int walId, int lockFd) {
+        public void trackDiscoveredWal(int walId, long lockFd) {
             trackDiscoveredSegment(walId, WalUtils.SEG_NONE_ID, lockFd);
         }
 
@@ -597,12 +597,12 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             return segmentId == WalUtils.SEG_NONE_ID && walId != WalUtils.METADATA_WALID;
         }
 
-        private int getLockFd(int index) {
+        private long getLockFd(int index) {
             return discovered.get(index * 3 + 2);
         }
 
         private int getSegmentId(int index) {
-            return discovered.get(index * 3 + 1);
+            return (int) discovered.get(index * 3 + 1);
         }
 
         private int getSeqPart(int walId, int segmentId) {
@@ -614,7 +614,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
 
         private int getWalId(int index) {
-            return discovered.get(index * 3);
+            return (int) discovered.get(index * 3);
         }
 
         private void logDebugInfo() {
@@ -634,7 +634,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 for (int i = 0, n = getStateSize(); i < n; i++) {
                     final int walId = getWalId(i);
                     final int segmentId = getSegmentId(i);
-                    final int lockId = getLockFd(i);
+                    final long lockId = getLockFd(i);
                     final int partNo = getSeqPart(walId, segmentId);
 
                     if (partNo > -1) {
@@ -672,7 +672,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     private class FsDeleter implements Deleter {
         @Override
-        public void deleteSegmentDirectory(int walId, int segmentId, int lockFd) {
+        public void deleteSegmentDirectory(int walId, int segmentId, long lockFd) {
             LOG.debug().$("deleting WAL segment directory [table=").utf8(tableToken.getDirName())
                     .$(", walId=").$(walId)
                     .$(", segmentId=").$(segmentId).$(']').$();
@@ -693,7 +693,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
 
         @Override
-        public void deleteWalDirectory(int walId, int lockFd) {
+        public void deleteWalDirectory(int walId, long lockFd) {
             LOG.debug().$("deleting WAL directory [table=").utf8(tableToken.getDirName())
                     .$(", walId=").$(walId).$(']').$();
             if (recursiveDelete(setWalPath(tableToken, walId))) {
@@ -704,7 +704,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
 
         @Override
-        public void unlock(int lockFd) {
+        public void unlock(long lockFd) {
             if (lockFd > -1) {
                 ff.close(lockFd);
             }

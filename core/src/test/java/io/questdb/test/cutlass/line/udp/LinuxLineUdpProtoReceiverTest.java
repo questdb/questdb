@@ -120,7 +120,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public boolean bindUdp(int fd, int ipv4Address, int port) {
+                public boolean bindUdp(long fd, int ipv4Address, int port) {
                     return false;
                 }
             };
@@ -138,7 +138,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public boolean join(int fd, int bindIPv4Address, int groupIPv4Address) {
+                public boolean join(long fd, int bindIPv4Address, int groupIPv4Address) {
                     return false;
                 }
             };
@@ -157,7 +157,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public int socketUdp() {
+                public long socketUdp() {
                     return -1;
                 }
             };
@@ -174,7 +174,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
     private void assertCannotSetReceiveBuffer(ReceiverFactory factory) throws Exception {
         NetworkFacade nf = new NetworkFacadeImpl() {
             @Override
-            public int setRcvBuf(int fd, int size) {
+            public int setRcvBuf(long fd, int size) {
                 return -1;
             }
         };

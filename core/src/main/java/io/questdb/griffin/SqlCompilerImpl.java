@@ -3175,7 +3175,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final KeywordBasedExecutor sqlBackup = backupAgent::sqlBackup;
         final KeywordBasedExecutor vacuumTable = this::vacuum;
         final KeywordBasedExecutor compileCheckpoint = this::compileCheckpoint;
-        final KeywordBasedExecutor compileLegacySnapshot = this::compileLegacyCheckpoint;
+        final KeywordBasedExecutor compileLegacyCheckpoint = this::compileLegacyCheckpoint;
         final KeywordBasedExecutor compileDeallocate = this::compileDeallocate;
         final KeywordBasedExecutor cancelQuery = this::cancelQuery;
 
@@ -3187,14 +3187,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         keywordBasedExecutors.put("commit", compileCommit);
         keywordBasedExecutors.put("rollback", compileRollback);
         keywordBasedExecutors.put("discard", compileSet);
-        keywordBasedExecutors.put("close", compileSet); //no-op
-        keywordBasedExecutors.put("unlisten", compileSet);  //no-op
-        keywordBasedExecutors.put("reset", compileSet);  //no-op
+        keywordBasedExecutors.put("close", compileSet); // no-op
+        keywordBasedExecutors.put("unlisten", compileSet); // no-op
+        keywordBasedExecutors.put("reset", compileSet); // no-op
         keywordBasedExecutors.put("drop", dropStatement);
         keywordBasedExecutors.put("backup", sqlBackup);
         keywordBasedExecutors.put("vacuum", vacuumTable);
         keywordBasedExecutors.put("checkpoint", compileCheckpoint);
-        keywordBasedExecutors.put("snapshot", compileLegacySnapshot);
+        keywordBasedExecutors.put("snapshot", compileLegacyCheckpoint);
         keywordBasedExecutors.put("deallocate", compileDeallocate);
         keywordBasedExecutors.put("cancel", cancelQuery);
     }

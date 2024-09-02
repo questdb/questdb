@@ -58,7 +58,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
             Function loFunc,
             @Nullable Function hiFunc,
             ListColumnFilter sortColumnFilter,
-            int timestampIndex //index of timestamp that base record cursor is already sorted on
+            int timestampIndex // index of timestamp that base record cursor is already sorted on
     ) {
         super(metadata);
         this.base = base;
@@ -81,16 +81,21 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         // Forcefully disable column pre-touch for all ORDER BY + LIMIT queries for all downstream
         // async filtered factories to avoid redundant disk reads.
         executionContext.setColumnPreTouchEnabled(false);
-        RecordCursor baseCursor = null;
+        final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
-            baseCursor = base.getCursor(executionContext);
             initialize(executionContext, baseCursor);
+        } catch (Throwable th) {
+            executionContext.setColumnPreTouchEnabled(oldPreTouchEnabled);
+            Misc.free(baseCursor);
+            throw th;
+        }
+
+        try {
             cursor.of(baseCursor, executionContext);
             return cursor;
-        } catch (Throwable ex) {
-            Misc.free(baseCursor);
+        } catch (Throwable th) {
             Misc.free(cursor);
-            throw ex;
+            throw th;
         } finally {
             executionContext.setColumnPreTouchEnabled(oldPreTouchEnabled);
         }
@@ -118,10 +123,10 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
      * <p>
      * Similar to LimitRecordCursorFactory.LimitRecordCursor, but doesn't check the underlying count.
      */
-    public void initializeLimitedSizeCursor(SqlExecutionContext executionContext, RecordCursor base) throws SqlException {
-        loFunction.init(base, executionContext);
+    public void initializeLimitedSizeCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {
+        loFunction.init(baseCursor, executionContext);
         if (hiFunction != null) {
-            hiFunction.init(base, executionContext);
+            hiFunction.init(baseCursor, executionContext);
         }
 
         long skipFirst = 0, skipLast = 0, limit;
@@ -225,9 +230,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
             hiFunction.init(baseCursor, executionContext);
         }
 
-        return !(loFunction.getLong(null) >= 0 &&
-                hiFunction != null &&
-                hiFunction.getLong(null) < 0);
+        return !(loFunction.getLong(null) >= 0 && hiFunction != null && hiFunction.getLong(null) < 0);
     }
 
     private void initialize(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {

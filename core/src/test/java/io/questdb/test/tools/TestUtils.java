@@ -27,9 +27,9 @@ package io.questdb.test.tools;
 import io.questdb.MessageBus;
 import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
-import io.questdb.cairo.sql.Record;
 import io.questdb.ServerMain;
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -105,21 +105,21 @@ public final class TestUtils {
         }
     }
 
-    public static void assertConnect(int fd, long sockAddr) {
+    public static void assertConnect(long fd, long sockAddr) {
         long rc = connect(fd, sockAddr);
         if (rc != 0) {
             Assert.fail("could not connect, errno=" + Os.errno());
         }
     }
 
-    public static void assertConnect(NetworkFacade nf, int fd, long pSockAddr) {
+    public static void assertConnect(NetworkFacade nf, long fd, long pSockAddr) {
         long rc = nf.connect(fd, pSockAddr);
         if (rc != 0) {
             Assert.fail("could not connect, errno=" + nf.errno());
         }
     }
 
-    public static void assertConnectAddrInfo(int fd, long sockAddrInfo) {
+    public static void assertConnectAddrInfo(long fd, long sockAddrInfo) {
         long rc = connectAddrInfo(fd, sockAddrInfo);
         if (rc != 0) {
             Assert.fail("could not connect, errno=" + Os.errno());
@@ -240,12 +240,12 @@ public final class TestUtils {
     public static void assertEquals(File a, File b) {
         try (Path path = new Path()) {
             path.of(a.getAbsolutePath());
-            int fda = TestFilesFacadeImpl.INSTANCE.openRO(path.$());
+            long fda = TestFilesFacadeImpl.INSTANCE.openRO(path.$());
             Assert.assertNotEquals(-1, fda);
 
             try {
                 path.of(b.getAbsolutePath());
-                int fdb = TestFilesFacadeImpl.INSTANCE.openRO(path.$());
+                long fdb = TestFilesFacadeImpl.INSTANCE.openRO(path.$());
                 Assert.assertNotEquals(-1, fdb);
                 try {
 
@@ -288,7 +288,7 @@ public final class TestUtils {
     public static void assertEquals(File a, CharSequence actual) {
         try (Path path = new Path()) {
             path.of(a.getAbsolutePath());
-            int fda = TestFilesFacadeImpl.INSTANCE.openRO(path.$());
+            long fda = TestFilesFacadeImpl.INSTANCE.openRO(path.$());
             Assert.assertNotEquals(-1, fda);
 
             try {
@@ -436,107 +436,6 @@ public final class TestUtils {
                 Assert.assertEquals(bs.byteAt(l), actBs.byteAt(l));
             }
         }
-    }
-
-    public static String replaceSizeToMatchPartitionSumInOS(String expected, String tableName, List<String> partitionColumnNames,
-                                                            CairoConfiguration configuration, CairoEngine engine, StringSink sink) {
-        return replaceSizeToMatchPartitionSumInOS(expected, new Utf8String(configuration.getRoot()), tableName, engine, sink, partitionColumnNames);
-    }
-
-    public static String replaceSizeToMatchOS(String expected, String tableName,
-                                              CairoConfiguration configuration, CairoEngine engine, StringSink sink) {
-        return replaceSizeToMatchOS(expected, new Utf8String(configuration.getRoot()), tableName, engine, sink);
-    }
-
-    public static String replaceSizeToMatchOS(
-            String expected,
-            Utf8Sequence root,
-            String tableName,
-            CairoEngine engine,
-            StringSink sink
-    ) {
-        ObjObjHashMap<String, Long> sizes = findPartitionSizes(root, tableName, engine, sink);
-        String[] lines = expected.split("\n");
-        sink.clear();
-        sink.put(lines[0]).put('\n');
-        StringSink auxSink = new StringSink();
-        for (int i = 1; i < lines.length; i++) {
-            String line = lines[i];
-            String nameColumn = line.split("\t")[2];
-            Long s = sizes.get(nameColumn);
-            long size = s != null ? s : 0L;
-            SizePrettyFunctionFactory.toSizePretty(auxSink, size);
-            line = line.replaceAll("SIZE", String.valueOf(size));
-            line = line.replaceAll("HUMAN", auxSink.toString());
-            sink.put(line).put('\n');
-        }
-        return sink.toString();
-    }
-
-
-    private static String replaceSizeToMatchPartitionSumInOS(
-            String expected,
-            Utf8Sequence root,
-            String tableName,
-            CairoEngine engine,
-            StringSink sink,
-            List<String> partitionColumnNames
-    ) {
-        ObjObjHashMap<String, Long> sizes = TestUtils.findPartitionSizes(root, tableName, engine, sink);
-        String[] lines = expected.split("\n");
-        sink.clear();
-        StringSink auxSink = new StringSink();
-        long size = 0L;
-        String line = lines[0];
-        for (int i = 0; i < partitionColumnNames.size(); i++) {
-            Long s = sizes.get(partitionColumnNames.get(i));
-            long pSize = s != null ? s : 0L;
-            size += pSize;
-        }
-        line = line.replaceAll("SIZE", String.valueOf(size));
-        sink.put(line).put('\n');
-        return sink.toString();
-    }
-
-
-    private static ObjObjHashMap<String, Long> findPartitionSizes(
-            Utf8Sequence root,
-            String tableName,
-            CairoEngine engine,
-            StringSink sink
-    ) {
-        ObjObjHashMap<String, Long> sizes = new ObjObjHashMap<>();
-        TableToken tableToken = engine.verifyTableName(tableName);
-        try (Path path = new Path().of(root).concat(tableToken)) {
-            int len = path.size();
-            long pFind = Files.findFirst(path.$());
-            try {
-                do {
-                    long namePtr = Files.findName(pFind);
-                    if (Files.notDots(namePtr)) {
-                        sink.clear();
-                        Utf8s.utf8ToUtf16Z(namePtr, sink);
-                        path.trimTo(len).concat(sink).$();
-                        int n = sink.length();
-                        int limit = n;
-                        for (int i = 0; i < n; i++) {
-                            if (sink.charAt(i) == '.' && i < n - 1) {
-                                char c = sink.charAt(i + 1);
-                                if (c >= '0' && c <= '9') {
-                                    limit = i;
-                                    break;
-                                }
-                            }
-                        }
-                        sink.clear(limit);
-                        sizes.put(sink.toString(), Files.getDirSize(path));
-                    }
-                } while (Files.findNext(pFind) > 0);
-            } finally {
-                Files.findClose(pFind);
-            }
-        }
-        return sizes;
     }
 
     public static void assertEquals(LongList expected, LongList actual) {
@@ -819,12 +718,12 @@ public final class TestUtils {
         }
     }
 
-    public static long connect(int fd, long sockAddr) {
+    public static int connect(long fd, long sockAddr) {
         Assert.assertTrue(fd > -1);
         return Net.connect(fd, sockAddr);
     }
 
-    public static long connectAddrInfo(int fd, long sockAddrInfo) {
+    public static long connectAddrInfo(long fd, long sockAddrInfo) {
         Assert.assertTrue(fd > -1);
         return Net.connectAddrInfo(fd, sockAddrInfo);
     }
@@ -1143,7 +1042,7 @@ public final class TestUtils {
             final AtomicInteger totalSent = new AtomicInteger();
 
             @Override
-            public int sendRaw(int fd, long buffer, int bufferLen) {
+            public int sendRaw(long fd, long buffer, int bufferLen) {
                 if (startDelayDelayAfter == 0) {
                     return super.sendRaw(fd, buffer, bufferLen);
                 }
@@ -1341,7 +1240,7 @@ public final class TestUtils {
                 DefaultLifecycleManager.INSTANCE,
                 configuration.getRoot(),
                 DefaultDdlListener.INSTANCE,
-                () -> false,
+                () -> Numbers.LONG_NULL,
                 metrics
         );
     }
@@ -1450,6 +1349,41 @@ public final class TestUtils {
             path.parent().concat(RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
             Assert.assertTrue("Checkpoint trigger cleanup error: " + ff.errno(), !ff.exists(path.$()) || ff.removeQuiet(path.$()));
         }
+    }
+
+    public static String replaceSizeToMatchOS(String expected, String tableName,
+                                              CairoConfiguration configuration, CairoEngine engine, StringSink sink) {
+        return replaceSizeToMatchOS(expected, new Utf8String(configuration.getRoot()), tableName, engine, sink);
+    }
+
+    public static String replaceSizeToMatchOS(
+            String expected,
+            Utf8Sequence root,
+            String tableName,
+            CairoEngine engine,
+            StringSink sink
+    ) {
+        ObjObjHashMap<String, Long> sizes = findPartitionSizes(root, tableName, engine, sink);
+        String[] lines = expected.split("\n");
+        sink.clear();
+        sink.put(lines[0]).put('\n');
+        StringSink auxSink = new StringSink();
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i];
+            String nameColumn = line.split("\t")[2];
+            Long s = sizes.get(nameColumn);
+            long size = s != null ? s : 0L;
+            SizePrettyFunctionFactory.toSizePretty(auxSink, size);
+            line = line.replaceAll("SIZE", String.valueOf(size));
+            line = line.replaceAll("HUMAN", auxSink.toString());
+            sink.put(line).put('\n');
+        }
+        return sink.toString();
+    }
+
+    public static String replaceSizeToMatchPartitionSumInOS(String expected, String tableName, List<String> partitionColumnNames,
+                                                            CairoConfiguration configuration, CairoEngine engine, StringSink sink) {
+        return replaceSizeToMatchPartitionSumInOS(expected, new Utf8String(configuration.getRoot()), tableName, engine, sink, partitionColumnNames);
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
@@ -1681,6 +1615,46 @@ public final class TestUtils {
         }
     }
 
+    private static ObjObjHashMap<String, Long> findPartitionSizes(
+            Utf8Sequence root,
+            String tableName,
+            CairoEngine engine,
+            StringSink sink
+    ) {
+        ObjObjHashMap<String, Long> sizes = new ObjObjHashMap<>();
+        TableToken tableToken = engine.verifyTableName(tableName);
+        try (Path path = new Path().of(root).concat(tableToken)) {
+            int len = path.size();
+            long pFind = Files.findFirst(path.$());
+            try {
+                do {
+                    long namePtr = Files.findName(pFind);
+                    if (Files.notDots(namePtr)) {
+                        sink.clear();
+                        Utf8s.utf8ToUtf16Z(namePtr, sink);
+                        path.trimTo(len).concat(sink).$();
+                        int n = sink.length();
+                        int limit = n;
+                        for (int i = 0; i < n; i++) {
+                            if (sink.charAt(i) == '.' && i < n - 1) {
+                                char c = sink.charAt(i + 1);
+                                if (c >= '0' && c <= '9') {
+                                    limit = i;
+                                    break;
+                                }
+                            }
+                        }
+                        sink.clear(limit);
+                        sizes.put(sink.toString(), Files.getDirSize(path));
+                    }
+                } while (Files.findNext(pFind) > 0);
+            } finally {
+                Files.findClose(pFind);
+            }
+        }
+        return sizes;
+    }
+
     private static StringSink getTlSink() {
         StringSink ss = tlSink.get();
         ss.clear();
@@ -1742,6 +1716,30 @@ public final class TestUtils {
                 sink.put('\t');
             }
         }
+        return sink.toString();
+    }
+
+    private static String replaceSizeToMatchPartitionSumInOS(
+            String expected,
+            Utf8Sequence root,
+            String tableName,
+            CairoEngine engine,
+            StringSink sink,
+            List<String> partitionColumnNames
+    ) {
+        ObjObjHashMap<String, Long> sizes = TestUtils.findPartitionSizes(root, tableName, engine, sink);
+        String[] lines = expected.split("\n");
+        sink.clear();
+        StringSink auxSink = new StringSink();
+        long size = 0L;
+        String line = lines[0];
+        for (int i = 0; i < partitionColumnNames.size(); i++) {
+            Long s = sizes.get(partitionColumnNames.get(i));
+            long pSize = s != null ? s : 0L;
+            size += pSize;
+        }
+        line = line.replaceAll("SIZE", String.valueOf(size));
+        sink.put(line).put('\n');
         return sink.toString();
     }
 

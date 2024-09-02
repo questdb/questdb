@@ -40,14 +40,14 @@ import java.util.function.LongSupplier;
 
 public class DefaultCairoConfiguration implements CairoConfiguration {
     private final BuildInformation buildInformation = new BuildInformationHolder();
+    private final CharSequence checkpointRoot;
     private final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration();
     private final CharSequence confRoot;
     private final long databaseIdHi;
     private final long databaseIdLo;
     private final LongSupplier importIDSupplier = () -> getRandom().nextPositiveLong();
-    private final String root;
-    private final CharSequence checkpointRoot;
     private final CharSequence legacyCheckpointRoot;
+    private final String root;
     private final DefaultTelemetryConfiguration telemetryConfiguration = new DefaultTelemetryConfiguration();
     private final TextConfiguration textConfiguration;
     private final VolumeDefinitions volumeDefinitions = new VolumeDefinitions();
@@ -123,6 +123,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean getCairoSqlLegacyOperatorPrecedence() {
         return false;
+    }
+
+    @Override
+    public @NotNull CharSequence getCheckpointRoot() {
+        return checkpointRoot;
     }
 
     @Override
@@ -267,7 +272,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getDoubleToStrCastScale() {
-        return Numbers.MAX_SCALE;
+        return Numbers.MAX_DOUBLE_SCALE;
     }
 
     @Override
@@ -292,7 +297,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getFloatToStrCastScale() {
-        return 4;
+        return Numbers.MAX_FLOAT_SCALE;
     }
 
     @Override
@@ -378,6 +383,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getLatestByQueueCapacity() {
         return 32;
+    }
+
+    @Override
+    public @NotNull CharSequence getLegacyCheckpointRoot() {
+        return legacyCheckpointRoot;
     }
 
     @Override
@@ -577,16 +587,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getCheckpointRoot() {
-        return checkpointRoot;
-    }
-
-    @Override
-    public @NotNull CharSequence getLegacyCheckpointRoot() {
-        return legacyCheckpointRoot;
-    }
-
-    @Override
     public long getSpinLockTimeout() {
         return 5000;
     }
@@ -761,6 +761,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlModelPoolCapacity() {
         return 1024;
+    }
+
+    @Override
+    public int getSqlOrderByRadixSortThreshold() {
+        return 600;
     }
 
     @Override
@@ -959,6 +964,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public double getWalLagRowsMultiplier() {
+        return 20;
+    }
+
+    @Override
     public long getWalMaxLagSize() {
         return 75 * Numbers.SIZE_1MB;
     }
@@ -991,11 +1001,6 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getWalSegmentRolloverSize() {
         return 0;  // watermark level disabled.
-    }
-
-    @Override
-    public double getWalLagRowsMultiplier() {
-        return 20;
     }
 
     @Override
@@ -1058,6 +1063,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isCheckpointRecoveryEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isDevModeEnabled() {
         return false;
     }
@@ -1093,13 +1103,13 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public boolean isCheckpointRecoveryEnabled() {
-        return true;
+    public boolean isSqlJitDebugEnabled() {
+        return false;
     }
 
     @Override
-    public boolean isSqlJitDebugEnabled() {
-        return false;
+    public boolean isSqlOrderBySortEnabled() {
+        return true;
     }
 
     @Override

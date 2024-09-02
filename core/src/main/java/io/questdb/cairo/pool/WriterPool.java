@@ -643,7 +643,7 @@ public class WriterPool extends AbstractPool {
         private CairoException ex = null;
         // time writer was last released
         private volatile long lastReleaseTime;
-        private volatile int lockFd = -1;
+        private volatile long lockFd = -1;
         // owner thread id or -1 if writer is available for hire
         private volatile long owner = Thread.currentThread().getId();
         private volatile String ownershipReason = OWNERSHIP_REASON_NONE;
