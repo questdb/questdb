@@ -379,7 +379,6 @@ public final class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinReco
             if (!masterHasNext) {
                 return false;
             }
-            isMasterHasNextPending = true;
 
             if (origRowId != -1) {
                 slaveCursor.recordAt(slaveRecB, Rows.toRowID(origFrameIndex, origRowId));
@@ -388,6 +387,7 @@ public final class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinReco
             if (masterTimestamp >= lookaheadTimestamp) {
                 nextSlave(masterTimestamp);
             }
+            isMasterHasNextPending = true;
             boolean hasSlave = record.hasSlave();
             if (!hasSlave) {
                 return true;
