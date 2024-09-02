@@ -31,6 +31,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.*;
 import io.questdb.std.str.Utf8Sequence;
 
@@ -48,9 +49,9 @@ public final class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinReco
             RecordSink masterKeySink,
             RecordCursorFactory slaveFactory,
             RecordSink slaveKeySink,
-            int columnSplit
-    ) {
-        super(metadata, null, masterFactory, slaveFactory);
+            int columnSplit,
+            JoinContext joinContext) {
+        super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
@@ -95,7 +96,8 @@ public final class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinReco
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("AsOf Join Keyed Fast Scan");
+        sink.type("AsOf Join Fast Scan");
+        sink.attr("condition").val(joinContext);
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }

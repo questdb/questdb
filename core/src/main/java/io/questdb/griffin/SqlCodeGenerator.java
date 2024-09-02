@@ -2081,7 +2081,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                     masterSink,
                                                     slave,
                                                     slaveSink,
-                                                    masterMetadata.getColumnCount()
+                                                    masterMetadata.getColumnCount(),
+                                                    slaveModel.getContext()
                                             );
                                         } else {
                                             master = createAsOfJoin(
