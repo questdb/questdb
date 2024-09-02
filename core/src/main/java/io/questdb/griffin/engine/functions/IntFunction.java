@@ -167,7 +167,7 @@ public abstract class IntFunction implements ScalarFunction {
 
     @Override
     public long getTimestamp(Record rec) {
-        return Numbers.intToLong(getInt(rec));
+        return getLong(rec);
     }
 
     @Override
