@@ -75,6 +75,18 @@ public class SubIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public long getLong(Record rec) {
+            int l = left.getInt(rec);
+            int r = right.getInt(rec);
+
+            if (l != Numbers.INT_NULL && r != Numbers.INT_NULL) {
+                return ((long) l) - r;
+            }
+
+            return Numbers.INT_NULL;
+        }
+
+        @Override
         public Function getRight() {
             return right;
         }
