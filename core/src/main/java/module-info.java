@@ -980,6 +980,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.geohash.GeoHashFromCoordinatesFunctionFactory,
             // bin functions
             io.questdb.griffin.engine.functions.bin.Base64FunctionFactory,
+            io.questdb.griffin.engine.functions.bin.Base64DecodeFunctionFactory,
             // bit operations
             io.questdb.griffin.engine.functions.math.BitwiseAndLongFunctionFactory,
             io.questdb.griffin.engine.functions.math.BitwiseOrLongFunctionFactory,

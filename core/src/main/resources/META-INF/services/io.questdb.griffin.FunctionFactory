@@ -994,3 +994,4 @@ io.questdb.griffin.engine.functions.geohash.GeoHashFromCoordinatesFunctionFactor
 
 # bin functions
 io.questdb.griffin.engine.functions.bin.Base64FunctionFactory
+io.questdb.griffin.engine.functions.bin.Base64DecodeFunctionFactory

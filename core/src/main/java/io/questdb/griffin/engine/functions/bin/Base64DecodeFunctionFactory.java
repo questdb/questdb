@@ -31,18 +31,21 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.griffin.engine.functions.BinFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8Sink;
+import io.questdb.std.str.Utf8StringSink;
+import org.jetbrains.annotations.Nullable;
 
-public class Base64FunctionFactory implements FunctionFactory {
+public class Base64DecodeFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "base64(Ui)";
+        return "from_base64(Ø)";
     }
 
     @Override
@@ -52,26 +55,16 @@ public class Base64FunctionFactory implements FunctionFactory {
                                 CairoConfiguration configuration,
                                 SqlExecutionContext sqlExecutionContext) throws SqlException {
 
-        final int maxLength = args.get(1).getInt(null);
-
-        if (maxLength < 1) {
-            throw SqlException.$(argPositions.getQuick(1), "maxLength has to be greater than 0");
-        }
-
         Function func = args.get(0);
-        final int length = Math.min(maxLength, configuration.getBinaryEncodingMaxLength());
-        return new Base64Func(func, length);
+        return new Base64DecodeFunc(func);
     }
 
-    private static class Base64Func extends StrFunction implements UnaryFunction {
+    private static class Base64DecodeFunc extends BinFunction implements UnaryFunction {
         private final Function data;
-        private final int maxLength;
-        private final StringSink sinkA = new StringSink();
-        private final StringSink sinkB = new StringSink();
+        private final BinarySequenceUtf8Sink sink = new BinarySequenceUtf8Sink();
 
-        public Base64Func(final Function data, final int maxLength) {
+        public Base64DecodeFunc(final Function data) {
             this.data = data;
-            this.maxLength = maxLength;
         }
 
         @Override
@@ -80,25 +73,23 @@ public class Base64FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public CharSequence getStrA(final Record rec) {
-            final BinarySequence sequence = getArg().getBin(rec);
-            if (sequence == null) {
+        public BinarySequence getBin(Record rec) {
+            CharSequence str = data.getStrA(rec);
+            if (str == null) {
                 return null;
             }
-            sinkA.clear();
-            Chars.base64Encode(sequence, this.maxLength, sinkA);
-            return sinkA;
+            sink.clear();
+            Chars.base64Decode(str, sink);
+            return sink;
         }
 
         @Override
-        public CharSequence getStrB(final Record rec) {
-            final BinarySequence sequence = getArg().getBin(rec);
-            if (sequence == null) {
-                return null;
+        public long getBinLen(Record rec) {
+            BinarySequence bs = getBin(rec);
+            if (bs == null) {
+                return -1;
             }
-            sinkB.clear();
-            Chars.base64Encode(sequence, this.maxLength, sinkB);
-            return sinkB;
+            return bs.length();
         }
 
         @Override
@@ -108,7 +99,40 @@ public class Base64FunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("base64(").val(data).val(',').val(maxLength).val(')');
+            sink.val("from_base64(").val(data).val(')');
+        }
+
+        private static class BinarySequenceUtf8Sink implements BinarySequence, Utf8Sink {
+            private final Utf8StringSink sink = new Utf8StringSink();
+
+            @Override
+            public byte byteAt(long index) {
+                return sink.byteAt((int) index);
+            }
+
+            public void clear() {
+                sink.clear();
+            }
+
+            @Override
+            public long length() {
+                return sink.size();
+            }
+
+            @Override
+            public Utf8Sink put(@Nullable Utf8Sequence us) {
+                return sink.put(us);
+            }
+
+            @Override
+            public Utf8Sink put(byte b) {
+                return sink.putAny(b);
+            }
+
+            @Override
+            public Utf8Sink putNonAscii(long lo, long hi) {
+                return sink.putNonAscii(lo, hi);
+            }
         }
     }
 }
