@@ -259,7 +259,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.groupby.allocator.default.chunk.size\tQDB_CAIRO_SQL_GROUPBY_ALLOCATOR_DEFAULT_CHUNK_SIZE\t131072\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.groupby.allocator.max.chunk.size\tQDB_CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE\t4294967296\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.hash.join.light.value.max.pages\tQDB_CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_MAX_PAGES\t2147483647\tdefault\tfalse\tfalse\n" +
-                                    "cairo.sql.hash.join.light.value.page.size\tQDB_CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.hash.join.light.value.page.size\tQDB_CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE\t131072\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.hash.join.value.max.pages\tQDB_CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.hash.join.value.page.size\tQDB_CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE\t16777216\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.asof.join.lookahead\tQDB_CAIRO_SQL_ASOF_JOIN_LOOKAHEAD\t100\tdefault\tfalse\tfalse\n" +

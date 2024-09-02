@@ -186,10 +186,14 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqUuidStrFunctionFactory,
 
             //contains
-            io.questdb.griffin.engine.functions.eq.ContainsIPv4FunctionFactory,
-            io.questdb.griffin.engine.functions.eq.ContainsEqIPv4FunctionFactory,
-            io.questdb.griffin.engine.functions.eq.NegContainsEqIPv4FunctionFactory,
-            io.questdb.griffin.engine.functions.eq.NegContainsIPv4FunctionFactory,
+            io.questdb.griffin.engine.functions.eq.ContainsIPv4StrFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.ContainsIPv4VarcharFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.ContainsEqIPv4StrFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.ContainsEqIPv4VarcharFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.NegContainsEqIPv4StrFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.NegContainsEqIPv4VarcharFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.NegContainsIPv4StrFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.NegContainsIPv4VarcharFunctionFactory,
 
             //nullif
             io.questdb.griffin.engine.functions.conditional.NullIfCharFunctionFactory,
@@ -1012,6 +1016,7 @@ open module io.questdb {
 
             // ipv4 functions
             io.questdb.griffin.engine.functions.math.IPv4StrNetmaskFunctionFactory,
+            io.questdb.griffin.engine.functions.math.IPv4VarcharNetmaskFunctionFactory,
 
             io.questdb.griffin.engine.functions.date.ToTimezoneTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory

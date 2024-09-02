@@ -75,6 +75,18 @@ public class AddIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public long getLong(Record rec) {
+            final int left = this.left.getInt(rec);
+            final int right = this.right.getInt(rec);
+
+            if (left == Numbers.INT_NULL || right == Numbers.INT_NULL) {
+                return Numbers.LONG_NULL;
+            }
+
+            return ((long) left) + right;
+        }
+
+        @Override
         public Function getRight() {
             return right;
         }

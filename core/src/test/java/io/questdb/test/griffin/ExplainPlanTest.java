@@ -2417,13 +2417,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     args.add(new StrConstant("0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9652"));
                                 } else if (isIPv4StrFactory(factory) && sigArgType == ColumnType.STRING) {
                                     args.add(new StrConstant("10.8.6.5"));
-                                } else if (factory instanceof ContainsIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                                } else if (factory instanceof ContainsIPv4StrFunctionFactory && sigArgType == ColumnType.STRING) {
                                     args.add(new StrConstant("12.6.5.10/24"));
-                                } else if (factory instanceof ContainsEqIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                                } else if (factory instanceof ContainsEqIPv4StrFunctionFactory && sigArgType == ColumnType.STRING) {
                                     args.add(new StrConstant("12.6.5.10/24"));
-                                } else if (factory instanceof NegContainsEqIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                                } else if (factory instanceof NegContainsEqIPv4StrFunctionFactory && sigArgType == ColumnType.STRING) {
                                     args.add(new StrConstant("34.56.22.11/12"));
-                                } else if (factory instanceof NegContainsIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                                } else if (factory instanceof NegContainsIPv4StrFunctionFactory && sigArgType == ColumnType.STRING) {
                                     args.add(new StrConstant("32.12.22.11/12"));
                                 } else if (factory instanceof RndIPv4CCFunctionFactory) {
                                     args.add(new StrConstant("4.12.22.11/12"));
