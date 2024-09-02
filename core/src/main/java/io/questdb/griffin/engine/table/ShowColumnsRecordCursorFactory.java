@@ -58,7 +58,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        return cursor.of(executionContext, tableToken, tokenPosition);
+        return cursor.of(executionContext, tableToken);
     }
 
     @Override
@@ -101,37 +101,27 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             return false;
         }
 
-        public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition) {
-            try {
-                final CairoMetadata cairoMetadata = executionContext.getCairoEngine().getCairoMetadata();
-                cairoTable = cairoMetadata.getTable(tableToken);
-
-                if (cairoTable == null) {
-                    try {
-                        cairoMetadata.hydrateTable(tableToken, false, true);
-                    } catch (Exception e) {
-                        if (e.getMessage().contains("could not open")) {
-                            throw CairoException.tableDoesNotExist(tableToken.getTableName());
-                        } else {
-                            throw e;
-                        }
-                    }
-                    cairoTable = cairoMetadata.getTable(tableToken);
-                }
-
-                assert cairoTable != null;
-
-                names = cairoTable.getColumnNames();
-            } catch (CairoException e) {
-                e.position(tokenPosition);
-                throw e;
-            }
+        public ShowColumnsCursor of(SqlExecutionContext executionContext, CairoTable table) {
+            cairoTable = table;
+            names = cairoTable.getColumnNames();
             toTop();
             return this;
         }
 
+        public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken) {
+            CairoTable table = executionContext.getCairoEngine().getCairoMetadata().getTable(tableToken);
+            if (table == null) {
+                throw CairoException.tableDoesNotExist(tableToken.getTableName());
+            } else {
+                return of(executionContext, table);
+            }
+        }
+
+
         public ShowColumnsCursor of(SqlExecutionContext executionContext, CharSequence tableName) {
-            return of(executionContext, executionContext.getTableTokenIfExists(tableName), -1);
+            final CairoEngine engine = executionContext.getCairoEngine();
+            final TableToken tableToken = engine.getTableTokenIfExists(tableName);
+            return of(executionContext, tableToken);
         }
 
         @Override

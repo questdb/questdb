@@ -241,8 +241,9 @@ public class CairoMetadata implements Sinkable {
                 LOG.info().$("hydrated metadata [table=").$(table.getName()).I$();
             }
         } catch (CairoException e) {
-            // todo: distingush errors to decide if error vs info log
+            // todo: distinguish errors to decide if error vs info log
             LOG.info().$("Could not hydrate metadata [table=").$(table.getName()).I$();
+
         }
     }
 
