@@ -41,6 +41,7 @@ public class CairoMetadata implements Sinkable {
     private final ConcurrentHashMap<CairoTable> tables = new ConcurrentHashMap<>();
     ThreadLocal<ColumnVersionReader> tlColumnVersionReader = ThreadLocal.withInitial(ColumnVersionReader::new);
     ThreadLocal<Path> tlPath = ThreadLocal.withInitial(Path::new);
+    ThreadLocal<ObjHashSet<TableToken>> tlTokens = ThreadLocal.withInitial(ObjHashSet<TableToken>::new);
 
     public CairoMetadata() {
     }
@@ -55,6 +56,31 @@ public class CairoMetadata implements Sinkable {
 
     public int getTablesCount() {
         return tables.size();
+    }
+
+    /**
+     * This is dangerous and may clobber any concurrent metadata changes.
+     */
+    public boolean hydrateAllTables(CairoEngine engine) {
+        ObjHashSet<TableToken> tableTokensSet = tlTokens.get();
+        engine.getTableTokens(tableTokensSet, false);
+        ObjList<TableToken> tableTokens = tableTokensSet.getList();
+        TableToken tableToken = tableTokens.getQuick(0);
+
+        try {
+            for (int i = 0, n = tableTokens.size(); i < n; i++) {
+                tableToken = tableTokens.getQuick(i);
+                if (!tableToken.isSystem()) {
+                    CairoMetadata.INSTANCE.hydrateTable(tableTokens.getQuick(i), engine.getConfiguration(), true, true);
+                }
+            }
+            return true;
+        } catch (CairoException ex) {
+            LOG.error().$("could not hydrate metadata: [table=").$(tableToken).I$();
+            return false;
+        } finally {
+            tlTokens.remove();
+        }
     }
 
     /**

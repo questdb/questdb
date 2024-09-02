@@ -25,13 +25,12 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableToken;
+import io.questdb.cairo.*;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
@@ -98,11 +97,22 @@ public class ShowTablesFunctionFactoryTest extends AbstractCairoTest {
             }
 
             refreshTablesInBaseEngine();
+
+            // table is still shown since the cache is not updated
             assertSql(
                     "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +
-                            "2\ttable2\tts2\tNONE\t1000\t300000000\n",
+                            "2\ttable2\tts2\tNONE\t1000\t300000000\n" +
+                            "1\ttable1\tts1\tDAY\t1000\t300000000\n",
                     "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
             );
+
+            CairoMetadata.INSTANCE.clear();
+
+            try {
+                CairoMetadata.INSTANCE.hydrateAllTables(engine);
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getMessage(), "could not open, file does not exist");
+            }
         });
     }
 
