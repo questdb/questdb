@@ -32,11 +32,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-// first arg is contained within or equals second arg
-public class ContainsEqIPv4FunctionFactory implements FunctionFactory {
+// second arg is contained within first arg
+public class NegContainsIPv4StrFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "<<=(XS)";
+        return ">>(SX)";
     }
 
     @Override
@@ -52,9 +52,9 @@ public class ContainsEqIPv4FunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        Function ipv4Func = args.getQuick(0);
-        int strFuncPosition = argPositions.getQuick(1);
-        Function strFunc = args.getQuick(1);
-        return ContainsEqIPv4Utils.containsIPv4(ipv4Func, strFunc, strFuncPosition);
+        Function ipv4Func = args.getQuick(1);
+        int strFuncPosition = argPositions.getQuick(0);
+        Function strFunc = args.getQuick(0);
+        return ContainsIPv4Utils.containsIPv4Str(ipv4Func, strFunc, strFuncPosition);
     }
 }
