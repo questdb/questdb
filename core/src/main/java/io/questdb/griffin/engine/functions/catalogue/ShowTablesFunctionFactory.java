@@ -251,16 +251,10 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
 
                     final CairoMetadata cairoMetadata = executionContext.getCairoEngine().getCairoMetadata();
 
-                    table = cairoMetadata.getTableQuiet(tableToken);
+                    table = cairoMetadata.getTable(tableToken);
 
-                    if (table == null) {
-                        cairoMetadata.hydrateTable(tableToken, executionContext.getCairoEngine().getConfiguration(), false, true);
-                        table = cairoMetadata.getTableQuiet(tableToken);
-                    }
-
-                    assert table != null;
-
-                    return true;
+                    return table != null;
+                   
                 }
             }
         }

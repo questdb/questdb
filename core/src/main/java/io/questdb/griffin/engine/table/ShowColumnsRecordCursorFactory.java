@@ -104,11 +104,11 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition) {
             try {
                 final CairoMetadata cairoMetadata = executionContext.getCairoEngine().getCairoMetadata();
-                cairoTable = cairoMetadata.getTableQuiet(tableToken);
+                cairoTable = cairoMetadata.getTable(tableToken);
 
                 if (cairoTable == null) {
                     try {
-                        cairoMetadata.hydrateTable(tableToken, executionContext.getCairoEngine().getConfiguration(), false, true);
+                        cairoMetadata.hydrateTable(tableToken, false, true);
                     } catch (Exception e) {
                         if (e.getMessage().contains("could not open")) {
                             throw CairoException.tableDoesNotExist(tableToken.getTableName());
@@ -116,7 +116,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
                             throw e;
                         }
                     }
-                    cairoTable = cairoMetadata.getTableQuiet(tableToken);
+                    cairoTable = cairoMetadata.getTable(tableToken);
                 }
 
                 assert cairoTable != null;

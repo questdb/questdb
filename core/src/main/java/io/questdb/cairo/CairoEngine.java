@@ -133,6 +133,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.rootExecutionContext = new SqlExecutionContextImpl(this, 1)
                     .with(AllowAllSecurityContext.INSTANCE);
 
+
             tableIdGenerator.open();
             checkpointRecover();
 
@@ -144,8 +145,8 @@ public class CairoEngine implements Closeable, WriterSource {
             tableNameRegistry.reload();
 
             this.sqlCompilerPool = new SqlCompilerPool(this);
+            this.cairoMetadata = new CairoMetadata(this);
 
-            this.cairoMetadata = new CairoMetadata();
         } catch (Throwable th) {
             close();
             throw th;
@@ -1380,7 +1381,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
             getDdlListener(tableToken).onTableCreated(securityContext, tableToken);
 
-            cairoMetadata.hydrateTable(tableToken, configuration, true, true);
+            cairoMetadata.hydrateTable(tableToken, true, true);
 
             return tableToken;
         }

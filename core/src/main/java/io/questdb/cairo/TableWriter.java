@@ -830,7 +830,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             symbolMapWriter.updateCacheFlag(cache);
             updateMetaStructureVersion();
             txWriter.bumpTruncateVersion();
-            cairoMetadata.hydrateTable(tableToken, configuration, true, true);
+            cairoMetadata.hydrateTable(tableToken, true, true);
         }
     }
 
@@ -2500,7 +2500,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             finishMetaSwapUpdate();
             metadata.setMaxUncommittedRows(maxUncommittedRows);
-            cairoMetadata.hydrateTable(tableToken, configuration, true, true);
+            cairoMetadata.hydrateTable(tableToken, true, true);
 
         } finally {
             ddlMem.close();
@@ -2523,7 +2523,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             finishMetaSwapUpdate();
             metadata.setO3MaxLag(o3MaxLagUs);
-            cairoMetadata.hydrateTable(tableToken, configuration, true, true);
+            cairoMetadata.hydrateTable(tableToken, true, true);
         } finally {
             ddlMem.close();
         }
