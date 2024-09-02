@@ -261,72 +261,73 @@ public class CairoMetadata implements Sinkable {
         }
     }
 
-    public void hydrateTable(@NotNull TableWriterMetadata metadata, boolean blindUpsert, boolean infoLog) {
-        CairoTable table = new CairoTable();
-
-        if (infoLog) {
-            LOG.info().$("hydrating metadata [table=").$(metadata.getTableName()).I$();
-        }
-
-        // create table to work with
-        table.setTableToken(metadata.getTableToken());
-        table.setMetadataVersion(metadata.getMetadataVersion());
-
-        int columnCount = metadata.getColumnCount();
-
-        LOG.debug().$("set metadata version [table=").$(table.getName()).$(", version=").$(table.getMetadataVersion()).I$();
-
-        table.setPartitionBy(metadata.getPartitionBy());
-        table.setMaxUncommittedRows(metadata.getMaxUncommittedRows());
-        table.setO3MaxLag(metadata.getO3MaxLag());
-        table.setTimestampIndex(metadata.getTimestampIndex());
-        table.setIsSoftLink(metadata.isSoftLink());
-
-        LOG.debug().$("reading columns [table=").$(table.getName()).$(", count=").$(columnCount).I$();
-
-        for (int i = 0; i < columnCount; i++) {
-            TableColumnMetadata columnMetadata = metadata.columnMetadata.getQuick(i);
-            CairoColumn column = new CairoColumn();
-
-            column.setName(columnMetadata.getName());
-            column.setType(columnMetadata.getType());
-
-            if (column.getType() < 0) {
-                // deleted
-                continue;
-            }
-
-            column.setPosition(i);
-            column.setIsIndexed(columnMetadata.isIndexed());
-            column.setIndexBlockCapacity(columnMetadata.getIndexValueBlockCapacity());
-            column.setIsSymbolTableStatic(columnMetadata.isSymbolTableStatic());
-            column.setIsDedupKey(columnMetadata.isDedupKey());
-            column.setWriterIndex(columnMetadata.getWriterIndex());
-            column.setStableIndex(i);
-            column.setIsDesignated(table.getTimestampIndex() == column.getWriterIndex());
-            column.setIsSequential(metadata.isSequential(i));
-
-            if (column.getIsDedupKey()) {
-                table.setIsDedup(true);
-            }
-
-            if (ColumnType.isSymbol(column.getType())) {
-                column.setSymbolCapacity(metadata.getSymbolCapacity(i));
-                column.setSymbolCached(metadata.getSymbolCacheFlag(i));
-            }
-            table.upsertColumn(column);
-        }
-
-        if (blindUpsert) {
-            tables.put(table.getDirectoryName(), table);
-        } else {
-            tables.putIfAbsent(table.getDirectoryName(), table);
-        }
-
-        if (infoLog) {
-            LOG.info().$("hydrated metadata [table=").$(metadata.getTableName()).I$();
-        }
-    }
+//    public void hydrateTable(@NotNull TableWriterMetadata metadata, boolean blindUpsert, boolean infoLog) {
+//        CairoTable table = new CairoTable();
+//
+//        if (infoLog) {
+//            LOG.info().$("hydrating metadata [table=").$(metadata.getTableName()).I$();
+//        }
+//
+//        // create table to work with
+//        table.setTableToken(metadata.getTableToken());
+//        table.setMetadataVersion(metadata.getMetadataVersion());
+//
+//        int columnCount = metadata.getColumnCount();
+//
+//        LOG.debug().$("set metadata version [table=").$(table.getName()).$(", version=").$(table.getMetadataVersion()).I$();
+//
+//        table.setPartitionBy(metadata.getPartitionBy());
+//        table.setMaxUncommittedRows(metadata.getMaxUncommittedRows());
+//        table.setO3MaxLag(metadata.getO3MaxLag());
+//        table.setTimestampIndex(metadata.getTimestampIndex());
+//        table.setIsSoftLink(metadata.isSoftLink());
+//        table.columnOrderMap = metadata.getCol
+//
+//        LOG.debug().$("reading columns [table=").$(table.getName()).$(", count=").$(columnCount).I$();
+//
+//        for (int i = 0; i < columnCount; i++) {
+//            TableColumnMetadata columnMetadata = metadata.columnMetadata.getQuick(i);
+//            CairoColumn column = new CairoColumn();
+//
+//            column.setName(columnMetadata.getName());
+//            column.setType(columnMetadata.getType());
+//
+//            if (column.getType() < 0) {
+//                // deleted
+//                continue;
+//            }
+//
+//            column.setPosition(i);
+//            column.setIsIndexed(columnMetadata.isIndexed());
+//            column.setIndexBlockCapacity(columnMetadata.getIndexValueBlockCapacity());
+//            column.setIsSymbolTableStatic(columnMetadata.isSymbolTableStatic());
+//            column.setIsDedupKey(columnMetadata.isDedupKey());
+//            column.setWriterIndex(columnMetadata.getWriterIndex());
+//            column.setStableIndex(i);
+//            column.setIsDesignated(table.getTimestampIndex() == column.getWriterIndex());
+//            column.setIsSequential(metadata.isSequential(i));
+//
+//            if (column.getIsDedupKey()) {
+//                table.setIsDedup(true);
+//            }
+//
+//            if (ColumnType.isSymbol(column.getType())) {
+//                column.setSymbolCapacity(metadata.getSymbolCapacity(i));
+//                column.setSymbolCached(metadata.getSymbolCacheFlag(i));
+//            }
+//            table.upsertColumn(column);
+//        }
+//
+//        if (blindUpsert) {
+//            tables.put(table.getDirectoryName(), table);
+//        } else {
+//            tables.putIfAbsent(table.getDirectoryName(), table);
+//        }
+//
+//        if (infoLog) {
+//            LOG.info().$("hydrated metadata [table=").$(metadata.getTableName()).I$();
+//        }
+//    }
 
     public void removeTable(@NotNull TableToken tableToken) {
         tables.remove(tableToken.getDirName());

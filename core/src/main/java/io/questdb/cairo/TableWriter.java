@@ -582,7 +582,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlListener.onColumnAdded(securityContext, tableToken, columnName);
         }
 
-        cairoMetadata.hydrateTable(metadata, true, true);
+        cairoMetadata.hydrateTable(tableToken, true, true);
     }
 
     @Override
@@ -625,7 +625,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnMetadata.setIndexed(true);
         columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
-        cairoMetadata.hydrateTable(metadata, true, true);
+        cairoMetadata.hydrateTable(tableToken, true, true);
         LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$substr(pathRootSize, path).$();
     }
 
@@ -948,7 +948,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     dedupColumnCommitAddresses.setDedupColumnCount(dedupColumnCommitAddresses.getColumnCount() - 1);
                 }
 
-                cairoMetadata.hydrateTable(metadata, true, true);
+                cairoMetadata.hydrateTable(tableToken, true, true);
             } finally {
                 // clear temp resources
                 convertOperator.finishColumnConversion();
@@ -1482,7 +1482,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         checkDistressed();
         LOG.info().$("disabling row deduplication [table=").utf8(tableToken.getTableName()).I$();
         updateMetadataWithDeduplicationUpsertKeys(false, null);
-        cairoMetadata.hydrateTable(metadata, true, true);
+        cairoMetadata.hydrateTable(tableToken, true, true);
     }
 
     @Override
@@ -1536,7 +1536,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             finishColumnPurge();
             LOG.info().$("REMOVED index [txn=").$(txWriter.getTxn()).$();
 
-            cairoMetadata.hydrateTable(metadata, true, true);
+            cairoMetadata.hydrateTable(tableToken, true, true);
 
             LOG.info().$("END DROP INDEX [txn=").$(txWriter.getTxn())
                     .$(", table=").utf8(tableToken.getTableName())
@@ -1585,7 +1585,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             logRec.I$();
         }
         updateMetadataWithDeduplicationUpsertKeys(true, columnsIndexes);
-        cairoMetadata.hydrateTable(metadata, true, true);
+        cairoMetadata.hydrateTable(tableToken, true, true);
     }
 
     public long getAppliedSeqTxn() {
@@ -2334,7 +2334,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         finishColumnPurge();
 
-        cairoMetadata.hydrateTable(metadata, true, true);
+        cairoMetadata.hydrateTable(tableToken, true, true);
         LOG.info().$("REMOVED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' from ").$substr(pathRootSize, path).$();
     }
 
@@ -2423,7 +2423,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlListener.onColumnRenamed(securityContext, tableToken, currentName, newName);
         }
 
-        cairoMetadata.hydrateTable(metadata, true, true);
+        cairoMetadata.hydrateTable(tableToken, true, true);
 
         LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$substr(pathRootSize, path).$();
     }
@@ -2441,7 +2441,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Record column structure version bump in txn file for WAL sequencer structure version to match writer structure version.
         bumpColumnStructureVersion();
 
-        cairoMetadata.hydrateTable(metadata, true, true);
+        cairoMetadata.hydrateTable(tableToken, true, true);
     }
 
     @Override
@@ -7796,7 +7796,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         LOG.info().$("truncated [name=").utf8(tableToken.getTableName()).I$();
 
-        cairoMetadata.hydrateTable(metadata, true, true);
+        cairoMetadata.hydrateTable(tableToken, true, true);
     }
 
     private void truncateColumns() {

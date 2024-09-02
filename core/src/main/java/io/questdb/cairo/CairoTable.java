@@ -57,20 +57,6 @@ public class CairoTable implements Sinkable {
         }
     }
 
-    public void copyTo(@NotNull CairoTable target) {
-        target.columns = columns;
-        target.columnOrderMap = columnOrderMap;
-        target.columnNameIndexMap = columnNameIndexMap;
-        target.setTableToken(getTableToken());
-        target.timestampIndex = timestampIndex;
-        target.isDedup = isDedup;
-        target.isSoftLink = isSoftLink;
-        target.metadataVersion = metadataVersion;
-        target.maxUncommittedRows = maxUncommittedRows;
-        target.o3MaxLag = o3MaxLag;
-        target.partitionBy = partitionBy;
-    }
-
     public long getColumnCount() {
         return this.columns.size();
     }
