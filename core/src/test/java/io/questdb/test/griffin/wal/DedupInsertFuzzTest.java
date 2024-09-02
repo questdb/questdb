@@ -48,7 +48,6 @@ import org.junit.Test;
 
 import java.util.Arrays;
 import java.util.List;
-import java.util.Objects;
 import java.util.stream.Collectors;
 
 import static io.questdb.test.tools.TestUtils.assertEquals;
@@ -138,22 +137,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
-    public void testDedupWithRandomShiftAndStepAndVarcharKeyAndColumnTops() throws Exception {
-        assertMemoryLeak(() -> {
-            Rnd rnd = generateRandom(LOG);
-
-            String tableName = testName.getMethodName();
-            compile(
-                    "create table " + tableName +
-                            " (ts timestamp, commit int) " +
-                            " timestamp(ts) partition by DAY WAL "
-                            + " DEDUP UPSERT KEYS(ts)"
-            );
-            testDedupWithRandomShiftAndStepAndColumnTops(rnd, ColumnType.VARCHAR, tableName);
-        });
-    }
-
-    @Test
     public void testDedupWithRandomShiftAndStepAndVarcharKey() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = generateRandom(LOG);
@@ -167,6 +150,22 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             );
 
             runDedupWithShiftAndStep(rnd, tableName, ColumnType.VARCHAR);
+        });
+    }
+
+    @Test
+    public void testDedupWithRandomShiftAndStepAndVarcharKeyAndColumnTops() throws Exception {
+        assertMemoryLeak(() -> {
+            Rnd rnd = generateRandom(LOG);
+
+            String tableName = testName.getMethodName();
+            compile(
+                    "create table " + tableName +
+                            " (ts timestamp, commit int) " +
+                            " timestamp(ts) partition by DAY WAL "
+                            + " DEDUP UPSERT KEYS(ts)"
+            );
+            testDedupWithRandomShiftAndStepAndColumnTops(rnd, ColumnType.VARCHAR, tableName);
         });
     }
 
@@ -981,7 +980,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                         if (symbols != null) {
                             sink.put(',');
                             CharSequence cs = readStrValue(rec, colType, 2);
-                            sink.put(Objects.requireNonNullElse(cs, "<null>"));
+                            sink.put(cs != null ? cs : "<null>");
                         }
                         sink.put('\n');
                     }

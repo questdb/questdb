@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions;
 
+
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -34,12 +35,12 @@ import io.questdb.std.str.Utf8Sequence;
 
 public abstract class BinFunction implements ScalarFunction {
     @Override
-    public boolean getBool(Record rec) {
+    public final boolean getBool(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public byte getByte(Record rec) {
+    public final byte getByte(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -49,17 +50,17 @@ public abstract class BinFunction implements ScalarFunction {
     }
 
     @Override
-    public long getDate(Record rec) {
+    public final long getDate(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public double getDouble(Record rec) {
+    public final double getDouble(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public float getFloat(Record rec) {
+    public final float getFloat(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -89,12 +90,12 @@ public abstract class BinFunction implements ScalarFunction {
     }
 
     @Override
-    public int getInt(Record rec) {
+    public final int getInt(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getLong(Record rec) {
+    public final long getLong(Record rec) {
         throw new UnsupportedOperationException();
     }
 
@@ -129,42 +130,42 @@ public abstract class BinFunction implements ScalarFunction {
     }
 
     @Override
-    public short getShort(Record rec) {
+    public final short getShort(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public CharSequence getStrA(Record rec) {
+    public final CharSequence getStrA(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public CharSequence getStrB(Record rec) {
+    public final CharSequence getStrB(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public int getStrLen(Record rec) {
+    public final int getStrLen(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public CharSequence getSymbol(Record rec) {
+    public final CharSequence getSymbol(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public CharSequence getSymbolB(Record rec) {
+    public final CharSequence getSymbolB(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public long getTimestamp(Record rec) {
+    public final long getTimestamp(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public int getType() {
+    public final int getType() {
         return ColumnType.BINARY;
     }
 

@@ -35,8 +35,8 @@ class MergeColumnComparer : dedup_column {
 public:
     inline int operator()(int64_t col_index, int64_t index_index) const {
         const T l_val = col_index >= column_top
-                           ? reinterpret_cast<T *>(column_data)[col_index]
-                           : *reinterpret_cast<const T *>(&null_value);
+                        ? reinterpret_cast<T *>(column_data)[col_index]
+                        : *reinterpret_cast<const T *>(&null_value);
 
         const auto r_val = reinterpret_cast<T *>(o3_data)[index_index];
 
@@ -64,13 +64,6 @@ public:
     }
 };
 
-struct VarcharDataView {
-    const uint8_t *const inline_chars;
-    const uint8_t *const remaining_chars;
-    const int32_t size;
-};
-
-const VarcharDataView NULL_VARCHAR_VIEW = {NULL, NULL, -1};
 
 const int32_t HEADER_FLAGS_WIDTH = 4;
 const int32_t MIN_INLINE_CHARS = 6;
@@ -78,121 +71,156 @@ const uint32_t HEADER_FLAG_NULL = 1 << 2;
 const int32_t VARCHAR_MAX_BYTES_FULLY_INLINED = 9;
 const uint32_t VARCHAR_HEADER_FLAG_INLINED = 1 << 0;
 
-inline VarcharDataView
-read_varchar(int64_t offset, const void *column_data, const void *column_var_data, const long column_var_data_len) {
-    const auto aux_data = &reinterpret_cast<const VarcharAuxEntrySplit *>(column_data)[offset];
+
+inline int32_t read_varchar_size(const char *l_val_aux) {
+    const auto aux_data = reinterpret_cast<const VarcharAuxEntrySplit *>(l_val_aux);
     assertm(aux_data->header != 0, "ERROR: invalid varchar aux data");
     if (aux_data->header & HEADER_FLAG_NULL) {
-        return NULL_VARCHAR_VIEW;
+        return -1;
     }
 
     if (aux_data->header & VARCHAR_HEADER_FLAG_INLINED) {
-        const auto aux_inlined_data = &reinterpret_cast<const VarcharAuxEntryInlined *>(column_data)[offset];
+        const auto aux_inlined_data = reinterpret_cast<const VarcharAuxEntryInlined *>(l_val_aux);
         const uint8_t size = aux_inlined_data->header >> HEADER_FLAGS_WIDTH;
         assertm(size <= VARCHAR_MAX_BYTES_FULLY_INLINED, "ERROR: invalid len of inline varchar");
-        return VarcharDataView{aux_inlined_data->chars, &aux_inlined_data->chars[MIN_INLINE_CHARS], (int32_t) size};
+        return size;
     }
+
     const auto size = (int32_t) (aux_data->header >> HEADER_FLAGS_WIDTH);
-
     assertm(size > VARCHAR_MAX_BYTES_FULLY_INLINED, "ERROR: invalid varchar non-inlined size");
-    const uint64_t data_offset = aux_data->offset_lo | ((uint64_t) aux_data->offset_hi) << 16;
-
-    assert(data_offset < (uint64_t) column_var_data_len || "ERROR: reading beyond varchar address length!");
-
-    const uint8_t *data = &reinterpret_cast<const uint8_t *>(column_var_data)[data_offset];
-
-    assertm(std::memcmp(aux_data->chars, data, MIN_INLINE_CHARS) == 0,
-            "ERROR: varchar inline prefix does not match the data");
-    return VarcharDataView{aux_data->chars, &data[MIN_INLINE_CHARS], size};
+    return size;
 }
 
-inline int compare_varchar(const VarcharDataView &l_val, const VarcharDataView &r_val) {
-    const auto min_size = std::min(l_val.size, r_val.size);
-    switch (min_size) {
+
+const int32_t chars_inline_offsets[2] = {
+        offsetof(VarcharAuxEntryInlined, chars),
+        offsetof(VarcharAuxEntrySplit, chars)
+};
+
+
+inline const char *get_inline_chars_ptr(const char *l_val_aux, int32_t size) {
+    return l_val_aux + chars_inline_offsets[size > VARCHAR_MAX_BYTES_FULLY_INLINED];
+}
+
+
+inline const char *
+get_tail_chars_ptr(const char *l_val_aux, int32_t size, const char *l_val_data, int64_t l_val_data_len) {
+    const auto aux_data = reinterpret_cast<const VarcharAuxEntrySplit *>(l_val_aux);
+    const uint64_t data_offset = aux_data->offset_lo | ((uint64_t) aux_data->offset_hi) << 16;
+    assertm(data_offset < (uint64_t) l_val_data_len, "ERROR: reading beyond varchar address length!");
+
+    const char *data = l_val_data + data_offset;
+    assertm(std::memcmp(aux_data->chars, data, MIN_INLINE_CHARS) == 0,
+            "ERROR: varchar inline prefix does not match the data");
+
+    return data;
+}
+
+
+// This struct represents repated pointers in dedup_column
+// Sometimes it's better to view dedup_column struct as if it has an array of 2 data_point(s)
+#pragma pack (push, 1)
+struct data_point {
+    char *aux_data;
+    char *var_data;
+    int64_t var_data_len;
+};
+#pragma pack(pop)
+
+
+inline int compare_varchar(const data_point *l_col, int64_t l_offset, const data_point *r_col, int64_t r_offset) {
+
+    auto l_val_aux = l_col->aux_data + l_offset * sizeof(VarcharAuxEntrySplit);
+    auto r_val_aux = r_col->aux_data + r_offset * sizeof(VarcharAuxEntrySplit);
+
+    auto l_size = read_varchar_size(l_val_aux);
+    auto r_size = read_varchar_size(r_val_aux);
+
+    if (l_size != r_size) {
+        return l_size - r_size;
+    }
+
+    switch (l_size) {
         case -1:
         case 0:
-            return l_val.size - r_val.size;
+            return 0;
 
         case 1:
         case 2:
         case 3:
         case 4:
         case 5:
-        case 6: {
-            auto diff = std::memcmp(l_val.inline_chars, r_val.inline_chars, min_size);
-            return diff != 0 ? diff : l_val.size - r_val.size;
+        case 6:
+        case 7:
+        case 8:
+        case 9: {
+            // Both are inlined
+            auto l_inl = l_val_aux + offsetof(VarcharAuxEntryInlined, chars);
+            auto r_inl = r_val_aux + offsetof(VarcharAuxEntryInlined, chars);
+            return std::memcmp(l_inl, r_inl, l_size);
         }
 
         default: {
-            auto diff = std::memcmp(l_val.inline_chars, r_val.inline_chars, MIN_INLINE_CHARS);
-            if (diff != 0) {
-                return diff;
-            }
-            auto diff2 = std::memcmp(l_val.remaining_chars, r_val.remaining_chars, min_size - MIN_INLINE_CHARS);
-            return diff2 != 0 ? diff2 : l_val.size - r_val.size;
+            // Both are not inlined
+            auto l_tail_chars_ptr = get_tail_chars_ptr(l_val_aux, l_size, l_col->var_data, l_col->var_data_len);
+            auto r_tail_chars_ptr = get_tail_chars_ptr(r_val_aux, r_size, r_col->var_data, r_col->var_data_len);
+            return std::memcmp(l_tail_chars_ptr, r_tail_chars_ptr, l_size);
         }
     }
 }
 
 
 class SortVarcharColumnComparer : dedup_column {
+
 public:
     inline int operator()(int64_t l, int64_t r) const {
-        const auto l_val = l > -1
-                           ? read_varchar(l, this->column_data, this->column_var_data, this->column_var_data_len)
-                           : read_varchar(l & ~(1ull << 63), this->o3_data, this->o3_var_data, this->o3_var_data_len);
-
-        const auto r_val = r > -1
-                           ? read_varchar(r, this->column_data, this->column_var_data, this->column_var_data_len)
-                           : read_varchar(r & ~(1ull << 63), this->o3_data, this->o3_var_data, this->o3_var_data_len);
-
-        return compare_varchar(l_val, r_val);
+        auto cols = reinterpret_cast<const data_point *>(&this->column_data);
+        auto l_col = &cols[l < 0];
+        auto r_col = &cols[r < 0];
+        return compare_varchar(l_col, l & ~(1ull << 63), r_col, r & ~(1ull << 63));
     }
 };
 
 
 class MergeVarcharColumnComparer : dedup_column {
 public:
-    inline int operator()(int64_t col_index, int64_t index_index) const {
-        const VarcharDataView l_val = col_index >= column_top
-                                      ? read_varchar(col_index, this->column_data, this->column_var_data,
-                                                     this->column_var_data_len)
-                                      : NULL_VARCHAR_VIEW;
+    inline int operator()(int64_t l_offset, int64_t r_offset) const {
+        const auto cols = reinterpret_cast<const data_point *>(&this->column_data);
 
-        const VarcharDataView r_val = read_varchar(index_index, this->o3_data, this->o3_var_data,
-                                                   this->o3_var_data_len);
-
-        return compare_varchar(l_val, r_val);
+        if (l_offset >= column_top) {
+            return compare_varchar(&cols[0], l_offset, &cols[1], r_offset);
+        } else {
+            // left value is null, read right header null flag
+            auto r_header_null =
+                    reinterpret_cast<const VarcharAuxEntrySplit *>(this->o3_data)[r_offset].header & HEADER_FLAG_NULL;
+            // if right is null, then 0 (equals), otherwise -1 (left null is first)
+            return r_header_null ? 0 : -1;
+        }
     }
 };
 
+
 template<typename T, int item_size>
 inline int compare_str_bin(const char *l_val, const char *r_val) {
-    const T l_size = *reinterpret_cast<const T *>(l_val);
-    const T r_size = *reinterpret_cast<const T *>(r_val);
-
-    const T min_size = std::min(l_size, r_size);
-    if (min_size > 0) {
-        auto diff = std::memcmp(
-                l_val + sizeof(T),
-                r_val + sizeof(T),
-                min_size * item_size
-        );
-        return diff != 0 ? diff : l_size - r_size;
+    T l_size = *reinterpret_cast<const T *>(l_val);
+    T r_size = *reinterpret_cast<const T *>(r_val);
+    if (l_size != r_size) {
+        return l_size - r_size;
     }
-    return l_size - r_size;
+
+    switch (l_size) {
+        case -1:
+        case 0:
+            return 0;
+
+        default: {
+            return std::memcmp(l_val + sizeof(T), r_val + sizeof(T), l_size * item_size);
+        }
+    }
 };
 
 template<typename T, int item_size>
 class SortStrBinColumnComparer : dedup_column {
-
-#pragma pack (push, 1)
-    struct data_point {
-        void *column_data;
-        void *column_var_data;
-        int64_t column_var_data_len;
-    };
-#pragma pack(pop)
 
 public:
     inline int operator()(int64_t l, int64_t r) const {
@@ -200,15 +228,15 @@ public:
         const auto l_col = &cols[l < 0];
         const auto r_col = &cols[r < 0];
 
-        const auto l_val_offset = reinterpret_cast<int64_t *>(l_col->column_data)[l & ~(1ull << 63)];
-        assertm(l_val_offset < l_col->column_var_data_len, "ERROR: column aux data point beyond var data buffer");
+        const auto l_val_offset = reinterpret_cast<int64_t *>(l_col->aux_data)[l & ~(1ull << 63)];
+        assertm(l_val_offset < l_col->var_data_len, "ERROR: column aux data point beyond var data buffer");
 
-        const auto r_val_offset = reinterpret_cast<int64_t *>(r_col->column_data)[r & ~(1ull << 63)];
-        assertm(r_val_offset < r_col->column_var_data_len, "ERROR: column aux data point beyond var data buffer");
+        const auto r_val_offset = reinterpret_cast<int64_t *>(r_col->aux_data)[r & ~(1ull << 63)];
+        assertm(r_val_offset < r_col->var_data_len, "ERROR: column aux data point beyond var data buffer");
 
         return compare_str_bin<T, item_size>(
-                reinterpret_cast<const char *>(l_col->column_var_data) + l_val_offset,
-                reinterpret_cast<const char *>(r_col->column_var_data) + r_val_offset
+                l_col->var_data + l_val_offset,
+                r_col->var_data + r_val_offset
         );
     }
 };
@@ -218,13 +246,13 @@ class MergeStrBinColumnComparer : dedup_column {
 public:
     inline int operator()(int64_t col_index, int64_t index_index) const {
         const T l_val_offset = col_index >= column_top
-                                  ? reinterpret_cast<int64_t *>(column_data)[col_index]
-                                  : -1;
+                               ? reinterpret_cast<int64_t *>(column_data)[col_index]
+                               : -1;
 
         assertm(l_val_offset < column_var_data_len, "ERROR: column aux data point beyond var data buffer");
         const char *l_val_ptr = col_index >= column_top ?
                                 reinterpret_cast<const char *>(column_var_data) + l_val_offset
-                                                                      : null_value;
+                                                        : null_value;
 
         const auto r_val_offset = reinterpret_cast<int64_t *>(o3_data)[index_index];
         assertm(r_val_offset < o3_var_data_len, "ERROR: column aux data point beyond var data buffer");

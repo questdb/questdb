@@ -1,4 +1,4 @@
-# description: Test dedup cases with varchar column type to
+# description: Test dedup cases with varchar column type
 # group: [dedup]
 
 control iso_timestamp on
