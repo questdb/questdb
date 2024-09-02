@@ -35,14 +35,14 @@ import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.*;
 import io.questdb.std.str.Utf8Sequence;
 
-public final class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinKeyedFastRecordCursor cursor;
     private final RecordSink masterKeySink;
     private final OffheapSink masterSinkTarget = new OffheapSink();
     private final RecordSink slaveKeySink;
     private final OffheapSink slaveSinkTarget = new OffheapSink();
 
-    public AsOfJoinKeyedFastRecordCursorFactory(
+    public AsOfJoinFastRecordCursorFactory(
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
@@ -111,7 +111,6 @@ public final class AsOfJoinKeyedFastRecordCursorFactory extends AbstractJoinReco
         Misc.free(slaveSinkTarget);
     }
 
-    // todo: generalize this to support all types
     private static class OffheapSink implements RecordSinkSPI, QuietCloseable {
         private static final int INITIAL_CAPACITY_BYTES = 8;
         private static final long MAX_HEAP_SIZE = 4096;

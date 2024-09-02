@@ -2074,7 +2074,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 writeStringAsVarcharA
                                         );
                                         if (slave.supportsTimeFrameCursor()) {
-                                            master = new AsOfJoinKeyedFastRecordCursorFactory(
+                                            master = new AsOfJoinFastRecordCursorFactory(
                                                     configuration,
                                                     createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                                     master,
