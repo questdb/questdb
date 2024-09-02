@@ -33,10 +33,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 // second arg is contained within first arg
-public class NegContainsIPv4FunctionFactory implements FunctionFactory {
+public class NegContainsIPv4VarcharFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return ">>(SX)";
+        return ">>(ØX)";
     }
 
     @Override
@@ -53,8 +53,8 @@ public class NegContainsIPv4FunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         Function ipv4Func = args.getQuick(1);
-        int strFuncPosition = argPositions.getQuick(0);
-        Function strFunc = args.getQuick(0);
-        return ContainsIPv4Utils.containsIPv4(ipv4Func, strFunc, strFuncPosition);
+        int varcharFuncPosition = argPositions.getQuick(0);
+        Function varcharFunc = args.getQuick(0);
+        return ContainsIPv4Utils.containsIPv4Varchar(ipv4Func, varcharFunc, varcharFuncPosition);
     }
 }
