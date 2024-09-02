@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
@@ -90,6 +91,11 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
         @Override
         public boolean isRuntimeConstant() {
             return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val("wait_wal_table(").val(tableName).val(')');
         }
     }
 }

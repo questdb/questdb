@@ -624,8 +624,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             assertSql("timestamp\td\tik\n" +
                     "2018-01-01T02:00:00.000000Z\t0.04488373772232379\tCPSW\n" +
                     "2044-02-24T00:00:00.000000Z\t3.0\tabc\n" +
-                    "2044-02-25T00:00:00.000000Z\t5.0\tdef\n" +
-                    "2044-02-25T00:00:00.000000Z\t4.0\tabc\n", "select timestamp, d, ik from x limit -4");
+                    "2044-02-25T00:00:00.000000Z\t4.0\tabc\n" +
+                    "2044-02-25T00:00:00.000000Z\t5.0\tdef\n", "select timestamp, d, ik from x limit -4");
         });
     }
 
