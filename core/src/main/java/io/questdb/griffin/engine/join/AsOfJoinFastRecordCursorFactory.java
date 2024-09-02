@@ -388,7 +388,11 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             if (masterTimestamp >= lookaheadTimestamp) {
                 nextSlave(masterTimestamp);
             }
+
+            // we have to set the `isMasterHasNextPending` only now since `nextSlave()` might throw DataUnavailableException
+            // and in this case we do not want to call `masterCursor.hasNext()` during the next call to `this.hasNext()`
             isMasterHasNextPending = true;
+
             boolean hasSlave = record.hasSlave();
             if (!hasSlave) {
                 return true;
@@ -401,6 +405,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             TimeFrame timeFrame = slaveCursor.getTimeFrame();
 
 
+            // make sure the cursor points to the right frame - since `nextSlave()` might have moved it under our feet
             int slaveRecordIndex = ((PageFrameMemoryRecord) slaveRecB).getFrameIndex();
             origFrameIndex = slaveRecordIndex;
             int cursorPrevCounter = 0;
@@ -415,14 +420,10 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 }
                 slaveCursor.open();
             }
-
             slaveCursor.open();
-            assert timeFrame.isOpen();
-            long rowHi = timeFrame.getRowHi();
+
+
             long rowLo = timeFrame.getRowLo();
-
-//            assert slaveFrameRow >= rowLo && slaveFrameRow < rowHi;
-
             long keyedRowId = ((PageFrameMemoryRecord) slaveRecB).getRowIndex();
             origRowId = keyedRowId;
             int keyedFrameIndex = timeFrame.getIndex();
@@ -448,13 +449,13 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                     slaveCursor.open();
 
                     keyedFrameIndex = timeFrame.getIndex();
-                    keyedRowId = timeFrame.getRowHi() - 1; // should it be -1? I never know. inclusive, exclusive, it's all a blur. I assume this one is exclusive. to be checked.
+                    keyedRowId = timeFrame.getRowHi() - 1;
                     rowLo = timeFrame.getRowLo();
                 }
                 slaveCursor.recordAt(slaveRecB, Rows.toRowID(keyedFrameIndex, keyedRowId));
             }
 
-            // rewind the slave cursor to the original position
+            // rewind the slave cursor to the original position so the next call to `nextSlave()` will not be affected
             if (cursorPrevCounter > 0) {
                 for (int i = 0; i < cursorPrevCounter; i++) {
                     slaveCursor.next();
