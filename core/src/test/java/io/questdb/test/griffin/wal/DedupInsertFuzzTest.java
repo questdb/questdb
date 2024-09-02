@@ -391,7 +391,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String tableNameWal
     ) throws SqlException {
         Log log = LOG;
-        String filter = ""; // " WHERE ts in ('2022-02-24T23:59:59.114787', '2022-02-24T23:59:59.114752Z')";
+        // Define where clause for debugging
+        String filter = "";
         try (
                 RecordCursorFactory factory = select(tableNameNoWal + filter);
                 RecordCursorFactory factoryPreview = select(tableNameNoWal + filter)

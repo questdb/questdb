@@ -14,11 +14,11 @@ template<typename T>
 class MergeColumnComparer : dedup_column {
 public:
     inline int operator()(int64_t col_index, int64_t index_index) const {
-        const auto l_val = col_index >= dedup_column::column_top
-                           ? reinterpret_cast<T *>(dedup_column::column_data)[col_index]
+        const T l_val = col_index >= column_top
+                           ? reinterpret_cast<T *>(column_data)[col_index]
                            : *reinterpret_cast<const T *>(&null_value);
 
-        const auto r_val = reinterpret_cast<T *>(dedup_column::o3_data)[index_index];
+        const auto r_val = reinterpret_cast<T *>(o3_data)[index_index];
 
         // One of the values can be MIN of the type (null value)
         // and subtraction can result in type overflow
@@ -31,12 +31,12 @@ class SortColumnComparer : dedup_column {
 public:
     inline int operator()(int64_t l, int64_t r) const {
         const auto l_val = l > -1
-                           ? reinterpret_cast<T *>(dedup_column::column_data)[l]
-                           : reinterpret_cast<T *>(dedup_column::o3_data)[l & ~(1ull << 63)];
+                           ? reinterpret_cast<T *>(column_data)[l]
+                           : reinterpret_cast<T *>(o3_data)[l & ~(1ull << 63)];
 
         const auto r_val = r > -1
-                           ? reinterpret_cast<T *>(dedup_column::column_data)[r]
-                           : reinterpret_cast<T *>(dedup_column::o3_data)[r & ~(1ull << 63)];
+                           ? reinterpret_cast<T *>(column_data)[r]
+                           : reinterpret_cast<T *>(o3_data)[r & ~(1ull << 63)];
 
         // One of the values can be MIN of the type (null value)
         // and subtraction can result in type overflow
@@ -134,7 +134,7 @@ public:
 class MergeVarcharColumnComparer : dedup_column {
 public:
     inline int operator()(int64_t col_index, int64_t index_index) const {
-        const VarcharDataView l_val = col_index >= dedup_column::column_top
+        const VarcharDataView l_val = col_index >= column_top
                                       ? read_varchar(col_index, this->column_data, this->column_var_data,
                                                      this->column_var_data_len)
                                       : NULL_VARCHAR_VIEW;
@@ -147,23 +147,21 @@ public:
 };
 
 template<typename T, int item_size>
-inline int compare_str_bin(const void *l_val, const void *r_val) {
-    T l_size = reinterpret_cast<const T *>(l_val)[0];
-    T r_size = reinterpret_cast<const T *>(r_val)[0];
+inline int compare_str_bin(const char *l_val, const char *r_val) {
+    const T l_size = *reinterpret_cast<const T *>(l_val);
+    const T r_size = *reinterpret_cast<const T *>(r_val);
 
-    auto min_size = std::min(l_size, r_size);
+    const T min_size = std::min(l_size, r_size);
     if (min_size > 0) {
         auto diff = std::memcmp(
-                reinterpret_cast<const char *>(l_val) + sizeof(T),
-                reinterpret_cast<const char *>(r_val) + sizeof(T),
+                l_val + sizeof(T),
+                r_val + sizeof(T),
                 min_size * item_size
         );
         return diff != 0 ? diff : l_size - r_size;
     }
     return l_size - r_size;
 };
-
-
 
 template<typename T, int item_size>
 class SortStrBinColumnComparer : dedup_column {
@@ -182,10 +180,10 @@ public:
         const auto l_col = &cols[l < 0];
         const auto r_col = &cols[r < 0];
 
-        const auto l_val_offset = reinterpret_cast<int64_t *>(l_col->column_data)[l < 0 ? l & ~(1ull << 63) : l];
+        const auto l_val_offset = reinterpret_cast<int64_t *>(l_col->column_data)[l & ~(1ull << 63)];
         assertm(l_val_offset < l_col->column_var_data_len, "ERROR: column aux data point beyond var data buffer");
 
-        const auto r_val_offset = reinterpret_cast<int64_t *>(r_col->column_data)[r < 0 ? r & ~(1ull << 63) : r];
+        const auto r_val_offset = reinterpret_cast<int64_t *>(r_col->column_data)[r & ~(1ull << 63)];
         assertm(r_val_offset < r_col->column_var_data_len, "ERROR: column aux data point beyond var data buffer");
 
         return compare_str_bin<T, item_size>(
@@ -199,19 +197,18 @@ template<typename T, int item_size>
 class MergeStrBinColumnComparer : dedup_column {
 public:
     inline int operator()(int64_t col_index, int64_t index_index) const {
-        const auto l_val_offset = col_index >= dedup_column::column_top
-                                  ? reinterpret_cast<int64_t *>(dedup_column::column_data)[col_index]
+        const T l_val_offset = col_index >= column_top
+                                  ? reinterpret_cast<int64_t *>(column_data)[col_index]
                                   : -1;
 
-        assertm(l_val_offset < dedup_column::column_var_data_len,
-                "ERROR: column aux data point beyond var data buffer");
-        const char *l_val_ptr = col_index >= dedup_column::column_top ?
-                                reinterpret_cast<const char *>(dedup_column::column_var_data) + l_val_offset
-                                                                      : dedup_column::null_value;
+        assertm(l_val_offset < column_var_data_len, "ERROR: column aux data point beyond var data buffer");
+        const char *l_val_ptr = col_index >= column_top ?
+                                reinterpret_cast<const char *>(column_var_data) + l_val_offset
+                                                                      : null_value;
 
-        const auto r_val_offset = reinterpret_cast<int64_t *>(dedup_column::o3_data)[index_index];
-        assertm(r_val_offset < dedup_column::o3_var_data_len, "ERROR: column aux data point beyond var data buffer");
-        const char *r_val_ptr = reinterpret_cast<const char *>(dedup_column::o3_var_data) + r_val_offset;
+        const auto r_val_offset = reinterpret_cast<int64_t *>(o3_data)[index_index];
+        assertm(r_val_offset < o3_var_data_len, "ERROR: column aux data point beyond var data buffer");
+        const char *r_val_ptr = reinterpret_cast<const char *>(o3_var_data) + r_val_offset;
 
         return compare_str_bin<T, item_size>(l_val_ptr, r_val_ptr);
     }
