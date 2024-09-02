@@ -315,6 +315,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlMaxNegativeLimit;
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlModelPoolCapacity;
+    private final int sqlOrderByRadixSortThreshold;
+    private final boolean sqlOrderBySortEnabled;
     private final int sqlPageFrameMaxRows;
     private final int sqlPageFrameMinRows;
     private final boolean sqlParallelFilterEnabled;
@@ -1335,6 +1337,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelWorkStealingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 16);
+            this.sqlOrderBySortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
+            this.sqlOrderByRadixSortThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_THRESHOLD, 600);
             this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
             this.writerAsyncCommandBusyWaitTimeout = getLong(properties, env, PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
             this.writerAsyncCommandMaxWaitTimeout = getLong(properties, env, PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 30_000);
@@ -2714,6 +2718,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlOrderByRadixSortThreshold() {
+            return sqlOrderByRadixSortThreshold;
+        }
+
+        @Override
         public int getSqlPageFrameMaxRows() {
             return sqlPageFrameMaxRows;
         }
@@ -3050,6 +3059,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlJitDebugEnabled() {
             return sqlJitDebugEnabled;
+        }
+
+        @Override
+        public boolean isSqlOrderBySortEnabled() {
+            return sqlOrderBySortEnabled;
         }
 
         @Override

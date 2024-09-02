@@ -78,7 +78,7 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
             cursor.of(baseCursor, executionContext);
             return cursor;
         } catch (Throwable th) {
-            baseCursor.close();
+            cursor.close();
             throw th;
         }
     }

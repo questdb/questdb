@@ -157,7 +157,7 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                             "5\t1\n" +
                             "7\t1\n" +
                             "9\t1\n",
-                    "select * from tab order by y",
+                    "select * from tab order by y, x",
                     null,
                     true,
                     true

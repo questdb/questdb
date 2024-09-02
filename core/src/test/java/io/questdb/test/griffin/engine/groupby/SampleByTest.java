@@ -3145,7 +3145,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByAllowsPredicatePushDown() throws Exception {
-        String plan = "Sort light\n" +
+        String plan = "Radix sort light\n" +
                 "  keys: [tstmp]\n" +
                 "    Filter filter: (tstmp>=1669852800000000 and 0<length(sym)*tstmp::long)\n" +
                 "        Async JIT Group By workers: 1\n" +
@@ -3171,7 +3171,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "sample by 1m align to calendar ) " +
                             "where tstmp >= '2022-12-01T00:00:00.000000Z' and  sym = 'B' and length(sym)*tstmp::long > 0",
                     "SelectedRecord\n" +
-                            "    Sort light\n" +
+                            "    Radix sort light\n" +
                             "      keys: [ts1]\n" +
                             "        Async Group By workers: 1\n" +
                             "          keys: [tstmp,sym,ts1]\n" +
@@ -3502,7 +3502,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "select time, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [time]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      keys: [time]\n" +
@@ -3512,7 +3512,6 @@ public class SampleByTest extends AbstractCairoTest {
                             "              filter: id='A'\n" +
                             "            Frame forward scan on: pos\n"
             );
-
         });
     }
 
@@ -3532,7 +3531,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "select   id, time, ts, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [time]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      keys: [id,time,ts]\n" +
@@ -3542,7 +3541,6 @@ public class SampleByTest extends AbstractCairoTest {
                             "              filter: id='A'\n" +
                             "            Frame forward scan on: pos\n"
             );
-
         });
     }
 
@@ -3562,7 +3560,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "select time, type, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [time]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      keys: [time,type]\n" +
@@ -3577,7 +3575,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "select   id, time, type, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [time]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      keys: [id,time,type]\n" +
@@ -3587,7 +3585,6 @@ public class SampleByTest extends AbstractCairoTest {
                             "              filter: id='A'\n" +
                             "            Frame forward scan on: pos\n"
             );
-
         });
     }
 
@@ -3606,7 +3603,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "select   id, time, geo6, last(lat) lat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [time]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      keys: [id,time,geo6]\n" +
@@ -3621,7 +3618,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "select   id, time, lat, last(lat) lastlat, last(lon) lon " +
                             " from pos " +
                             " where id = 'A' sample by 15m ALIGN to CALENDAR",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [time]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      keys: [id,time,lat]\n" +
@@ -4593,7 +4590,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "    Hash Outer Join Light\n" +
                             "      condition: b.sym=a.sym\n" +
                             "        SelectedRecord\n" +
-                            "            Sort light\n" +
+                            "            Radix sort light\n" +
                             "              keys: [ts1]\n" +
                             "                Async Group By workers: 1\n" +
                             "                  keys: [sym,ts1]\n" +
@@ -4604,7 +4601,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "                        Frame forward scan on: x\n" +
                             "        Hash\n" +
                             "            SelectedRecord\n" +
-                            "                Sort light\n" +
+                            "                Radix sort light\n" +
                             "                  keys: [ts1]\n" +
                             "                    Async Group By workers: 1\n" +
                             "                      keys: [sym,ts1]\n" +
@@ -4632,7 +4629,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "sample by 1m align to calendar) b ",
                     "SelectedRecord\n" +
                             "    AsOf Join\n" +
-                            "        Sort light\n" +
+                            "        Radix sort light\n" +
                             "          keys: [ts1]\n" +
                             "            Async Group By workers: 1\n" +
                             "              keys: [ts1,sym]\n" +
@@ -4641,7 +4638,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: x\n" +
-                            "        Sort light\n" +
+                            "        Radix sort light\n" +
                             "          keys: [ts1]\n" +
                             "            Async Group By workers: 1\n" +
                             "              keys: [ts1,sym]\n" +
@@ -4701,7 +4698,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar ",
                     "SelectedRecord\n" +
-                            "    Sort light\n" +
+                            "    Radix sort light\n" +
                             "      keys: [b]\n" +
                             "        Async Group By workers: 1\n" +
                             "          keys: [b,sym]\n" +
@@ -4723,7 +4720,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar ",
                     "SelectedRecord\n" +
-                            "    Sort light\n" +
+                            "    Radix sort light\n" +
                             "      keys: [b]\n" +
                             "        Async Group By workers: 1\n" +
                             "          keys: [b]\n" +
@@ -4745,7 +4742,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar ",
                     "SelectedRecord\n" +
-                            "    Sort light\n" +
+                            "    Radix sort light\n" +
                             "      keys: [d]\n" +
                             "        Async Group By workers: 1\n" +
                             "          keys: [d,sym]\n" +
@@ -4766,7 +4763,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "select ts1, sym, min(val), avg(val), max(val) " +
                             "from x " +
                             "sample by 1m align to calendar time zone 'UTC'",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts1]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [ts1,sym]\n" +
@@ -4793,7 +4790,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "sample by 1m align to calendar ",
                     "Union All\n" +
                             "    SelectedRecord\n" +
-                            "        Sort light\n" +
+                            "        Radix sort light\n" +
                             "          keys: [ts1]\n" +
                             "            Async Group By workers: 1\n" +
                             "              keys: [sym,ts1]\n" +
@@ -4803,7 +4800,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: x\n" +
                             "    SelectedRecord\n" +
-                            "        Sort light\n" +
+                            "        Radix sort light\n" +
                             "          keys: [ts1]\n" +
                             "            Async Group By workers: 1\n" +
                             "              keys: [sym,ts1]\n" +
@@ -4829,7 +4826,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar ",
                     "Union All\n" +
-                            "    Sort light\n" +
+                            "    Radix sort light\n" +
                             "      keys: [tstmp]\n" +
                             "        Async Group By workers: 1\n" +
                             "          keys: [tstmp,sym]\n" +
@@ -4858,7 +4855,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "from x " +
                             "sample by 1m align to calendar) select * from y ",
                     "SelectedRecord\n" +
-                            "    Sort light\n" +
+                            "    Radix sort light\n" +
                             "      keys: [d]\n" +
                             "        Async Group By workers: 1\n" +
                             "          keys: [d,sym]\n" +

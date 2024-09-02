@@ -257,6 +257,33 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterTableCacheAndNocache() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE foo ( a SYMBOL )");
+            drainWalQueue();
+
+            String header = "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n";
+            String left = "a\tSYMBOL\tfalse\t256\t";
+            String right = "\t128\tfalse\tfalse\n";
+
+            // check its true by default
+            assertSql(header + left + "true" + right, "table_columns('foo')");
+
+            ddl("ALTER TABLE foo ALTER COLUMN a NOCACHE");
+            drainWalQueue();
+            // check its false now
+            assertSql(header + left + "false" + right, "table_columns('foo')");
+
+            ddl("ALTER TABLE foo ALTER COLUMN a CACHE");
+            drainWalQueue();
+
+            // check its true again
+            assertSql(header + left + "true" + right, "table_columns('foo')");
+
+        });
+    }
+
+    @Test
     public void testAlterTableFailsToUpgradeConcurrently() throws Exception {
         runAlterOnBusyTable(
                 (writer, reader) -> {

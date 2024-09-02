@@ -488,7 +488,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         final int position = node.position;
         Function function;
         try {
-            LOG.debug().$("call ").$(node).$(" -> ").$(factory.getSignature()).$("[factory=").$(factory).$(']').$();
+            LOG.debug().$("call ").$(node).$(" -> ").$(factory.getSignature()).$("[factory=").$(factory).I$();
             function = factory.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
         } catch (SqlException | ImplicitCastException e) {
             Misc.freeObjList(args);
@@ -502,8 +502,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (function == null) {
             LOG.error().$("NULL function")
                     .$(" [signature=").$(factory.getSignature())
-                    .$(", class=").$(factory.getClass().getName()).$(']')
-                    .$();
+                    .$(", class=").$(factory.getClass().getName())
+                    .I$();
             Misc.freeObjList(args);
             throw SqlException.position(position).put("bad function factory (NULL), check log");
         }
@@ -999,7 +999,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (function instanceof IntConstant) {
                     return function;
                 } else {
-                    return IntConstant.newInstance(function.getInt(null));
+                    int intConst = function.getInt(null);
+                    long longConst = function.getLong(null);
+                    if (intConst == Numbers.INT_NULL || intConst == longConst) {
+                        return IntConstant.newInstance(intConst);
+                    } else {
+                        return new LongConstant(longConst);
+                    }
                 }
             case ColumnType.BOOLEAN:
                 if (function instanceof BooleanConstant) {
