@@ -89,12 +89,6 @@ public class MemoryPages implements Closeable, Mutable, Reopenable {
         cachePageHi = 0;
     }
 
-    /* Returns number of chunks of chunkSize that fits in allocated memory (assuming there could be unused space at end of each page) */
-    public long countNumberOf(int chunkSize) {
-        return (cachePageLo >> bits) * (pageSize / chunkSize) + //full pages
-                (cachePageLo & mask) / chunkSize; //last page
-    }
-
     @Override
     public void reopen() {
         allocate0(0);

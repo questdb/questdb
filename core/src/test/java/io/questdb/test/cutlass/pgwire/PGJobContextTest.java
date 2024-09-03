@@ -7550,9 +7550,9 @@ nodejs code:
     public void testQueryTimeout() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_double() d from long_sequence(10000000))");
+            ddl("create table tab as (select rnd_double() d from long_sequence(1000000))");
             try (
-                    final PGWireServer server = createPGServer(1, Timestamps.SECOND_MILLIS);
+                    final PGWireServer server = createPGServer(1, 10); // 10ms query timeout
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
