@@ -77,31 +77,31 @@ public class DedupColumnCommitAddresses implements Closeable {
         addresses = Misc.free(addresses);
     }
 
-    public long getAddress(long dedupCommitAddr) {
+    public static long getAddress(long dedupCommitAddr) {
         return dedupCommitAddr;
     }
 
-    public long getColReserved1(long dedupBlockAddress, int keyIndex) {
+    public static long getColReserved1(long dedupBlockAddress, int keyIndex) {
         return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + RESERVED1);
     }
 
-    public long getColReserved2(long dedupBlockAddress, int keyIndex) {
+    public static long getColReserved2(long dedupBlockAddress, int keyIndex) {
         return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + RESERVED2);
     }
 
-    public long getColReserved3(long dedupBlockAddress, int keyIndex) {
+    public static long getColReserved3(long dedupBlockAddress, int keyIndex) {
         return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + RESERVED3);
     }
 
-    public long getColReserved4(long dedupBlockAddress, int keyIndex) {
+    public static long getColReserved4(long dedupBlockAddress, int keyIndex) {
         return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + RESERVED4);
     }
 
-    public long getColReserved5(long dedupBlockAddress, int keyIndex) {
+    public static long getColReserved5(long dedupBlockAddress, int keyIndex) {
         return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + RESERVED5);
     }
 
-    public long getVarDataLen(long dedupBlockAddress, int keyIndex) {
+    public static long getVarDataLen(long dedupBlockAddress, int keyIndex) {
         return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + COL_VAR_DATA_LEN_64);
     }
 
@@ -109,7 +109,7 @@ public class DedupColumnCommitAddresses implements Closeable {
         return columnCount;
     }
 
-    public void setColAddressValues(
+    public static void setColAddressValues(
             long addr,
             long columnDataAddress
     ) {
@@ -118,7 +118,7 @@ public class DedupColumnCommitAddresses implements Closeable {
         Unsafe.getUnsafe().putLong(addr + COL_VAR_DATA_LEN_64, NULL);
     }
 
-    public void setColAddressValues(
+    public static void setColAddressValues(
             long addr,
             long columnDataAddress,
             long columnVarDataAddress,
@@ -129,7 +129,7 @@ public class DedupColumnCommitAddresses implements Closeable {
         Unsafe.getUnsafe().putLong(addr + COL_VAR_DATA_LEN_64, columnVarDataLen);
     }
 
-    public long setColValues(
+    public static long setColValues(
             long dedupCommitAddr,
             int dedupKeyIndex,
             int columnType,
@@ -148,7 +148,7 @@ public class DedupColumnCommitAddresses implements Closeable {
         return addr;
     }
 
-    public void setO3DataAddressValues(
+    public static void setO3DataAddressValues(
             long addr,
             long o3DataAddress
     ) {
@@ -157,7 +157,7 @@ public class DedupColumnCommitAddresses implements Closeable {
         Unsafe.getUnsafe().putLong(addr + O3_VAR_DATA_LEN_64, NULL);
     }
 
-    public void setO3DataAddressValues(
+    public static void setO3DataAddressValues(
             long addr,
             long o3DataAddress,
             long o3VarDataAddress,
@@ -168,7 +168,7 @@ public class DedupColumnCommitAddresses implements Closeable {
         Unsafe.getUnsafe().putLong(addr + O3_VAR_DATA_LEN_64, o3VarDataLen);
     }
 
-    public void setReservedValuesSet1(
+    public static void setReservedValuesSet1(
             long addr,
             long reserved1,
             long reserved2,
@@ -179,7 +179,7 @@ public class DedupColumnCommitAddresses implements Closeable {
         Unsafe.getUnsafe().putLong(addr + RESERVED3, reserved3);
     }
 
-    public void setReservedValuesSet2(
+    public static void setReservedValuesSet2(
             long addr,
             long reserved4,
             long reserved5

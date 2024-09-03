@@ -8,7 +8,7 @@ use futures::{pin_mut, StreamExt};
 use pg_interval::Interval;
 use postgres_types::{ToSql, Type};
 use rust_decimal::Decimal;
-use sqllogictest::{DataFormat, DBOutput, DefaultColumnType, TimestampFormat};
+use sqllogictest::{DateFormat, DBOutput, DefaultColumnType, TimestampFormat};
 
 use super::{Extended, Postgres, Result};
 
@@ -222,7 +222,7 @@ impl sqllogictest::AsyncDB for Postgres<Extended> {
     type Error = tokio_postgres::error::Error;
     type ColumnType = DefaultColumnType;
 
-    async fn run(&mut self, sql: &str, data_format: DataFormat) -> Result<DBOutput<Self::ColumnType>> {
+    async fn run(&mut self, sql: &str, data_format: DateFormat) -> Result<DBOutput<Self::ColumnType>> {
         let mut output = vec![];
 
         let stmt = self.client.prepare(sql).await?;

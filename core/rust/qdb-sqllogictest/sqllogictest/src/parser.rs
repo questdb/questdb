@@ -529,7 +529,7 @@ pub enum SortMode {
 }
 
 
-/// Whether to apply sorting before checking the results of a query.
+/// Whether to print timestamp in default SQLlogictest format or ISO microseconds.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum TimestampFormat {
     /// The default option for compatibility with SQLite, DuckDB

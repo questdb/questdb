@@ -61,14 +61,18 @@ pub enum DBOutput<T: ColumnType> {
 }
 
 
-pub struct DataFormat {
+pub struct DateFormat {
     /// The format of the timestamp.
     pub timestamp_format: Option<TimestampFormat>,
 }
 
-pub const DEFAULT_DATA_FORMAT: DataFormat = DataFormat {
-    timestamp_format: None,
-};
+impl Default for DateFormat {
+    fn default() -> Self {
+        Self {
+            timestamp_format: None
+        }
+    }
+}
 
 /// The async database to be tested.
 #[async_trait]
@@ -79,7 +83,7 @@ pub trait AsyncDB {
     type ColumnType: ColumnType;
 
     /// Async run a SQL query and return the output.
-    async fn run(&mut self, sql: &str, format: DataFormat) -> Result<DBOutput<Self::ColumnType>, Self::Error>;
+    async fn run(&mut self, sql: &str, format: DateFormat) -> Result<DBOutput<Self::ColumnType>, Self::Error>;
 
     /// Engine name of current database.
     fn engine_name(&self) -> &str {
@@ -130,7 +134,7 @@ where
     type Error = D::Error;
     type ColumnType = D::ColumnType;
 
-    async fn run(&mut self, sql: &str, _: DataFormat) -> Result<DBOutput<Self::ColumnType>, Self::Error> {
+    async fn run(&mut self, sql: &str, _: DateFormat) -> Result<DBOutput<Self::ColumnType>, Self::Error> {
         D::run(self, sql)
     }
 
@@ -611,7 +615,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                     return RecordOutput::Nothing;
                 }
 
-                let data_format = DataFormat {
+                let data_format = DateFormat {
                     timestamp_format: self.timestamp_format,
                 };
                 let ret = conn.run(&sql, data_format).await;
@@ -763,7 +767,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                     return RecordOutput::Nothing;
                 }
 
-                let data_format = DataFormat {
+                let data_format = DateFormat {
                     timestamp_format: self.timestamp_format,
                 };
                 let (types, mut rows) = match conn.run(&sql, data_format).await {

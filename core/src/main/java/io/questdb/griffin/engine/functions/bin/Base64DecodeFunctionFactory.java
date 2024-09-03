@@ -45,7 +45,7 @@ import org.jetbrains.annotations.Nullable;
 public class Base64DecodeFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "from_base64(Ø)";
+        return "from_base64(S)";
     }
 
     @Override

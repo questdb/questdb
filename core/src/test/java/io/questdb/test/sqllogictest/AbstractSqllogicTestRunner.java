@@ -104,8 +104,15 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
     @After
     public void tearDown() throws Exception {
         LOG.info().$("Finished test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
-        Path p = Path.getThreadLocal(root).concat("db");
-        TestUtils.removeTestPath(root);
+        if (serverMain != null) {
+            if (!Os.isWindows()) {
+                serverMain.reset();
+            } else {
+                // TODO: figure out why test stuck on Windows without full server reset
+                serverMain = Misc.free(serverMain);
+            }
+        }
+        TestUtils.removeTestPath(root + Files.SEPARATOR + "db");
     }
 
     @Test
