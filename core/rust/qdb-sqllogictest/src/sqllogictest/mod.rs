@@ -3,6 +3,7 @@ use jni::JNIEnv;
 use sqllogictest::{Record, Runner};
 use sqllogictest_engines::postgres::{PostgresConfig, PostgresExtended};
 use std::ffi::CStr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::os::raw::c_char;
 use std::path::Path;
 use tokio::runtime::Runtime;
@@ -40,7 +41,7 @@ pub extern "system" fn Java_io_questdb_test_Sqllogictest_run(
         config.dbname("quest");
         config.user("admin");
         config.password("quest");
-        config.host("localhost");
+        config.hostaddr(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
         PostgresExtended::connect(config)
     });
 

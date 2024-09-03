@@ -42,8 +42,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
-import static io.questdb.PropertyKey.CAIRO_SQL_COPY_ROOT;
-import static io.questdb.PropertyKey.PG_NET_BIND_TO;
+import static io.questdb.PropertyKey.*;
 import static org.junit.Assert.assertNotNull;
 
 @RunWith(Parameterized.class)
@@ -89,7 +88,11 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
 
                 serverMain = startWithEnvVariables(
                         PG_NET_BIND_TO.getEnvVarName(), "0.0.0.0:" + pgPort,
-                        CAIRO_SQL_COPY_ROOT.getEnvVarName(), testResourcePath
+                        CAIRO_SQL_COPY_ROOT.getEnvVarName(), testResourcePath,
+                        CONFIG_RELOAD_ENABLED.getEnvVarName(), "false",
+                        HTTP_MIN_ENABLED.getEnvVarName(), "false",
+                        HTTP_ENABLED.getEnvVarName(), "false",
+                        LINE_TCP_ENABLED.getEnvVarName(), "false"
                 );
                 serverMain.start();
             } else {
