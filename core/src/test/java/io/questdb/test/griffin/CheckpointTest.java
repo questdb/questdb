@@ -578,7 +578,7 @@ public class CheckpointTest extends AbstractCairoTest {
             assertSql("count\n0\n", "select count() from tables() where table_name = 'test';");
             assertSql("count\n1\n", "select count() from tables() where table_name = 'test2';");
 
-            engine.getCairoMetadata().hydrateAllTables();
+            engine.metadataCacheHydrateAllTables();
 
             // Renamed table should be there under the original name.
             assertSql("count\n1\n", "select count() from tables() where table_name = 'test';");

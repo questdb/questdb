@@ -1383,15 +1383,15 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
-        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), metrics, new MessageBusImpl(configuration), engine.getCairoMetadata());
+        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), metrics, new MessageBusImpl(configuration), engine);
     }
 
     protected static TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName) {
-        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), engine.getCairoMetadata());
+        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), engine);
     }
 
     protected static TableWriter newOffPoolWriter(CharSequence tableName) {
-        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), engine.getCairoMetadata());
+        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), engine);
     }
 
     protected static void printSql(CharSequence sql) throws SqlException {
@@ -1937,7 +1937,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics, MessageBus messageBus) {
-        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), metrics, messageBus, engine.getCairoMetadata());
+        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), metrics, messageBus, engine);
     }
 
     protected TableToken registerTableName(CharSequence tableName) {

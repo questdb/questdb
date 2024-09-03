@@ -249,12 +249,10 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                         }
                     }
 
-                    final CairoMetadata cairoMetadata = executionContext.getCairoEngine().getCairoMetadata();
-
-                    table = cairoMetadata.getTable(tableToken);
+                    table = executionContext.getCairoEngine().metadataCacheGetTable(tableToken);
 
                     return table != null;
-                   
+
                 }
             }
         }

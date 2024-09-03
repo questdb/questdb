@@ -32,6 +32,8 @@ import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.pool.*;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.*;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
@@ -44,9 +46,7 @@ import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.MutableCharSink;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.str.*;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.tasks.TelemetryWalTask;
 import io.questdb.tasks.WalTxnNotificationTask;
@@ -55,6 +55,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.lang.ThreadLocal;
 import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.concurrent.TimeUnit;
@@ -72,6 +73,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private static final int MAX_SLEEP_MILLIS = 250;
     protected final CairoConfiguration configuration;
     private final AtomicLong asyncCommandCorrelationId = new AtomicLong();
+    private final ConcurrentHashMap<CairoTable> cairoTables = new ConcurrentHashMap<>();
     private final DatabaseCheckpointAgent checkpointAgent;
     private final CopyContext copyContext;
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
@@ -91,11 +93,13 @@ public class CairoEngine implements Closeable, WriterSource {
     private final TableSequencerAPI tableSequencerAPI;
     private final Telemetry<TelemetryTask> telemetry;
     private final Telemetry<TelemetryWalTask> telemetryWal;
+    private final ThreadLocal<ColumnVersionReader> tlColumnVersionReader = ThreadLocal.withInitial(ColumnVersionReader::new);
+    private final ThreadLocal<Path> tlPath = ThreadLocal.withInitial(Path::new);
+    private final ThreadLocal<ObjHashSet<TableToken>> tlTokens = ThreadLocal.withInitial(ObjHashSet<TableToken>::new);
     // initial value of unpublishedWalTxnCount is 1 because we want to scan for non-applied WAL transactions on startup
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
-    private @NotNull CairoMetadata cairoMetadata;
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
@@ -145,7 +149,6 @@ public class CairoEngine implements Closeable, WriterSource {
             tableNameRegistry.reload();
 
             this.sqlCompilerPool = new SqlCompilerPool(this);
-            this.cairoMetadata = new CairoMetadata(this);
 
         } catch (Throwable th) {
             close();
@@ -394,7 +397,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     }
                 } finally {
                     unlockTableUnsafe(tableToken, null, false);
-                    cairoMetadata.removeTable(tableToken);
+                    metadataCacheRemoveTable(tableToken);
                 }
 
                 tableNameRegistry.dropTable(tableToken);
@@ -447,7 +450,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 getDdlListener(tableToken),
                 checkpointAgent,
                 Metrics.disabled(),
-                cairoMetadata
+                this
         );
     }
 
@@ -459,10 +462,6 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public int getBusyWriterCount() {
         return writerPool.getBusyCount();
-    }
-
-    public @NotNull CairoMetadata getCairoMetadata() {
-        return cairoMetadata;
     }
 
     public DatabaseCheckpointStatus getCheckpointStatus() {
@@ -479,6 +478,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public CopyContext getCopyContext() {
         return copyContext;
+    }
+
+    public ConcurrentHashMap<TableToken> getCreateTableLock() {
+        return createTableLock;
     }
 
     public @NotNull DdlListener getDdlListener(TableToken tableToken) {
@@ -909,6 +912,264 @@ public class CairoEngine implements Closeable, WriterSource {
         validNameOrThrow(tableName);
         String tableNameStr = Chars.toString(tableName);
         return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isWal);
+    }
+
+    public void metadataCacheClear() {
+        cairoTables.clear();
+    }
+
+    /**
+     * Gets the current table metadata object from the list.
+     *
+     * @param tableToken A current table token for the table.
+     * @return The cached table metadata.
+     */
+    public CairoTable metadataCacheGetTable(@NotNull TableToken tableToken) {
+        final CairoTable table = cairoTables.get(tableToken.getDirName());
+        if (table == null) {
+            metadataCacheHydrateTable(tableToken, false, true);
+        }
+        return cairoTables.get(tableToken.getDirName());
+    }
+
+    /**
+     * This is dangerous and may clobber any concurrent metadata changes. This should only be used in last-resort cases,
+     * for example, for testing purposes.
+     */
+    public void metadataCacheHydrateAllTables() {
+        ObjHashSet<TableToken> tableTokensSet = tlTokens.get();
+        getTableTokens(tableTokensSet, false);
+        ObjList<TableToken> tableTokens = tableTokensSet.getList();
+        TableToken tableToken = tableTokens.getQuick(0);
+
+        try {
+            for (int i = 0, n = tableTokens.size(); i < n; i++) {
+                tableToken = tableTokens.getQuick(i);
+                if (!tableToken.isSystem()) {
+                    metadataCacheHydrateTable(tableTokens.getQuick(i), true, true);
+                }
+            }
+        } catch (CairoException ex) {
+            LOG.error().$("could not hydrate metadata: [table=").$(tableToken).I$();
+        } finally {
+            tlTokens.get().clear();
+        }
+    }
+
+    /**
+     * Uses thread-local Path/ColumnVersionReader objects.
+     *
+     * @param token
+     * @param blindUpsert
+     * @see CairoEngine#metadataCacheHydrateTable(TableToken, Path, ColumnVersionReader, boolean, boolean)
+     */
+    public void metadataCacheHydrateTable(@NotNull TableToken token, boolean blindUpsert, boolean infoLog) {
+        LOG.debug().$("hydrating table using thread-local path and column version reader [table=").$(token.getTableName()).I$();
+        try {
+            metadataCacheHydrateTable(token, tlPath.get(), tlColumnVersionReader.get(), blindUpsert, infoLog);
+        } finally {
+            tlPath.get().close();
+            tlColumnVersionReader.get().close();
+        }
+    }
+
+    /**
+     * Hydrates table metadata, bypassing TableWriter/Reader.
+     * <p>
+     * This function reads the table metadata from file directly, bypassing TableReader/Writer. This ensures that it is
+     * non-blocking.
+     * <p>
+     * One must be careful on the setting of the `blindUpsert` value. When set to true, the data will be blindly
+     * upserted to the tables list, which could clobber any concurrent metadata update, leading to inconsistent state.
+     * <p>
+     * In general, any metadata change that does not originate from TableWriter (or friends) should use `blindUpsert=false`.
+     *
+     * @param token               The table token for the table to read metadata.
+     * @param path                Specify a Path object to be used.
+     * @param columnVersionReader Specify a ColumnVersionReader object to be used.
+     * @param blindUpsert         Specifies whether upsert is blind or only if non-null. This is important as TableWriter should take priority over other processes calling this function (async hydration job, queries)
+     */
+    public void metadataCacheHydrateTable(@NotNull TableToken token, @NotNull Path path, @NotNull ColumnVersionReader columnVersionReader,
+                                          boolean blindUpsert, boolean infoLog) {
+        if (infoLog) {
+            LOG.info().$("hydrating metadata [table=").$(token.getTableName()).I$();
+        }
+
+        // set up dir path
+        path.of(configuration.getRoot())
+                .concat(token.getDirName());
+
+        boolean isSoftLink = Files.isSoftLink(path.$());
+
+        // set up table path
+        path.concat(TableUtils.META_FILE_NAME)
+                .trimTo(path.size());
+
+        CairoTable table = new CairoTable(token);
+
+        try (path; MemoryCMR metaMem = Vm.getCMRInstance()) {
+
+            // open metadata
+            metaMem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.NATIVE_METADATA_READER);
+            TableUtils.validateMeta(metaMem, null, ColumnType.VERSION);
+
+            // create table to work with
+
+            table.setMetadataVersion(Long.MIN_VALUE);
+
+            int metadataVersion = metaMem.getInt(TableUtils.META_OFFSET_METADATA_VERSION);
+
+            // make sure we aren't duplicating work
+            CairoTable potentiallyExistingTable = cairoTables.get(token.getDirName());
+            if (potentiallyExistingTable != null && potentiallyExistingTable.getMetadataVersion() > metadataVersion) {
+                LOG.debug().$("table in cache with newer version [table=")
+                        .$(token.getTableName()).$(", version=").$(potentiallyExistingTable.getMetadataVersion()).I$();
+                return;
+            }
+
+            // get basic metadata
+            int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+
+            LOG.debug().$("reading columns [table=").$(token.getTableName())
+                    .$(", count=").$(columnCount)
+                    .I$();
+
+            table.setMetadataVersion(metadataVersion);
+
+            LOG.debug().$("set metadata version [table=").$(token.getTableName())
+                    .$(", version=").$(metadataVersion)
+                    .I$();
+
+            table.setPartitionBy(metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY));
+            table.setMaxUncommittedRows(metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS));
+            table.setO3MaxLag(metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG));
+            table.setTimestampIndex(metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX));
+            table.setIsSoftLink(isSoftLink);
+
+            TableUtils.buildWriterOrderMap(metaMem, table.columnOrderMap, metaMem, columnCount);
+
+            // populate columns
+            for (int i = 0, n = table.columnOrderMap.size(); i < n; i += 3) {
+
+                int writerIndex = table.columnOrderMap.get(i);
+                if (writerIndex < 0) {
+                    continue;
+                }
+                int stableIndex = i / 3;
+                CharSequence name = metaMem.getStrA(table.columnOrderMap.get(i + 1));
+
+                assert name != null;
+                int columnType = TableUtils.getColumnType(metaMem, writerIndex);
+
+                if (columnType > -1) {
+                    String columnName = Chars.toString(name);
+                    CairoColumn column = new CairoColumn();
+
+                    LOG.debug().$("hydrating column [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
+
+                    column.setName(columnName);
+                    table.upsertColumn(column);
+
+                    column.setPosition((int) (table.getColumnCount() - 1 < 0 ? 0 : table.getColumnCount() - 1));
+                    column.setType(columnType);
+
+                    if (column.getType() < 0) {
+                        // deleted
+                        continue;
+                    }
+
+                    column.setIsIndexed(TableUtils.isColumnIndexed(metaMem, writerIndex));
+                    column.setIndexBlockCapacity(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
+                    column.setIsSymbolTableStatic(true);
+                    column.setIsDedupKey(TableUtils.isColumnDedupKey(metaMem, writerIndex));
+                    column.setWriterIndex(writerIndex);
+                    column.setStableIndex(stableIndex);
+                    column.setIsDesignated(writerIndex == table.getTimestampIndex());
+                    column.setIsSequential(TableUtils.isSequential(metaMem, writerIndex));
+
+                    if (column.getIsDedupKey()) {
+                        table.setIsDedup(true);
+                    }
+
+                    if (ColumnType.isSymbol(columnType)) {
+                        LOG.debug().$("hydrating symbol metadata [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
+
+                        // get column version
+                        path.trimTo(configuration.getRoot().length())
+                                .concat(table.getDirectoryName())
+                                .concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+                        columnVersionReader.ofRO(configuration.getFilesFacade(),
+                                path.$());
+
+
+                        columnVersionReader.readUnsafe();
+                        final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
+                        columnVersionReader.close();
+
+                        // use txn to find correct symbol entry
+                        final LPSZ offsetFileName = TableUtils.offsetFileName(
+                                path.trimTo(configuration.getRoot().length()).concat(table.getDirectoryName())
+                                , columnName, columnNameTxn);
+
+                        // initialise symbol map memory
+                        MemoryCMR offsetMem = Vm.getCMRInstance();
+                        final long offsetMemSize = SymbolMapWriter.keyToOffset(0) + Long.BYTES;
+                        offsetMem.of(configuration.getFilesFacade(), offsetFileName, offsetMemSize, offsetMemSize, MemoryTag.NATIVE_METADATA_READER);
+
+                        // get symbol properties
+                        column.setSymbolCapacity(offsetMem.getInt(SymbolMapWriter.HEADER_CAPACITY));
+                        assert column.getSymbolCapacity() > 0;
+
+                        column.setSymbolCached(offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED));
+
+                        offsetMem.close();
+                    }
+                }
+            }
+
+            if (blindUpsert) {
+                cairoTables.put(token.getDirName(), table);
+            } else {
+                cairoTables.putIfAbsent(token.getDirName(), table);
+            }
+
+            if (infoLog) {
+                LOG.info().$("hydrated metadata [table=").$(table.getName()).I$();
+            }
+        } catch (CairoException e) {
+            // todo: distinguish errors to decide if error vs info log
+            LOG.info().$("Could not hydrate metadata [table=").$(table.getName()).I$();
+        }
+    }
+
+    public void metadataCacheRemoveTable(@NotNull TableToken tableToken) {
+        cairoTables.remove(tableToken.getDirName());
+        LOG.info().$("dropped metadata [table=").$(tableToken.getTableName()).I$();
+    }
+
+    public int metadataCacheTablesCount() {
+        return cairoTables.size();
+    }
+
+    public void metadataCacheToSink(@NotNull CharSink<?> sink) {
+        sink.put("MetadataCache [");
+        sink.put("tableCount=").put(metadataCacheTablesCount()).put("]");
+        sink.put('\n');
+
+        for (CairoTable table : cairoTables.values()) {
+            sink.put('\t');
+            table.toSink(sink);
+            sink.put('\n');
+        }
+    }
+
+    /**
+     * For debug printing the metadata object.
+     */
+    public String metadataCacheToString0() {
+        StringSink sink = Misc.getThreadLocalSink();
+        this.metadataCacheToSink(sink);
+        return sink.toString();
     }
 
     public void notifyDropped(TableToken tableToken) {
@@ -1381,7 +1642,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
             getDdlListener(tableToken).onTableCreated(securityContext, tableToken);
 
-            cairoMetadata.hydrateTable(tableToken, true, true);
+            metadataCacheHydrateTable(tableToken, true, true);
 
             return tableToken;
         }

@@ -281,7 +281,7 @@ public class WriterPool extends AbstractPool {
                         engine.getDdlListener(tableToken),
                         engine.getCheckpointStatus(),
                         engine.getMetrics(),
-                        engine.getCairoMetadata()
+                        engine
                 );
             }
 
@@ -401,7 +401,7 @@ public class WriterPool extends AbstractPool {
                     engine.getDdlListener(tableToken),
                     engine.getCheckpointStatus(),
                     engine.getMetrics(),
-                    engine.getCairoMetadata()
+                    engine
             );
             e.ownershipReason = lockReason;
             return logAndReturn(e, PoolListener.EV_CREATE);

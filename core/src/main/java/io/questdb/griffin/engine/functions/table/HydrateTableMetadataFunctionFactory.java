@@ -24,7 +24,10 @@
 
 package io.questdb.griffin.engine.functions.table;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -102,20 +105,19 @@ public class HydrateTableMetadataFunctionFactory implements FunctionFactory {
         }
 
         if (tableTokens.size() > 0) {
-            return new HydrateTableMetadataFunction(tableTokens, engine.getConfiguration());
+            return new HydrateTableMetadataFunction(tableTokens, engine);
         } else {
             throw SqlException.$(position, "no valid table names provided");
         }
     }
 
     private static class HydrateTableMetadataFunction extends BooleanFunction {
-        private final CairoConfiguration configuration;
         private final ObjList<TableToken> tableTokens;
-        private CairoMetadata metadata;
+        private CairoEngine engine;
 
-        public HydrateTableMetadataFunction(@NotNull ObjList<TableToken> tableTokens, @NotNull CairoConfiguration configuration) {
+        public HydrateTableMetadataFunction(@NotNull ObjList<TableToken> tableTokens, @NotNull CairoEngine engine) {
             this.tableTokens = tableTokens;
-            this.configuration = configuration;
+            this.engine = engine;
         }
 
         @Override
@@ -124,7 +126,7 @@ public class HydrateTableMetadataFunctionFactory implements FunctionFactory {
                 final TableToken tableToken = tableTokens.getQuick(i);
                 if (!tableToken.isSystem()) {
                     try {
-                        metadata.hydrateTable(tableTokens.getQuick(i), true, true);
+                        engine.metadataCacheHydrateTable(tableTokens.getQuick(i), true, true);
                     } catch (CairoException ex) {
                         LOG.error().$("could not hydrate metadata: [table=").$(tableToken).I$();
                         return false;
@@ -137,7 +139,7 @@ public class HydrateTableMetadataFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             executionContext.getSecurityContext().authorizeAdminAction();
-            metadata = executionContext.getCairoEngine().getCairoMetadata();
+            engine = executionContext.getCairoEngine();
             super.init(symbolTableSource, executionContext);
         }
 

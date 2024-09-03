@@ -37,19 +37,19 @@ import java.io.Closeable;
 public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
     public static final Log LOG = LogFactory.getLog(HydrateMetadataJob.class);
     public static boolean completed = false;
-    CairoMetadata cairoMetadata;
     CairoConfiguration configuration;
     MemoryCMR metaMem;
     MemoryCMR offsetMem;
     Path path = new Path();
     int position;
     ObjHashSet<TableToken> tokens = new ObjHashSet<>();
+    private CairoEngine engine;
 
     public HydrateMetadataJob(CairoEngine engine) {
         engine.getTableTokens(tokens, false);
         position = 0;
         this.configuration = engine.getConfiguration();
-        cairoMetadata = engine.getCairoMetadata();
+        this.engine = engine;
     }
 
     @Override
@@ -82,7 +82,7 @@ public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
         if (position >= tokens.size()) {
             completed = true;
             close();
-            LOG.info().$("hydration completed [user_tables=").$(cairoMetadata.getTablesCount()).I$();
+            LOG.info().$("hydration completed [user_tables=").$(engine.metadataCacheTablesCount()).I$();
             tokens.clear();
             position = -1;
             return true;
@@ -93,7 +93,7 @@ public class HydrateMetadataJob extends SynchronizedJob implements Closeable {
         // skip system tables
         if (!token.isSystem()) {
             try {
-                cairoMetadata.hydrateTable(token, false, false);
+                engine.metadataCacheHydrateTable(token, false, false);
             } catch (CairoException e) {
                 if (e.isCritical()) {
                     LOG.critical().$(e.getMessage()).$();

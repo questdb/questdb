@@ -30,9 +30,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 // todo: fuzzers!
-public class CairoMetadataTest extends AbstractCairoTest {
+public class CairoMetadataCacheTest extends AbstractCairoTest {
 
-    private static String xMetaString = "CairoMetadata [tableCount=1]\n" +
+    private static String xMetaString = "MetadataCache [tableCount=1]\n" +
             "\tCairoTable [name=x, id=1, directoryName=x~, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=NONE, timestampIndex=3, timestampName=timestamp, walEnabled=false, columnCount=16]\n" +
             "\t\tCairoColumn [name=i, position=0, type=INT, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
             "\t\tCairoColumn [name=sym, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=0, stableIndex=1, writerIndex=1]\n" +
@@ -50,10 +50,10 @@ public class CairoMetadataTest extends AbstractCairoTest {
             "\t\tCairoColumn [name=l, position=13, type=BYTE, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=13, writerIndex=13]\n" +
             "\t\tCairoColumn [name=m, position=14, type=BINARY, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=14, writerIndex=14]\n" +
             "\t\tCairoColumn [name=n, position=15, type=STRING, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=15, writerIndex=15]\n";
-    private static String yMetaString = "CairoMetadata [tableCount=1]\n" +
+    private static String yMetaString = "MetadataCache [tableCount=1]\n" +
             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=1]\n" +
             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n";
-    private static String zMetaString = "CairoMetadata [tableCount=1]\n" +
+    private static String zMetaString = "MetadataCache [tableCount=1]\n" +
             "\tCairoTable [name=z, id=1, directoryName=z~1, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=3, timestampName=timestamp, walEnabled=true, columnCount=16]\n" +
             "\t\tCairoColumn [name=i, position=0, type=INT, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
             "\t\tCairoColumn [name=sym, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=0, stableIndex=1, writerIndex=1]\n" +
@@ -75,117 +75,89 @@ public class CairoMetadataTest extends AbstractCairoTest {
     @Test
     public void testAlterTableAddColumn() throws Exception {
         assertMemoryLeak(() -> {
-            engine.getCairoMetadata().clear();
+            engine.metadataCacheClear();
             createY();
 
             TestUtils.assertEquals(yMetaString,
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
 
             ddl("ALTER TABLE y ADD COLUMN foo VARCHAR");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=foo, position=1, type=VARCHAR, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=256, stableIndex=1, writerIndex=1]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
 
             ddl("ALTER TABLE y ADD COLUMN bah SYMBOL");
             drainWalQueue();
 
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=2, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=3]\n" +
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=foo, position=1, type=VARCHAR, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=256, stableIndex=1, writerIndex=1]\n" +
                             "\t\tCairoColumn [name=bah, position=2, type=SYMBOL, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=256, stableIndex=2, writerIndex=2]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
         });
     }
 
     @Test
     public void testAlterTableColumnAddIndex() throws Exception {
         assertMemoryLeak(() -> {
-            engine.getCairoMetadata().clear();
+            engine.metadataCacheClear();
 
             ddl("CREATE TABLE y (ts TIMESTAMP, foo SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL;");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                     "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
                     "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
-                    "\t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=256, stableIndex=1, writerIndex=1]\n", engine.getCairoMetadata().toString0());
+                    "\t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=256, stableIndex=1, writerIndex=1]\n", engine.metadataCacheToString0());
 
             ddl("ALTER TABLE y ALTER COLUMN foo ADD INDEX");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                     "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
                     "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
-                    "\t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=true, indexBlockCapacity=256, stableIndex=1, writerIndex=1]\n", engine.getCairoMetadata().toString0());
+                    "\t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=true, indexBlockCapacity=256, stableIndex=1, writerIndex=1]\n", engine.metadataCacheToString0());
 
         });
     }
 
-//    @Test
-//    public void testAlterTableColumnAddIndex() throws Exception {
-//        assertMemoryLeak(() -> {
-//            engine.getCairoMetadata().clear();
-//
-//            createY();
-//            TestUtils.assertEquals(yMetaString,
-//                    engine.getCairoMetadata().toString0());
-//
-//            ddl("ALTER TABLE y ADD COLUMN foo SYMBOL");
-//            drainWalQueue();
-//
-//            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
-//                    "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
-//                    "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
-//                    "\t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=256, stableIndex=1, writerIndex=1]\n", engine.getCairoMetadata().toString0());
-//
-//            ddl("ALTER TABLE y ALTER COLUMN foo ADD INDEX");
-//            drainWalQueue();
-//
-//            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
-//                    "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=2, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
-//                    "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
-//                    "\t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=true, indexBlockCapacity=256, stableIndex=1, writerIndex=1]\n", engine.getCairoMetadata().toString0());
-//
-//        });
-//    }
-
     @Test
     public void testAlterTableColumnCacheNocache() throws Exception {
         assertMemoryLeak(() -> {
-            engine.getCairoMetadata().clear();
+            engine.metadataCacheClear();
 
             ddl("CREATE TABLE y ( ts TIMESTAMP, x SYMBOL ) timestamp(ts) partition by day wal;");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=x, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=256, stableIndex=1, writerIndex=1]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
 
             ddl("ALTER TABLE y ALTER COLUMN x NOCACHE");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=x, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=128, isIndexed=false, indexBlockCapacity=256, stableIndex=1, writerIndex=1]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
 
             ddl("ALTER TABLE y ALTER COLUMN x CACHE");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=2, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=x, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=256, stableIndex=1, writerIndex=1]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
 
         });
     }
@@ -193,25 +165,25 @@ public class CairoMetadataTest extends AbstractCairoTest {
     @Test
     public void testAlterTableColumnDropIndex() throws Exception {
         assertMemoryLeak(() -> {
-            engine.getCairoMetadata().clear();
+            engine.metadataCacheClear();
 
             ddl("CREATE TABLE y (ts TIMESTAMP, foo SYMBOL INDEX) TIMESTAMP(ts) PARTITION BY DAY WAL;");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=true, indexBlockCapacity=256, stableIndex=1, writerIndex=1]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
 
             ddl("ALTER TABLE y ALTER COLUMN foo DROP INDEX");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=256, stableIndex=1, writerIndex=1]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
 
         });
     }
@@ -219,67 +191,67 @@ public class CairoMetadataTest extends AbstractCairoTest {
     @Test
     public void testAlterTableColumnType() throws Exception {
         assertMemoryLeak(() -> {
-            engine.getCairoMetadata().clear();
+            engine.metadataCacheClear();
             ddl("CREATE TABLE y (ts TIMESTAMP, foo VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL;");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=foo, position=1, type=VARCHAR, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=1, writerIndex=1]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
 
             ddl("ALTER TABLE y ALTER COLUMN foo TYPE SYMBOL");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=foo, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=256, stableIndex=1, writerIndex=2]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
         });
     }
 
     @Test
     public void testAlterTableDedupDisable() throws Exception {
         assertMemoryLeak(() -> {
-            engine.getCairoMetadata().clear();
+            engine.metadataCacheClear();
 
             ddl("CREATE TABLE y ( ts TIMESTAMP, foo INT ) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, foo)");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=true, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=true, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=foo, position=1, type=INT, isDedupKey=true, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=1, writerIndex=1]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
 
             ddl("ALTER TABLE y DEDUP DISABLE");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=foo, position=1, type=INT, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=1, writerIndex=1]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
         });
     }
 
     @Test
     public void testAlterTableDedupEnable() throws Exception {
         assertMemoryLeak(() -> {
-            engine.getCairoMetadata().clear();
+            engine.metadataCacheClear();
 
             createZ();
             drainWalQueue();
 
             TestUtils.assertEquals(zMetaString,
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
 
             ddl("ALTER TABLE z DEDUP ENABLE UPSERT KEYS(timestamp, i, e, k)");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=z, id=1, directoryName=z~1, isDedup=true, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=3, timestampName=timestamp, walEnabled=true, columnCount=16]\n" +
                             "\t\tCairoColumn [name=i, position=0, type=INT, isDedupKey=true, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=sym, position=1, type=SYMBOL, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=true, symbolCapacity=128, isIndexed=false, indexBlockCapacity=0, stableIndex=1, writerIndex=1]\n" +
@@ -297,91 +269,91 @@ public class CairoMetadataTest extends AbstractCairoTest {
                             "\t\tCairoColumn [name=l, position=13, type=BYTE, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=13, writerIndex=13]\n" +
                             "\t\tCairoColumn [name=m, position=14, type=BINARY, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=14, writerIndex=14]\n" +
                             "\t\tCairoColumn [name=n, position=15, type=STRING, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=15, writerIndex=15]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
         });
     }
 
     @Test
     public void testAlterTableDropColumn() throws Exception {
         assertMemoryLeak(() -> {
-            engine.getCairoMetadata().clear();
+            engine.metadataCacheClear();
 
             ddl("CREATE TABLE y ( ts TIMESTAMP, foo INT ) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, foo)");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=true, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=true, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=foo, position=1, type=INT, isDedupKey=true, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=1, writerIndex=1]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
 
             ddl("ALTER TABLE y DROP COLUMN foo");
             drainWalQueue();
 
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=true, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=1]\n" +
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=true, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
         });
     }
 
     @Test
     public void testAlterTableRenameColumn() throws Exception {
         assertMemoryLeak(() -> {
-            engine.getCairoMetadata().clear();
+            engine.metadataCacheClear();
 
             ddl("CREATE TABLE y ( ts TIMESTAMP, x INT ) timestamp(ts) partition by day wal;");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=x, position=1, type=INT, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=1, writerIndex=1]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
 
             ddl("ALTER TABLE y RENAME COLUMN x TO x2");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=x2, position=1, type=INT, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=1, writerIndex=1]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
         });
     }
 
     @Test
     public void testAlterTableSetParam() throws Exception {
         assertMemoryLeak(() -> {
-            engine.getCairoMetadata().clear();
+            engine.metadataCacheClear();
 
             ddl("CREATE TABLE y ( ts TIMESTAMP, x INT ) timestamp(ts) partition by day wal;");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=x, position=1, type=INT, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=1, writerIndex=1]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
 
             ddl("ALTER TABLE y SET PARAM maxUncommittedRows = 42");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=1, maxUncommittedRows=42, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=x, position=1, type=INT, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=1, writerIndex=1]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
 
             ddl("ALTER TABLE y SET PARAM o3MaxLag = 42s");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=2, maxUncommittedRows=42, o3MaxLag=42000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=x, position=1, type=INT, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=1, writerIndex=1]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
 
         });
     }
@@ -389,11 +361,11 @@ public class CairoMetadataTest extends AbstractCairoTest {
     @Test
     public void testBasicMetadata() throws Exception {
         assertMemoryLeak(() -> {
-            engine.getCairoMetadata().clear();
+            engine.metadataCacheClear();
             createX();
 
             TestUtils.assertEquals(xMetaString,
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
         });
     }
 
@@ -405,16 +377,16 @@ public class CairoMetadataTest extends AbstractCairoTest {
     @Test
     public void testDropTable() throws Exception {
         assertMemoryLeak(() -> {
-            engine.getCairoMetadata().clear();
+            engine.metadataCacheClear();
 
             ddl("CREATE TABLE y ( ts TIMESTAMP, x INT ) timestamp(ts) partition by day wal;");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=x, position=1, type=INT, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=1, writerIndex=1]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
 
             drop("DROP TABLE y");
             drainWalQueue();
@@ -426,19 +398,19 @@ public class CairoMetadataTest extends AbstractCairoTest {
     @Test
     public void testRenameTable() throws Exception {
         assertMemoryLeak(() -> {
-            engine.getCairoMetadata().clear();
+            engine.metadataCacheClear();
             createY();
 
             TestUtils.assertEquals(yMetaString,
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
 
             ddl("RENAME TABLE y TO y2");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y2, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=1]\n" +
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
 
         });
     }
@@ -446,25 +418,25 @@ public class CairoMetadataTest extends AbstractCairoTest {
     @Test
     public void testTruncateTable() throws Exception {
         assertMemoryLeak(() -> {
-            engine.getCairoMetadata().clear();
+            engine.metadataCacheClear();
 
             ddl("CREATE TABLE y ( ts TIMESTAMP, x INT ) timestamp(ts) partition by day wal;");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=x, position=1, type=INT, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=1, writerIndex=1]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
 
             ddl("TRUNCATE TABLE y");
             drainWalQueue();
 
-            TestUtils.assertEquals("CairoMetadata [tableCount=1]\n" +
+            TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=2]\n" +
                             "\t\tCairoColumn [name=ts, position=0, type=TIMESTAMP, isDedupKey=false, isDesignated=true, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=0, writerIndex=0]\n" +
                             "\t\tCairoColumn [name=x, position=1, type=INT, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=1, writerIndex=1]\n",
-                    engine.getCairoMetadata().toString0());
+                    engine.metadataCacheToString0());
         });
     }
 

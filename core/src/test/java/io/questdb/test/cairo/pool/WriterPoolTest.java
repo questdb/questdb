@@ -661,7 +661,7 @@ public class WriterPoolTest extends AbstractCairoTest {
                     engine.getDdlListener(tableToken),
                     engine.getCheckpointStatus(),
                     engine.getMetrics(),
-                    engine.getCairoMetadata()
+                    engine
             );
             for (int i = 0; i < 100; i++) {
                 TableWriter.Row row = writer.newRow();

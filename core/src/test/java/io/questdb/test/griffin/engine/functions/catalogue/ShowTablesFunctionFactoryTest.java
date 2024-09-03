@@ -25,7 +25,6 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoMetadata;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
@@ -108,10 +107,9 @@ public class ShowTablesFunctionFactoryTest extends AbstractCairoTest {
                     "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
             );
 
-            final CairoMetadata cairoMetadata = sqlExecutionContext.getCairoEngine().getCairoMetadata();
-            cairoMetadata.clear();
+            engine.metadataCacheClear();
 
-            cairoMetadata.hydrateAllTables();
+            engine.metadataCacheHydrateAllTables();
 
             assertSql(
                     "id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" +

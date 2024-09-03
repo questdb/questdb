@@ -31,7 +31,7 @@ import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
 public class CairoColumn implements Sinkable {
-    public static final Log LOG = LogFactory.getLog(CairoMetadata.class);
+    public static final Log LOG = LogFactory.getLog(CairoEngine.class);
     private int indexBlockCapacity;
     private boolean isDedupKey;
     private boolean isDesignated;

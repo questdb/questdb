@@ -109,7 +109,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition) {
-            CairoTable table = executionContext.getCairoEngine().getCairoMetadata().getTable(tableToken);
+            CairoTable table = executionContext.getCairoEngine().metadataCacheGetTable(tableToken);
             if (table == null) {
                 throw CairoException.tableDoesNotExist(tableToken.getTableName()).position(tokenPosition);
             } else {

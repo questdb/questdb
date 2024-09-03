@@ -1980,7 +1980,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         engine.getDdlListener(tableToken),
                         engine.getCheckpointStatus(),
                         engine.getMetrics(),
-                        engine.getCairoMetadata()
+                        engine
                 );
             } else {
                 writerAPI = engine.getTableWriterAPI(tableToken, "create as select");
