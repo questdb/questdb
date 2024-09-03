@@ -41,7 +41,6 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     public SingleRecordSink(long maxHeapSizeBytes, int memoryTag) {
         this.memoryTag = memoryTag;
         this.maxHeapSize = maxHeapSizeBytes;
-        reopen();
     }
 
     @Override
