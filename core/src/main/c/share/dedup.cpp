@@ -435,8 +435,8 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                 );
             }
             case -1: {
-                switch (col_key->column_type) {
-                    case (int) ColumnType::VARCHAR: {
+                switch ((ColumnType)(col_key->column_type)) {
+                    case ColumnType::VARCHAR: {
                         return merge_dedup_long_index_int_keys(
                                 src, data_lo, data_hi,
                                 index, index_lo, index_hi,
@@ -444,7 +444,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                                 *reinterpret_cast<const MergeVarcharColumnComparer *>(src_keys)
                         );
                     }
-                    case (int) ColumnType::STRING: {
+                    case ColumnType::STRING: {
                         return merge_dedup_long_index_int_keys(
                                 src, data_lo, data_hi,
                                 index, index_lo, index_hi,
@@ -452,7 +452,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                                 *reinterpret_cast<const MergeStrBinColumnComparer<int32_t, 2> *>(src_keys)
                         );
                     }
-                    case (int) ColumnType::BINARY: {
+                    case ColumnType::BINARY: {
                         return merge_dedup_long_index_int_keys(
                                 src, data_lo, data_hi,
                                 index, index_lo, index_hi,
@@ -509,18 +509,18 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                     break;
                 }
                 case -1: {
-                    switch (col_key->column_type) {
-                        case (int) ColumnType::VARCHAR: {
+                    switch ((ColumnType)(col_key->column_type)) {
+                        case ColumnType::VARCHAR: {
                             auto comparer{*reinterpret_cast<const MergeVarcharColumnComparer *>(col_key)};
                             diff = comparer(l, r);
                             break;
                         }
-                        case (int) ColumnType::STRING: {
+                        case ColumnType::STRING: {
                             auto comparer{*reinterpret_cast<const MergeStrBinColumnComparer<int32_t, 2> *>(col_key)};
                             diff = comparer(l, r);
                             break;
                         }
-                        case (int) ColumnType::BINARY: {
+                        case ColumnType::BINARY: {
                             auto comparer{*reinterpret_cast<const MergeStrBinColumnComparer<int64_t, 1> *>(col_key)};
                             diff = comparer(l, r);
                             break;
@@ -600,18 +600,18 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                             *reinterpret_cast<const SortColumnComparer<int256> *>(src_keys)
                     );
                 case -1:
-                    switch (col_key->column_type) {
-                        case (int) ColumnType::VARCHAR:
+                    switch ((ColumnType)(col_key->column_type)) {
+                        case ColumnType::VARCHAR:
                             return dedup_sorted_timestamp_index_with_keys(
                                     index_in, index_count, index_out, index_temp,
                                     *reinterpret_cast<const SortVarcharColumnComparer *>(src_keys)
                             );
-                        case (int) ColumnType::STRING:
+                        case ColumnType::STRING:
                             return dedup_sorted_timestamp_index_with_keys(
                                     index_in, index_count, index_out, index_temp,
                                     *reinterpret_cast<const SortStrBinColumnComparer<int32_t, 2> *>(src_keys)
                             );
-                        case (int) ColumnType::BINARY:
+                        case ColumnType::BINARY:
                             return dedup_sorted_timestamp_index_with_keys(
                                     index_in, index_count, index_out, index_temp,
                                     *reinterpret_cast<const SortStrBinColumnComparer<int64_t, 1> *>(src_keys)
@@ -663,18 +663,18 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                         break;
                     }
                     case -1: {
-                        switch (col_key->column_type) {
-                            case (int) ColumnType::VARCHAR: {
+                        switch ((ColumnType)(col_key->column_type)) {
+                            case ColumnType::VARCHAR: {
                                 auto comparer{*reinterpret_cast<const SortVarcharColumnComparer *>(col_key)};
                                 diff = comparer(l, r);
                                 break;
                             }
-                            case (int) ColumnType::STRING: {
+                            case ColumnType::STRING: {
                                 auto comparer{*reinterpret_cast<const SortStrBinColumnComparer<int32_t, 2> *>(col_key)};
                                 diff = comparer(l, r);
                                 break;
                             }
-                            case (int) ColumnType::BINARY: {
+                            case ColumnType::BINARY: {
                                 auto comparer{*reinterpret_cast<const SortStrBinColumnComparer<int64_t, 1> *>(col_key)};
                                 diff = comparer(l, r);
                                 break;

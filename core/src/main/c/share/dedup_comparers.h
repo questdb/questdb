@@ -72,7 +72,7 @@ const int32_t VARCHAR_MAX_BYTES_FULLY_INLINED = 9;
 const uint32_t VARCHAR_HEADER_FLAG_INLINED = 1 << 0;
 
 
-inline int32_t read_varchar_size(const char *l_val_aux) {
+inline int32_t read_varchar_size(const uint8_t *l_val_aux) {
     const auto aux_data = reinterpret_cast<const VarcharAuxEntrySplit *>(l_val_aux);
     assertm(aux_data->header != 0, "ERROR: invalid varchar aux data");
     if (aux_data->header & HEADER_FLAG_NULL) {
@@ -92,25 +92,14 @@ inline int32_t read_varchar_size(const char *l_val_aux) {
 }
 
 
-const int32_t chars_inline_offsets[2] = {
-        offsetof(VarcharAuxEntryInlined, chars),
-        offsetof(VarcharAuxEntrySplit, chars)
-};
-
-
-inline const char *get_inline_chars_ptr(const char *l_val_aux, int32_t size) {
-    return l_val_aux + chars_inline_offsets[size > VARCHAR_MAX_BYTES_FULLY_INLINED];
-}
-
-
-inline const char *
-get_tail_chars_ptr(const char *l_val_aux, int32_t size, const char *l_val_data, int64_t l_val_data_len) {
+inline const uint8_t *
+get_tail_chars_ptr(const uint8_t *l_val_aux, int32_t size, const uint8_t *l_val_data, int64_t l_val_data_len) {
     const auto aux_data = reinterpret_cast<const VarcharAuxEntrySplit *>(l_val_aux);
     const uint64_t data_offset = aux_data->offset_lo | ((uint64_t) aux_data->offset_hi) << 16;
     assertm(data_offset < (uint64_t) l_val_data_len, "ERROR: reading beyond varchar address length!");
 
-    const char *data = l_val_data + data_offset;
-    assertm(std::memcmp(aux_data->chars, data, MIN_INLINE_CHARS) == 0,
+    const uint8_t *data = l_val_data + data_offset;
+    assertm(memcmp(aux_data->chars, data, MIN_INLINE_CHARS) == 0,
             "ERROR: varchar inline prefix does not match the data");
 
     return data;
@@ -121,8 +110,8 @@ get_tail_chars_ptr(const char *l_val_aux, int32_t size, const char *l_val_data, 
 // Sometimes it's better to view dedup_column struct as if it has an array of 2 data_point(s)
 #pragma pack (push, 1)
 struct data_point {
-    char *aux_data;
-    char *var_data;
+    uint8_t *aux_data;
+    uint8_t *var_data;
     int64_t var_data_len;
 };
 #pragma pack(pop)
@@ -157,14 +146,14 @@ inline int compare_varchar(const data_point *l_col, int64_t l_offset, const data
             // Both are inlined
             auto l_inl = l_val_aux + offsetof(VarcharAuxEntryInlined, chars);
             auto r_inl = r_val_aux + offsetof(VarcharAuxEntryInlined, chars);
-            return std::memcmp(l_inl, r_inl, l_size);
+            return memcmp(l_inl, r_inl, l_size);
         }
 
         default: {
             // Both are not inlined
             auto l_tail_chars_ptr = get_tail_chars_ptr(l_val_aux, l_size, l_col->var_data, l_col->var_data_len);
             auto r_tail_chars_ptr = get_tail_chars_ptr(r_val_aux, r_size, r_col->var_data, r_col->var_data_len);
-            return std::memcmp(l_tail_chars_ptr, r_tail_chars_ptr, l_size);
+            return memcmp(l_tail_chars_ptr, r_tail_chars_ptr, l_size);
         }
     }
 }
@@ -201,7 +190,7 @@ public:
 
 
 template<typename T, int item_size>
-inline int compare_str_bin(const char *l_val, const char *r_val) {
+inline int compare_str_bin(const uint8_t *l_val, const uint8_t *r_val) {
     T l_size = *reinterpret_cast<const T *>(l_val);
     T r_size = *reinterpret_cast<const T *>(r_val);
     if (l_size != r_size) {
@@ -214,7 +203,7 @@ inline int compare_str_bin(const char *l_val, const char *r_val) {
             return 0;
 
         default: {
-            return std::memcmp(l_val + sizeof(T), r_val + sizeof(T), l_size * item_size);
+            return memcmp(l_val + sizeof(T), r_val + sizeof(T), l_size * item_size);
         }
     }
 };
@@ -250,13 +239,13 @@ public:
                                : -1;
 
         assertm(l_val_offset < column_var_data_len, "ERROR: column aux data point beyond var data buffer");
-        const char *l_val_ptr = col_index >= column_top ?
-                                reinterpret_cast<const char *>(column_var_data) + l_val_offset
+        const uint8_t *l_val_ptr = col_index >= column_top ?
+                                reinterpret_cast<const uint8_t *>(column_var_data) + l_val_offset
                                                         : null_value;
 
         const auto r_val_offset = reinterpret_cast<int64_t *>(o3_data)[index_index];
         assertm(r_val_offset < o3_var_data_len, "ERROR: column aux data point beyond var data buffer");
-        const char *r_val_ptr = reinterpret_cast<const char *>(o3_var_data) + r_val_offset;
+        const uint8_t *r_val_ptr = reinterpret_cast<const uint8_t *>(o3_var_data) + r_val_offset;
 
         return compare_str_bin<T, item_size>(l_val_ptr, r_val_ptr);
     }

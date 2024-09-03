@@ -25,8 +25,6 @@
 #ifndef QUESTDB_DEDUP_H
 #define QUESTDB_DEDUP_H
 
-#include <cstring>
-
 #pragma pack (push, 1)
 // Should match data structure described in DedupColumnCommitAddresses.java
 struct dedup_column {
@@ -44,7 +42,7 @@ struct dedup_column {
     int64_t java_reserved_3;
     int64_t java_reserved_4;
     int64_t java_reserved_5;
-    char null_value[32];
+    uint8_t null_value[32];
 };
 #pragma pack(pop)
 
