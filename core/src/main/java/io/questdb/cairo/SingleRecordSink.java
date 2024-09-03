@@ -248,11 +248,7 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
 
     private void checkCapacity(long requiredSize) {
         if (appendAddress + requiredSize > heapLimit) {
-            long delta = resize(requiredSize, appendAddress);
-            heapStart += delta;
-            appendAddress += delta;
-            assert heapStart > 0;
-            assert appendAddress > 0;
+            resize(requiredSize, appendAddress);
         }
     }
 
@@ -262,8 +258,7 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
         appendAddress += 4L;
     }
 
-    // Returns delta between new and old heapStart addresses.
-    private long resize(long entrySize, long appendAddress) {
+    private void resize(long entrySize, long appendAddress) {
         assert appendAddress >= heapStart;
         long currentCapacity = heapLimit - heapStart;
         long newCapacity = currentCapacity << 1;
@@ -274,13 +269,11 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
         if (newCapacity > maxHeapSize) {
             throw LimitOverflowException.instance().put("limit of ").put(maxHeapSize).put(" memory exceeded in ASOF join");
         }
+        long newAddress = Unsafe.realloc(heapStart, currentCapacity, newCapacity, memoryTag);
 
-        long kAddress = Unsafe.realloc(heapStart, currentCapacity, newCapacity, memoryTag);
-
-        long delta = kAddress - heapStart;
-        this.heapStart = kAddress;
-        this.heapLimit = kAddress + newCapacity;
-
-        return delta;
+        long delta = newAddress - heapStart;
+        this.heapStart = newAddress;
+        this.heapLimit = newAddress + newCapacity;
+        this.appendAddress += delta;
     }
 }
