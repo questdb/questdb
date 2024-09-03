@@ -202,7 +202,6 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
                     record.hasSlave(true);
                     slaveCursor.recordAt(slaveRecB, Rows.toRowID(slaveFrameIndex, slaveFrameRow));
                     long slaveTimestamp = slaveRecB.getTimestamp(slaveTimestampIndex);
-                    assert slaveTimestamp <= masterTimestamp;
                     if (slaveFrameRow < frame.getRowHi() - 1) {
                         slaveCursor.recordAt(slaveRecA, Rows.toRowID(slaveFrameIndex, slaveFrameRow + 1));
                         lookaheadTimestamp = slaveRecA.getTimestamp(slaveTimestampIndex);

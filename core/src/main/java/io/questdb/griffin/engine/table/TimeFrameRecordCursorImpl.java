@@ -87,6 +87,20 @@ public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     }
 
     @Override
+    public void jumpTo(int frameIndex) {
+        buildFrameCache();
+
+        if (frameIndex >= frameCount || frameIndex < 0) {
+            throw CairoException.nonCritical().put("frame index out of bounds. [frameIndex=]").put(frameIndex).put(", frameCount=").put(frameCount).put(']');
+        }
+
+        int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
+        long timestampLo = reader.getPartitionTimestampByIndex(partitionIndex);
+        long maxTimestampHi = partitionIndex < partitionHi - 2 ? reader.getPartitionTimestampByIndex(partitionIndex + 1) : Long.MAX_VALUE;
+        timeFrame.of(frameIndex, timestampLo, estimatePartitionHi(timestampLo, maxTimestampHi));
+    }
+
+    @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         return frameCursor.newSymbolTable(columnIndex);
     }
@@ -167,21 +181,6 @@ public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
         frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), frameMemoryRecord);
         frameMemoryRecord.setRowIndex(Rows.toLocalRowID(rowId));
-    }
-
-    @Override
-    public boolean toFrameIndex(int frameIndex) {
-        buildFrameCache();
-
-        if (frameIndex < frameCount) {
-            int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
-            long timestampLo = reader.getPartitionTimestampByIndex(partitionIndex);
-            long maxTimestampHi = partitionIndex < partitionHi - 2 ? reader.getPartitionTimestampByIndex(partitionIndex + 1) : Long.MAX_VALUE;
-            timeFrame.of(frameIndex, timestampLo, estimatePartitionHi(timestampLo, maxTimestampHi));
-            return true;
-        }
-        timeFrame.of(-1, Long.MIN_VALUE, Long.MIN_VALUE);
-        return false;
     }
 
     @Override

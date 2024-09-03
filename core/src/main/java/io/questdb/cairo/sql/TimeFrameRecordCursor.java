@@ -51,6 +51,13 @@ public interface TimeFrameRecordCursor extends QuietCloseable, SymbolTableSource
      */
     TimeFrame getTimeFrame();
 
+    /**
+     * Rewinds cursor to a beginning of the given frame. The frame must have been previously opened.
+     *
+     * @param frameIndex index of the frame to rewind to
+     */
+    void jumpTo(int frameIndex);
+
     boolean next();
 
     /**
@@ -71,14 +78,6 @@ public interface TimeFrameRecordCursor extends QuietCloseable, SymbolTableSource
      * @param rowId  row id of the desired record
      */
     void recordAt(Record record, long rowId);
-
-    /**
-     * Rewinds cursor to a beginning of the given frame. The frame must have been previously opened.
-     *
-     * @param frameIndex index of the frame to rewind to
-     * @return true if frame was rewound, false if frame is not available
-     */
-    boolean toFrameIndex(int frameIndex);
 
     /**
      * Return the cursor to the beginning of the page frame.

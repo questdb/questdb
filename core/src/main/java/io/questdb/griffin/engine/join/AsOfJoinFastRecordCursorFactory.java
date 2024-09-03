@@ -24,23 +24,25 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.model.JoinContext;
-import io.questdb.std.*;
-import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Rows;
 
 public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinKeyedFastRecordCursor cursor;
     private final RecordSink masterKeySink;
-    private final OffheapSink masterSinkTarget = new OffheapSink();
+    private final SingleRecordSink masterSinkTarget;
     private final RecordSink slaveKeySink;
-    private final OffheapSink slaveSinkTarget = new OffheapSink();
+    private final SingleRecordSink slaveSinkTarget;
 
     public AsOfJoinFastRecordCursorFactory(
             CairoConfiguration configuration,
@@ -55,6 +57,9 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         assert slaveFactory.supportsTimeFrameCursor();
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
+        long maxSinkTargetHeapSize = (long) configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
+        this.masterSinkTarget = new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN);
+        this.slaveSinkTarget = new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN);
         this.cursor = new AsOfJoinKeyedFastRecordCursor(
                 columnSplit,
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
@@ -111,252 +116,6 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         Misc.free(slaveSinkTarget);
     }
 
-    private static class OffheapSink implements RecordSinkSPI, QuietCloseable {
-        private static final int INITIAL_CAPACITY_BYTES = 8;
-        private static final long MAX_HEAP_SIZE = 4096;
-        private long appendAddress;
-        private long heapLimit;
-        private long heapStart;
-
-
-        private OffheapSink() {
-            this.appendAddress = Unsafe.malloc(INITIAL_CAPACITY_BYTES, MemoryTag.NATIVE_JOIN_MAP); // todo: is this the right tag?
-            this.heapStart = appendAddress;
-            this.heapLimit = appendAddress + INITIAL_CAPACITY_BYTES;
-        }
-
-        @Override
-        public void close() {
-            if (appendAddress != 0) {
-                Unsafe.free(heapStart, heapLimit - heapStart, MemoryTag.NATIVE_JOIN_MAP);
-                appendAddress = 0;
-                heapStart = 0;
-            }
-        }
-
-        @Override
-        public void putBin(BinarySequence value) {
-            if (value == null) {
-                putVarSizeNull();
-            } else {
-                long len = value.length() + 4L;
-                if (len > Integer.MAX_VALUE) {
-                    throw CairoException.nonCritical().put("binary column is too large");
-                }
-
-                checkCapacity((int) len);
-                int l = (int) (len - Integer.BYTES);
-                Unsafe.getUnsafe().putInt(appendAddress, l);
-                value.copyTo(appendAddress + Integer.BYTES, 0, l);
-                appendAddress += len;
-            }
-        }
-
-        @Override
-        public void putBool(boolean value) {
-            checkCapacity(1);
-            Unsafe.getUnsafe().putBoolean(null, appendAddress, value);
-            appendAddress += 1;
-        }
-
-        @Override
-        public void putByte(byte value) {
-            checkCapacity(1);
-            Unsafe.getUnsafe().putByte(appendAddress, value);
-            appendAddress += 1;
-        }
-
-        @Override
-        public void putChar(char value) {
-            checkCapacity(2);
-            Unsafe.getUnsafe().putChar(appendAddress, value);
-            appendAddress += 2;
-        }
-
-        @Override
-        public void putDate(long value) {
-            checkCapacity(8);
-            Unsafe.getUnsafe().putLong(appendAddress, value);
-            appendAddress += 8;
-        }
-
-        @Override
-        public void putDouble(double value) {
-            checkCapacity(8);
-            Unsafe.getUnsafe().putDouble(appendAddress, value);
-            appendAddress += 8;
-        }
-
-        @Override
-        public void putFloat(float value) {
-            checkCapacity(4);
-            Unsafe.getUnsafe().putFloat(appendAddress, value);
-            appendAddress += 4;
-        }
-
-        @Override
-        public void putIPv4(int value) {
-            checkCapacity(4);
-            Unsafe.getUnsafe().putInt(appendAddress, value);
-            appendAddress += 4;
-        }
-
-        @Override
-        public void putInt(int value) {
-            checkCapacity(4);
-            Unsafe.getUnsafe().putInt(appendAddress, value);
-            appendAddress += 4;
-        }
-
-        @Override
-        public void putLong(long value) {
-            checkCapacity(8);
-            Unsafe.getUnsafe().putLong(appendAddress, value);
-            appendAddress += 8;
-        }
-
-        @Override
-        public void putLong128(long lo, long hi) {
-            checkCapacity(16);
-            Unsafe.getUnsafe().putLong(appendAddress, lo);
-            Unsafe.getUnsafe().putLong(appendAddress + 8, hi);
-            appendAddress += 16;
-        }
-
-        @Override
-        public void putLong256(Long256 value) {
-            checkCapacity(32);
-            Unsafe.getUnsafe().putLong(appendAddress, value.getLong0());
-            Unsafe.getUnsafe().putLong(appendAddress + 8, value.getLong1());
-            Unsafe.getUnsafe().putLong(appendAddress + 16, value.getLong2());
-            Unsafe.getUnsafe().putLong(appendAddress + 24, value.getLong3());
-            appendAddress += 32;
-        }
-
-        @Override
-        public void putLong256(long l0, long l1, long l2, long l3) {
-            checkCapacity(32);
-            Unsafe.getUnsafe().putLong(appendAddress, l0);
-            Unsafe.getUnsafe().putLong(appendAddress + 8, l1);
-            Unsafe.getUnsafe().putLong(appendAddress + 16, l2);
-            Unsafe.getUnsafe().putLong(appendAddress + 24, l3);
-            appendAddress += 32;
-        }
-
-        @Override
-        public void putRecord(Record value) {
-            throw new UnsupportedOperationException("Not implemented");
-        }
-
-        @Override
-        public void putShort(short value) {
-            checkCapacity(2);
-            Unsafe.getUnsafe().putShort(appendAddress, value);
-            appendAddress += 2;
-        }
-
-        @Override
-        public void putStr(CharSequence value) {
-            if (value == null) {
-                putVarSizeNull();
-                return;
-            }
-
-            int len = value.length();
-            checkCapacity(((long) len << 1) + 4L);
-            Unsafe.getUnsafe().putInt(appendAddress, len);
-            appendAddress += 4L;
-            for (int i = 0; i < len; i++) {
-                Unsafe.getUnsafe().putChar(appendAddress + ((long) i << 1), value.charAt(i));
-            }
-            appendAddress += (long) len << 1;
-        }
-
-        @Override
-        public void putStr(CharSequence value, int lo, int hi) {
-            int len = hi - lo;
-            checkCapacity(((long) len << 1) + 4L);
-            Unsafe.getUnsafe().putInt(appendAddress, len);
-            appendAddress += 4L;
-            for (int i = lo; i < hi; i++) {
-                Unsafe.getUnsafe().putChar(appendAddress + ((long) (i - lo) << 1), value.charAt(i));
-            }
-            appendAddress += (long) len << 1;
-        }
-
-        @Override
-        public void putTimestamp(long value) {
-            checkCapacity(8);
-            Unsafe.getUnsafe().putLong(appendAddress, value);
-            appendAddress += 8;
-        }
-
-        @Override
-        public void putVarchar(Utf8Sequence value) {
-            int byteCount = VarcharTypeDriver.getSingleMemValueByteCount(value);
-            checkCapacity(byteCount);
-            VarcharTypeDriver.appendPlainValue(appendAddress, value, false);
-            appendAddress += byteCount;
-        }
-
-        public void reset() {
-            appendAddress = heapStart;
-        }
-
-        @Override
-        public void skip(int bytes) {
-            checkCapacity(bytes);
-            appendAddress += bytes;
-        }
-
-        public boolean storesSameDataAs(OffheapSink other) {
-            long thisSize = appendAddress - heapStart;
-            long otherSize = other.appendAddress - other.heapStart;
-            if (thisSize != otherSize) {
-                return false;
-            }
-            return Vect.memeq(heapStart, other.heapStart, thisSize);
-        }
-
-        private void putVarSizeNull() {
-            checkCapacity(4L);
-            Unsafe.getUnsafe().putInt(appendAddress, TableUtils.NULL_LEN);
-            appendAddress += 4L;
-        }
-
-        // Returns delta between new and old heapStart addresses.
-        private long resize(long entrySize, long appendAddress) {
-            assert appendAddress >= heapStart;
-            long currentCapacity = heapLimit - heapStart;
-            long newCapacity = currentCapacity << 1;
-            long target = appendAddress + entrySize - heapStart;
-            if (newCapacity < target) {
-                newCapacity = Numbers.ceilPow2(target);
-            }
-            if (newCapacity > MAX_HEAP_SIZE) {
-                throw LimitOverflowException.instance().put("limit of ").put(MAX_HEAP_SIZE).put(" memory exceeded in ASOF join");
-            }
-
-            long kAddress = Unsafe.realloc(heapStart, currentCapacity, newCapacity, MemoryTag.NATIVE_JOIN_MAP);
-
-            long delta = kAddress - heapStart;
-            this.heapStart = kAddress;
-            this.heapLimit = kAddress + newCapacity;
-
-            return delta;
-        }
-
-        protected void checkCapacity(long requiredSize) {
-            if (appendAddress + requiredSize > heapLimit) {
-                long delta = resize(requiredSize, appendAddress);
-                heapStart += delta;
-                appendAddress += delta;
-                assert heapStart > 0;
-                assert appendAddress > 0;
-            }
-        }
-    }
-
     private class AsOfJoinKeyedFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
         private int origSlaveFrameIndex = -1;
         private long origSlaveRowId = -1;
@@ -391,7 +150,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
             // we have to set the `isMasterHasNextPending` only now since `nextSlave()` may throw DataUnavailableException
             // and in such case we do not want to call `masterCursor.hasNext()` during the next call to `this.hasNext()`.
-            // if we are here then it's clear nestSlave() did not throw DataUnavailableException.
+            // if we are here then it's clear nextSlave() did not throw DataUnavailableException.
             isMasterHasNextPending = true;
 
             boolean hasSlave = record.hasSlave();
@@ -406,10 +165,10 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
             // make sure the cursor points to the right frame - since `nextSlave()` might have moved it under our feet
             TimeFrame timeFrame = slaveCursor.getTimeFrame();
-            int slaveRecordIndex = ((PageFrameMemoryRecord) slaveRecB).getFrameIndex();
-            origSlaveFrameIndex = slaveRecordIndex;
+            int slaveFrameIndex = ((PageFrameMemoryRecord) slaveRecB).getFrameIndex();
+            origSlaveFrameIndex = slaveFrameIndex;
             int cursorFrameIndex = timeFrame.getIndex();
-            slaveCursor.toFrameIndex(slaveRecordIndex);
+            slaveCursor.jumpTo(slaveFrameIndex);
             slaveCursor.open();
 
             long rowLo = timeFrame.getRowLo();
@@ -419,7 +178,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             for (; ; ) {
                 slaveSinkTarget.reset();
                 slaveKeySink.copy(slaveRecB, slaveSinkTarget);
-                if (masterSinkTarget.storesSameDataAs(slaveSinkTarget)) {
+                if (masterSinkTarget.memeq(slaveSinkTarget)) {
                     // we have a match, that's awesome, no need to traverse the slave cursor!
                     break;
                 }
@@ -444,7 +203,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             }
 
             // rewind the slave cursor to the original position so the next call to `nextSlave()` will not be affected
-            slaveCursor.toFrameIndex(cursorFrameIndex);
+            slaveCursor.jumpTo(cursorFrameIndex);
             assert slaveFrameIndex == timeFrame.getIndex();
             slaveCursor.open();
             return true;
