@@ -327,6 +327,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(telemetryWal);
         Misc.free(tableNameRegistry);
         Misc.free(checkpointAgent);
+        metadataCacheClear();
     }
 
     @TestOnly
@@ -1102,7 +1103,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         path.trimTo(configuration.getRoot().length())
                                 .concat(table.getDirectoryName())
                                 .concat(TableUtils.COLUMN_VERSION_FILE_NAME);
-                       
+
                         columnVersionReader.ofRO(configuration.getFilesFacade(),
                                 path.$());
 
