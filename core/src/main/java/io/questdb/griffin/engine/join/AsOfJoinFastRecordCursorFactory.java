@@ -78,7 +78,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         TimeFrameRecordCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
-            cursor.of(masterCursor, slaveCursor);
+            cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
@@ -115,6 +115,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
     private class AsOfJoinKeyedFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
         private final SingleRecordSink masterSinkTarget;
         private final SingleRecordSink slaveSinkTarget;
+        private SqlExecutionCircuitBreaker circuitBreaker;
         private int origSlaveFrameIndex = -1;
         private long origSlaveRowId = -1;
 
@@ -209,6 +210,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                     rowLo = timeFrame.getRowLo();
                 }
                 slaveCursor.recordAt(slaveRecB, Rows.toRowID(keyedFrameIndex, keyedRowId));
+                circuitBreaker.statefulThrowExceptionIfTripped();
             }
 
             // rewind the slave cursor to the original position so the next call to `nextSlave()` will not be affected
@@ -218,11 +220,11 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             return true;
         }
 
-        @Override
-        public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor) {
+        public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             super.of(masterCursor, slaveCursor);
             masterSinkTarget.reopen();
             slaveSinkTarget.reopen();
+            this.circuitBreaker = circuitBreaker;
         }
 
         @Override
