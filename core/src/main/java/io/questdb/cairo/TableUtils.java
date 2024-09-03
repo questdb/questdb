@@ -36,7 +36,6 @@ import io.questdb.griffin.AnyRecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.join.LongChain;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
@@ -257,25 +256,6 @@ public final class TableUtils {
             }
         }
         return count;
-    }
-
-    public static long computeCursorSizeFromMap(RecordCursor masterCursor, Map map, RecordSink keySink) {
-        final Record masterRecord = masterCursor.getRecord();
-        long size = 0;
-        try {
-            masterCursor.toTop();
-            while (masterCursor.hasNext()) {
-                MapKey key = map.withKey();
-                key.put(masterRecord, keySink);
-                MapValue value = key.findValue();
-                if (value != null) {
-                    size += value.getLong(2);
-                }
-            }
-            return size;
-        } finally {
-            masterCursor.toTop();
-        }
     }
 
     public static void createColumnVersionFile(MemoryMARW mem) {
@@ -1218,32 +1198,6 @@ public final class TableUtils {
                 value.putLong(2, 1);
             } else {
                 value.putLong(1, chain.put(record, value.getLong(1)));
-                value.addLong(2, 1);
-            }
-        }
-    }
-
-    public static void populateRowIDHashMap(
-            SqlExecutionCircuitBreaker circuitBreaker,
-            RecordCursor cursor,
-            Map keyMap,
-            RecordSink recordSink,
-            LongChain rowIDChain
-    ) {
-        final Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-
-            MapKey key = keyMap.withKey();
-            key.put(record, recordSink);
-            MapValue value = key.createValue();
-            if (value.isNew()) {
-                final long offset = rowIDChain.put(record.getRowId(), -1);
-                value.putLong(0, offset);
-                value.putLong(1, offset);
-                value.putLong(2, 1);
-            } else {
-                value.putLong(1, rowIDChain.put(record.getRowId(), value.getLong(1)));
                 value.addLong(2, 1);
             }
         }

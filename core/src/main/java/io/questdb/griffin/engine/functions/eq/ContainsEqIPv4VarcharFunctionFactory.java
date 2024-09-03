@@ -22,43 +22,39 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions.math;
+package io.questdb.griffin.engine.functions.eq;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.math.MulLongFunctionFactory;
-import io.questdb.std.Numbers;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
-import org.junit.Test;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
-public class MulLongFunctionFactoryTest extends AbstractFunctionFactoryTest {
-    @Test
-    public void testBothNan() throws SqlException {
-        call(Numbers.LONG_NULL, Numbers.LONG_NULL).andAssert(Numbers.LONG_NULL);
-    }
-
-    @Test
-    public void testLeftNan() throws SqlException {
-        call(Numbers.LONG_NULL, 5L).andAssert(Numbers.LONG_NULL);
-    }
-
-    @Test
-    public void testMulByZero() throws SqlException {
-        call(10L, 0L).andAssert(0L);
-    }
-
-    @Test
-    public void testRightNan() throws SqlException {
-        call(123L, Numbers.LONG_NULL).andAssert(Numbers.LONG_NULL);
-    }
-
-    @Test
-    public void testSimple() throws SqlException {
-        call(10L, 81L).andAssert(810L);
+// first arg is contained within or equals second arg
+public class ContainsEqIPv4VarcharFunctionFactory implements FunctionFactory {
+    @Override
+    public String getSignature() {
+        return "<<=(XØ)";
     }
 
     @Override
-    protected FunctionFactory getFunctionFactory() {
-        return new MulLongFunctionFactory();
+    public boolean isBoolean() {
+        return true;
+    }
+
+    @Override
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        Function ipv4Func = args.getQuick(0);
+        int varcharFuncPosition = argPositions.getQuick(1);
+        Function varcharFunc = args.getQuick(1);
+        return ContainsEqIPv4Utils.containsIPv4Varchar(ipv4Func, varcharFunc, varcharFuncPosition);
     }
 }

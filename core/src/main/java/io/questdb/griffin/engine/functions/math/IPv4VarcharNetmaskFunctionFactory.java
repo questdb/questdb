@@ -27,19 +27,23 @@ package io.questdb.griffin.engine.functions.math;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.IPv4Function;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.IPv4Constant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
 
-public class NegIntFunctionFactory implements FunctionFactory {
+public class IPv4VarcharNetmaskFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "-(I)";
+        return "netmask(Ø)";
     }
 
     @Override
@@ -50,11 +54,20 @@ public class NegIntFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.getQuick(0));
+        final Function varcharFunc = args.getQuick(0);
+        if (varcharFunc.isConstant()) {
+            final CharSequence str = varcharFunc.getStrA(null);
+            if (str == null) {
+                return IPv4Constant.NULL;
+            }
+            final int val = Numbers.getIPv4Netmask(str);
+            return val == Numbers.BAD_NETMASK ? IPv4Constant.NULL : IPv4Constant.newInstance(val);
+        }
+        return new Func(varcharFunc);
     }
 
-    private static class Func extends IntFunction implements UnaryFunction {
-        final Function arg;
+    private static class Func extends IPv4Function implements UnaryFunction {
+        private final Function arg;
 
         public Func(Function arg) {
             this.arg = arg;
@@ -66,20 +79,18 @@ public class NegIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public int getInt(Record rec) {
-            final int value = arg.getInt(rec);
-            return value != Numbers.INT_NULL ? -value : Numbers.INT_NULL;
-        }
-
-        @Override
-        public long getLong(Record rec) {
-            final int value = arg.getInt(rec);
-            return value != Numbers.INT_NULL ? -((long) value) : Numbers.LONG_NULL;
+        public int getIPv4(Record rec) {
+            final Utf8Sequence seq = arg.getVarcharA(rec);
+            if (seq == null) {
+                return Numbers.IPv4_NULL;
+            }
+            final int val = Numbers.getIPv4Netmask(seq.asAsciiCharSequence());
+            return val == Numbers.BAD_NETMASK ? Numbers.IPv4_NULL : val;
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val('-').val(arg);
+            sink.val("netmask(").val(arg).val(')');
         }
     }
 }
