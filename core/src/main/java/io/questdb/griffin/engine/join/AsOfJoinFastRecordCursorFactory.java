@@ -40,9 +40,7 @@ import io.questdb.std.Rows;
 public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinKeyedFastRecordCursor cursor;
     private final RecordSink masterKeySink;
-    private final SingleRecordSink masterSinkTarget;
     private final RecordSink slaveKeySink;
-    private final SingleRecordSink slaveSinkTarget;
 
     public AsOfJoinFastRecordCursorFactory(
             CairoConfiguration configuration,
@@ -58,13 +56,13 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         this.masterKeySink = masterKeySink;
         this.slaveKeySink = slaveKeySink;
         long maxSinkTargetHeapSize = (long) configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
-        this.masterSinkTarget = new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN);
-        this.slaveSinkTarget = new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN);
         this.cursor = new AsOfJoinKeyedFastRecordCursor(
                 columnSplit,
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
+                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 slaveFactory.getMetadata().getTimestampIndex(),
+                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
                 configuration.getSqlAsOfJoinLookAhead()
         );
     }
@@ -112,11 +110,11 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         Misc.freeIfCloseable(getMetadata());
         Misc.free(masterFactory);
         Misc.free(slaveFactory);
-        Misc.free(masterSinkTarget);
-        Misc.free(slaveSinkTarget);
     }
 
     private class AsOfJoinKeyedFastRecordCursor extends AbstractAsOfJoinFastRecordCursor {
+        private final SingleRecordSink masterSinkTarget;
+        private final SingleRecordSink slaveSinkTarget;
         private int origSlaveFrameIndex = -1;
         private long origSlaveRowId = -1;
 
@@ -124,10 +122,21 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 int columnSplit,
                 Record nullRecord,
                 int masterTimestampIndex,
+                SingleRecordSink masterSinkTarget,
                 int slaveTimestampIndex,
+                SingleRecordSink slaveSinkTarget,
                 int lookahead
         ) {
             super(columnSplit, nullRecord, masterTimestampIndex, slaveTimestampIndex, lookahead);
+            this.masterSinkTarget = masterSinkTarget;
+            this.slaveSinkTarget = slaveSinkTarget;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            masterSinkTarget.close();
+            slaveSinkTarget.close();
         }
 
         @Override
@@ -160,7 +169,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
             // ok, the non-keyed matcher found a record with a matching timestamp.
             // we have to make sure the JOIN keys match as well.
-            masterSinkTarget.reset();
+            masterSinkTarget.clear();
             masterKeySink.copy(masterRecord, masterSinkTarget);
 
             // make sure the cursor points to the right frame - since `nextSlave()` might have moved it under our feet
@@ -176,7 +185,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             origSlaveRowId = keyedRowId;
             int keyedFrameIndex = timeFrame.getIndex();
             for (; ; ) {
-                slaveSinkTarget.reset();
+                slaveSinkTarget.clear();
                 slaveKeySink.copy(slaveRecB, slaveSinkTarget);
                 if (masterSinkTarget.memeq(slaveSinkTarget)) {
                     // we have a match, that's awesome, no need to traverse the slave cursor!
@@ -207,6 +216,13 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             assert slaveFrameIndex == timeFrame.getIndex();
             slaveCursor.open();
             return true;
+        }
+
+        @Override
+        public void of(RecordCursor masterCursor, TimeFrameRecordCursor slaveCursor) {
+            super.of(masterCursor, slaveCursor);
+            masterSinkTarget.reopen();
+            slaveSinkTarget.reopen();
         }
 
         @Override

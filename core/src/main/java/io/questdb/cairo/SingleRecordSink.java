@@ -29,7 +29,7 @@ import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.*;
 import io.questdb.std.str.Utf8Sequence;
 
-public final class SingleRecordSink implements RecordSinkSPI, QuietCloseable {
+public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenable {
     private static final int INITIAL_CAPACITY_BYTES = 8;
     private final long maxHeapSize;
     private final int memoryTag;
@@ -40,10 +40,13 @@ public final class SingleRecordSink implements RecordSinkSPI, QuietCloseable {
 
     public SingleRecordSink(long maxHeapSizeBytes, int memoryTag) {
         this.memoryTag = memoryTag;
-        this.appendAddress = Unsafe.malloc(INITIAL_CAPACITY_BYTES, memoryTag);
-        this.heapStart = appendAddress;
         this.maxHeapSize = maxHeapSizeBytes;
-        this.heapLimit = appendAddress + INITIAL_CAPACITY_BYTES;
+        reopen();
+    }
+
+    @Override
+    public void clear() {
+        appendAddress = heapStart;
     }
 
     @Override
@@ -229,7 +232,12 @@ public final class SingleRecordSink implements RecordSinkSPI, QuietCloseable {
         appendAddress += byteCount;
     }
 
-    public void reset() {
+    @Override
+    public void reopen() {
+        if (appendAddress == 0) {
+            heapStart = Unsafe.malloc(INITIAL_CAPACITY_BYTES, memoryTag);
+            heapLimit = heapStart + INITIAL_CAPACITY_BYTES;
+        }
         appendAddress = heapStart;
     }
 
