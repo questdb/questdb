@@ -7461,7 +7461,7 @@ public class IODispatcherTest extends AbstractTest {
                                     "Keep-Alive: timeout=5, max=10000\r\n" +
                                     "\r\n" +
                                     "64\r\n" +
-                                    "{\"query\":\"show columns from balances\",\"error\":\"table does not exist [table=balances]\",\"position\"18}\r\n" +
+                                    "{\"query\":\"show columns from balances\",\"error\":\"table does not exist [table=balances]\",\"position\":18}\r\n" +
                                     "00\r\n\r\n",
                             1,
                             0,

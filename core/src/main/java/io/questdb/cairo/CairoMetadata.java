@@ -39,9 +39,9 @@ public class CairoMetadata implements Sinkable {
     public static final Log LOG = LogFactory.getLog(CairoMetadata.class);
     private final CairoEngine engine;
     private final ConcurrentHashMap<CairoTable> tables = new ConcurrentHashMap<>();
-    ThreadLocal<ColumnVersionReader> tlColumnVersionReader = ThreadLocal.withInitial(ColumnVersionReader::new);
-    ThreadLocal<Path> tlPath = ThreadLocal.withInitial(Path::new);
-    ThreadLocal<ObjHashSet<TableToken>> tlTokens = ThreadLocal.withInitial(ObjHashSet<TableToken>::new);
+    private final ThreadLocal<ColumnVersionReader> tlColumnVersionReader = ThreadLocal.withInitial(ColumnVersionReader::new);
+    private final ThreadLocal<Path> tlPath = ThreadLocal.withInitial(Path::new);
+    private final ThreadLocal<ObjHashSet<TableToken>> tlTokens = ThreadLocal.withInitial(ObjHashSet<TableToken>::new);
 
     public CairoMetadata(CairoEngine engine) {
         this.engine = engine;
