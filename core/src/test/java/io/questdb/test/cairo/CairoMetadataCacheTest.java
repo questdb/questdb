@@ -24,10 +24,15 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoTable;
+import io.questdb.cairo.TableToken;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 // todo: fuzzers!
 public class CairoMetadataCacheTest extends AbstractCairoTest {
@@ -72,6 +77,89 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
             "\t\tCairoColumn [name=m, position=14, type=BINARY, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=14, writerIndex=14]\n" +
             "\t\tCairoColumn [name=n, position=15, type=STRING, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=15, writerIndex=15]\n";
 
+//    @Test
+//    public void fuzzConcurrentCreatesDropsAndSchemaAlterations() throws SqlException {
+//        String[] types = {"INT", "LONG", "STRING", "VARCHAR", "SYMBOL"};
+//        String[] names = {"a", "b", "c", "d", "e"};
+//
+//        char[] table_names = {'\0', '\0', '\0'};
+//        String[] type_names = {"INT", "INT", "INT"};
+//
+//
+//        for (int i = 0; i < 100; i++) {
+//            String ddl = "CREATE TABLE foo (";
+//
+//            for (int j = 0; j < 3; j++) {
+//                table_names[j] = genAlpha();
+//                type_names[j] = types[genInt(types.length)];
+//            }
+//
+//            ddl += createTableColumnsList(table_names, type_names);
+//            ddl += ") PARTITION BY DAY WAL;";
+//
+//            ddl(ddl);
+//
+//
+//        }
+//
+//    }
+
+    @Test
+    public void fuzzConcurrentCreatesAndDrops() throws InterruptedException {
+
+        AtomicInteger creatorInteger = new AtomicInteger();
+        AtomicInteger dropperInteger = new AtomicInteger();
+
+        Thread creatingThread = new Thread() {
+            public void run() {
+                try {
+                    fuzzConcurrentCreatesAndDropsCreatorThread(creatorInteger);
+                } catch (Exception ignore) {
+                }
+            }
+        };
+
+        Thread droppingThread = new Thread() {
+            public void run() {
+                try {
+                    fuzzConcurrentCreatesAndDropsDropperThread(dropperInteger);
+                } catch (Exception ignore) {
+                }
+            }
+        };
+
+        creatingThread.start();
+        droppingThread.start();
+
+        TableToken tableToken;
+        CairoTable cairoTable;
+
+        Thread.sleep(2_000);
+
+        creatingThread.interrupt();
+        droppingThread.interrupt();
+
+        int creatorCounter = creatorInteger.get();
+        int dropperCounter = dropperInteger.get();
+
+        LOG.infoW().$("[creator=").$(creatorCounter).$(", dropper=").$(dropperCounter).I$();
+
+        drainWalQueue();
+
+        LOG.infoW().$("TEST:").$(engine.getUnpublishedWalTxnCount()).$();
+
+        tableToken = engine.getTableTokenIfExists("foo");
+
+        if (tableToken != null) {
+            cairoTable = engine.metadataCacheGetTable(tableToken);
+            if (engine.isTableDropped(tableToken)) {
+                Assert.assertNull(cairoTable);
+            } else {
+                Assert.assertNotNull(cairoTable);
+            }
+        }
+    }
+
     @Test
     public void testAlterTableAddColumn() throws Exception {
         assertMemoryLeak(() -> {
@@ -92,7 +180,6 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
 
             ddl("ALTER TABLE y ADD COLUMN bah SYMBOL");
             drainWalQueue();
-
 
             TestUtils.assertEquals("MetadataCache [tableCount=1]\n" +
                             "\tCairoTable [name=y, id=1, directoryName=y~1, isDedup=false, isSoftLink=false, metadataVersion=2, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=DAY, timestampIndex=0, timestampName=ts, walEnabled=true, columnCount=3]\n" +
@@ -369,11 +456,6 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
         });
     }
 
-
-    // todo: ALTER TABLE SET TYPE
-    // more complicated since it requires a database restart
-    // maybe fuzzer is best place to check this
-
     @Test
     public void testDropTable() throws Exception {
         assertMemoryLeak(() -> {
@@ -440,6 +522,21 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
         });
     }
 
+    private String createTableColumnsList(char[] table_names, String[] type_names) {
+        assert table_names.length == type_names.length;
+
+        String result = "";
+        for (int i = 0; i < table_names.length; i++) {
+            result += table_names[i];
+            result += ' ';
+            result += type_names[i];
+            if (i + 1 < table_names.length) {
+                result += ',';
+            }
+        }
+        return result;
+    }
+
     private void createX() throws SqlException {
         ddl(
                 "create table x as (" +
@@ -464,6 +561,11 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
                         ") timestamp (timestamp);"
         );
     }
+
+
+    // todo: ALTER TABLE SET TYPE
+    // more complicated since it requires a database restart
+    // maybe fuzzer is best place to check this
 
     private void createY() throws SqlException {
         ddl("create table y ( ts timestamp ) timestamp(ts) partition by day wal;");
@@ -492,6 +594,40 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
                         " from long_sequence(10)" +
                         ") timestamp (timestamp) partition by day wal;"
         );
+    }
+
+    private void fuzzConcurrentCreatesAndDropsCreatorThread(AtomicInteger counter) throws SqlException, InterruptedException {
+        String createDdl = "CREATE TABLE IF NOT EXISTS foo ( ts TIMESTAMP, x INT, y DOUBLE, z SYMBOL );";
+
+        while (true) {
+            ddl(createDdl);
+            counter.incrementAndGet();
+            Thread.sleep(50);
+        }
+    }
+
+    private void fuzzConcurrentCreatesAndDropsDropperThread(AtomicInteger counter) throws SqlException, InterruptedException {
+        String dropDdl = "DROP TABLE IF EXISTS foo;";
+
+        while (true) {
+            drop(dropDdl);
+            counter.incrementAndGet();
+            Thread.sleep(50);
+        }
+    }
+
+    private char genAlpha() {
+        char c = '\0';
+
+        while ((int) c < 97 && (int) c > 122) {
+            c = sqlExecutionContext.getRandom().nextChar();
+        }
+
+        return c;
+    }
+
+    private int genInt(int max) {
+        return sqlExecutionContext.getRandom().nextInt(max);
     }
 
 }
