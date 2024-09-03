@@ -420,6 +420,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getRootContext();
         metrics = node1.getMetrics();
         engine = node1.getEngine();
+        engine.metadataCacheClear();
         messageBus = node1.getMessageBus();
 
         node1.initGriffin(circuitBreaker);

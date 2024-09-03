@@ -42,6 +42,7 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.*;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
@@ -920,6 +921,9 @@ public class CairoEngine implements Closeable, WriterSource {
 
     /**
      * Gets the current table metadata object from the list.
+     * <p>
+     * Returns a table if present.
+     * Returns null if table not present or could not be re-hydrated after a metadata change.
      *
      * @param tableToken A current table token for the table.
      * @return The cached table metadata.
@@ -957,7 +961,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Uses thread-local Path/ColumnVersionReader objects.
+     * Hydrates metadata cache for a table, using thread-local Path/ColumnVersionReader objects.
      *
      * @param token
      * @param blindUpsert
@@ -1005,6 +1009,7 @@ public class CairoEngine implements Closeable, WriterSource {
         path.concat(TableUtils.META_FILE_NAME)
                 .trimTo(path.size());
 
+        // create table to work with
         CairoTable table = new CairoTable(token);
 
         try (path; MemoryCMR metaMem = Vm.getCMRInstance()) {
@@ -1012,8 +1017,6 @@ public class CairoEngine implements Closeable, WriterSource {
             // open metadata
             metaMem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.NATIVE_METADATA_READER);
             TableUtils.validateMeta(metaMem, null, ColumnType.VERSION);
-
-            // create table to work with
 
             table.setMetadataVersion(Long.MIN_VALUE);
 
@@ -1094,17 +1097,17 @@ public class CairoEngine implements Closeable, WriterSource {
                     if (ColumnType.isSymbol(columnType)) {
                         LOG.debug().$("hydrating symbol metadata [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
 
+
                         // get column version
                         path.trimTo(configuration.getRoot().length())
                                 .concat(table.getDirectoryName())
                                 .concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+                       
                         columnVersionReader.ofRO(configuration.getFilesFacade(),
                                 path.$());
 
-
                         columnVersionReader.readUnsafe();
                         final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
-                        columnVersionReader.close();
 
                         // use txn to find correct symbol entry
                         final LPSZ offsetFileName = TableUtils.offsetFileName(
@@ -1113,16 +1116,18 @@ public class CairoEngine implements Closeable, WriterSource {
 
                         // initialise symbol map memory
                         MemoryCMR offsetMem = Vm.getCMRInstance();
-                        final long offsetMemSize = SymbolMapWriter.keyToOffset(0) + Long.BYTES;
-                        offsetMem.of(configuration.getFilesFacade(), offsetFileName, offsetMemSize, offsetMemSize, MemoryTag.NATIVE_METADATA_READER);
+                        try {
+                            final long offsetMemSize = SymbolMapWriter.keyToOffset(0) + Long.BYTES;
+                            offsetMem.of(configuration.getFilesFacade(), offsetFileName, offsetMemSize, offsetMemSize, MemoryTag.NATIVE_METADATA_READER);
 
-                        // get symbol properties
-                        column.setSymbolCapacity(offsetMem.getInt(SymbolMapWriter.HEADER_CAPACITY));
-                        assert column.getSymbolCapacity() > 0;
+                            // get symbol properties
+                            column.setSymbolCapacity(offsetMem.getInt(SymbolMapWriter.HEADER_CAPACITY));
+                            assert column.getSymbolCapacity() > 0;
 
-                        column.setSymbolCached(offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED));
-
-                        offsetMem.close();
+                            column.setSymbolCached(offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED));
+                        } finally {
+                            offsetMem.close();
+                        }
                     }
                 }
             }
@@ -1137,8 +1142,13 @@ public class CairoEngine implements Closeable, WriterSource {
                 LOG.info().$("hydrated metadata [table=").$(table.getName()).I$();
             }
         } catch (CairoException e) {
-            // todo: distinguish errors to decide if error vs info log
-            LOG.info().$("Could not hydrate metadata [table=").$(table.getName()).I$();
+            metadataCacheRemoveTable(token); // get rid of stale metadata
+            // if can't hydrate and table is not dropped, it's a critical error
+            LogRecord root = this.isTableDropped(token) ? LOG.info() : LOG.critical();
+            root.$("could not hydrate metadata [table=").$(table.getName()).I$();
+        } finally {
+            columnVersionReader.close();
+            path.close();
         }
     }
 
