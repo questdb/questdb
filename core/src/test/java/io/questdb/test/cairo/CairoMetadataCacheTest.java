@@ -77,32 +77,6 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
             "\t\tCairoColumn [name=m, position=14, type=BINARY, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=14, writerIndex=14]\n" +
             "\t\tCairoColumn [name=n, position=15, type=STRING, isDedupKey=false, isDesignated=false, isSequential=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, stableIndex=15, writerIndex=15]\n";
 
-//    @Test
-//    public void fuzzConcurrentCreatesDropsAndSchemaAlterations() throws SqlException {
-//        String[] types = {"INT", "LONG", "STRING", "VARCHAR", "SYMBOL"};
-//        String[] names = {"a", "b", "c", "d", "e"};
-//
-//        char[] table_names = {'\0', '\0', '\0'};
-//        String[] type_names = {"INT", "INT", "INT"};
-//
-//
-//        for (int i = 0; i < 100; i++) {
-//            String ddl = "CREATE TABLE foo (";
-//
-//            for (int j = 0; j < 3; j++) {
-//                table_names[j] = genAlpha();
-//                type_names[j] = types[genInt(types.length)];
-//            }
-//
-//            ddl += createTableColumnsList(table_names, type_names);
-//            ddl += ") PARTITION BY DAY WAL;";
-//
-//            ddl(ddl);
-//
-//
-//        }
-//
-//    }
 
     @Test
     public void fuzzConcurrentCreatesAndDrops() throws InterruptedException {
@@ -138,6 +112,9 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
 
         creatingThread.interrupt();
         droppingThread.interrupt();
+
+        creatingThread.join();
+        droppingThread.join();
 
         int creatorCounter = creatorInteger.get();
         int dropperCounter = dropperInteger.get();
