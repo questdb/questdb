@@ -132,7 +132,6 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
         private Iterator<CairoTable> cairoTablesIterator;
         private int columnCount;
         private int columnIndex = 0;
-        private CairoColumn nextColumn;
         private CairoTable nextTable;
         private int tableId = 1000;
 
@@ -155,7 +154,6 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
         public boolean hasNext() {
             if (columnIndex == columnCount) {
                 nextTable = null;
-                nextColumn = null;
                 columnIndex = 0;
             }
 
@@ -168,9 +166,8 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
             }
 
             if (nextTable != null) {
-
                 if (columnIndex < columnCount) {
-                    nextColumn = nextTable.columns.getQuick(columnIndex);
+                    final CairoColumn nextColumn = nextTable.columns.getQuick(columnIndex);
                     final int type = PGOids.getTypeOid(nextColumn.getType());
                     diskReadingRecord.intValues[N_ATTTYPID_COL] = type;
                     diskReadingRecord.name = nextColumn.getName();
