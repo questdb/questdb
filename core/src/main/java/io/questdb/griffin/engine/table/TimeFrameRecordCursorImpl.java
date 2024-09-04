@@ -39,8 +39,8 @@ public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     private final PageFrameMemoryPool frameMemoryPool;
     private final IntList framePartitionIndexes = new IntList();
     private final LongList frameRowCounts = new LongList();
-    private final PageFrameMemoryRecord recordA = new PageFrameMemoryRecord();
-    private final PageFrameMemoryRecord recordB = new PageFrameMemoryRecord();
+    private final PageFrameMemoryRecord recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+    private final PageFrameMemoryRecord recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
     private final TableReaderTimeFrame timeFrame = new TableReaderTimeFrame();
     private final int timestampIndex;
     private int frameCount = 0;

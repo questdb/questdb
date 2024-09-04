@@ -65,7 +65,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     public AsyncFilteredRecordCursor(Function filter, int scanDirection) {
         this.filter = filter;
         this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
-        record = new PageFrameMemoryRecord();
+        record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
         frameMemoryPool = new PageFrameMemoryPool();
     }
 
@@ -159,7 +159,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         if (recordB != null) {
             return recordB;
         }
-        recordB = new PageFrameMemoryRecord(record);
+        recordB = new PageFrameMemoryRecord(record, PageFrameMemoryRecord.RECORD_B_LETTER);
         return recordB;
     }
 

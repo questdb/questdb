@@ -72,7 +72,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
     private DirectLongList rows;
 
     public AsyncFilteredNegativeLimitRecordCursor(int scanDirection) {
-        this.record = new PageFrameMemoryRecord();
+        this.record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
         this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
         this.frameMemoryPool = new PageFrameMemoryPool();
     }
@@ -107,7 +107,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements RecordCursor {
         if (recordB != null) {
             return recordB;
         }
-        recordB = new PageFrameMemoryRecord(record);
+        recordB = new PageFrameMemoryRecord(record, PageFrameMemoryRecord.RECORD_B_LETTER);
         return recordB;
     }
 

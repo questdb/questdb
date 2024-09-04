@@ -44,8 +44,8 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
             @NotNull CairoConfiguration configuration,
             @NotNull @Transient RecordMetadata metadata
     ) {
-        recordA = new PageFrameMemoryRecord();
-        recordB = new PageFrameMemoryRecord();
+        recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+        recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
         frameAddressCache = new PageFrameAddressCache(configuration);
         frameAddressCache.of(metadata);
         frameMemoryPool = new PageFrameMemoryPool();

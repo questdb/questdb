@@ -38,13 +38,17 @@ import org.jetbrains.annotations.Nullable;
 import java.io.Closeable;
 
 /**
- * Must be initialized with a {@link #init(PageFrameMemory)} call
- * for a given page frame before any use.
+ * Must be initialized with a {@link PageFrameMemoryPool#navigateTo(int, PageFrameMemoryRecord)}
+ * or {@link #init(PageFrameMemory)} call for a given page frame before any use.
  */
 public class PageFrameMemoryRecord implements Record, StableStringSource, Closeable {
+    // Letters are used to track usage in PageFrameMemoryPool
+    public static final byte RECORD_A_LETTER = 0;
+    public static final byte RECORD_B_LETTER = 1;
     private final ObjList<MemoryCR.ByteSequenceView> bsViews = new ObjList<>();
     private final ObjList<DirectString> csViewsA = new ObjList<>();
     private final ObjList<DirectString> csViewsB = new ObjList<>();
+    private final byte letter; // 0 means A, 1 means B
     private final ObjList<Long256Impl> longs256A = new ObjList<>();
     private final ObjList<Long256Impl> longs256B = new ObjList<>();
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
@@ -61,10 +65,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
     private boolean stableStrings;
     private SymbolTableSource symbolTableSource;
 
-    public PageFrameMemoryRecord() {
+    public PageFrameMemoryRecord(byte letter) {
+        this.letter = letter;
     }
 
-    public PageFrameMemoryRecord(PageFrameMemoryRecord other) {
+    public PageFrameMemoryRecord(PageFrameMemoryRecord other, byte letter) {
         this.symbolTableSource = other.symbolTableSource;
         this.rowIndex = other.rowIndex;
         this.frameIndex = other.frameIndex;
@@ -75,6 +80,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
         this.pageSizes = other.pageSizes;
         this.auxPageSizes = other.auxPageSizes;
         this.stableStrings = other.stableStrings;
+        this.letter = letter;
     }
 
     @Override
@@ -210,6 +216,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
             return Unsafe.getUnsafe().getInt(address + (rowIndex << 2));
         }
         return NullMemoryCMR.INSTANCE.getInt(0);
+    }
+
+    // 0 means A, 1 means B
+    public byte getLetter() {
+        return letter;
     }
 
     @Override
@@ -358,6 +369,9 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
         return TableUtils.NULL_LEN; // Column top.
     }
 
+    // Note: this method doesn't break caching in PageFrameMemoryPool
+    // as this method assumes that the record can't be used once
+    // the frame memory is switched to another frame.
     public void init(PageFrameMemory frameMemory) {
         this.frameIndex = frameMemory.getFrameIndex();
         this.frameFormat = frameMemory.getFrameFormat();

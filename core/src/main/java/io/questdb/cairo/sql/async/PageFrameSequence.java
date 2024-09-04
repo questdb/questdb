@@ -540,7 +540,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private void initRecord(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
         if (localRecord == null) {
             final SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration = executionContextCircuitBreaker.getConfiguration();
-            localRecord = new PageFrameMemoryRecord();
+            localRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
             if (sqlExecutionCircuitBreakerConfiguration != null) {
                 circuitBreaker = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration, MemoryTag.NATIVE_CB2);
             } else if (executionContextCircuitBreaker instanceof AtomicBooleanCircuitBreaker) {

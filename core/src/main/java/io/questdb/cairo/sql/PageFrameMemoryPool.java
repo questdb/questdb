@@ -24,10 +24,12 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.Reopenable;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.std.*;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * Provides addresses for page frames in both native and Parquet formats.
@@ -40,20 +42,31 @@ import io.questdb.std.*;
  * This pool is thread-unsafe as it may hold navigated Parquet partition data,
  * so it shouldn't be shared between multiple threads.
  */
-// TODO(puzpuzpuz): add LRU cache for multiple frames
 public class PageFrameMemoryPool implements QuietCloseable {
+    private static final byte FRAME_MEMORY_MASK = 1 << 2;
+    private static final byte RECORD_A_MASK = 1;
+    private static final byte RECORD_B_MASK = 1 << 1;
+    // LRU cache (most recently used buffers are to the right)
+    private final ObjList<ParquetBuffers> cachedParquetBuffers;
     private final PageFrameMemoryImpl frameMemory;
-    // TODO(puzpuzpuz): this won't do for record A/B
-    private final ParquetBuffers parquetBuffers;
+    private final ObjList<ParquetBuffers> freeParquetBuffers;
+    private final int parquetCacheSize;
     private final DirectIntList parquetColumnTypes;
     private final PartitionDecoder parquetDecoder;
     private PageFrameAddressCache addressCache;
 
     public PageFrameMemoryPool() {
+        // TODO(puzpuzpuz): move to config
+        final int cacheSize = 3;
         try {
+            parquetCacheSize = cacheSize;
+            cachedParquetBuffers = new ObjList<>(parquetCacheSize);
+            freeParquetBuffers = new ObjList<>(parquetCacheSize);
+            for (int i = 0; i < parquetCacheSize; i++) {
+                freeParquetBuffers.add(new ParquetBuffers());
+            }
             frameMemory = new PageFrameMemoryImpl();
             parquetDecoder = new PartitionDecoder();
-            parquetBuffers = new ParquetBuffers();
             parquetColumnTypes = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
         } catch (Throwable th) {
             close();
@@ -64,8 +77,10 @@ public class PageFrameMemoryPool implements QuietCloseable {
     @Override
     public void close() {
         Misc.free(parquetDecoder);
-        Misc.free(parquetBuffers);
         Misc.free(parquetColumnTypes);
+        freeParquetBuffers.addAll(cachedParquetBuffers);
+        cachedParquetBuffers.clear();
+        Misc.freeObjListAndKeepObjects(freeParquetBuffers);
         frameMemory.clear();
         addressCache = null;
     }
@@ -93,6 +108,8 @@ public class PageFrameMemoryPool implements QuietCloseable {
             );
         } else if (format == PartitionFormat.PARQUET) {
             parquetDecoder.of(addressCache.getParquetFd(frameIndex));
+            final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
+            final ParquetBuffers parquetBuffers = findBuffers(frameIndex, usageBit);
             parquetBuffers.decode(parquetDecoder, parquetColumnTypes, addressCache.getParquetRowGroup(frameIndex));
 
             record.init(
@@ -129,6 +146,7 @@ public class PageFrameMemoryPool implements QuietCloseable {
             frameMemory.auxPageSizes = addressCache.getAuxPageSizes(frameIndex);
         } else if (format == PartitionFormat.PARQUET) {
             parquetDecoder.of(addressCache.getParquetFd(frameIndex));
+            final ParquetBuffers parquetBuffers = findBuffers(frameIndex, FRAME_MEMORY_MASK);
             parquetBuffers.decode(parquetDecoder, parquetColumnTypes, addressCache.getParquetRowGroup(frameIndex));
 
             frameMemory.pageAddresses = parquetBuffers.pageAddresses;
@@ -145,20 +163,75 @@ public class PageFrameMemoryPool implements QuietCloseable {
     public void of(PageFrameAddressCache addressCache) {
         this.addressCache = addressCache;
         frameMemory.clear();
-        parquetBuffers.reopen();
         parquetColumnTypes.reopen();
         addressCache.copyColumnTypes(parquetColumnTypes);
+        for (int i = 0, n = freeParquetBuffers.size(); i < n; i++) {
+            freeParquetBuffers.getQuick(i).reopen();
+        }
     }
 
-    private static class ParquetBuffers implements QuietCloseable, Reopenable, Mutable {
+    // We don't use additional data structures to speed up the lookups
+    // such as <frame_index, buffers> hash table. That's because we don't
+    // expect the cache size to be large.
+    @NotNull
+    private ParquetBuffers findBuffers(int frameIndex, byte usageBit) {
+        // First, clear the usage bit.
+        for (int i = 0, n = cachedParquetBuffers.size(); i < n; i++) {
+            ParquetBuffers buffers = cachedParquetBuffers.getQuick(i);
+            buffers.usageFlags &= (byte) ~usageBit;
+        }
+        // Next, check if the frame is already in the cache.
+        final int cached = cachedParquetBuffers.size();
+        for (int i = 0; i < cached; i++) {
+            ParquetBuffers buffers = cachedParquetBuffers.getQuick(i);
+            if (buffers.frameIndex == frameIndex) {
+                buffers.usageFlags |= usageBit;
+                // Preserve LRU order.
+                cachedParquetBuffers.setQuick(i, cachedParquetBuffers.getQuick(cached - 1));
+                cachedParquetBuffers.setQuick(cached - 1, buffers);
+                return buffers;
+            }
+        }
+        // Check free buffers.
+        final int free = freeParquetBuffers.size();
+        if (free > 0) {
+            ParquetBuffers buffers = freeParquetBuffers.getQuick(free - 1);
+            freeParquetBuffers.remove(free - 1);
+            buffers.frameIndex = frameIndex;
+            buffers.usageFlags = usageBit;
+            cachedParquetBuffers.add(buffers);
+            return buffers;
+        }
+        // Finally, try to find an unused buffer in the cache.
+        for (int i = 0; i < cached; i++) {
+            ParquetBuffers buffers = cachedParquetBuffers.getQuick(i);
+            if (buffers.usageFlags == 0) {
+                buffers.frameIndex = frameIndex;
+                buffers.usageFlags = usageBit;
+                // Preserve LRU order.
+                cachedParquetBuffers.setQuick(i, cachedParquetBuffers.getQuick(cached - 1));
+                cachedParquetBuffers.setQuick(cached - 1, buffers);
+                return buffers;
+            }
+        }
+        // Give up.
+        throw CairoException.critical(0)
+                .put("insufficient memory pool size [size=").put(parquetCacheSize)
+                .put(", usageBit=").put(usageBit)
+                .put(']');
+    }
+
+    private static class ParquetBuffers implements QuietCloseable, Reopenable {
         private final LongList auxPageAddresses = new LongList();
         private final LongList auxPageSizes = new LongList();
         private final LongList pageAddresses = new LongList();
         private final LongList pageSizes = new LongList();
         private final RowGroupBuffers rowGroupBuffers = new RowGroupBuffers();
+        private int frameIndex = -1;
+        // Contains bits FRAME_MEMORY_MASK, RECORD_A_MASK and RECORD_B_MASK.
+        private byte usageFlags;
 
-        @Override
-        public void clear() {
+        public void clearAddresses() {
             pageAddresses.clear();
             pageSizes.clear();
             auxPageAddresses.clear();
@@ -168,13 +241,15 @@ public class PageFrameMemoryPool implements QuietCloseable {
         @Override
         public void close() {
             Misc.free(rowGroupBuffers);
-            clear();
+            clearAddresses();
+            usageFlags = 0;
+            frameIndex = -1;
         }
 
         public void decode(PartitionDecoder parquetDecoder, DirectIntList parquetColumnTypes, int rowGroup) {
             parquetDecoder.decodeRowGroup(rowGroupBuffers, parquetColumnTypes, rowGroup);
             // TODO(puzpuzpuz): we need to map Parquet columns to what's required by the query
-            clear();
+            clearAddresses();
             for (int i = 0, n = parquetDecoder.getMetadata().columnCount(); i < n; i++) {
                 pageAddresses.add(rowGroupBuffers.getChunkDataPtr(i));
                 pageSizes.add(rowGroupBuffers.getChunkDataSize(i));
