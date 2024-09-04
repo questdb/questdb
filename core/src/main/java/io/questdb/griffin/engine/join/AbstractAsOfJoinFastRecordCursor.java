@@ -184,7 +184,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
     protected void nextSlave(long masterTimestamp) {
         final TimeFrame frame = slaveCursor.getTimeFrame();
         while (true) {
-            if (frame.isOpen() && frame.getIndex() == slaveFrameIndex) {
+            if (frame.isOpen() && frame.getFrameIndex() == slaveFrameIndex) {
                 // Scan a few rows to speed up self-join/identical tables cases.
                 if (linearScan(frame, masterTimestamp)) {
                     return;
@@ -237,11 +237,11 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
                         continue;
                     }
                     // The frame is what we need, so we can search through its rows.
-                    slaveFrameIndex = frame.getIndex();
+                    slaveFrameIndex = frame.getFrameIndex();
                     slaveFrameRow = masterTimestamp < frame.getTimestampHi() - 1 ? frame.getRowLo() : frame.getRowHi() - 1;
                 } else {
                     // We were scanning backwards, so position to the last row.
-                    slaveFrameIndex = frame.getIndex();
+                    slaveFrameIndex = frame.getFrameIndex();
                     slaveFrameRow = frame.getRowHi() - 1;
                     isSlaveForwardScan = true;
                 }
@@ -260,7 +260,7 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
                     isSlaveOpenPending = true;
                 }
             } else {
-                if (!slaveCursor.prev() || slaveFrameIndex == frame.getIndex()) {
+                if (!slaveCursor.prev() || slaveFrameIndex == frame.getFrameIndex()) {
                     // We've reached the first frame or an already opened frame. The scan is over.
                     isSlaveForwardScan = true;
                     return false;

@@ -182,14 +182,14 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             TimeFrame timeFrame = slaveCursor.getTimeFrame();
             int slaveFrameIndex = ((PageFrameMemoryRecord) slaveRecB).getFrameIndex();
             origSlaveFrameIndex = slaveFrameIndex;
-            int cursorFrameIndex = timeFrame.getIndex();
+            int cursorFrameIndex = timeFrame.getFrameIndex();
             slaveCursor.jumpTo(slaveFrameIndex);
             slaveCursor.open();
 
             long rowLo = timeFrame.getRowLo();
             long keyedRowId = ((PageFrameMemoryRecord) slaveRecB).getRowIndex();
             origSlaveRowId = keyedRowId;
-            int keyedFrameIndex = timeFrame.getIndex();
+            int keyedFrameIndex = timeFrame.getFrameIndex();
             for (; ; ) {
                 slaveSinkTarget.clear();
                 slaveKeySink.copy(slaveRecB, slaveSinkTarget);
@@ -210,7 +210,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                     }
                     slaveCursor.open();
 
-                    keyedFrameIndex = timeFrame.getIndex();
+                    keyedFrameIndex = timeFrame.getFrameIndex();
                     keyedRowId = timeFrame.getRowHi() - 1;
                     rowLo = timeFrame.getRowLo();
                 }
@@ -220,7 +220,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
             // rewind the slave cursor to the original position so the next call to `nextSlave()` will not be affected
             slaveCursor.jumpTo(cursorFrameIndex);
-            assert slaveFrameIndex == timeFrame.getIndex();
+            assert slaveFrameIndex == timeFrame.getFrameIndex();
             slaveCursor.open();
             return true;
         }

@@ -237,7 +237,7 @@ public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
         }
 
         @Override
-        public int getIndex() {
+        public int getFrameIndex() {
             return frameIndex;
         }
 
