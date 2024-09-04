@@ -23,8 +23,10 @@
  ******************************************************************************/
 
 package io.questdb.griffin.engine.table.parquet;
-import io.questdb.std.*;
+
 import io.questdb.cairo.SymbolMapWriter;
+import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
 
 public class MappedMemoryPartitionDescriptor extends BorrowedMemoryPartitionDescriptor {
     @Override

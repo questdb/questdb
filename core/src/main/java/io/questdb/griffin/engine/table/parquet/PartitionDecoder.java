@@ -42,6 +42,13 @@ public class PartitionDecoder implements QuietCloseable {
     private static final long CHUNK_AUX_PTR_OFFSET;
     private static final long CHUNK_DATA_PTR_OFFSET;
     private static final long CHUNK_ROW_GROUP_COUNT_PTR_OFFSET;
+    private static final long CHUNK_STATS_DISTINCT_COUNT_OFFSET;
+    private static final long CHUNK_STATS_FILE_OFFSET_OFFSET;
+    private static final long CHUNK_STATS_MAX_VALUE_PTR_OFFSET;
+    private static final long CHUNK_STATS_MAX_VALUE_SIZE_OFFSET;
+    private static final long CHUNK_STATS_MIN_VALUE_PTR_OFFSET;
+    private static final long CHUNK_STATS_MIN_VALUE_SIZE_OFFSET;
+    private static final long CHUNK_STATS_NULL_COUNT_OFFSET;
     private static final long COLUMNS_PTR_OFFSET;
     private static final long COLUMN_COUNT_OFFSET;
     private final static long COLUMN_IDS_OFFSET;
@@ -52,15 +59,6 @@ public class PartitionDecoder implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(PartitionDecoder.class);
     private static final long ROW_COUNT_OFFSET;
     private static final long ROW_GROUP_COUNT_OFFSET;
-
-    private static final long CHUNK_STATS_FILE_OFFSET_OFFSET;
-    private static final long CHUNK_STATS_NULL_COUNT_OFFSET;
-    private static final long CHUNK_STATS_DISTINCT_COUNT_OFFSET;
-    private static final long CHUNK_STATS_MAX_VALUE_PTR_OFFSET;
-    private static final long CHUNK_STATS_MAX_VALUE_SIZE_OFFSET;
-    private static final long CHUNK_STATS_MIN_VALUE_PTR_OFFSET;
-    private static final long CHUNK_STATS_MIN_VALUE_SIZE_OFFSET;
-
     private final ObjectPool<DirectString> directStringPool = new ObjectPool<>(DirectString::new, 16);
     private final FilesFacade ff;
     private final Metadata metadata = new Metadata();
@@ -78,6 +76,34 @@ public class PartitionDecoder implements QuietCloseable {
 
     public static long getChunkDataPtr(long chunkPtr) {
         return Unsafe.getUnsafe().getLong(chunkPtr + CHUNK_DATA_PTR_OFFSET);
+    }
+
+    public static long getChunkStatsDistinctCount(long chunkStatsPtr) {
+        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_DISTINCT_COUNT_OFFSET);
+    }
+
+    public static long getChunkStatsFileOffset(long chunkStatsPtr) {
+        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_FILE_OFFSET_OFFSET);
+    }
+
+    public static long getChunkStatsMaxValuePtr(long chunkStatsPtr) {
+        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_MAX_VALUE_PTR_OFFSET);
+    }
+
+    public static long getChunkStatsMaxValueSize(long chunkStatsPtr) {
+        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_MAX_VALUE_SIZE_OFFSET);
+    }
+
+    public static long getChunkStatsMinValuePtr(long chunkStatsPtr) {
+        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_MIN_VALUE_PTR_OFFSET);
+    }
+
+    public static long getChunkStatsMinValueSize(long chunkStatsPtr) {
+        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_MIN_VALUE_SIZE_OFFSET);
+    }
+
+    public static long getChunkStatsNullCount(long chunkStatsPtr) {
+        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_NULL_COUNT_OFFSET);
     }
 
     public static long getRowGroupRowCount(long chunkPtr) {
@@ -115,6 +141,24 @@ public class PartitionDecoder implements QuietCloseable {
         }
     }
 
+    public long getColumnChunkMaxTimestamp(long rowGroup, long timestampIndex) {
+        final long chunkStatsPtr = getColumnChunkStats(rowGroup, timestampIndex);
+        final long size = getChunkStatsMaxValueSize(chunkStatsPtr);
+        assert size == Long.BYTES;
+        final long ptr = getChunkStatsMaxValuePtr(chunkStatsPtr);
+        assert ptr != 0;
+        return Unsafe.getUnsafe().getLong(ptr);
+    }
+
+    public long getColumnChunkMinTimestamp(long rowGroup, long timestampIndex) {
+        final long chunkStatsPtr = getColumnChunkStats(rowGroup, timestampIndex);
+        final long size = getChunkStatsMinValueSize(chunkStatsPtr);
+        assert size == Long.BYTES;
+        final long ptr = getChunkStatsMinValuePtr(chunkStatsPtr);
+        assert ptr != 0;
+        return Unsafe.getUnsafe().getLong(ptr);
+    }
+
     public long getColumnChunkStats(long rowGroup, long columnId) {
         assert ptr != 0;
         try {
@@ -132,52 +176,6 @@ public class PartitionDecoder implements QuietCloseable {
 
             throw CairoException.nonCritical().put(th.getMessage());
         }
-    }
-
-    public long getColumnChunkMinTimestamp(long rowGroup, long timestampIndex) {
-        final long chunkStatsPtr = getColumnChunkStats(rowGroup, timestampIndex);
-        final long size = getChunkStatsMinValueSize(chunkStatsPtr);
-        assert size == Long.BYTES;
-        final long ptr = getChunkStatsMinValuePtr(chunkStatsPtr);
-        assert ptr != 0;
-        return Unsafe.getUnsafe().getLong(ptr);
-    }
-
-    public long getColumnChunkMaxTimestamp(long rowGroup, long timestampIndex) {
-        final long chunkStatsPtr = getColumnChunkStats(rowGroup, timestampIndex);
-        final long size = getChunkStatsMaxValueSize(chunkStatsPtr);
-        assert size == Long.BYTES;
-        final long ptr = getChunkStatsMaxValuePtr(chunkStatsPtr);
-        assert ptr != 0;
-        return Unsafe.getUnsafe().getLong(ptr);
-    }
-
-    public static long getChunkStatsFileOffset(long chunkStatsPtr) {
-        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_FILE_OFFSET_OFFSET);
-    }
-
-    public static long getChunkStatsNullCount(long chunkStatsPtr) {
-        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_NULL_COUNT_OFFSET);
-    }
-
-    public static long getChunkStatsDistinctCount(long chunkStatsPtr) {
-        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_DISTINCT_COUNT_OFFSET);
-    }
-
-    public static long getChunkStatsMaxValuePtr(long chunkStatsPtr) {
-        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_MAX_VALUE_PTR_OFFSET);
-    }
-
-    public static long getChunkStatsMaxValueSize(long chunkStatsPtr) {
-        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_MAX_VALUE_SIZE_OFFSET);
-    }
-
-    public static long getChunkStatsMinValuePtr(long chunkStatsPtr) {
-        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_MIN_VALUE_PTR_OFFSET);
-    }
-
-    public static long getChunkStatsMinValueSize(long chunkStatsPtr) {
-        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_MIN_VALUE_SIZE_OFFSET);
     }
 
     public Metadata getMetadata() {
@@ -204,6 +202,20 @@ public class PartitionDecoder implements QuietCloseable {
     private static native long chunkDataPtrOffset();
 
     private static native long chunkRowGroupCountPtrOffset();
+
+    private static native long chunkStatDistinctCountOffset();
+
+    private static native long chunkStatFileOffsetOffset();
+
+    private static native long chunkStatMaxValuePtrOffset();
+
+    private static native long chunkStatMaxValueSizeOffset();
+
+    private static native long chunkStatMinValuePtrOffset();
+
+    private static native long chunkStatMinValueSizeOffset();
+
+    private static native long chunkStatNullCountOffset();
 
     private static native long columnCountOffset();
 
@@ -232,18 +244,11 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native void destroy(long impl);
 
+    private static native long getColumnChunkStats(long decoderPtr, long rowGroup, long columnId);
+
     private static native long rowCountOffset();
 
     private static native long rowGroupCountOffset();
-
-    private static native long getColumnChunkStats(long decoderPtr, long rowGroup, long columnId);
-    private static native long chunkStatFileOffsetOffset();
-    private static native long chunkStatNullCountOffset();
-    private static native long chunkStatDistinctCountOffset();
-    private static native long chunkStatMaxValuePtrOffset();
-    private static native long chunkStatMaxValueSizeOffset();
-    private static native long chunkStatMinValuePtrOffset();
-    private static native long chunkStatMinValueSizeOffset();
 
     private void destroy() {
         if (ptr != 0) {

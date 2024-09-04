@@ -173,6 +173,41 @@ public class PartitionEncoder {
         }
     }
 
+    public static void update(PartitionDescriptor descriptor, short rowGroupId, Path destPath) {
+        final int columnCount = descriptor.getColumnCount();
+        final long partitionSize = descriptor.getPartitionRowCount();
+        final int timestampIndex = descriptor.getTimestampIndex();
+        try {
+            updatePartition(
+                    rowGroupId,
+                    columnCount,
+                    descriptor.getColumnNamesPtr(),
+                    descriptor.getColumnNamesSize(),
+                    descriptor.getColumnNameLengthsPtr(),
+                    descriptor.getColumnTypesPtr(),
+                    descriptor.getColumnIdsPtr(),
+                    timestampIndex,
+                    descriptor.getColumnTopsPtr(),
+                    descriptor.getColumnAddressesPtr(),
+                    descriptor.getColumnSizesPtr(),
+                    descriptor.getColumnSecondaryAddressesPtr(),
+                    descriptor.getColumnSecondarySizesPtr(),
+                    descriptor.getSymbolOffsetsAddressesPtr(),
+                    descriptor.getSymbolOffsetsSizesPtr(),
+                    partitionSize,
+                    destPath.ptr(),
+                    destPath.size()
+            );
+        } catch (Throwable th) {
+            throw CairoException.critical(0).put("Could not update partition: [table=").put(descriptor.getTableName())
+                    .put(", exception=").put(th.getClass().getSimpleName())
+                    .put(", msg=").put(th.getMessage())
+                    .put(']');
+        } finally {
+            descriptor.clear();
+        }
+    }
+
     private static native void encodePartition(
             long tableNamePtr,
             int tableNameSize,
@@ -199,41 +234,6 @@ public class PartitionEncoder {
             long dataPageSize,
             int version
     );
-
-    public static void update(PartitionDescriptor descriptor, short rowGroupId, Path destPath) {
-        final int columnCount = descriptor.getColumnCount();
-        final long partitionSize = descriptor.getPartitionRowCount();
-        final int timestampIndex = descriptor.getTimestampIndex();
-        try {
-            updatePartition(
-                rowGroupId,
-                columnCount,
-                descriptor.getColumnNamesPtr(),
-                descriptor.getColumnNamesSize(),
-                descriptor.getColumnNameLengthsPtr(),
-                descriptor.getColumnTypesPtr(),
-                descriptor.getColumnIdsPtr(),
-                timestampIndex,
-                descriptor.getColumnTopsPtr(),
-                descriptor.getColumnAddressesPtr(),
-                descriptor.getColumnSizesPtr(),
-                descriptor.getColumnSecondaryAddressesPtr(),
-                descriptor.getColumnSecondarySizesPtr(),
-                descriptor.getSymbolOffsetsAddressesPtr(),
-                descriptor.getSymbolOffsetsSizesPtr(),
-                partitionSize,
-                destPath.ptr(),
-                destPath.size()
-            );
-        } catch (Throwable th) {
-            throw CairoException.critical(0).put("Could not update partition: [table=").put(descriptor.getTableName())
-                    .put(", exception=").put(th.getClass().getSimpleName())
-                    .put(", msg=").put(th.getMessage())
-                    .put(']');
-        } finally {
-            descriptor.clear();
-        }
-    }
 
     private static native void updatePartition(
             short rowGroupId,

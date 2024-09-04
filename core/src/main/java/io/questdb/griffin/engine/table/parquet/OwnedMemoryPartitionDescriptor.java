@@ -23,7 +23,9 @@
  ******************************************************************************/
 
 package io.questdb.griffin.engine.table.parquet;
-import io.questdb.std.*;
+
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 
 public class OwnedMemoryPartitionDescriptor extends BorrowedMemoryPartitionDescriptor {
 
