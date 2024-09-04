@@ -203,7 +203,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean getBool(int col) {
-                return col == 9;
+                return col == N_ATTHASDEF_COL;
             }
 
             @Override
