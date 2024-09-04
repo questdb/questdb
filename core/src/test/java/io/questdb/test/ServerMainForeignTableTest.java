@@ -344,23 +344,14 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 CairoEngine engine = qdb.getEngine();
                 TableToken tableToken = createPopulateTable(engine, compiler, context, tableName, true, true, false);
                 assertTableExists(tableToken, true, true);
-                long t = System.currentTimeMillis();
-                while (true) {
-                    try {
-                        assertSql(
-                                compiler,
-                                context,
-                                "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                                new StringSink(),
-                                TABLE_START_CONTENT
-                        );
-                        break;
-                    } catch (AssertionError e) {
-                        if (System.currentTimeMillis() - t > 5000) {
-                            throw e;
-                        }
-                    }
-                }
+                qdb.awaitTxn(tableName, 1);
+                assertSql(
+                        compiler,
+                        context,
+                        "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
+                        new StringSink(),
+                        TABLE_START_CONTENT
+                );
                 dropTable(compiler, context, tableToken);
             }
         });
