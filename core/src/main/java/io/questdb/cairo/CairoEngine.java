@@ -57,6 +57,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.lang.ThreadLocal;
+import java.util.Collection;
 import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.concurrent.TimeUnit;
@@ -935,6 +936,10 @@ public class CairoEngine implements Closeable, WriterSource {
             metadataCacheHydrateTable(tableToken, false, true);
         }
         return cairoTables.get(tableToken.getDirName());
+    }
+
+    public Collection<CairoTable> metadataCacheGetTableList() {
+        return cairoTables.values();
     }
 
     /**

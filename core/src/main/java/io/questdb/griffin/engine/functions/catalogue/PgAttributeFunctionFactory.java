@@ -34,9 +34,14 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+
+import java.util.Collection;
+import java.util.Iterator;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_SIZE_MAP;
 
@@ -76,7 +81,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
     ) {
         return new CursorFunction(
                 new AttributeCatalogueCursorFactory(
-                        configuration,
+                        sqlExecutionContext.getCairoEngine(),
                         METADATA
                 )
         ) {
@@ -93,9 +98,9 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
         private final MemoryMR metaMem = Vm.getCMRInstance();
         private final Path path = new Path();
 
-        public AttributeCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
+        public AttributeCatalogueCursorFactory(CairoEngine engine, RecordMetadata metadata) {
             super(metadata);
-            this.cursor = new AttributeClassCatalogueCursor(configuration, path, metaMem);
+            this.cursor = new AttributeClassCatalogueCursor(engine, path, metaMem);
         }
 
         @Override
@@ -122,31 +127,22 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
     }
 
     private static class AttributeClassCatalogueCursor implements NoRandomAccessRecordCursor {
+        private final Collection<CairoTable> cairoTables;
         private final DiskReadingRecord diskReadingRecord = new DiskReadingRecord();
-        private final FilesFacade ff;
-        private final MemoryMR metaMem;
-        private final Path path;
-        private final int plimit;
+        private Iterator<CairoTable> cairoTablesIterator;
         private int columnCount;
         private int columnIndex = 0;
-        private long findFileStruct = 0;
-        private boolean foundMetadataFile = false;
-        private boolean hasNextFile = true;
-        private boolean readNextFileFromDisk = true;
+        private CairoColumn nextColumn;
+        private CairoTable nextTable;
         private int tableId = 1000;
 
-        public AttributeClassCatalogueCursor(CairoConfiguration configuration, Path path, MemoryMR metaMem) {
-            this.ff = configuration.getFilesFacade();
-            this.path = path;
-            this.path.of(configuration.getRoot()).$();
-            this.plimit = path.size();
-            this.metaMem = metaMem;
+        public AttributeClassCatalogueCursor(CairoEngine engine, Path path, MemoryMR metaMem) {
+            this.cairoTables = engine.metadataCacheGetTableList();
         }
 
         @Override
         public void close() {
-            findFileStruct = ff.findClose(findFileStruct);
-            metaMem.close();
+
         }
 
         @Override
@@ -154,19 +150,39 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
             return diskReadingRecord;
         }
 
+
         @Override
         public boolean hasNext() {
-            if (findFileStruct == 0) {
-                findFileStruct = ff.findFirst(path.trimTo(plimit).$());
-                if (findFileStruct > 0) {
-                    return next0();
-                }
-
-                findFileStruct = 0;
-                return false;
+            if (columnIndex == columnCount) {
+                nextTable = null;
+                nextColumn = null;
+                columnIndex = 0;
             }
 
-            return next0();
+            if (nextTable == null) {
+                if (cairoTablesIterator.hasNext()) {
+                    nextTable = cairoTablesIterator.next();
+                    columnCount = (int) nextTable.getColumnCount();
+                    tableId = nextTable.getId();
+                }
+            }
+
+            if (nextTable != null) {
+
+                if (columnIndex < columnCount) {
+                    nextColumn = nextTable.columns.getQuick(columnIndex);
+                    final int type = PGOids.getTypeOid(nextColumn.getType());
+                    diskReadingRecord.intValues[N_ATTTYPID_COL] = type;
+                    diskReadingRecord.name = nextColumn.getName();
+                    diskReadingRecord.shortValues[N_ATTNUM_COL] = (short) (columnIndex + 1);
+                    diskReadingRecord.shortValues[N_ATTLEN_COL] = (short) PG_TYPE_TO_SIZE_MAP.get(type);
+                    diskReadingRecord.intValues[N_ATTRELID_COL] = tableId;
+                    columnIndex++;
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         @Override
@@ -176,56 +192,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
         @Override
         public void toTop() {
-            findFileStruct = ff.findClose(findFileStruct);
-        }
-
-        private boolean next0() {
-            do {
-                if (readNextFileFromDisk) {
-                    foundMetadataFile = false;
-                    final long pUtf8NameZ = ff.findName(findFileStruct);
-                    if (hasNextFile) {
-                        if (ff.isDirOrSoftLinkDirNoDots(path, plimit, pUtf8NameZ, ff.findType(findFileStruct))) {
-                            if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
-                                foundMetadataFile = true;
-                                metaMem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
-                                columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
-                                tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-                            }
-                        }
-                        hasNextFile = ff.findNext(findFileStruct) > 0;
-                    }
-                }
-
-                if (foundMetadataFile) {
-                    long offset = TableUtils.getColumnNameOffset(columnCount);
-                    for (int i = 0; i < columnCount; i++) {
-                        CharSequence name = metaMem.getStrA(offset);
-                        if (columnIndex == i) {
-                            int type = PGOids.getTypeOid(TableUtils.getColumnType(metaMem, i));
-                            diskReadingRecord.intValues[N_ATTTYPID_COL] = type;
-                            diskReadingRecord.name = name;
-                            diskReadingRecord.shortValues[N_ATTNUM_COL] = (short) (i + 1);
-                            diskReadingRecord.shortValues[N_ATTLEN_COL] = (short) PG_TYPE_TO_SIZE_MAP.get(type);
-                            diskReadingRecord.intValues[N_ATTRELID_COL] = tableId;
-                            columnIndex++;
-                            if (columnIndex == columnCount) {
-                                readNextFileFromDisk = true;
-                                columnIndex = 0;
-                            } else {
-                                readNextFileFromDisk = false;
-                            }
-                            return true;
-                        }
-                        offset += Vm.getStorageLength(name);
-                    }
-                }
-            } while (hasNextFile);
-
-            findFileStruct = ff.findClose(findFileStruct);
-            hasNextFile = true;
-            foundMetadataFile = false;
-            return false;
+            this.cairoTablesIterator = cairoTables.iterator();
         }
 
         static class DiskReadingRecord implements Record {
