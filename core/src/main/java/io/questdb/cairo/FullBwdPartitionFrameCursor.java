@@ -46,17 +46,7 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
     @Override
     public PartitionFrame next() {
         if (rowGroupIndex > -1) {
-            frame.partitionIndex = partitionIndex;
-            frame.partitionFormat = PartitionFormat.PARQUET;
-            frame.parquetFd = parquetDecoder.getFd();
-            frame.rowHi = rowGroupHi;
-            frame.rowLo = rowGroupHi - parquetDecoder.getMetadata().rowGroupSize(rowGroupIndex);
-            rowGroupHi = frame.rowLo;
-            if (--rowGroupIndex == -1) {
-                // Proceed to the next partition on the next call.
-                partitionIndex--;
-            }
-            return frame;
+            return prepareParquetFrame();
         }
 
         while (partitionIndex > -1) {
@@ -68,23 +58,13 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
                 final byte format = reader.getPartitionFormat(partitionIndex);
 
                 if (format == PartitionFormat.PARQUET) {
-                    parquetDecoder.of(reader.getParquetFd(partitionIndex));
-                    final PartitionDecoder.Metadata metadata = parquetDecoder.getMetadata();
-                    rowGroupCount = metadata.rowGroupCount();
+                    final long fd = reader.getParquetFd(partitionIndex);
+                    assert fd != -1;
+                    parquetDecoder.of(fd);
+                    rowGroupCount = parquetDecoder.getMetadata().rowGroupCount();
                     rowGroupIndex = rowGroupCount - 1;
                     rowGroupHi = hi;
-
-                    frame.partitionIndex = partitionIndex;
-                    frame.partitionFormat = PartitionFormat.PARQUET;
-                    frame.parquetFd = parquetDecoder.getFd();
-                    frame.rowHi = rowGroupHi;
-                    frame.rowLo = rowGroupHi - parquetDecoder.getMetadata().rowGroupSize(rowGroupIndex);
-                    rowGroupHi = frame.rowLo;
-                    if (--rowGroupIndex == -1) {
-                        // Proceed to the next partition on the next call.
-                        partitionIndex--;
-                    }
-                    return frame;
+                    return prepareParquetFrame();
                 }
 
                 frame.partitionIndex = partitionIndex;
@@ -111,5 +91,19 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
         rowGroupIndex = -1;
         rowGroupCount = 0;
         rowGroupHi = 0;
+    }
+
+    private FullTablePartitionFrame prepareParquetFrame() {
+        frame.partitionIndex = partitionIndex;
+        frame.partitionFormat = PartitionFormat.PARQUET;
+        frame.parquetFd = parquetDecoder.getFd();
+        frame.rowHi = rowGroupHi;
+        frame.rowLo = rowGroupHi - parquetDecoder.getMetadata().rowGroupSize(rowGroupIndex);
+        rowGroupHi = frame.rowLo;
+        if (--rowGroupIndex == -1) {
+            // Proceed to the next partition on the next call.
+            partitionIndex--;
+        }
+        return frame;
     }
 }
