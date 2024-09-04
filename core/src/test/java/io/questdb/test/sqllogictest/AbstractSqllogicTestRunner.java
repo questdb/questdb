@@ -58,60 +58,6 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
         this.testFile = testFile;
     }
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        AbstractBootstrapTest.setUpStatic();
-        try (Path key = new Path(); Path value = new Path()) {
-            key.of("DB_ROOT");
-            value.of(root);
-            Sqllogictest.setEnvVar(key.$().ptr(), value.$().ptr());
-
-            key.of("TEST_RESOURCE_ROOT");
-            value.of(getTestResourcePath());
-            Sqllogictest.setEnvVar(key.$().ptr(), value.$().ptr());
-        }
-    }
-
-    @AfterClass
-    public static void tearDownUpStatic() {
-        serverMain = Misc.free(serverMain);
-        AbstractBootstrapTest.tearDownStatic();
-    }
-
-    @Before
-    public void setUp() {
-       super.setUp();
-        try (Path path = new Path()) {
-            if (serverMain == null) {
-                pgPort = (short) (10000 + TestUtils.generateRandom(null).nextInt(1000));
-                String testResourcePath = getTestResourcePath();
-                path.of(testResourcePath).concat("test");
-
-                serverMain = startWithEnvVariables(
-                        PG_NET_BIND_TO.getEnvVarName(), "0.0.0.0:" + pgPort,
-                        CAIRO_SQL_COPY_ROOT.getEnvVarName(), testResourcePath,
-                        CONFIG_RELOAD_ENABLED.getEnvVarName(), "false",
-                        HTTP_MIN_ENABLED.getEnvVarName(), "false",
-                        HTTP_ENABLED.getEnvVarName(), "false",
-                        LINE_TCP_ENABLED.getEnvVarName(), "false",
-                        TELEMETRY_DISABLE_COMPLETELY.getEnvVarName(), "true"
-                );
-                serverMain.start();
-            } else {
-                serverMain.reset();
-            }
-        }
-    }
-
-    @After
-    public void tearDown() throws Exception {
-        LOG.info().$("Finished test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
-        if (serverMain != null) {
-            serverMain.reset();
-            removeNonSystemTables(root + Files.SEPARATOR + "db");
-        }
-    }
-
     public static void removeNonSystemTables(CharSequence dbRoot) {
         try (Path path = new Path()) {
             path.of(dbRoot);
@@ -144,7 +90,7 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
                             return false;
                         }
                     } else if (notDots(nameUtf8Ptr)) {
-                        if (path.size() - len < 4 || !Utf8s.equalsAscii("sys.", path, len, len  + 4)) {
+                        if (path.size() - len < 4 || !Utf8s.equalsAscii("sys.", path, len, len + 4)) {
                             res = type == Files.DT_LNK ? ff.unlink(path.$()) == 0 : ff.rmdir(path, haltOnFail);
                             if (!res && haltOnFail) {
                                 return false;
@@ -164,6 +110,60 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
             return true;
         }
         return false;
+    }
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        AbstractBootstrapTest.setUpStatic();
+        try (Path key = new Path(); Path value = new Path()) {
+            key.of("DB_ROOT");
+            value.of(root);
+            Sqllogictest.setEnvVar(key.$().ptr(), value.$().ptr());
+
+            key.of("TEST_RESOURCE_ROOT");
+            value.of(getTestResourcePath());
+            Sqllogictest.setEnvVar(key.$().ptr(), value.$().ptr());
+        }
+    }
+
+    @AfterClass
+    public static void tearDownUpStatic() {
+        serverMain = Misc.free(serverMain);
+        AbstractBootstrapTest.tearDownStatic();
+    }
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        try (Path path = new Path()) {
+            if (serverMain == null) {
+                pgPort = (short) (10000 + TestUtils.generateRandom(null).nextInt(1000));
+                String testResourcePath = getTestResourcePath();
+                path.of(testResourcePath).concat("test");
+
+                serverMain = startWithEnvVariables(
+                        PG_NET_BIND_TO.getEnvVarName(), "0.0.0.0:" + pgPort,
+                        CAIRO_SQL_COPY_ROOT.getEnvVarName(), testResourcePath,
+                        CONFIG_RELOAD_ENABLED.getEnvVarName(), "false",
+                        HTTP_MIN_ENABLED.getEnvVarName(), "false",
+                        HTTP_ENABLED.getEnvVarName(), "false",
+                        LINE_TCP_ENABLED.getEnvVarName(), "false",
+                        TELEMETRY_DISABLE_COMPLETELY.getEnvVarName(), "true"
+                );
+                serverMain.start();
+            } else {
+                serverMain.reset();
+            }
+        }
+    }
+
+    @After
+    public void tearDown() throws Exception {
+        LOG.info().$("Finished test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
+        if (serverMain != null) {
+            serverMain.reset();
+            removeNonSystemTables(root + Files.SEPARATOR + "db");
+        }
     }
 
     @Test
