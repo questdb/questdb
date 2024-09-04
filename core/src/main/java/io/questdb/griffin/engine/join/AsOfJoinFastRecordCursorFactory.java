@@ -116,6 +116,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         private final SingleRecordSink masterSinkTarget;
         private final SingleRecordSink slaveSinkTarget;
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private boolean origHasSlave;
         private int origSlaveFrameIndex = -1;
         private long origSlaveRowId = -1;
 
@@ -153,6 +154,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             if (origSlaveRowId != -1) {
                 slaveCursor.recordAt(slaveRecB, Rows.toRowID(origSlaveFrameIndex, origSlaveRowId));
             }
+            record.hasSlave(origHasSlave);
             final long masterTimestamp = masterRecord.getTimestamp(masterTimestampIndex);
             if (masterTimestamp >= lookaheadTimestamp) {
                 nextSlave(masterTimestamp);
@@ -164,6 +166,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             isMasterHasNextPending = true;
 
             boolean hasSlave = record.hasSlave();
+            origHasSlave = hasSlave;
             if (!hasSlave) {
                 // the non-keyd algo did not find a matching record in the slave table.
                 // this means the slave table does not have a single record with a timestamp that is less than or equal
@@ -237,6 +240,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             super.toTop();
             origSlaveFrameIndex = -1;
             origSlaveRowId = -1;
+            origHasSlave = false;
         }
     }
 }
