@@ -35,14 +35,14 @@ pub extern "system" fn Java_io_questdb_test_Sqllogictest_run(
         return;
     }
 
-    let mut runner = Runner::new(move || {
+    let mut runner = Runner::new(|| async {
         let mut config = PostgresConfig::new();
         config.port(port as u16);
         config.dbname("quest");
         config.user("admin");
         config.password("quest");
         config.hostaddr(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
-        PostgresExtended::connect(config)
+        PostgresExtended::connect(config).await
     });
 
     let runtime = Runtime::new().expect("Failed to create Tokio runtime");
@@ -71,7 +71,7 @@ pub extern "system" fn Java_io_questdb_test_Sqllogictest_run(
                         continue;
                     }
 
-                    let res = runner.run(record);
+                    let res = runner.run_async(record).await;
                     if let Err(e) = res {
                         return Err(anyhow::Error::from(e));
                     }

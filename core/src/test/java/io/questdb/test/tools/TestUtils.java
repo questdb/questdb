@@ -1344,13 +1344,17 @@ public final class TestUtils {
             path.of(root);
             FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
             path.slash();
-            if (ff.exists(path.$()) && !ff.rmdir(path.slash())) {
-                Assert.fail("Test dir cleanup error: " + ff.errno());
+            if (ff.exists(path.$()) && !ff.rmdir(path, false)) {
+                StringSink dir = new StringSink();
+                dir.put(path.$());
+                Assert.fail("Test dir " + dir + " cleanup error: " + ff.errno());
             }
 
             path.parent().concat(RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
-            if (ff.exists(path.$()) && !ff.rmdir(path.slash())) {
-                Assert.fail("\"Checkpoint trigger cleanup error: " + ff.errno());
+            if (ff.exists(path.$()) && !ff.rmdir(path, false)) {
+                StringSink dir = new StringSink();
+                dir.put(path.$());
+                Assert.fail("Checkpoint dir " + dir + " trigger cleanup error:: " + ff.errno());
             }
         }
     }

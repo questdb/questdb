@@ -89,7 +89,6 @@ public class TestServerMain extends ServerMain {
             ff.mkdir(p.$(), engine.getConfiguration().getMkDirMode());
         }
         engine.getTableIdGenerator().open();
-        engine.getTableIdGenerator().reset();
         engine.resetNameRegistryMemory();
         resetQueryCache();
         engine.setUp();

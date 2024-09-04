@@ -26,10 +26,12 @@ package io.questdb.test.sqllogictest;
 
 import io.questdb.std.*;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.Sqllogictest;
 import io.questdb.test.TestServerMain;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.runner.RunWith;
@@ -43,6 +45,7 @@ import java.util.Collection;
 import java.util.List;
 
 import static io.questdb.PropertyKey.*;
+import static io.questdb.std.Files.notDots;
 import static org.junit.Assert.assertNotNull;
 
 @RunWith(Parameterized.class)
@@ -50,7 +53,6 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
     private static short pgPort;
     private static TestServerMain serverMain;
     private final String testFile;
-    private String TEST_DIR_NAME;
 
     public AbstractSqllogicTestRunner(String testFile) {
         this.testFile = testFile;
@@ -72,18 +74,13 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
 
     @AfterClass
     public static void tearDownUpStatic() {
-        AbstractBootstrapTest.tearDownStatic();
         serverMain = Misc.free(serverMain);
+        AbstractBootstrapTest.tearDownStatic();
     }
 
     @Before
     public void setUp() {
-        // Tests freeze on Windows on CI
-        // suspicion is that our PgWire implementation is not robust enough so it does not reply correctly to rust clients
-        Assume.assumeFalse(Os.isWindows());
-
-        super.setUp();
-
+       super.setUp();
         try (Path path = new Path()) {
             if (serverMain == null) {
                 pgPort = (short) (10000 + TestUtils.generateRandom(null).nextInt(1000));
@@ -96,7 +93,8 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
                         CONFIG_RELOAD_ENABLED.getEnvVarName(), "false",
                         HTTP_MIN_ENABLED.getEnvVarName(), "false",
                         HTTP_ENABLED.getEnvVarName(), "false",
-                        LINE_TCP_ENABLED.getEnvVarName(), "false"
+                        LINE_TCP_ENABLED.getEnvVarName(), "false",
+                        TELEMETRY_DISABLE_COMPLETELY.getEnvVarName(), "true"
                 );
                 serverMain.start();
             } else {
@@ -110,13 +108,66 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
         LOG.info().$("Finished test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         if (serverMain != null) {
             serverMain.reset();
+            removeNonSystemTables(root + Files.SEPARATOR + "db");
         }
-        TestUtils.removeTestPath(root + Files.SEPARATOR + "db");
+    }
+
+    public static void removeNonSystemTables(CharSequence dbRoot) {
+        try (Path path = new Path()) {
+            path.of(dbRoot);
+            FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            path.slash();
+            if (!removeNonSystemTables(path, false)) {
+                StringSink dir = new StringSink();
+                dir.put(path.$());
+                Assert.fail("Test dir " + dir + " cleanup error: " + ff.errno());
+            }
+        }
+    }
+
+    public static boolean removeNonSystemTables(Path path, boolean haltOnFail) {
+        FilesFacade ff = FilesFacadeImpl.INSTANCE;
+        path.$();
+        long pFind = ff.findFirst(path.$());
+        if (pFind > 0L) {
+            int len = path.size();
+            boolean res;
+            int type;
+            long nameUtf8Ptr;
+            try {
+                do {
+                    nameUtf8Ptr = ff.findName(pFind);
+                    path.trimTo(len).concat(nameUtf8Ptr).$();
+                    type = ff.findType(pFind);
+                    if (type == Files.DT_FILE) {
+                        if (!ff.removeQuiet(path.$()) && haltOnFail) {
+                            return false;
+                        }
+                    } else if (notDots(nameUtf8Ptr)) {
+                        if (path.size() - len < 4 || !Utf8s.equalsAscii("sys.", path, len, len  + 4)) {
+                            res = type == Files.DT_LNK ? ff.unlink(path.$()) == 0 : ff.rmdir(path, haltOnFail);
+                            if (!res && haltOnFail) {
+                                return false;
+                            }
+                        }
+                    }
+                }
+                while (ff.findNext(pFind) > 0);
+            } finally {
+                ff.findClose(pFind);
+                path.trimTo(len).$();
+            }
+
+            if (ff.isSoftLink(path.$())) {
+                return ff.unlink(path.$()) == 0;
+            }
+            return true;
+        }
+        return false;
     }
 
     @Test
     public void test() {
-        Assume.assumeFalse(Os.isWindows());
         try (Path path = new Path()) {
             String testResourcePath = getTestResourcePath();
             path.of(testResourcePath).concat("test").concat(testFile);
@@ -147,7 +198,7 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
                 int res;
                 do {
                     long name = ff.findName(p);
-                    if (Files.notDots(name)) {
+                    if (notDots(name)) {
                         int type = ff.findType(p);
                         src.trimTo(len);
                         src.concat(name);
@@ -179,8 +230,6 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
 
     protected static Collection<Object[]> files(String dirName) {
         String testResourcePath = getTestResourcePath();
-        FilesFacade ff = FilesFacadeImpl.INSTANCE;
-
         try (Path path = new Path()) {
             path.concat(testResourcePath).concat("test").concat(dirName);
             List<Object[]> paths = new ArrayList<>();
