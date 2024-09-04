@@ -168,6 +168,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeStringAsVarcharB = new BitSet();
     private final BitSet writeSymbolAsString = new BitSet();
     private boolean enableJitNullChecks = true;
+    private boolean fastAsOfJoins = true;
     private boolean fullFatJoins = false;
 
     public SqlCodeGenerator(
@@ -192,6 +193,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             jitIRMem.truncate();
             this.expressionNodePool = expressionNodePool;
             this.reduceTaskFactory = () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER);
+            this.fastAsOfJoins = configuration.useFastAsOfJoin();
         } catch (Throwable th) {
             close();
             throw th;
@@ -2079,7 +2081,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 writeSymbolAsString,
                                                 writeStringAsVarcharA
                                         );
-                                        if (slave.supportsTimeFrameCursor()) {
+                                        if (slave.supportsTimeFrameCursor() && fastAsOfJoins) {
                                             master = new AsOfJoinFastRecordCursorFactory(
                                                     configuration,
                                                     createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
