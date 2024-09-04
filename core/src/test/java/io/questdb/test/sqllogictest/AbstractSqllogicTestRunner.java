@@ -78,6 +78,8 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
 
     @Before
     public void setUp() {
+        // Tests freeze on Windows on CI
+        // suspicion is that our PgWire implementation is not robust enough so it does not reply correctly to rust clients
         Assume.assumeFalse(Os.isWindows());
 
         super.setUp();
@@ -114,8 +116,6 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
 
     @Test
     public void test() {
-        // Tests freeze on Windows on CI
-        // suspicion is that our PgWire implementation is not robust enough so it does not reply correctly to rust clients
         Assume.assumeFalse(Os.isWindows());
         try (Path path = new Path()) {
             String testResourcePath = getTestResourcePath();
