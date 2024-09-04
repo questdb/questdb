@@ -81,6 +81,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     static final byte MESSAGE_TYPE_COMMAND_COMPLETE = 'C';
     static final byte MESSAGE_TYPE_DATA_ROW = 'D';
     static final byte MESSAGE_TYPE_EMPTY_QUERY = 'I';
+    static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
     static final byte MESSAGE_TYPE_NO_DATA = 'n';
     static final byte MESSAGE_TYPE_PARAMETER_DESCRIPTION = 't';
     static final byte MESSAGE_TYPE_PARSE_COMPLETE = '1';
@@ -89,7 +90,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     static final int NO_TRANSACTION = 0;
     private static final int COMMIT_TRANSACTION = 2;
     private static final Log LOG = LogFactory.getLog(PGConnectionContext.class);
-    static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
     private static final byte MESSAGE_TYPE_SSL_SUPPORTED_RESPONSE = 'S';
     private static final int PREFIXED_MESSAGE_HEADER_LEN = 5;
@@ -453,6 +453,54 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         recvBufferReadOffset = 0;
     }
 
+    private PGPipelineEntry uncacheNamedPortal(CharSequence portalName) {
+        if (portalName != null) {
+            final int index = namedPortals.keyIndex(portalName);
+            if (index < 0) {
+                PGPipelineEntry pe = namedStatements.valueAt(index);
+                PGPipelineEntry peParent = pe.getParentPreparedStatementPipelineEntry();
+                if (peParent != null) {
+                    int parentIndex = peParent.getPortalNames().indexOf(portalName);
+                    if (parentIndex != -1) {
+                        peParent.getPortalNames().remove(parentIndex);
+                    }
+                }
+                namedPortals.removeAt(index);
+                return pe;
+            }
+        }
+        return null;
+    }
+
+    private PGPipelineEntry uncacheNamedStatement(CharSequence statementName) {
+        if (statementName != null) {
+            int index = namedStatements.keyIndex(statementName);
+            if (index < 0) {
+                PGPipelineEntry pe = namedStatements.valueAt(index);
+                namedStatements.removeAt(index);
+                // also remove entries for the matching portal names
+                ObjList<CharSequence> portalNames = pe.getPortalNames();
+                for (int i = 0, n = portalNames.size(); i < n; i++) {
+                    int portalKeyIndex = this.namedPortals.keyIndex(portalNames.getQuick(i));
+                    if (portalKeyIndex < 0) {
+                        // release the entry, it must not be referenced from anywhere other than
+                        // this list (we enforce portal name uniqueness)
+                        Misc.free(this.namedPortals.valueAt(portalKeyIndex));
+                        this.namedPortals.removeAt(portalKeyIndex);
+                    } else {
+                        // else: do not make a fuss if portal name does not exist
+                        LOG.debug()
+                                .$("ignoring non-existent portal [portalName=").$(portalNames.getQuick(i))
+                                .$(", statementName=").$(statementName)
+                                .I$();
+                    }
+                }
+                return pe;
+            }
+        }
+        return null;
+    }
+
     private void closePendingWriters(boolean commit) {
         for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
             final TableWriterAPI m = pendingWriter.value;
@@ -467,6 +515,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     // processes one or more queries (batch/script). "Simple Query" in PostgreSQL docs.
     private void cmdQuery(long lo, long limit) {
+        System.out.println("********************* OOPSIE *************************");
 /*
         sendRNQ = true;
         prepareForNewQuery();
@@ -779,7 +828,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     // doing this; they would have to send "parse" message without statement name and then
                     // send "bind" message without statement name but with portal). So we can use
                     // the current entry as the portal
-                    pipelineCurrentEntry.setPortal(true);
+                    pipelineCurrentEntry.setPortal(true, (String) portalName);
                     namedPortals.putAt(index, portalName, pipelineCurrentEntry);
                 } else {
                     pipelineCurrentEntry.getErrorMessageSink().put("portal already exists [portalName=").put(portalName).put(']');
@@ -828,13 +877,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void msgClose(long lo, long msgLimit) throws BadProtocolException {
-
-        // If we have anything in the current pipeline entry
-        // add it to the pipeline. Closing statements or portals is
-        // unconnected to pipeline building.
-        addPipelineEntry();
-
+        // 'close' message can either:
+        // - close the named entity, portal or statement
         final byte type = Unsafe.getUnsafe().getByte(lo);
+        PGPipelineEntry lookedUpPipelineEntry;
         switch (type) {
             case 'S':
                 // invalid statement names are allowed (as noop)
@@ -843,76 +889,43 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 // reference from maps.
                 lo = lo + 1;
                 final long hi = getUtf8StrSize(lo, msgLimit, "bad prepared statement name length", pipelineCurrentEntry);
-                final CharSequence statementName = getUtf16Str(lo, hi, "invalid UTF8 bytes in statement name (close)");
-                if (statementName != null) {
-                    int index = namedStatements.keyIndex(statementName);
-                    if (index < 0) {
-                        pipelineCurrentEntry = namedStatements.valueAt(index);
-                        namedStatements.removeAt(index);
-                        // also remove entries for the matching portal names
-                        ObjList<CharSequence> portalNames = pipelineCurrentEntry.getPortalNames();
-                        for (int i = 0, n = portalNames.size(); i < n; i++) {
-                            int portalKeyIndex = this.namedPortals.keyIndex(portalNames.getQuick(i));
-                            if (portalKeyIndex < 0) {
-                                // release the entry, it must not be referenced from anywhere other than
-                                // this list (we enforce portal name uniqueness)
-                                Misc.free(this.namedPortals.valueAt(portalKeyIndex));
-                                this.namedPortals.removeAt(portalKeyIndex);
-                            } else {
-                                // else: do not make a fuss if portal name does not exist
-                                LOG.debug()
-                                        .$("ignoring non-existent portal [portalName=").$(portalNames.getQuick(i))
-                                        .$(", statementName=").$(statementName)
-                                        .I$();
-                            }
-                        }
-                    } else {
-                        // it is not an error to close non-existing prepared statement
-                        LOG.debug().$("closing non-existent prepared statement [statementName=").$(statementName).I$();
-                    }
-
-                    // add the close command to the pipeline in case there are several of them
-                    if (pipelineCurrentEntry != null) {
-                        // pipeline entry might be null if the client is closing non-existent prepared statement
-                        pipelineCurrentEntry.setStateClosed(true);
-                    }
-                    addPipelineEntry();
-                } else {
-                    // this would be a protocol violation to not provide prepared statement name with "close" message
-                    throw CairoException.nonCritical().put("cannot close prepared statement, NULL name [close]");
-                }
+                lookedUpPipelineEntry = uncacheNamedStatement(getUtf16Str(lo, hi, "invalid UTF8 bytes in statement name (close)"));
                 break;
             case 'P':
                 lo = lo + 1;
                 final long high = getUtf8StrSize(lo, msgLimit, "bad prepared portal name length (close)", pipelineCurrentEntry);
-                final CharSequence portalName = getUtf16Str(lo, high, "invalid UTF8 bytes in portal name (close)");
-                if (portalName != null) {
-                    final int index = namedPortals.keyIndex(portalName);
-                    if (index < 0) {
-                        PGPipelineEntry pe = namedStatements.valueAt(index);
-                        PGPipelineEntry peParent = pe.getParentPreparedStatementPipelineEntry();
-                        if (peParent != null) {
-                            int parentIndex = peParent.getPortalNames().indexOf(portalName);
-                            if (parentIndex != -1) {
-                                peParent.getPortalNames().remove(parentIndex);
-                            }
-                        }
-                        namedPortals.removeAt(index);
-                        Misc.free(pe);
-                    } else {
-                        LOG.debug().$("closing non-existent portal name [portalName=").$(portalName).I$();
-                    }
-                    // add the close command to the pipeline in case there are several of them
-                    pipelineCurrentEntry.setStateClosed(true);
-                    addPipelineEntry();
-                } else {
-                    // this would be a protocol violation to not provide prepared statement name with "close" message
-                    throw CairoException.nonCritical().put("cannot close prepared statement, NULL name [close]");
-                }
+                lookedUpPipelineEntry = uncacheNamedPortal(getUtf16Str(lo, high, "invalid UTF8 bytes in portal name (close)"));
                 break;
             default:
+                // todo: we need to have valid pipeline entry so that we can send this message to the client
                 LOG.error().$("invalid type for close message [type=").$(type).I$();
                 throw BadProtocolException.INSTANCE;
+        }
+
+        // if we already have the current pipeline entry, we will use that to produce the 'close'
+        // message to the client. Otherwise, our options are:
+        // - we can use the entry we looked up using the prepared statements' name
+        // - create a brand-new entry
+        if (pipelineCurrentEntry == null) {
+            if (lookedUpPipelineEntry != null) {
+                pipelineCurrentEntry = lookedUpPipelineEntry;
+            } else {
+                pipelineCurrentEntry = new PGPipelineEntry(engine);
+            }
+        } else {
+            Misc.free(lookedUpPipelineEntry);
+        }
+
+        pipelineCurrentEntry.setStateClosed(true);
+
+        // It is possible that the intent to close current pipeline entry was mis-labelled
+        // for example, Rust driver creates named statement and then closes "null" 'portal'
+        if (lookedUpPipelineEntry == null) {
+            if (pipelineCurrentEntry.isPreparedStatement()) {
+                uncacheNamedStatement(pipelineCurrentEntry.getPreparedStatementName());
+            } else if (pipelineCurrentEntry.isPortal()) {
+                uncacheNamedPortal(pipelineCurrentEntry.getPortalName());
+            }
         }
     }
 
@@ -975,9 +988,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 this,
                 namedStatements
         );
-        // We do not expect any more interaction with the current pipeline entry.
-        // Adding the current pipeline entry to the pipeline allows pipelining of D/E/D/E/D/E/S
-        addPipelineEntry();
     }
 
     private void msgFlush() throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, BadProtocolException {
@@ -1063,8 +1073,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             LOG.info().$("create prepared statement [name=").$(targetStatementName).I$();
             int index = namedStatements.keyIndex(targetStatementName);
             if (index > -1) {
-                pipelineCurrentEntry.setPreparedStatement(true);
-                namedStatements.putAt(index, Chars.toString(targetStatementName), pipelineCurrentEntry);
+                final String preparedStatementName = Chars.toString(targetStatementName);
+                pipelineCurrentEntry.setPreparedStatement(true, preparedStatementName);
+                namedStatements.putAt(index, preparedStatementName, pipelineCurrentEntry);
             } else {
                 pipelineCurrentEntry.getErrorMessageSink().put("duplicate statement [name=").put(targetStatementName).put(']');
                 throw BadProtocolException.INSTANCE;

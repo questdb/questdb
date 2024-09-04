@@ -570,4 +570,6 @@ public interface BindVariableService extends Mutable {
      * @throws SqlException is throw when variable has already been defined with type that is not compatible with UUID
      */
     void setUuid(CharSequence name, long lo, long hi) throws SqlException;
+
+    boolean isDefined(int index);
 }

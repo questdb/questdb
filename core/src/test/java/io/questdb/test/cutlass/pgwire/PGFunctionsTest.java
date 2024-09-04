@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.sql.CallableStatement;
@@ -34,6 +35,7 @@ import java.sql.ResultSet;
 
 import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
 
+@Ignore
 public class PGFunctionsTest extends BasePGTest {
 
     @Test

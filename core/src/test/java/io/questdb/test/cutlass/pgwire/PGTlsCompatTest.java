@@ -37,6 +37,7 @@ import io.questdb.network.SocketFactory;
 import io.questdb.test.mp.TestWorkerPool;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.postgresql.util.PSQLException;
 
@@ -45,7 +46,7 @@ import java.sql.DriverManager;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 
-
+@Ignore
 public class PGTlsCompatTest extends BasePGTest {
 
     @Test

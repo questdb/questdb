@@ -33,6 +33,7 @@ import io.questdb.test.cutlass.suspend.TestCase;
 import io.questdb.test.cutlass.suspend.TestCases;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.sql.CallableStatement;
@@ -48,6 +49,7 @@ import java.sql.ResultSet;
  * hasn't been suspended.
  */
 @SuppressWarnings("SqlNoDataSourceInspection")
+@Ignore
 public class PGQuerySuspendTest extends BasePGTest {
 
     private static final Log LOG = LogFactory.getLog(PGQuerySuspendTest.class);

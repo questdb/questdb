@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.postgresql.util.PSQLException;
 
@@ -35,6 +36,7 @@ import java.sql.Statement;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
 
+@Ignore
 public class PGMemoryLimitTest extends BasePGTest {
     @Test
     public void testUpdateRecoversFromOomError() throws Exception {

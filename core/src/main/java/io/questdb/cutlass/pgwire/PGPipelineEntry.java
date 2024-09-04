@@ -30,8 +30,6 @@ import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.*;
-import io.questdb.network.PeerDisconnectedException;
-import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -70,11 +68,13 @@ public class PGPipelineEntry implements QuietCloseable {
     private boolean outResendCursorRecord = false;
     private PGPipelineEntry parentPreparedStatementPipelineEntry;
     private boolean portal = false;
+    private String portalName;
     private boolean preparedStatement = false;
+    private String preparedStatementName;
     // the name of the prepared statement as used by "deallocate" SQL
     // not to be confused with prepared statements that come on the
     // PostgresSQL wire.
-    private CharSequence preparedStatementName;
+    private CharSequence preparedStatementNameToDeallocate;
     private long sqlAffectedRowCount = 0;
     // The count of rows sent that have been sent to the client per fetch. Client can either
     // fetch all rows at once, or in batches. In case of full fetch, this is the
@@ -149,15 +149,15 @@ public class PGPipelineEntry implements QuietCloseable {
                     executeCompiledQuery(sqlExecutionContext, transactionState);
                     break;
                 case CompiledQuery.DEALLOCATE:
-                    // this is our own SQL query, which is intended to remove named statement from
-                    // connection cache.
-                    // todo: this will fail for portals
-                    PGPipelineEntry pe = namedStatements.get(this.preparedStatementName);
-                    if (pe != null) {
-                        pe.setPreparedStatement(false);
-                        PGConnectionContext.freeIfAbandoned(pe);
-                    }
-                    break;
+                    // this is supposed to work instead of sending 'close' message via the
+                    // network protocol. My latest understanding is that this is meant to close either
+                    // prepared statement or portal, depending on the name provided. The difference perhaps would be
+                    // in the way we have to reply back to the client. Reply format out of 'execute' message is
+                    // different from that of 'close' message.
+
+                    getErrorMessageSink().put("unsupported for now");
+                    preparedStatementNameToDeallocate = Chars.toString(compiledQuery.getStatementName());
+                    throw BadProtocolException.INSTANCE;
                 case CompiledQuery.BEGIN:
                     return IN_TRANSACTION;
                 case CompiledQuery.COMMIT:
@@ -197,8 +197,16 @@ public class PGPipelineEntry implements QuietCloseable {
         return parentPreparedStatementPipelineEntry;
     }
 
+    public String getPortalName() {
+        return portalName;
+    }
+
     public ObjList<CharSequence> getPortalNames() {
         return portalNames;
+    }
+
+    public String getPreparedStatementName() {
+        return preparedStatementName;
     }
 
     public short getShort(long address, long msgLimit, CharSequence errorMessage) throws BadProtocolException {
@@ -227,6 +235,10 @@ public class PGPipelineEntry implements QuietCloseable {
 
     public boolean isPreparedStatement() {
         return preparedStatement;
+    }
+
+    public boolean isStateClosed() {
+        return stateClosed;
     }
 
     public boolean isStateParseExecuted() {
@@ -401,18 +413,20 @@ public class PGPipelineEntry implements QuietCloseable {
         this.parentPreparedStatementPipelineEntry = preparedStatementPipelineEntry;
     }
 
-    public void setPortal(boolean portal) {
+    public void setPortal(boolean portal, String portalName) {
         this.portal = portal;
         // because this is now a prepared statement, it means the entry is
         // cached. All flyweight objects referenced from cache have to be internalized
         this.sqlText = Chars.toString(this.sqlText);
+        this.portalName = portalName;
     }
 
-    public void setPreparedStatement(boolean preparedStatement) {
+    public void setPreparedStatement(boolean preparedStatement, String preparedStatementName) {
         this.preparedStatement = preparedStatement;
         // because this is now a prepared statement, it means the entry is
         // cached. All flyweight objects referenced from cache have to be internalized
         this.sqlText = Chars.toString(this.sqlText);
+        this.preparedStatementName = preparedStatementName;
     }
 
     public void setReturnRowCountLimit(int rowCountLimit) {
@@ -469,7 +483,7 @@ public class PGPipelineEntry implements QuietCloseable {
             WriterSource writerSource,
             CharSequenceObjHashMap<PGPipelineEntry> namedStatements,
             PGResponseSink utf8Sink
-    ) throws  QueryPausedException, BadProtocolException {
+    ) throws QueryPausedException, BadProtocolException {
         if (isError()) {
             utf8Sink.resetToBookmark();
             // todo: we need to test scenario, when sync does not fit the buffer
@@ -524,23 +538,6 @@ public class PGPipelineEntry implements QuietCloseable {
                         if (stateExec) {
                             // the flow when the pipeline entry was executed
                             switch (sqlType) {
-                                case CompiledQuery.CREATE_TABLE_AS_SELECT:
-                                case CompiledQuery.SET:
-                                case CompiledQuery.BEGIN:
-                                case CompiledQuery.COMMIT:
-                                case CompiledQuery.ROLLBACK:
-                                case CompiledQuery.ALTER_USER:
-                                case CompiledQuery.CREATE_USER:
-                                case CompiledQuery.DEALLOCATE:
-                                case CompiledQuery.ALTER: {
-                                    // create table is just "OK"
-                                    utf8Sink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
-                                    long addr = utf8Sink.skipInt();
-                                    utf8Sink.put(sqlTag).put((byte) 0);
-                                    utf8Sink.putLen(addr);
-                                    stateSync = 6;
-                                    break;
-                                }
                                 case CompiledQuery.EXPLAIN:
                                 case CompiledQuery.SELECT:
                                 case CompiledQuery.PSEUDO_SELECT:
@@ -568,6 +565,14 @@ public class PGPipelineEntry implements QuietCloseable {
                                     stateSync = 6;
                                     break;
                                 }
+                                default:
+                                    // create table is just "OK"
+                                    utf8Sink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
+                                    long addr = utf8Sink.skipInt();
+                                    utf8Sink.put(sqlTag).put((byte) 0);
+                                    utf8Sink.putLen(addr);
+                                    stateSync = 6;
+                                    break;
                             }
                         }
                     }
@@ -593,6 +598,12 @@ public class PGPipelineEntry implements QuietCloseable {
                     outPortalSuspended(utf8Sink);
                     break;
             }
+
+            if (isError()) {
+                utf8Sink.resetToBookmark();
+                // todo: we need to test scenario, when sync does not fit the buffer
+                outError(utf8Sink, 0, getErrorMessageSink());
+            }
         }
 
         // after the pipeline entry is synchronized we should prepare it for the next
@@ -606,47 +617,6 @@ public class PGPipelineEntry implements QuietCloseable {
         stateClosed = false;
 
         return transactionState;
-    }
-
-    private void outCursor(
-            SqlExecutionContext sqlExecutionContext,
-            PGResponseSink utf8Sink,
-            Record record,
-            int columnCount
-    ) throws BadProtocolException, QueryPausedException {
-
-        if (!sqlExecutionContext.getCircuitBreaker().isTimerSet()) {
-            sqlExecutionContext.getCircuitBreaker().resetTimer();
-        }
-
-        try {
-
-            if (outResendCursorRecord) {
-                utf8Sink.resetToBookmark();
-                outRecord(utf8Sink, record, columnCount);
-            }
-
-            while (sqlReturnRowCount < sqlReturnRowCountToBeSent && cursor.hasNext()) {
-                outResendCursorRecord = true;
-                outRecord(utf8Sink, record, columnCount);
-            }
-        } catch (DataUnavailableException e) {
-            stateSync = 100; // query is paused
-            utf8Sink.resetToBookmark();
-            throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
-        }
-
-        // the above loop may have exited due to the return row limit as prescribed by the portal
-        // either way, the result set was sent out as intended. The difference is in what we
-        // send as the suffix.
-
-        if (sqlReturnRowCount < sqlReturnRowCountToBeSent) {
-            // the limit was not set, we sent all we had
-            stateSync = 20;
-        } else {
-            // we sent as many rows as was requested, but we have more to send
-            stateSync = 30;
-        }
     }
 
     private static void outBindComplete(PGResponseSink utf8Sink) {
@@ -666,15 +636,14 @@ public class PGPipelineEntry implements QuietCloseable {
     }
 
     private static void outPortalSuspended(PGResponseSink utf8Sink) {
-        utf8Sink.bookmark();
-        utf8Sink.put(MESSAGE_TYPE_PORTAL_SUSPENDED);
-        utf8Sink.putIntDirect(INT_BYTES_X);
+        outSimpleMsg(utf8Sink, MESSAGE_TYPE_PORTAL_SUSPENDED);
     }
 
     private static void outSimpleMsg(PGResponseSink utf8Sink, byte msgByte) {
         utf8Sink.bookmark();
         utf8Sink.put(msgByte);
         utf8Sink.putIntDirect(INT_BYTES_X);
+        utf8Sink.bookmark();
     }
 
     private static void setBindVariableAsBin(
@@ -1335,8 +1304,59 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
+    private void outCursor(
+            SqlExecutionContext sqlExecutionContext,
+            PGResponseSink utf8Sink,
+            Record record,
+            int columnCount
+    ) throws QueryPausedException {
+        if (!sqlExecutionContext.getCircuitBreaker().isTimerSet()) {
+            sqlExecutionContext.getCircuitBreaker().resetTimer();
+        }
+
+        try {
+            if (outResendCursorRecord) {
+                utf8Sink.resetToBookmark();
+                outRecord(utf8Sink, record, columnCount);
+            }
+
+            while (sqlReturnRowCount < sqlReturnRowCountToBeSent && cursor.hasNext()) {
+                outResendCursorRecord = true;
+                outRecord(utf8Sink, record, columnCount);
+            }
+        } catch (DataUnavailableException e) {
+            stateSync = 100; // query is paused
+            utf8Sink.resetToBookmark();
+            throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
+        } catch (Throwable e) {
+            utf8Sink.resetToBookmark();
+            if (e instanceof FlyweightMessageContainer) {
+                getErrorMessageSink().put(((FlyweightMessageContainer) e).getFlyweightMessage());
+            } else {
+                // todo: we should absorb the exception into the pipeline entry so that we can print it out later
+                e.printStackTrace();
+                String msg = e.getMessage();
+                getErrorMessageSink().put(msg != null ? msg : "no message provided (internal error)");
+            }
+        }
+
+        // the above loop may have exited due to the return row limit as prescribed by the portal
+        // either way, the result set was sent out as intended. The difference is in what we
+        // send as the suffix.
+
+        if (sqlReturnRowCount < sqlReturnRowCountToBeSent || !isPortal()) {
+            // the limit does not tell is if it came from "fetchSize" or "maxRows". The former is
+            // used for portals and effectively prescribes us to keep the cursor open and primed to continue the
+            // fetch. The latter is acting like SQL limit query. E.g. we return top X rows and dispose of the cursor.
+            stateSync = 20;
+        } else {
+            // we sent as many rows as was requested, but we have more to send
+            stateSync = 30;
+        }
+    }
+
     private void outCursor(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink)
-            throws QueryPausedException, BadProtocolException {
+            throws QueryPausedException {
         switch (stateSync) {
             case 4:
                 outComputeCursorSize();
@@ -1537,6 +1557,7 @@ public class PGPipelineEntry implements QuietCloseable {
             utf8Sink.putNetworkShort(ColumnType.isBinary(columnType) ? 1 : getColumnBinaryFlag(typeFlag)); // format code
         }
         utf8Sink.putLen(addr);
+        utf8Sink.bookmark();
     }
 
     private void parseNew(
@@ -1606,7 +1627,7 @@ public class PGPipelineEntry implements QuietCloseable {
                     sqlTag = TAG_SET;
                     break;
                 case CompiledQuery.DEALLOCATE:
-                    this.preparedStatementName = cq.getStatementName();
+                    this.preparedStatementNameToDeallocate = cq.getStatementName();
                     sqlTag = TAG_DEALLOCATE;
                     break;
                 case CompiledQuery.BEGIN:

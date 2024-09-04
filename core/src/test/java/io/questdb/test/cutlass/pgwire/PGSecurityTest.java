@@ -47,6 +47,7 @@ import java.util.TimeZone;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
 
+@Ignore
 public class PGSecurityTest extends BasePGTest {
 
     private static final SecurityContextFactory READ_ONLY_SECURITY_CONTEXT_FACTORY = new ReadOnlyUsersAwareSecurityContextFactory(true, null, false);

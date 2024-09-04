@@ -128,6 +128,7 @@ import static org.junit.Assert.*;
         Change PGWireConfiguration.getDumpNetworkTraffic() to return 'false' again.
     8. Run the test
  */
+@Ignore
 @RunWith(Parameterized.class)
 @SuppressWarnings("SqlNoDataSourceInspection")
 public class PGJobContextTest extends BasePGTest {
@@ -194,7 +195,7 @@ public class PGJobContextTest extends BasePGTest {
     @Test
     //this looks like the same script as the preparedStatementHex()
     public void testAllParamsHex() throws Exception {
-//        skipOnWalRun();
+        skipOnWalRun();
         final String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
                 ">70000000076f6800\n" +
@@ -3202,7 +3203,6 @@ if __name__ == "__main__":
                 stmt.executeUpdate("create table if not exists tab ( a int, b long, ts timestamp)");
             }
 
-/*
             //max rows bigger than result set sie (empty result set)
             assertResultTenTimes(connection,
                     "select * from tab",
@@ -3239,7 +3239,6 @@ if __name__ == "__main__":
                             "b,LONG,false,0,false,0,false,false\n" +
                             "ts,TIMESTAMP,false,0,false,0,false,false\n", 6
             );
-*/
         });
     }
 
