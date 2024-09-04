@@ -103,6 +103,13 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
         return capacity >>> 2;
     }
 
+    public void removeLast() {
+        if (pos == address) {
+            return;
+        }
+        pos -= Integer.BYTES;
+    }
+
     @Override
     public void reopen() {
         if (address == 0) {

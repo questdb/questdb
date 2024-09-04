@@ -40,10 +40,10 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 
-public class IPv4StrNetmaskFunctionFactory implements FunctionFactory {
+public class IPv4VarcharNetmaskFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "netmask(S)";
+        return "netmask(Ø)";
     }
 
     @Override
@@ -54,43 +54,43 @@ public class IPv4StrNetmaskFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        final Function strFunc = args.getQuick(0);
-        if (strFunc.isConstant()) {
-            final CharSequence str = strFunc.getStrA(null);
+        final Function varcharFunc = args.getQuick(0);
+        if (varcharFunc.isConstant()) {
+            final CharSequence str = varcharFunc.getStrA(null);
             if (str == null) {
                 return IPv4Constant.NULL;
             }
             final int val = Numbers.getIPv4Netmask(str);
             return val == Numbers.BAD_NETMASK ? IPv4Constant.NULL : IPv4Constant.newInstance(val);
         }
-        return new Func(strFunc);
+        return new Func(varcharFunc);
     }
 
     private static class Func extends IPv4Function implements UnaryFunction {
-        private final Function strFunc;
+        private final Function arg;
 
-        public Func(Function strFunc) {
-            this.strFunc = strFunc;
+        public Func(Function arg) {
+            this.arg = arg;
         }
 
         @Override
         public Function getArg() {
-            return strFunc;
+            return arg;
         }
 
         @Override
         public int getIPv4(Record rec) {
-            final CharSequence str = strFunc.getStrA(rec);
-            if (str == null) {
+            final Utf8Sequence seq = arg.getVarcharA(rec);
+            if (seq == null) {
                 return Numbers.IPv4_NULL;
             }
-            final int val = Numbers.getIPv4Netmask(str);
+            final int val = Numbers.getIPv4Netmask(seq.asAsciiCharSequence());
             return val == Numbers.BAD_NETMASK ? Numbers.IPv4_NULL : val;
         }
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.val("netmask(").val(strFunc).val(')');
+            sink.val("netmask(").val(arg).val(')');
         }
     }
 }
