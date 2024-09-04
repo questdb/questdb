@@ -63,47 +63,8 @@ public class SingleRecordSinkTest extends AbstractTest {
     @Test
     public void testFuzz() throws Exception {
         Rnd rnd = TestUtils.generateRandom(null);
-        runWithSinks((sinkLeft, sinkRight) -> {
-
-
-            // generate ops
-            int opsCount = rnd.nextInt(100) + 1; // at least one op
-            PUT_OP[] ops = new PUT_OP[opsCount];
-            for (int i = 0; i < opsCount; i++) {
-                int op = rnd.nextInt(PUT_OP.values().length);
-                ops[i] = PUT_OP.values()[op];
-            }
-            boolean negativeCase = rnd.nextBoolean();
-            int corruptSeedAt = -1;
-            if (negativeCase) {
-                corruptSeedAt = rnd.nextInt(opsCount);
-            }
-
-            long seed0 = rnd.getSeed0();
-            long seed1 = rnd.getSeed1();
-
-            // populate left sink
-            rnd.reset(seed0, seed1);
-            for (int i = 0; i < opsCount; i++) {
-                ops[i].put(sinkLeft, rnd, false);
-            }
-
-            // populate right sink
-            rnd.reset(seed0, seed1);
-            for (int i = 0; i < opsCount; i++) {
-//                if (i == corruptSeedAt) {
-//                    rnd.nextLong(); // corrupt seed, from now on sinks will be different
-//                }
-                ops[i].put(sinkRight, rnd, i == corruptSeedAt);
-            }
-
-            // compare
-            if (sinkLeft.memeq(sinkRight) == negativeCase) {
-                System.out.println("gotcha!");
-            }
-
-            Assert.assertTrue(sinkLeft.memeq(sinkRight) != negativeCase);
-        }, 1024 * 1024);
+        testFuzz0(rnd, false);
+        testFuzz0(rnd, true);
     }
 
     @Test(expected = LimitOverflowException.class)
@@ -161,6 +122,40 @@ public class SingleRecordSinkTest extends AbstractTest {
 
             Assert.assertTrue(sinkLeft.memeq(sinkRight));
         });
+    }
+
+    private static void testFuzz0(Rnd rnd, boolean negativeCase) throws Exception {
+        runWithSinks((sinkLeft, sinkRight) -> {
+            // generate ops
+            int opsCount = rnd.nextInt(100) + 1; // at least one op
+            PUT_OP[] ops = new PUT_OP[opsCount];
+            for (int i = 0; i < opsCount; i++) {
+                int op = rnd.nextInt(PUT_OP.values().length);
+                ops[i] = PUT_OP.values()[op];
+            }
+            int badValueAt = -1;
+            if (negativeCase) {
+                badValueAt = rnd.nextInt(opsCount);
+            }
+
+            long seed0 = rnd.getSeed0();
+            long seed1 = rnd.getSeed1();
+
+            // populate left sink
+            rnd.reset(seed0, seed1);
+            for (int i = 0; i < opsCount; i++) {
+                ops[i].put(sinkLeft, rnd, false);
+            }
+
+            // populate right sink
+            rnd.reset(seed0, seed1);
+            for (int i = 0; i < opsCount; i++) {
+                ops[i].put(sinkRight, rnd, i == badValueAt);
+            }
+
+
+            Assert.assertTrue(sinkLeft.memeq(sinkRight) != negativeCase);
+        }, 1024 * 1024);
     }
 
     private enum PUT_OP {
