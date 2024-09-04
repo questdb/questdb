@@ -42,6 +42,17 @@ import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_SIZE_MAP;
 
 public class PgAttributeFunctionFactory implements FunctionFactory {
 
+    public static final int N_ATTRELID_COL = 0;
+    public static final int N_ATTNAME_COL = N_ATTRELID_COL + 1;
+    private static final int N_ATTNUM_COL = N_ATTNAME_COL + 1;
+    private static final int N_ATTTYPID_COL = N_ATTNUM_COL + 1;
+    private static final int N_ATTNOTNULL_COL = N_ATTTYPID_COL + 1;
+    private static final int N_ATTTYPMOD_COL = N_ATTNOTNULL_COL + 1;
+    private static final int N_ATTLEN_COL = N_ATTTYPMOD_COL + 1;
+    private static final int N_ATTIDENTITY_COL = N_ATTLEN_COL + 1;
+    private static final int N_ATTISDROPPED_COL = N_ATTIDENTITY_COL + 1;
+    private static final int N_ATTHASDEF_COL = N_ATTISDROPPED_COL + 1;
+
     private static final RecordMetadata METADATA;
     private static final String SIGNATURE = "pg_attribute()";
 
@@ -192,11 +203,11 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
                         CharSequence name = metaMem.getStrA(offset);
                         if (columnIndex == i) {
                             int type = PGOids.getTypeOid(TableUtils.getColumnType(metaMem, i));
-                            diskReadingRecord.intValues[3] = type;
+                            diskReadingRecord.intValues[N_ATTTYPID_COL] = type;
                             diskReadingRecord.name = name;
-                            diskReadingRecord.shortValues[2] = (short) (i + 1);
-                            diskReadingRecord.shortValues[6] = (short) PG_TYPE_TO_SIZE_MAP.get(type);
-                            diskReadingRecord.intValues[0] = tableId;
+                            diskReadingRecord.shortValues[N_ATTNUM_COL] = (short) (i + 1);
+                            diskReadingRecord.shortValues[N_ATTLEN_COL] = (short) PG_TYPE_TO_SIZE_MAP.get(type);
+                            diskReadingRecord.intValues[N_ATTRELID_COL] = tableId;
                             columnIndex++;
                             if (columnIndex == columnCount) {
                                 readNextFileFromDisk = true;
