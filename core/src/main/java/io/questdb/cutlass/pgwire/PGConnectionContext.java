@@ -89,7 +89,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     static final int NO_TRANSACTION = 0;
     private static final int COMMIT_TRANSACTION = 2;
     private static final Log LOG = LogFactory.getLog(PGConnectionContext.class);
-    private static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
+    static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
     private static final byte MESSAGE_TYPE_SSL_SUPPORTED_RESPONSE = 'S';
     private static final int PREFIXED_MESSAGE_HEADER_LEN = 5;
@@ -244,6 +244,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         super.clear();
         this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
         this.sendBuffer = this.sendBufferPtr = this.sendBufferLimit = Unsafe.free(sendBuffer, sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
+        responseUtf8Sink.bookmarkPtr = sendBufferPtr;
         pipelineCurrentEntry = null;
         pipeline.clear();
         prepareForNewQuery();
@@ -376,16 +377,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 // to retry 'send' but not parse the same input again
                 readOffsetBeforeParse = recvBufferReadOffset;
                 totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
-                parseMessage(recvBuffer + recvBufferReadOffset, (int) (recvBufferWriteOffset - recvBufferReadOffset));
+                try {
+                    parseMessage(recvBuffer + recvBufferReadOffset, (int) (recvBufferWriteOffset - recvBufferReadOffset));
+                } catch (BadProtocolException e) {
+                    // ignore, we are interrupting the current message processing, but have to continue processing other
+                    // messages
+                }
             }
-        } catch (SqlException e) {
-            handleException(e.getPosition(), e.getFlyweightMessage(), false, -1, true);
-        } catch (ImplicitCastException e) {
-            handleException(-1, e.getFlyweightMessage(), false, -1, true);
-        } catch (CairoException e) {
-            handleException(e.getPosition(), e.getFlyweightMessage(), e.isCritical(), e.getErrno(), e.isInterruption());
-        } catch (PeerDisconnectedException | PeerIsSlowToReadException | PeerIsSlowToWriteException |
-                 QueryPausedException | BadProtocolException e) {
+        } catch (
+                PeerDisconnectedException | PeerIsSlowToReadException | PeerIsSlowToWriteException |
+                QueryPausedException e) {
             throw e;
         } catch (Throwable th) {
             th.printStackTrace();
@@ -403,6 +404,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (sendBuffer == 0) {
             this.sendBuffer = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
             this.sendBufferPtr = sendBuffer;
+            this.responseUtf8Sink.bookmarkPtr = this.sendBufferPtr;
             this.sendBufferLimit = sendBuffer + sendBufferSize;
         }
         authenticator.init(socket, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit);
@@ -870,7 +872,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     }
 
                     // add the close command to the pipeline in case there are several of them
-                    pipelineCurrentEntry.setStateClosed(true);
+                    if (pipelineCurrentEntry != null) {
+                        // pipeline entry might be null if the client is closing non-existent prepared statement
+                        pipelineCurrentEntry.setStateClosed(true);
+                    }
                     addPipelineEntry();
                 } else {
                     // this would be a protocol violation to not provide prepared statement name with "close" message
@@ -1308,15 +1313,37 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void syncPipeline() throws PeerIsSlowToReadException, QueryPausedException, BadProtocolException, PeerDisconnectedException {
         while (pipelineCurrentEntry != null || (pipelineCurrentEntry = pipeline.poll()) != null) {
             // with the sync call the existing pipeline entry will assign its own completion hooks (resume callbacks)
-            transactionState = pipelineCurrentEntry.sync(
-                    sqlExecutionContext,
-                    transactionState,
-                    taiCache,
-                    pendingWriters,
-                    this,
-                    namedStatements,
-                    responseUtf8Sink
-            );
+            try {
+                transactionState = pipelineCurrentEntry.sync(
+                        sqlExecutionContext,
+                        transactionState,
+                        taiCache,
+                        pendingWriters,
+                        this,
+                        namedStatements,
+                        responseUtf8Sink
+                );
+            } catch (NoSpaceLeftInResponseBufferException e) {
+                responseUtf8Sink.resetToBookmark();
+                responseUtf8Sink.sendBufferAndReset();
+                try {
+                    transactionState = pipelineCurrentEntry.sync(
+                            sqlExecutionContext,
+                            transactionState,
+                            taiCache,
+                            pendingWriters,
+                            this,
+                            namedStatements,
+                            responseUtf8Sink
+                    );
+                } catch (NoSpaceLeftInResponseBufferException e1) {
+                    // oopsie, buffer is too small for single record
+                    pipelineCurrentEntry.getErrorMessageSink()
+                            .put("not enough space in send buffer [sendBufferSize=").put(responseUtf8Sink.getSendBufferSize()).put(']');
+                    responseUtf8Sink.reset();
+                    throw BadProtocolException.INSTANCE;
+                }
+            }
             pipelineCurrentEntry = Misc.free(pipelineCurrentEntry);
         }
     }
@@ -1379,6 +1406,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             doSendWithRetries(offset + n, size - n);
         }
         sendBufferPtr = sendBuffer;
+        responseUtf8Sink.bookmarkPtr = sendBufferPtr;
         bufferRemainingSize = 0;
         bufferRemainingOffset = 0;
     }
@@ -1409,6 +1437,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private class ResponseUtf8Sink implements PGResponseSink, Mutable {
 
         private long bookmarkPtr = -1;
+
+        public ResponseUtf8Sink() {
+        }
 
         @Override
         public void bookmark() {
