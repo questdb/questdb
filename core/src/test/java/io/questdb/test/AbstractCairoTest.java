@@ -446,6 +446,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         factoryProvider = null;
         engineFactory = null;
         configurationFactory = null;
+        engine.metadataCacheClear();
         AbstractTest.tearDownStatic();
         DumpThreadStacksFunctionFactory.dumpThreadStacks();
     }
@@ -460,6 +461,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         SharedRandom.RANDOM.set(new Rnd());
         forEachNode(QuestDBTestNode::setUpCairo);
         engine.resetNameRegistryMemory();
+        engine.metadataCacheClear();
         refreshTablesInBaseEngine();
         SharedRandom.RANDOM.set(new Rnd());
         TestFilesFacadeImpl.resetTracking();
@@ -480,6 +482,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         LOG.info().$("Tearing down test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         forEachNode(node -> node.tearDownCairo(removeDir));
         ioURingFacade = IOURingFacadeImpl.INSTANCE;
+        engine.metadataCacheClear();
         sink.clear();
         memoryUsage = -1;
         if (inputWorkRoot != null) {
