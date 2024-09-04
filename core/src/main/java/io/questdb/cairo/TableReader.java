@@ -939,6 +939,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                         if (isReopen) {
                             ff.close(openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_FD));
                         }
+                        // TODO(puzpuzpuz): we need to read txn's Parquet file size and use it when reading
+                        //                  that's because O3 appends new versions of the file to its end
                         long fd = TableUtils.openRO(ff, path.$(), LOG);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_FD, fd);
                         if (!isReopen) {
