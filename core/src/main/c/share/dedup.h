@@ -46,4 +46,34 @@ struct dedup_column {
 };
 #pragma pack(pop)
 
+struct int256 {
+    __int128 lo;
+    __int128 hi;
+};
+
+inline bool operator>(const int256 &a, const int256 &b) {
+    // First, compare the high 128-bit parts
+    if (a.hi > b.hi) {
+        return true;
+    } else if (a.hi < b.hi) {
+        return false;
+    }
+
+    // If the high parts are equal, compare the low 128-bit parts
+    return a.lo > b.lo;
+}
+
+inline bool operator<(const int256 &a, const int256 &b) {
+    // First, compare the high 128-bit parts
+    if (a.hi < b.hi) {
+        return true;
+    } else if (a.hi > b.hi) {
+        return false;
+    }
+
+    // If the high parts are equal, compare the low 128-bit parts
+    return a.lo < b.lo;
+}
+
+
 #endif //QUESTDB_DEDUP_H

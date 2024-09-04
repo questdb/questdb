@@ -33,20 +33,6 @@
 #include "dedup.h"
 #include "dedup_comparers.h"
 #define assertm(exp, msg) assert(((void)msg, exp))
-
-struct int256 {
-    __int128 lo;
-    __int128 hi;
-};
-
-inline bool operator>(const int256 &a, const int256 &b) {
-    return a.hi > b.hi || a.lo > b.lo;
-}
-
-inline bool operator<(const int256 &a, const int256 &b) {
-    return a.hi < b.hi || a.lo < b.lo;
-}
-
 template<typename LambdaDiff>
 inline int64_t branch_free_search(const index_t *array, int64_t count, int64_t value_index, LambdaDiff compare) {
     const index_t *base = array;

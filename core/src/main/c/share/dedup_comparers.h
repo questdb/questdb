@@ -38,11 +38,11 @@ public:
                         ? reinterpret_cast<T *>(column_data)[col_index]
                         : *reinterpret_cast<const T *>(&null_value);
 
-        const auto r_val = reinterpret_cast<T *>(o3_data)[index_index];
+        const T r_val = reinterpret_cast<T *>(o3_data)[index_index];
 
         // One of the values can be MIN of the type (null value)
         // and subtraction can result in type overflow
-        return l_val > r_val ? 1 : (l_val < r_val ? -1 : 0);
+        return (l_val > r_val) - (l_val < r_val);
     }
 };
 
@@ -50,17 +50,17 @@ template<typename T>
 class SortColumnComparer : dedup_column {
 public:
     inline int operator()(int64_t l, int64_t r) const {
-        const auto l_val = l > -1
+        const T l_val = l > -1
                            ? reinterpret_cast<T *>(column_data)[l]
                            : reinterpret_cast<T *>(o3_data)[l & ~(1ull << 63)];
 
-        const auto r_val = r > -1
+        const T r_val = r > -1
                            ? reinterpret_cast<T *>(column_data)[r]
                            : reinterpret_cast<T *>(o3_data)[r & ~(1ull << 63)];
 
         // One of the values can be MIN of the type (null value)
         // and subtraction can result in type overflow
-        return l_val > r_val ? 1 : (l_val < r_val ? -1 : 0);
+        return (l_val > r_val) - (l_val < r_val);
     }
 };
 
@@ -240,8 +240,8 @@ public:
 
         assertm(l_val_offset < column_var_data_len, "ERROR: column aux data point beyond var data buffer");
         const uint8_t *l_val_ptr = col_index >= column_top ?
-                                reinterpret_cast<const uint8_t *>(column_var_data) + l_val_offset
-                                                        : null_value;
+                                   reinterpret_cast<const uint8_t *>(column_var_data) + l_val_offset
+                                                           : null_value;
 
         const auto r_val_offset = reinterpret_cast<int64_t *>(o3_data)[index_index];
         assertm(r_val_offset < o3_var_data_len, "ERROR: column aux data point beyond var data buffer");
