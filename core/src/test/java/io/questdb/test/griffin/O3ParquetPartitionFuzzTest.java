@@ -44,6 +44,30 @@ import org.junit.Test;
 
 public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
 
+    public static GenericRecordMetadata symbolAsVarcharCopy(RecordMetadata that) {
+        if (that != null) {
+            GenericRecordMetadata metadata = new GenericRecordMetadata();
+            for (int i = 0, n = that.getColumnCount(); i < n; i++) {
+                final int columnType = that.getColumnType(i);
+                metadata.add(
+                        new TableColumnMetadata(
+                                that.getColumnName(i),
+                                columnType == ColumnType.SYMBOL ? ColumnType.VARCHAR : columnType,
+                                that.isColumnIndexed(i),
+                                that.getIndexValueBlockCapacity(i),
+                                that.isSymbolTableStatic(i),
+                                that.getMetadata(i),
+                                that.getWriterIndex(i),
+                                that.isDedupKey(i)
+                        )
+                );
+            }
+            metadata.setTimestampIndex(that.getTimestampIndex());
+            return metadata;
+        }
+        return null;
+    }
+
     @Test
     public void testFuzz() throws Exception {
         executeWithPool(0, this::testFuzz0);
@@ -108,7 +132,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
 
 
         long minTs = partitionTs - 3600000000L;
-        long maxTs = partitionTs + 2*3600000000L;
+        long maxTs = partitionTs + 2 * 3600000000L;
 
         int txCount = Math.max(1, rnd.nextInt(10));
         int rowCount = Math.max(1, txCount * rnd.nextInt(20) * 100);
@@ -161,42 +185,18 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
         }
     }
 
-    static void assertEquals(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expectedSql, String parquetSql) throws SqlException {
-        try (RecordCursorFactory f1 = compiler.compile(expectedSql, sqlExecutionContext).getRecordCursorFactory(); RecordCursorFactory f2 = compiler.compile(parquetSql, sqlExecutionContext).getRecordCursorFactory(); RecordCursor c1 = f1.getCursor(sqlExecutionContext); RecordCursor c2 = f2.getCursor(sqlExecutionContext)) {
-            RecordMetadata parquetMetadata = symbolAsVarcharCopy(f2.getMetadata());
-            TestUtils.assertEquals(c1, f1.getMetadata(), c2, parquetMetadata, true);
-        }
-    }
-
-    public static GenericRecordMetadata symbolAsVarcharCopy(RecordMetadata that) {
-        if (that != null) {
-            GenericRecordMetadata metadata = new GenericRecordMetadata();
-            for (int i = 0, n = that.getColumnCount(); i < n; i++) {
-                final int columnType = that.getColumnType(i);
-                metadata.add(
-                        new TableColumnMetadata(
-                                that.getColumnName(i),
-                                columnType == ColumnType.SYMBOL ? ColumnType.VARCHAR : columnType,
-                                that.isColumnIndexed(i),
-                                that.getIndexValueBlockCapacity(i),
-                                that.isSymbolTableStatic(i),
-                                that.getMetadata(i),
-                                that.getWriterIndex(i),
-                                that.isDedupKey(i)
-                        )
-                );
-            }
-            metadata.setTimestampIndex(that.getTimestampIndex());
-            return metadata;
-        }
-        return null;
-    }
-
     private void testFuzz0(
             CairoEngine engine,
             SqlCompiler compiler,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         testFuzz00(engine, compiler, sqlExecutionContext, TestUtils.generateRandom(LOG));
+    }
+
+    static void assertEquals(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expectedSql, String parquetSql) throws SqlException {
+        try (RecordCursorFactory f1 = compiler.compile(expectedSql, sqlExecutionContext).getRecordCursorFactory(); RecordCursorFactory f2 = compiler.compile(parquetSql, sqlExecutionContext).getRecordCursorFactory(); RecordCursor c1 = f1.getCursor(sqlExecutionContext); RecordCursor c2 = f2.getCursor(sqlExecutionContext)) {
+            RecordMetadata parquetMetadata = symbolAsVarcharCopy(f2.getMetadata());
+            TestUtils.assertEquals(c1, f1.getMetadata(), c2, parquetMetadata, true);
+        }
     }
 }
