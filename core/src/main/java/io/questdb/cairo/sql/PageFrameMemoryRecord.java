@@ -41,7 +41,7 @@ import java.io.Closeable;
  * Must be initialized with a {@link PageFrameMemoryPool#navigateTo(int, PageFrameMemoryRecord)}
  * or {@link #init(PageFrameMemory)} call for a given page frame before any use.
  */
-public class PageFrameMemoryRecord implements Record, StableStringSource, Closeable {
+public class PageFrameMemoryRecord implements Record, StableStringSource, Closeable, Mutable {
     // Letters are used to track usage in PageFrameMemoryPool
     public static final byte RECORD_A_LETTER = 0;
     public static final byte RECORD_B_LETTER = 1;
@@ -84,9 +84,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
     }
 
     @Override
-    public void close() {
-        Misc.freeObjListIfCloseable(symbolTableCache);
-        symbolTableCache.clear();
+    public void clear() {
         rowIndex = 0;
         frameIndex = -1;
         rowIdOffset = -1;
@@ -94,6 +92,13 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
         auxPageAddresses = null;
         pageSizes = null;
         auxPageSizes = null;
+    }
+
+    @Override
+    public void close() {
+        Misc.freeObjListIfCloseable(symbolTableCache);
+        symbolTableCache.clear();
+        clear();
     }
 
     @Override

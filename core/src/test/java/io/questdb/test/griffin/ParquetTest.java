@@ -40,6 +40,27 @@ import org.junit.Test;
 public class ParquetTest extends AbstractCairoTest {
 
     @Test
+    public void testFilterAndOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table x as (\n" +
+                            "  select x id, timestamp_sequence(0,1000000000) as ts\n" +
+                            "  from long_sequence(10)\n" +
+                            ") timestamp(ts) partition by hour;"
+            );
+            ddl("alter table x convert partition to parquet where ts >= 0");
+
+            assertSql(
+                    "id\tts\n" +
+                            "3\t1970-01-01T00:33:20.000000Z\n" +
+                            "2\t1970-01-01T00:16:40.000000Z\n" +
+                            "1\t1970-01-01T00:00:00.000000Z\n",
+                    "x where id < 4 order by id desc"
+            );
+        });
+    }
+
+    @Test
     public void testJitFilter() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);

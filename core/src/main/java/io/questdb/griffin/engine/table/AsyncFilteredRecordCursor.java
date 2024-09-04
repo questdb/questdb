@@ -300,6 +300,9 @@ class AsyncFilteredRecordCursor implements RecordCursor {
             // because we updated frameIndex and loop can exit due to lack of frames.
             // Non-update of 'cursor' could cause double-free.
             cursor = -1;
+            // We also need to clear the record as it's initialized with the task's
+            // page frame memory that is now closed.
+            record.clear();
         }
     }
 
