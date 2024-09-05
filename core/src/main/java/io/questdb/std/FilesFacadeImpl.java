@@ -437,8 +437,8 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
-    public boolean rmdir(Path name, boolean lazy) {
-        return Files.rmdir(name, lazy);
+    public boolean rmdir(Path name, boolean haltOnError) {
+        return Files.rmdir(name, haltOnError);
     }
 
     @Override

@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.Uuid;
@@ -36,6 +37,7 @@ import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.MutableCharSink;
+import io.questdb.std.str.Utf8Sequence;
 
 import static io.questdb.std.Numbers.IPv4_NULL;
 
@@ -84,7 +86,8 @@ public class CursorPrinter {
                 break;
             case ColumnType.STRING:
                 if (!symbolAsString | metadata.getColumnType(columnIndex) != ColumnType.SYMBOL) {
-                    sink.put(record.getStrA(columnIndex));
+                    CharSequence val = record.getStrA(columnIndex);
+                    sink.put(val != null ? val : nullStringValue);
                     break;
                 } // Fall down to SYMBOL
             case ColumnType.SYMBOL:
@@ -123,7 +126,12 @@ public class CursorPrinter {
                 sink.put(record.getBool(columnIndex));
                 break;
             case ColumnType.BINARY:
-                Chars.toSink(record.getBin(columnIndex), sink);
+                BinarySequence bin = record.getBin(columnIndex);
+                if (bin != null) {
+                    Chars.toSink(bin, sink);
+                } else {
+                    sink.put(nullStringValue);
+                }
                 break;
             case ColumnType.LONG256:
                 record.getLong256(columnIndex, sink);
@@ -146,7 +154,12 @@ public class CursorPrinter {
                 break;
             }
             case ColumnType.VARCHAR:
-                sink.put(record.getVarcharA(columnIndex));
+                Utf8Sequence varchar = record.getVarcharA(columnIndex);
+                if (varchar != null) {
+                    sink.put(varchar);
+                } else {
+                    sink.put(nullStringValue);
+                }
                 break;
             default:
                 break;

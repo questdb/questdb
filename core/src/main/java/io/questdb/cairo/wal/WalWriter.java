@@ -1766,10 +1766,6 @@ public class WalWriter implements TableWriterAPI {
                 if (columnType < 0) {
                     throw CairoException.nonCritical().put("cannot use dropped column for deduplication [column=").put(metadata.getColumnName(columnIndex)).put(']');
                 }
-                if (ColumnType.isVarSize(columnType)) {
-                    throw CairoException.nonCritical().put("cannot use variable length column for deduplication [column=").put(metadata.getColumnName(columnIndex))
-                            .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
-                }
             }
             structureVersion++;
         }
