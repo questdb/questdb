@@ -8,7 +8,7 @@ use futures::{pin_mut, StreamExt};
 use pg_interval::Interval;
 use postgres_types::{ToSql, Type};
 use rust_decimal::Decimal;
-use sqllogictest::{DBOutput, DefaultColumnType};
+use sqllogictest::{DateFormat, DBOutput, DefaultColumnType, TimestampFormat};
 
 use super::{Extended, Postgres, Result};
 
@@ -148,6 +148,10 @@ fn bool_to_str(value: &bool) -> &'static str {
     }
 }
 
+fn timestamp_to_str(ts: &NaiveDateTime) -> String {
+    return ts.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string();
+}
+
 fn varchar_to_str(value: &str) -> String {
     if value.is_empty() {
         "(empty)".to_string()
@@ -218,7 +222,7 @@ impl sqllogictest::AsyncDB for Postgres<Extended> {
     type Error = tokio_postgres::error::Error;
     type ColumnType = DefaultColumnType;
 
-    async fn run(&mut self, sql: &str) -> Result<DBOutput<Self::ColumnType>> {
+    async fn run(&mut self, sql: &str, data_format: DateFormat) -> Result<DBOutput<Self::ColumnType>> {
         let mut output = vec![];
 
         let stmt = self.client.prepare(sql).await?;
@@ -254,7 +258,14 @@ impl sqllogictest::AsyncDB for Postgres<Extended> {
                         single_process!(row, row_vec, idx, NaiveTime);
                     }
                     Type::TIMESTAMP => {
-                        single_process!(row, row_vec, idx, NaiveDateTime);
+                        match data_format.timestamp_format {
+                            Some(TimestampFormat::Iso) => {
+                                single_process!(row, row_vec, idx, NaiveDateTime, timestamp_to_str);
+                            },
+                            _ => {
+                                single_process!(row, row_vec, idx, NaiveDateTime);
+                            }
+                        }
                     }
                     Type::BOOL => {
                         single_process!(row, row_vec, idx, bool, bool_to_str);

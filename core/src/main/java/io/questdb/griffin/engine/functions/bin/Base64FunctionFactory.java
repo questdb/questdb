@@ -82,6 +82,9 @@ public class Base64FunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrA(final Record rec) {
             final BinarySequence sequence = getArg().getBin(rec);
+            if (sequence == null) {
+                return null;
+            }
             sinkA.clear();
             Chars.base64Encode(sequence, this.maxLength, sinkA);
             return sinkA;
@@ -90,6 +93,9 @@ public class Base64FunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrB(final Record rec) {
             final BinarySequence sequence = getArg().getBin(rec);
+            if (sequence == null) {
+                return null;
+            }
             sinkB.clear();
             Chars.base64Encode(sequence, this.maxLength, sinkB);
             return sinkB;

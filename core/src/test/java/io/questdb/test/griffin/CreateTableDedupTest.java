@@ -122,11 +122,6 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             String alterPrefix = "alter table a ";
 
             assertException(
-                    alterPrefix + "deduplicate UPSERT KEYS(ts, str);",
-                    42,
-                    "deduplicate key column can only be fixed size column [column=str, type=STRING]"
-            );
-            assertException(
                     alterPrefix + "deduplicate UPSERT KEYS",
                     37,
                     "deduplicate key column list expected"
@@ -172,11 +167,6 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                     createPrefix + " timestamp(ts) partition by day bypass wal deduplicate UPSERT KEYS(l);",
                     121,
                     "deduplication is possible only on WAL tables"
-            );
-            assertException(
-                    createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (l, str);",
-                    130,
-                    "deduplicate key column can only be fixed size column [column=str, type=STRING]"
             );
             assertException(
                     createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (;",

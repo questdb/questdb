@@ -25,28 +25,33 @@
 package io.questdb.test.fuzz;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Utf8StringSink;
 
 public class FuzzStableInsertOperation implements FuzzTransactionOperation {
     private final int commit;
     private final String symbol;
     private final long timestamp;
-    private final boolean withSymbol;
+    private final int columnType;
+    private final Utf8StringSink utf8String;
 
     public FuzzStableInsertOperation(long timestamp, int commit) {
         this.timestamp = timestamp;
         this.commit = commit;
         this.symbol = null;
-        this.withSymbol = false;
+        this.columnType = -1;
+        this.utf8String = null;
     }
 
-    public FuzzStableInsertOperation(long timestamp, int commit, String symbol) {
+    public FuzzStableInsertOperation(long timestamp, int commit, String symbol, int columnType, Utf8StringSink utf8String) {
         this.timestamp = timestamp;
         this.commit = commit;
         this.symbol = symbol;
-        this.withSymbol = true;
+        this.columnType = columnType;
+        this.utf8String = utf8String;
     }
 
     @Override
@@ -56,8 +61,21 @@ public class FuzzStableInsertOperation implements FuzzTransactionOperation {
             row.putTimestamp(virtualTimestampIndex, getTimestamp());
         }
         row.putInt(1, commit);
-        if (withSymbol) {
-            row.putSym(2, getSymbol());
+        switch (columnType) {
+            case ColumnType.SYMBOL:
+                row.putSym(2, getSymbol());
+                break;
+            case ColumnType.VARCHAR:
+                String sym = getSymbol();
+                if (sym != null) {
+                    utf8String.clear();
+                    utf8String.put(sym);
+                    row.putVarchar(2, utf8String);
+                }
+                break;
+            case ColumnType.STRING:
+                row.putStr(2, getSymbol());
+                break;
         }
         row.append();
         return false;

@@ -289,6 +289,7 @@ public class TextMetadataDetector implements CsvTextLexer.Listener, Mutable, Clo
                 columnNames.setQuick(i, normalise(utf8Sink));
             } else {
                 LOG.info().$("utf8 error [table=").$(tableName).$(", line=0, col=").$(i).$(']').$();
+                columnNames.setQuick(i, "");
             }
         }
     }

@@ -1,0 +1,60 @@
+# description: Test dedup cases with binary column type
+# group: [dedup]
+
+control iso_timestamp on
+
+# Absolute path
+statement ok
+create table x (s BINARY, x int, ts timestamp)
+timestamp(ts) partition by DAY WAL DEDUP UPSERT KEYS(ts, s);
+
+# Insert some data with dups in the single commit
+statement ok
+insert into x(s, x, ts)
+values
+(from_base64('MTIzNA=='), 01, '2020-01-01T00:00:00.000Z'),
+(NULL,         -1, '2020-01-01T00:00:00.000Z'),
+(from_base64('MTIzNA=='),         10, '2020-01-03T00:00:00.000Z'),
+(from_base64('MTIzNA=='),          2, '2020-01-01T00:00:00.000Z'),
+(from_base64('MTIzNA=='),          3, '2020-01-01T00:00:00.000Z'),
+(from_base64('MTIzNA=='),         20, '2020-01-03T00:00:00.000Z');
+
+# wait data inserted
+statement ok
+select wait_wal_table('x');
+
+# check dedup data
+query TIT
+select base64(s, 100), x, ts from x order by ts, x;
+----
+NULL      -1  2020-01-01T00:00:00.000000Z
+MTIzNA==   3  2020-01-01T00:00:00.000000Z
+MTIzNA==  20  2020-01-03T00:00:00.000000Z
+
+
+# Insert partially matched data
+statement ok
+insert into x(s, x, ts)
+values (from_base64('MTIzNA=='), 31, '2020-01-01T00:00:00.000Z'),
+       (from_base64('NTY3OA=='), 32, '2020-01-04T00:00:00.000Z'),
+       (from_base64('NTY3OA=='), 33, '2020-01-01T00:00:00.000Z'),
+       (from_base64('MTIzNA=='), 34, '2020-01-01T00:00:00.000Z'),
+       (from_base64('NTY3OA=='), 35, '2020-01-03T00:00:00.000Z'),
+       (NULL,                    36, '2020-01-01T00:00:00.000Z');
+
+# wait data inserted
+statement ok
+select wait_wal_table('x');
+
+# check dedup data
+query TIT
+select base64(s, 100), x, ts from x order by ts, x;
+----
+NTY3OA==  33  2020-01-01T00:00:00.000000Z
+MTIzNA==  34  2020-01-01T00:00:00.000000Z
+NULL      36  2020-01-01T00:00:00.000000Z
+MTIzNA==  20  2020-01-03T00:00:00.000000Z
+NTY3OA==  35  2020-01-03T00:00:00.000000Z
+NTY3OA==  32  2020-01-04T00:00:00.000000Z
+
+

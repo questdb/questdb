@@ -156,7 +156,7 @@ public interface FilesFacade {
 
     boolean rmdir(Path name);  // Implementation-specific laziness.
 
-    boolean rmdir(Path name, boolean lazy);
+    boolean rmdir(Path name, boolean haltOnError);
 
     int softLink(LPSZ src, LPSZ softLink);
 
