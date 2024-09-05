@@ -91,11 +91,8 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         @Override
         public boolean hasNext() {
             columnIndex++;
-            if (columnIndex < cairoTable.getColumnCount()) {
-                cairoColumn = cairoTable.getColumnQuick(columnNames.getQuick(columnIndex));
-                return true;
-            }
-            return false;
+            cairoColumn = cairoTable.getColumnQuiet(columnIndex);
+            return cairoColumn != null;
         }
 
         public ShowColumnsCursor of(CairoTable table) {

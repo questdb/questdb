@@ -65,14 +65,6 @@ public class CairoTable implements Sinkable {
         return this.columnNameIndexMap.keys();
     }
 
-    public @NotNull CairoColumn getColumnQuick(@NotNull CharSequence columnName) {
-        final CairoColumn col = getColumnQuiet(columnName);
-        if (col == null) {
-            throw CairoException.columnDoesNotExist(columnName);
-        }
-        return col;
-    }
-
     public CairoColumn getColumnQuiet(@NotNull CharSequence columnName) {
         final int index = columnNameIndexMap.get(columnName);
         if (index != -1) {
@@ -80,6 +72,10 @@ public class CairoTable implements Sinkable {
         } else {
             return null;
         }
+    }
+
+    public CairoColumn getColumnQuiet(int position) {
+        return columns.getQuiet(position);
     }
 
     public String getDirectoryName() {
@@ -106,10 +102,6 @@ public class CairoTable implements Sinkable {
         return metadataVersion;
     }
 
-    public @NotNull String getTableName() {
-        return this.getTableToken().getTableName();
-    }
-
     public long getO3MaxLag() {
         return o3MaxLag;
     }
@@ -120,6 +112,10 @@ public class CairoTable implements Sinkable {
 
     public String getPartitionByName() {
         return PartitionBy.toString(partitionBy);
+    }
+
+    public @NotNull String getTableName() {
+        return this.getTableToken().getTableName();
     }
 
     public TableToken getTableToken() {
@@ -211,14 +207,6 @@ public class CairoTable implements Sinkable {
             columns.add(newColumn);
             final int denseIndex = columns.size() - 1;
             columnNameIndexMap.put(columnName, denseIndex);
-        }
-    }
-
-    private CairoColumn getColumnQuiet(int position) {
-        if (position > -1) {
-            return columns.getQuiet(position);
-        } else {
-            return null;
         }
     }
 }
