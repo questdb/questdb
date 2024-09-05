@@ -38,6 +38,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
     private final Function filter;
     private final boolean restrictedByExcludedValues;
     private final boolean restrictedByIncludedValues;
+    private final DirectLongList rowIds;
     private final int shrinkToCapacity;
     private boolean areRecordsFound;
     private SqlExecutionCircuitBreaker circuitBreaker;
@@ -46,7 +47,6 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
     private IntHashSet foundKeys;
     private int foundSize;
     private IntHashSet includedSymbolKeys;
-    private DirectLongList rowIds;
 
     public LatestByValueListRecordCursor(
             @NotNull CairoConfiguration configuration,
