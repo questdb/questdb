@@ -909,6 +909,28 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isWal);
     }
 
+    public void metadataCacheAsyncHydrator() {
+        try {
+            final ObjHashSet<TableToken> tableTokensSet = tlTokens.get();
+            getTableTokens(tableTokensSet, false);
+            final ObjList<TableToken> tableTokens = tableTokensSet.getList();
+
+            LOG.info().$("metadata hydration started [all_tables=").$(tableTokens.size()).I$();
+
+            for (int i = 0, n = tableTokens.size(); i < n; i++) {
+                final TableToken tableToken = tableTokens.getQuick(i);
+                if (!tableToken.isSystem()) {
+                    metadataCacheHydrateTable(tableTokens.getQuick(i), false, false);
+                }
+            }
+
+            LOG.info().$("metaata hydration completed [user_tables=").$(metadataCacheTablesCount()).I$();
+        } catch (CairoException e) {
+            LogRecord l = e.isCritical() ? LOG.critical() : LOG.error();
+            l.$(e.getMessage()).$();
+        }
+    }
+
     public void metadataCacheClear() {
         cairoTables.clear();
     }
@@ -976,8 +998,8 @@ public class CairoEngine implements Closeable, WriterSource {
     /**
      * Hydrates metadata cache for a table, using thread-local Path/ColumnVersionReader objects.
      *
-     * @param token       The table token for the table
-     * @param blindUpsert controls whether or not this function call overrides concurrent writers
+     * @param token       The table token for the tablez
+     * @param blindUpsert controls whether this function call overrides concurrent writers
      * @see CairoEngine#metadataCacheHydrateTable(TableToken, Path, ColumnVersionReader, boolean, boolean)
      */
     public void metadataCacheHydrateTable(@NotNull TableToken token, boolean blindUpsert, boolean infoLog) {
