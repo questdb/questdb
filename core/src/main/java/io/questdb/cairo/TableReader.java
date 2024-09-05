@@ -56,7 +56,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_NAME_TXN = 2;
     private static final int PARTITIONS_SLOT_OFFSET_PARQUET_FD = 5;
     private static final int PARTITIONS_SLOT_OFFSET_SIZE = 1;
-    private static final int PARTITIONS_SLOT_SIZE = 6;
+    private static final int PARTITIONS_SLOT_SIZE = 8; // must be power of 2
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
     private final MillisecondClock clock;
     private final ColumnVersionReader columnVersionReader;
