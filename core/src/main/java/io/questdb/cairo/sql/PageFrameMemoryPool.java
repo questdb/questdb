@@ -42,7 +42,7 @@ import org.jetbrains.annotations.NotNull;
  * This pool is thread-unsafe as it may hold navigated Parquet partition data,
  * so it shouldn't be shared between multiple threads.
  */
-public class PageFrameMemoryPool implements QuietCloseable {
+public class PageFrameMemoryPool implements QuietCloseable, Mutable {
     private static final byte FRAME_MEMORY_MASK = 1 << 2;
     private static final byte RECORD_A_MASK = 1;
     private static final byte RECORD_B_MASK = 1 << 1;
@@ -70,6 +70,16 @@ public class PageFrameMemoryPool implements QuietCloseable {
             close();
             throw th;
         }
+    }
+
+    @Override
+    public void clear() {
+        parquetColumnTypes.resetCapacity();
+        freeParquetBuffers.addAll(cachedParquetBuffers);
+        cachedParquetBuffers.clear();
+        Misc.freeObjListAndKeepObjects(freeParquetBuffers);
+        frameMemory.clear();
+        addressCache = null;
     }
 
     @Override

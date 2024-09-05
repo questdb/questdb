@@ -30,13 +30,10 @@ import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.StatefulAtom;
-import io.questdb.std.DirectLongList;
-import io.questdb.std.FlyweightMessageContainer;
-import io.questdb.std.Misc;
-import io.questdb.std.QuietCloseable;
+import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 
-public class PageFrameReduceTask implements QuietCloseable {
+public class PageFrameReduceTask implements QuietCloseable, Mutable {
     public static final byte TYPE_FILTER = 0;
     public static final byte TYPE_GROUP_BY = 1;
     public static final byte TYPE_GROUP_BY_NOT_KEYED = 2;
@@ -69,6 +66,14 @@ public class PageFrameReduceTask implements QuietCloseable {
             close();
             throw th;
         }
+    }
+
+    @Override
+    public void clear() {
+        filteredRows.resetCapacity();
+        dataAddresses.resetCapacity();
+        auxAddresses.resetCapacity();
+        frameMemoryPool.clear();
     }
 
     @Override
@@ -188,19 +193,14 @@ public class PageFrameReduceTask implements QuietCloseable {
     }
 
     public void releaseFrameMemory() {
-        frameMemory = null;
         Misc.free(frameMemoryPool);
+        frameMemory = null;
     }
 
+    // same as clear(), but also releases frame pool memory
     public void reset() {
-        resetCapacities();
+        clear();
         releaseFrameMemory();
-    }
-
-    public void resetCapacities() {
-        filteredRows.resetCapacity();
-        dataAddresses.resetCapacity();
-        auxAddresses.resetCapacity();
     }
 
     public void setErrorMsg(Throwable th) {
