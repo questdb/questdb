@@ -582,7 +582,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlListener.onColumnAdded(securityContext, tableToken, columnName);
         }
 
-        engine.metadataCacheHydrateTable(tableToken, true, true);
+        engine.metadataCacheHydrateTable(metadata, true, true);
     }
 
     @Override
@@ -625,7 +625,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnMetadata.setIndexed(true);
         columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
-        engine.metadataCacheHydrateTable(tableToken, true, true);
+        engine.metadataCacheHydrateTable(metadata, true, true);
         LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$substr(pathRootSize, path).$();
     }
 
@@ -830,7 +830,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             symbolMapWriter.updateCacheFlag(cache);
             updateMetaStructureVersion();
             txWriter.bumpTruncateVersion();
-            engine.metadataCacheHydrateTable(tableToken, true, true);
+            engine.metadataCacheHydrateTable(metadata, true, true);
         }
     }
 
@@ -907,7 +907,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // remove old column to in-memory metadata object and add new one
                 metadata.removeColumn(existingColIndex);
-                metadata.addColumn(columnName, newType, isIndexed, indexValueBlockCapacity, existingColIndex, isSequential, symbolCapacity, newColumnDedupKey);
+                metadata.addColumn(columnName, newType, isIndexed, indexValueBlockCapacity, existingColIndex, isSequential, symbolCapacity, newColumnDedupKey, existingColIndex + 1); // by convention, replacingIndex is +1
 
                 // open new column files
                 if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
@@ -947,7 +947,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // effectively removes that column from being a dedup flag.
                     dedupColumnCommitAddresses.setDedupColumnCount(dedupColumnCommitAddresses.getColumnCount() - 1);
                 }
-                engine.metadataCacheHydrateTable(tableToken, true, true);
+                engine.metadataCacheHydrateTable(metadata, true, true);
             } finally {
                 // clear temp resources
                 convertOperator.finishColumnConversion();
@@ -1481,7 +1481,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         checkDistressed();
         LOG.info().$("disabling row deduplication [table=").utf8(tableToken.getTableName()).I$();
         updateMetadataWithDeduplicationUpsertKeys(false, null);
-        engine.metadataCacheHydrateTable(tableToken, true, true);
+        engine.metadataCacheHydrateTable(metadata, true, true);
     }
 
     @Override
@@ -1535,7 +1535,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             finishColumnPurge();
             LOG.info().$("REMOVED index [txn=").$(txWriter.getTxn()).$();
 
-            engine.metadataCacheHydrateTable(tableToken, true, true);
+            engine.metadataCacheHydrateTable(metadata, true, true);
 
             LOG.info().$("END DROP INDEX [txn=").$(txWriter.getTxn())
                     .$(", table=").utf8(tableToken.getTableName())
@@ -1584,7 +1584,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             logRec.I$();
         }
         updateMetadataWithDeduplicationUpsertKeys(true, columnsIndexes);
-        engine.metadataCacheHydrateTable(tableToken, true, true);
+        engine.metadataCacheHydrateTable(metadata, true, true);
     }
 
     public long getAppliedSeqTxn() {
@@ -2333,7 +2333,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         finishColumnPurge();
 
-        engine.metadataCacheHydrateTable(tableToken, true, true);
+        engine.metadataCacheHydrateTable(metadata, true, true);
         LOG.info().$("REMOVED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' from ").$substr(pathRootSize, path).$();
     }
 
@@ -2422,7 +2422,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlListener.onColumnRenamed(securityContext, tableToken, currentName, newName);
         }
 
-        engine.metadataCacheHydrateTable(tableToken, true, true);
+        engine.metadataCacheHydrateTable(metadata, true, true);
 
         LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$substr(pathRootSize, path).$();
     }
@@ -2440,7 +2440,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Record column structure version bump in txn file for WAL sequencer structure version to match writer structure version.
         bumpColumnStructureVersion();
 
-        engine.metadataCacheHydrateTable(tableToken, true, true);
+        engine.metadataCacheHydrateTable(metadata, true, true);
     }
 
     @Override
@@ -2499,7 +2499,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             finishMetaSwapUpdate();
             metadata.setMaxUncommittedRows(maxUncommittedRows);
-            engine.metadataCacheHydrateTable(tableToken, true, true);
+            engine.metadataCacheHydrateTable(metadata, true, true);
 
         } finally {
             ddlMem.close();
@@ -2522,7 +2522,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             finishMetaSwapUpdate();
             metadata.setO3MaxLag(o3MaxLagUs);
-            engine.metadataCacheHydrateTable(tableToken, true, true);
+            engine.metadataCacheHydrateTable(metadata, true, true);
         } finally {
             ddlMem.close();
         }
@@ -7795,7 +7795,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         LOG.info().$("truncated [name=").utf8(tableToken.getTableName()).I$();
 
-        engine.metadataCacheHydrateTable(tableToken, true, true);
+        engine.metadataCacheHydrateTable(metadata, true, true);
     }
 
     private void truncateColumns() {

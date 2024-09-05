@@ -1029,6 +1029,9 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
 
+    /**
+     * @see CairoEngine#metadataCacheHydrateTable(TableToken, boolean, boolean)
+     */
     public void metadataCacheHydrateTable(@NotNull TableWriterMetadata tableMetadata, boolean blindUpsert, boolean infoLog) {
         final TableToken tableToken = tableMetadata.getTableToken();
 
@@ -1083,7 +1086,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
             column.setName(columnName); // check this, not sure the char sequence is preserved
             column.setType(columnType);
-            column.setPosition(columnMetadata.getExistingIndex() > -1 ? columnMetadata.getExistingIndex() : i);
+            column.setPosition(columnMetadata.getReplacingIndex() > 0 ? columnMetadata.getReplacingIndex() - 1 : i);
             column.setIsIndexed(columnMetadata.isIndexed());
             column.setIndexBlockCapacity(columnMetadata.getIndexValueBlockCapacity());
             column.setIsSymbolTableStatic(columnMetadata.isSymbolTableStatic());

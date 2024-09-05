@@ -34,11 +34,11 @@ public class TableColumnMetadata implements Plannable {
     private final RecordMetadata metadata;
     private final boolean symbolTableStatic;
     private final int writerIndex;
-    private int existingIndex;
     private int indexValueBlockCapacity;
     private boolean indexed;
     private boolean isDedupKey;
     private String name;
+    private int replacingIndex;
     private int type;
 
     public TableColumnMetadata(String name, int type) {
@@ -81,7 +81,7 @@ public class TableColumnMetadata implements Plannable {
         this.metadata = GenericRecordMetadata.copyOf(metadata);
         this.writerIndex = writerIndex;
         this.isDedupKey = dedupKeyFlag;
-        this.existingIndex = 0;
+        this.replacingIndex = 0;
     }
 
     public TableColumnMetadata(
@@ -93,7 +93,7 @@ public class TableColumnMetadata implements Plannable {
             @Nullable RecordMetadata metadata,
             int writerIndex,
             boolean dedupKeyFlag,
-            int existingIndex
+            int replacingIndex
     ) {
         this.name = name;
         this.type = type;
@@ -103,11 +103,7 @@ public class TableColumnMetadata implements Plannable {
         this.metadata = GenericRecordMetadata.copyOf(metadata);
         this.writerIndex = writerIndex;
         this.isDedupKey = dedupKeyFlag;
-        this.existingIndex = existingIndex;
-    }
-
-    public int getExistingIndex() {
-        return existingIndex;
+        this.replacingIndex = replacingIndex;
     }
 
     public int getIndexValueBlockCapacity() {
@@ -121,6 +117,10 @@ public class TableColumnMetadata implements Plannable {
 
     public String getName() {
         return name;
+    }
+
+    public int getReplacingIndex() {
+        return replacingIndex;
     }
 
     public int getType() {
@@ -155,10 +155,6 @@ public class TableColumnMetadata implements Plannable {
         isDedupKey = dedupKeyFlag;
     }
 
-    public void setExistingIndex(int existingIndex) {
-        this.existingIndex = existingIndex;
-    }
-
     public void setIndexValueBlockCapacity(int indexValueBlockCapacity) {
         this.indexValueBlockCapacity = indexValueBlockCapacity;
     }
@@ -169,6 +165,10 @@ public class TableColumnMetadata implements Plannable {
 
     public void setName(String name) {
         this.name = name;
+    }
+
+    public void setReplacingIndex(int replacingIndex) {
+        this.replacingIndex = replacingIndex;
     }
 
     @Override
