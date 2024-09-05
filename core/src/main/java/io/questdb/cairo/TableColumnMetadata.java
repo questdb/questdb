@@ -34,6 +34,7 @@ public class TableColumnMetadata implements Plannable {
     private final RecordMetadata metadata;
     private final boolean symbolTableStatic;
     private final int writerIndex;
+    private int existingIndex;
     private int indexValueBlockCapacity;
     private boolean indexed;
     private boolean isDedupKey;
@@ -45,7 +46,7 @@ public class TableColumnMetadata implements Plannable {
     }
 
     public TableColumnMetadata(String name, int type, @Nullable RecordMetadata metadata) {
-        this(name, type, false, 0, false, metadata, -1, false);
+        this(name, type, false, 0, false, metadata, -1, false, 0);
         // Do not allow using this constructor for symbol types.
         // Use version where you specify symbol table parameters
         assert !ColumnType.isSymbol(type);
@@ -59,7 +60,7 @@ public class TableColumnMetadata implements Plannable {
             boolean symbolTableStatic,
             @Nullable RecordMetadata metadata
     ) {
-        this(name, type, indexFlag, indexValueBlockCapacity, symbolTableStatic, metadata, -1, false);
+        this(name, type, indexFlag, indexValueBlockCapacity, symbolTableStatic, metadata, -1, false, 0);
     }
 
     public TableColumnMetadata(
@@ -80,6 +81,33 @@ public class TableColumnMetadata implements Plannable {
         this.metadata = GenericRecordMetadata.copyOf(metadata);
         this.writerIndex = writerIndex;
         this.isDedupKey = dedupKeyFlag;
+        this.existingIndex = 0;
+    }
+
+    public TableColumnMetadata(
+            String name,
+            int type,
+            boolean indexed,
+            int indexValueBlockCapacity,
+            boolean symbolTableStatic,
+            @Nullable RecordMetadata metadata,
+            int writerIndex,
+            boolean dedupKeyFlag,
+            int existingIndex
+    ) {
+        this.name = name;
+        this.type = type;
+        this.indexed = indexed;
+        this.indexValueBlockCapacity = indexValueBlockCapacity;
+        this.symbolTableStatic = symbolTableStatic;
+        this.metadata = GenericRecordMetadata.copyOf(metadata);
+        this.writerIndex = writerIndex;
+        this.isDedupKey = dedupKeyFlag;
+        this.existingIndex = existingIndex;
+    }
+
+    public int getExistingIndex() {
+        return existingIndex;
     }
 
     public int getIndexValueBlockCapacity() {
@@ -125,6 +153,10 @@ public class TableColumnMetadata implements Plannable {
 
     public void setDedupKeyFlag(boolean dedupKeyFlag) {
         isDedupKey = dedupKeyFlag;
+    }
+
+    public void setExistingIndex(int existingIndex) {
+        this.existingIndex = existingIndex;
     }
 
     public void setIndexValueBlockCapacity(int indexValueBlockCapacity) {

@@ -264,7 +264,8 @@ public final class TableUtils {
                         false,
                         null,
                         columnIndex,
-                        false
+                        false,
+                        existingIndex // replacing column index by convention can be 0 if not in use
                 )
         );
         columnMetadata.getQuick(existingIndex).markDeleted();

@@ -64,7 +64,8 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
                             symbolTableStatic,
                             null,
                             writerIndex,
-                            isDedupKey
+                            isDedupKey,
+                            0
                     )
             );
         }

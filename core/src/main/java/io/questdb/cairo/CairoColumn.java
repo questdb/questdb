@@ -36,12 +36,10 @@ public class CairoColumn implements Sinkable {
     private boolean isDedupKey;
     private boolean isDesignated;
     private boolean isIndexed;
-    private boolean isSequential;
     private boolean isSymbolTableStatic;
     private long metadataVersion;
     private CharSequence name;
     private int position;
-    private int stableIndex;
     private boolean symbolCached;
     private int symbolCapacity;
     private int type;
@@ -58,12 +56,10 @@ public class CairoColumn implements Sinkable {
         target.isSymbolTableStatic = this.isSymbolTableStatic;
         target.name = this.name;
         target.position = this.position;
-        target.stableIndex = this.stableIndex;
         target.symbolCached = this.symbolCached;
         target.symbolCapacity = this.symbolCapacity;
         target.type = this.type;
         target.writerIndex = this.writerIndex;
-        target.isSequential = this.isSequential;
         target.metadataVersion = this.metadataVersion;
     }
 
@@ -83,10 +79,6 @@ public class CairoColumn implements Sinkable {
         return isIndexed;
     }
 
-    public boolean getIsSequential() {
-        return isSequential;
-    }
-
     public boolean getIsSymbolTableStatic() {
         return isSymbolTableStatic;
     }
@@ -97,10 +89,6 @@ public class CairoColumn implements Sinkable {
 
     public int getPosition() {
         return position;
-    }
-
-    public int getStableIndex() {
-        return stableIndex;
     }
 
     public boolean getSymbolCached() {
@@ -135,10 +123,6 @@ public class CairoColumn implements Sinkable {
         this.isIndexed = isIndexed;
     }
 
-    public void setIsSequential(boolean isSequential) {
-        this.isSequential = isSequential;
-    }
-
     public void setIsSymbolTableStatic(boolean symbolTableStatic) {
         isSymbolTableStatic = symbolTableStatic;
     }
@@ -149,10 +133,6 @@ public class CairoColumn implements Sinkable {
 
     public void setPosition(int position) {
         this.position = position;
-    }
-
-    public void setStableIndex(int stableIndex) {
-        this.stableIndex = stableIndex;
     }
 
     public void setSymbolCached(boolean symbolCached) {
@@ -179,13 +159,11 @@ public class CairoColumn implements Sinkable {
         sink.put("type=").put(ColumnType.nameOf(getType())).put(", ");
         sink.put("isDedupKey=").put(getIsDedupKey()).put(", ");
         sink.put("isDesignated=").put(getIsDesignated()).put(", ");
-        sink.put("isSequential=").put(getIsSequential()).put(", ");
         sink.put("isSymbolTableStatic=").put(getIsSymbolTableStatic()).put(", ");
         sink.put("symbolCached=").put(getSymbolCached()).put(", ");
         sink.put("symbolCapacity=").put(getSymbolCapacity()).put(", ");
         sink.put("isIndexed=").put(getIsIndexed()).put(", ");
         sink.put("indexBlockCapacity=").put(getIndexBlockCapacity()).put(", ");
-        sink.put("stableIndex=").put(getStableIndex()).put(", ");
         sink.put("writerIndex=").put(getWriterIndex()).put("]");
     }
 
