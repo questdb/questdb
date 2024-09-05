@@ -830,7 +830,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             symbolMapWriter.updateCacheFlag(cache);
             updateMetaStructureVersion();
             txWriter.bumpTruncateVersion();
-            engine.metadataCacheHydrateTable(metadata, true, true);
+            engine.metadataCacheHydrateTable(tableToken, true, true);
         }
     }
 
