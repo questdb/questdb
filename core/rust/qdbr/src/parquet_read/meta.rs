@@ -24,7 +24,7 @@ impl ParquetDecoder {
         let mut row_group_sizes: Vec<i32> = Vec::with_capacity(metadata.row_groups.len());
         let mut columns = Vec::with_capacity(col_len);
 
-        for (_, row_group) in metadata.row_groups.iter().enumerate() {
+        for row_group in metadata.row_groups.iter() {
             row_group_sizes.push(row_group.num_rows() as i32)
         }
 
