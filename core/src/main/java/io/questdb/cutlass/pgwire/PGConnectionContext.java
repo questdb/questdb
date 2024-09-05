@@ -2402,8 +2402,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         lo = hi + 1;
         hi = getStringLength(lo, msgLimit, "bad query text length");
 
-        // clear currentCursor and factory if they weren't cleared by previous execute with maxRows
-        if (currentCursor != null) {
+        // clear currentCursor and factory if they weren't cleared by previous execute, e.g. due to maxRows
+        if (currentCursor != null || typesAndSelect != null) {
             clearCursorAndFactory();
         }
 
