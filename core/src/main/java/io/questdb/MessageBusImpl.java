@@ -222,7 +222,7 @@ public class MessageBusImpl implements MessageBus {
         }
         for (int i = 0; i < pageFrameReduceShardCount; i++) {
             for (int j = 0, n = pageFrameReduceQueue[i].getCycle(); j < n; j++) {
-                pageFrameReduceQueue[i].get(j).resetCapacities();
+                pageFrameReduceQueue[i].get(j).reset();
             }
         }
     }
@@ -233,7 +233,6 @@ public class MessageBusImpl implements MessageBus {
         Misc.free(tableWriterEventQueue);
         Misc.free(pageFrameReduceQueue);
         Misc.free(latestByQueue);
-        Misc.free(pageFrameReduceQueue);
     }
 
     @Override

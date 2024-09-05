@@ -36,8 +36,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.StringSink;
 
-import java.io.Closeable;
-
 public class PageFrameReduceTask implements QuietCloseable {
     public static final byte TYPE_FILTER = 0;
     public static final byte TYPE_GROUP_BY = 1;
@@ -60,10 +58,10 @@ public class PageFrameReduceTask implements QuietCloseable {
 
     public PageFrameReduceTask(CairoConfiguration configuration, int memoryTag) {
         try {
+            this.frameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
             this.filteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
             this.dataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
             this.auxAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
-            this.frameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
             this.frameMemoryPool = new PageFrameMemoryPool();
         } catch (Throwable th) {
             close();
@@ -192,11 +190,11 @@ public class PageFrameReduceTask implements QuietCloseable {
         Misc.free(frameMemoryPool);
     }
 
-    public void resetCapacities() {
+    public void reset() {
         filteredRows.resetCapacity();
         dataAddresses.resetCapacity();
         auxAddresses.resetCapacity();
-        Misc.free(frameMemoryPool);
+        releaseFrameMemory();
     }
 
     public void setErrorMsg(Throwable th) {
@@ -238,7 +236,7 @@ public class PageFrameReduceTask implements QuietCloseable {
         // is 32 items. If our particular producer resizes queue items to 10x of the initial size
         // we let these sizes stick until produce starts to wind down.
         if (forceCollect || frameIndex >= frameCount - frameQueueCapacity) {
-            resetCapacities();
+            reset();
         }
     }
 }
