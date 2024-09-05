@@ -29,10 +29,9 @@ import io.questdb.std.Rows;
 public interface TimeFrame {
 
     /**
-     * @return numeric index of the current time frame; not guaranteed
-     * to be sequentially growing
+     * @return numeric index of the current time frame.
      */
-    int getIndex();
+    int getFrameIndex();
 
     /**
      * Make sure to call {@link TimeFrameRecordCursor#open()} prior to this method.

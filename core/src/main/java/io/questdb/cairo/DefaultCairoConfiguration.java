@@ -1156,4 +1156,9 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     public boolean mangleTableDirNames() {
         return false;
     }
+
+    @Override
+    public boolean useFastAsOfJoin() {
+        return true;
+    }
 }

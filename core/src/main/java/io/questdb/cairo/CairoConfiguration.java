@@ -626,4 +626,6 @@ public interface CairoConfiguration {
 
     default void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
     }
+
+    boolean useFastAsOfJoin();
 }
