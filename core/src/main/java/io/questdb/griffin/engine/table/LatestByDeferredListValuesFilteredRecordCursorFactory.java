@@ -136,7 +136,7 @@ public class LatestByDeferredListValuesFilteredRecordCursorFactory extends Abstr
     protected void _close() {
         super._close();
         Misc.free(filter);
-        this.cursor.destroy();
+        Misc.free(cursor);
     }
 
     @Override

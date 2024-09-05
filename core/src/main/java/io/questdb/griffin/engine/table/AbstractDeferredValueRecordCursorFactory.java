@@ -88,6 +88,7 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
     protected void _close() {
         super._close();
         filter = Misc.free(filter);
+        Misc.free(cursor);
     }
 
     protected abstract AbstractLatestByValueRecordCursor createCursorFor(int symbolKey);
