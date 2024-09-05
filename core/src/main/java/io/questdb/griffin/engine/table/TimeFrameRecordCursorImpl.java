@@ -87,6 +87,20 @@ public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     }
 
     @Override
+    public void jumpTo(int frameIndex) {
+        buildFrameCache();
+
+        if (frameIndex >= frameCount || frameIndex < 0) {
+            throw CairoException.nonCritical().put("frame index out of bounds. [frameIndex=]").put(frameIndex).put(", frameCount=").put(frameCount).put(']');
+        }
+
+        int partitionIndex = framePartitionIndexes.getQuick(frameIndex);
+        long timestampLo = reader.getPartitionTimestampByIndex(partitionIndex);
+        long maxTimestampHi = partitionIndex < partitionHi - 2 ? reader.getPartitionTimestampByIndex(partitionIndex + 1) : Long.MAX_VALUE;
+        timeFrame.of(frameIndex, timestampLo, estimatePartitionHi(timestampLo, maxTimestampHi));
+    }
+
+    @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         return frameCursor.newSymbolTable(columnIndex);
     }
@@ -223,7 +237,7 @@ public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
         }
 
         @Override
-        public int getIndex() {
+        public int getFrameIndex() {
             return frameIndex;
         }
 
