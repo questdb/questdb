@@ -2390,6 +2390,7 @@ public class SqlOptimiser implements Mutable {
         return node;
     }
 
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     private boolean matchesWithOrWithoutTablePrefix(@NotNull CharSequence name, @NotNull CharSequence table, CharSequence target) {
         if (target == null) {
             return false;

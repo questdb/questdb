@@ -123,6 +123,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final ObjList<MapWriter> denseSymbolMapWriters;
     private final int detachedMkDirMode;
+    private final CairoEngine engine;
     private final FilesFacade ff;
     private final int fileOperationRetryCount;
     private final FrameFactory frameFactory;
@@ -197,7 +198,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private String designatedTimestampColumnName;
     private boolean distressed = false;
     private DropIndexOperator dropIndexOperator;
-    private CairoEngine engine;
     private int indexCount;
     private int lastErrno;
     private boolean lastOpenPartitionIsReadOnly;

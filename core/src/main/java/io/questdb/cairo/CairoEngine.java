@@ -976,8 +976,8 @@ public class CairoEngine implements Closeable, WriterSource {
     /**
      * Hydrates metadata cache for a table, using thread-local Path/ColumnVersionReader objects.
      *
-     * @param token
-     * @param blindUpsert
+     * @param token       The table token for the table
+     * @param blindUpsert controls whether or not this function call overrides concurrent writers
      * @see CairoEngine#metadataCacheHydrateTable(TableToken, Path, ColumnVersionReader, boolean, boolean)
      */
     public void metadataCacheHydrateTable(@NotNull TableToken token, boolean blindUpsert, boolean infoLog) {
@@ -1006,6 +1006,7 @@ public class CairoEngine implements Closeable, WriterSource {
      * @param columnVersionReader Specify a ColumnVersionReader object to be used.
      * @param blindUpsert         Specifies whether upsert is blind or only if non-null. This is important as TableWriter should take priority over other processes calling this function (async hydration job, queries)
      */
+    @SuppressWarnings("TryFinallyCanBeTryWithResources")
     public void metadataCacheHydrateTable(@NotNull TableToken token, @NotNull Path path, @NotNull ColumnVersionReader columnVersionReader,
                                           boolean blindUpsert, boolean infoLog) {
         if (infoLog) {
@@ -1024,144 +1025,136 @@ public class CairoEngine implements Closeable, WriterSource {
 
         // create table to work with
         CairoTable table = new CairoTable(token);
+        MemoryCMR metaMem = Vm.getCMRInstance();
 
         try {
-            try {
-                MemoryCMR metaMem = Vm.getCMRInstance();
-                try {
 
-                    // open metadata
-                    metaMem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.NATIVE_METADATA_READER);
-                    TableUtils.validateMeta(metaMem, null, ColumnType.VERSION);
+            // open metadata
+            metaMem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.NATIVE_METADATA_READER);
+            TableUtils.validateMeta(metaMem, null, ColumnType.VERSION);
 
-                    table.setMetadataVersion(Long.MIN_VALUE);
+            table.setMetadataVersion(Long.MIN_VALUE);
 
-                    int metadataVersion = metaMem.getInt(TableUtils.META_OFFSET_METADATA_VERSION);
+            int metadataVersion = metaMem.getInt(TableUtils.META_OFFSET_METADATA_VERSION);
 
-                    // make sure we aren't duplicating work
-                    CairoTable potentiallyExistingTable = cairoTables.get(token.getDirName());
-                    if (potentiallyExistingTable != null && potentiallyExistingTable.getMetadataVersion() > metadataVersion) {
-                        LOG.debug().$("table in cache with newer version [table=")
-                                .$(token.getTableName()).$(", version=").$(potentiallyExistingTable.getMetadataVersion()).I$();
-                        return;
-                    }
+            // make sure we aren't duplicating work
+            CairoTable potentiallyExistingTable = cairoTables.get(token.getDirName());
+            if (potentiallyExistingTable != null && potentiallyExistingTable.getMetadataVersion() > metadataVersion) {
+                LOG.debug().$("table in cache with newer version [table=")
+                        .$(token.getTableName()).$(", version=").$(potentiallyExistingTable.getMetadataVersion()).I$();
+                return;
+            }
 
-                    // get basic metadata
-                    int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
+            // get basic metadata
+            int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
 
-                    LOG.debug().$("reading columns [table=").$(token.getTableName())
-                            .$(", count=").$(columnCount)
-                            .I$();
+            LOG.debug().$("reading columns [table=").$(token.getTableName())
+                    .$(", count=").$(columnCount)
+                    .I$();
 
-                    table.setMetadataVersion(metadataVersion);
+            table.setMetadataVersion(metadataVersion);
 
-                    LOG.debug().$("set metadata version [table=").$(token.getTableName())
-                            .$(", version=").$(metadataVersion)
-                            .I$();
+            LOG.debug().$("set metadata version [table=").$(token.getTableName())
+                    .$(", version=").$(metadataVersion)
+                    .I$();
 
-                    table.setPartitionBy(metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY));
-                    table.setMaxUncommittedRows(metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS));
-                    table.setO3MaxLag(metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG));
-                    table.setTimestampIndex(metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX));
-                    table.setIsSoftLink(isSoftLink);
+            table.setPartitionBy(metaMem.getInt(TableUtils.META_OFFSET_PARTITION_BY));
+            table.setMaxUncommittedRows(metaMem.getInt(TableUtils.META_OFFSET_MAX_UNCOMMITTED_ROWS));
+            table.setO3MaxLag(metaMem.getLong(TableUtils.META_OFFSET_O3_MAX_LAG));
+            table.setTimestampIndex(metaMem.getInt(TableUtils.META_OFFSET_TIMESTAMP_INDEX));
+            table.setIsSoftLink(isSoftLink);
 
-                    TableUtils.buildWriterOrderMap(metaMem, table.columnOrderMap, metaMem, columnCount);
+            TableUtils.buildWriterOrderMap(metaMem, table.columnOrderMap, metaMem, columnCount);
 
-                    // populate columns
-                    for (int i = 0, n = table.columnOrderMap.size(); i < n; i += 3) {
+            // populate columns
+            for (int i = 0, n = table.columnOrderMap.size(); i < n; i += 3) {
 
-                        int writerIndex = table.columnOrderMap.get(i);
-                        if (writerIndex < 0) {
-                            continue;
-                        }
-                        int stableIndex = i / 3;
-                        CharSequence name = metaMem.getStrA(table.columnOrderMap.get(i + 1));
-
-                        assert name != null;
-                        int columnType = TableUtils.getColumnType(metaMem, writerIndex);
-
-                        if (columnType > -1) {
-                            String columnName = Chars.toString(name);
-                            CairoColumn column = new CairoColumn();
-
-                            LOG.debug().$("hydrating column [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
-
-                            column.setName(columnName);
-                            table.upsertColumn(column);
-
-                            column.setPosition((int) (table.getColumnCount() - 1 < 0 ? 0 : table.getColumnCount() - 1));
-                            column.setType(columnType);
-
-                            if (column.getType() < 0) {
-                                // deleted
-                                continue;
-                            }
-
-                            column.setIsIndexed(TableUtils.isColumnIndexed(metaMem, writerIndex));
-                            column.setIndexBlockCapacity(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
-                            column.setIsSymbolTableStatic(true);
-                            column.setIsDedupKey(TableUtils.isColumnDedupKey(metaMem, writerIndex));
-                            column.setWriterIndex(writerIndex);
-                            column.setStableIndex(stableIndex);
-                            column.setIsDesignated(writerIndex == table.getTimestampIndex());
-                            column.setIsSequential(TableUtils.isSequential(metaMem, writerIndex));
-
-                            if (column.getIsDedupKey()) {
-                                table.setIsDedup(true);
-                            }
-
-                            if (ColumnType.isSymbol(columnType)) {
-                                LOG.debug().$("hydrating symbol metadata [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
-
-
-                                // get column version
-                                path.trimTo(configuration.getRoot().length())
-                                        .concat(table.getDirectoryName())
-                                        .concat(TableUtils.COLUMN_VERSION_FILE_NAME);
-
-                                columnVersionReader.ofRO(configuration.getFilesFacade(),
-                                        path.$());
-
-                                columnVersionReader.readUnsafe();
-                                final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
-
-                                // use txn to find correct symbol entry
-                                final LPSZ offsetFileName = TableUtils.offsetFileName(
-                                        path.trimTo(configuration.getRoot().length()).concat(table.getDirectoryName())
-                                        , columnName, columnNameTxn);
-
-                                // initialise symbol map memory
-                                MemoryCMR offsetMem = Vm.getCMRInstance();
-                                try {
-                                    final long offsetMemSize = SymbolMapWriter.keyToOffset(0) + Long.BYTES;
-                                    offsetMem.of(configuration.getFilesFacade(), offsetFileName, offsetMemSize, offsetMemSize, MemoryTag.NATIVE_METADATA_READER);
-
-                                    // get symbol properties
-                                    column.setSymbolCapacity(offsetMem.getInt(SymbolMapWriter.HEADER_CAPACITY));
-                                    assert column.getSymbolCapacity() > 0;
-
-                                    column.setSymbolCached(offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED));
-                                } finally {
-                                    offsetMem.close();
-                                }
-                            }
-                        }
-                    }
-
-                    if (blindUpsert) {
-                        cairoTables.put(token.getDirName(), table);
-                    } else {
-                        cairoTables.putIfAbsent(token.getDirName(), table);
-                    }
-
-                    if (infoLog) {
-                        LOG.info().$("hydrated metadata [table=").$(table.getTableName()).I$();
-                    }
-                } finally {
-                    metaMem.close();
+                int writerIndex = table.columnOrderMap.get(i);
+                if (writerIndex < 0) {
+                    continue;
                 }
-            } finally {
-                path.close();
+                int stableIndex = i / 3;
+                CharSequence name = metaMem.getStrA(table.columnOrderMap.get(i + 1));
+
+                assert name != null;
+                int columnType = TableUtils.getColumnType(metaMem, writerIndex);
+
+                if (columnType > -1) {
+                    String columnName = Chars.toString(name);
+                    CairoColumn column = new CairoColumn();
+
+                    LOG.debug().$("hydrating column [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
+
+                    column.setName(columnName);
+                    table.upsertColumn(column);
+
+                    column.setPosition((int) (table.getColumnCount() - 1 < 0 ? 0 : table.getColumnCount() - 1));
+                    column.setType(columnType);
+
+                    if (column.getType() < 0) {
+                        // deleted
+                        continue;
+                    }
+
+                    column.setIsIndexed(TableUtils.isColumnIndexed(metaMem, writerIndex));
+                    column.setIndexBlockCapacity(TableUtils.getIndexBlockCapacity(metaMem, writerIndex));
+                    column.setIsSymbolTableStatic(true);
+                    column.setIsDedupKey(TableUtils.isColumnDedupKey(metaMem, writerIndex));
+                    column.setWriterIndex(writerIndex);
+                    column.setStableIndex(stableIndex);
+                    column.setIsDesignated(writerIndex == table.getTimestampIndex());
+                    column.setIsSequential(TableUtils.isSequential(metaMem, writerIndex));
+
+                    if (column.getIsDedupKey()) {
+                        table.setIsDedup(true);
+                    }
+
+                    if (ColumnType.isSymbol(columnType)) {
+                        LOG.debug().$("hydrating symbol metadata [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
+
+
+                        // get column version
+                        path.trimTo(configuration.getRoot().length())
+                                .concat(table.getDirectoryName())
+                                .concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+
+                        columnVersionReader.ofRO(configuration.getFilesFacade(),
+                                path.$());
+
+                        columnVersionReader.readUnsafe();
+                        final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
+
+                        // use txn to find correct symbol entry
+                        final LPSZ offsetFileName = TableUtils.offsetFileName(
+                                path.trimTo(configuration.getRoot().length()).concat(table.getDirectoryName())
+                                , columnName, columnNameTxn);
+
+                        // initialise symbol map memory
+                        MemoryCMR offsetMem = Vm.getCMRInstance();
+                        try {
+                            final long offsetMemSize = SymbolMapWriter.keyToOffset(0) + Long.BYTES;
+                            offsetMem.of(configuration.getFilesFacade(), offsetFileName, offsetMemSize, offsetMemSize, MemoryTag.NATIVE_METADATA_READER);
+
+                            // get symbol properties
+                            column.setSymbolCapacity(offsetMem.getInt(SymbolMapWriter.HEADER_CAPACITY));
+                            assert column.getSymbolCapacity() > 0;
+
+                            column.setSymbolCached(offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED));
+                        } finally {
+                            offsetMem.close();
+                        }
+                    }
+                }
+            }
+
+            if (blindUpsert) {
+                cairoTables.put(token.getDirName(), table);
+            } else {
+                cairoTables.putIfAbsent(token.getDirName(), table);
+            }
+
+            if (infoLog) {
+                LOG.info().$("hydrated metadata [table=").$(table.getTableName()).I$();
             }
         } catch (CairoException e) {
             metadataCacheRemoveTable(token); // get rid of stale metadata
@@ -1171,6 +1164,7 @@ public class CairoEngine implements Closeable, WriterSource {
         } finally {
             columnVersionReader.close();
             path.close();
+            metaMem.close();
         }
     }
 
