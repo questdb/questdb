@@ -374,19 +374,6 @@ public class Bootstrap {
         return new CairoEngine(getConfiguration().getCairoConfiguration(), getMetrics());
     }
 
-    private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
-        copyConfResource(dir, force, buffer, res, res, log);
-    }
-
-    private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, String dest, Log log) throws IOException {
-        File out = new File(dir, dest);
-        try (InputStream is = ServerMain.class.getResourceAsStream("/io/questdb/site/" + res)) {
-            if (is != null) {
-                copyInputStream(force, buffer, out, is, log);
-            }
-        }
-    }
-
     private static void copyInputStream(boolean force, byte[] buffer, File out, InputStream is, Log log) throws IOException {
         final boolean exists = out.exists();
         if (force || !exists) {
@@ -413,13 +400,17 @@ public class Bootstrap {
         }
     }
 
-    private static void copyResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
-        File out = new File(dir, res);
+    private static void copyResource(String dir, boolean force, byte[] buffer, String res, String dest, Log log) throws IOException {
+        File out = new File(dir, dest);
         try (InputStream is = ServerMain.class.getResourceAsStream("/io/questdb/site/" + res)) {
             if (is != null) {
                 copyInputStream(force, buffer, out, is, log);
             }
         }
+    }
+
+    private static void copyResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
+        copyResource(dir, force, buffer, res, res, log);
     }
 
     private static String getPublicVersion(String publicDir) throws IOException {
@@ -478,9 +469,9 @@ public class Bootstrap {
 
     private void copyLogConfResource(byte[] buffer) throws IOException {
         if (Chars.equalsIgnoreCaseNc("false", System.getProperty(CONTAINERIZED_SYSTEM_PROPERTY))) {
-            copyConfResource(rootDirectory, false, buffer, "conf/non_containerized_log.conf", "conf/log.conf", null);
+            copyResource(rootDirectory, false, buffer, "conf/non_containerized_log.conf", "conf/log.conf", null);
         } else {
-            copyConfResource(rootDirectory, false, buffer, "conf/log.conf", null);
+            copyResource(rootDirectory, false, buffer, "conf/log.conf", null);
         }
     }
 
@@ -508,7 +499,7 @@ public class Bootstrap {
                 throw exception;
             }
         }
-        copyConfResource(rootDirectory, false, buffer, "conf/server.conf", log);
+        copyResource(rootDirectory, false, buffer, "conf/server.conf", log);
         copyLogConfResource(buffer);
     }
 
