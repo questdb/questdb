@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use bytes::{Buf, BytesMut};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use sqllogictest::{AsyncDB, DBOutput, DefaultColumnType};
+use sqllogictest::{AsyncDB, DateFormat, DBOutput, DefaultColumnType};
 use thiserror::Error;
 use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -93,7 +93,7 @@ impl AsyncDB for ExternalDriver {
     type Error = ExternalDriverError;
     type ColumnType = DefaultColumnType;
 
-    async fn run(&mut self, sql: &str) -> Result<DBOutput<Self::ColumnType>> {
+    async fn run(&mut self, sql: &str, _: DateFormat) -> Result<DBOutput<Self::ColumnType>> {
         let input = Input {
             sql: sql.to_string(),
         };

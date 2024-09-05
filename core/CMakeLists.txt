@@ -344,5 +344,14 @@ else ()
     target_link_libraries(questdb rt -Wl,--gc-sections -Wl,--exclude-libs=ALL -static-libgcc _simdjson)
 endif ()
 
+# Define the secondary output directory
+
+set(SECONDARY_OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/questdb/bin-local/)
+
+add_custom_command(TARGET questdb POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${OUTPUT} ${SECONDARY_OUTPUT}
+        COMMENT "Copying all build outputs from ${OUTPUT} to ${SECONDARY_OUTPUT}"
+)
+
 #jemalloc
 include(${CMAKE_CURRENT_SOURCE_DIR}/src/main/c/share/jemalloc-cmake/CMakeLists.txt)
