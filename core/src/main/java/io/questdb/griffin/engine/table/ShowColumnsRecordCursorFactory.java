@@ -30,8 +30,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
@@ -44,7 +42,6 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     private static final int N_SYMBOL_CAPACITY_COL = N_SYMBOL_CACHED_COL + 1;
     private static final int N_DESIGNATED_COL = N_SYMBOL_CAPACITY_COL + 1;
     private static final int N_UPSERT_KEY_COL = N_DESIGNATED_COL + 1;
-    private static final Log LOG = LogFactory.getLog(ShowColumnsRecordCursorFactory.class);
     private static final RecordMetadata METADATA;
     private final ShowColumnsCursor cursor = new ShowColumnsCursor();
     private final TableToken tableToken;
@@ -77,13 +74,13 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         private CairoColumn cairoColumn = new CairoColumn();
         private CairoTable cairoTable;
         private int columnIndex;
-        private ObjList<CharSequence> names;
+        private ObjList<CharSequence> columnNames;
 
         @Override
         public void close() {
             cairoTable = null;
             cairoColumn = null;
-            names = null;
+            columnNames = null;
         }
 
         @Override
@@ -95,7 +92,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         public boolean hasNext() {
             columnIndex++;
             if (columnIndex < cairoTable.getColumnCount()) {
-                cairoColumn = cairoTable.getColumnQuick(names.getQuick(columnIndex));
+                cairoColumn = cairoTable.getColumnQuick(columnNames.getQuick(columnIndex));
                 return true;
             }
             return false;
@@ -103,7 +100,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
         public ShowColumnsCursor of(CairoTable table) {
             cairoTable = table;
-            names = cairoTable.getColumnNames();
+            columnNames = cairoTable.getColumnNames();
             toTop();
             return this;
         }
@@ -116,7 +113,6 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
                 return of(table);
             }
         }
-
 
         public ShowColumnsCursor of(SqlExecutionContext executionContext, CharSequence tableName) {
             final CairoEngine engine = executionContext.getCairoEngine();

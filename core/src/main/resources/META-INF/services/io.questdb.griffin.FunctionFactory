@@ -781,7 +781,7 @@ io.questdb.griffin.engine.functions.catalogue.PgRangeFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PgGetKeywordsFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.FunctionListFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetKeywordsFunctionFactory
-io.questdb.griffin.engine.functions.catalogue.ShowTablesFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.TablesFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.KeywordsFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.WalTableListFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.WalTransactionsFunctionFactory
@@ -891,7 +891,7 @@ io.questdb.griffin.engine.functions.str.PositionVarcharFunctionFactory
 
 # ^
 io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory
-io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.AllTablesFunctionFactory
 io.questdb.griffin.engine.functions.table.TableColumnsFunctionFactory
 io.questdb.griffin.engine.functions.table.TablePartitionsFunctionFactory
 io.questdb.griffin.engine.functions.table.TableStorageFunctionFactory

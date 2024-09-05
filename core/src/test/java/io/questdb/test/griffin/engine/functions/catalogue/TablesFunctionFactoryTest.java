@@ -36,7 +36,7 @@ import org.junit.Test;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 
-public class ShowTablesFunctionFactoryTest extends AbstractCairoTest {
+public class TablesFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testMetadataQuery() throws Exception {
         assertMemoryLeak(() -> {

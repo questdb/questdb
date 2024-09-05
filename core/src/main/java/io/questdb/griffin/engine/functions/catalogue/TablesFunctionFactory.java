@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.TelemetryConfigLogger;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -34,23 +33,22 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
-import io.questdb.tasks.TelemetryTask;
+import io.questdb.std.str.StringSink;
 
-public class ShowTablesFunctionFactory implements FunctionFactory {
-    private static final int DEDUP_NAME_COLUMN;
-    private static final int DESIGNATED_TIMESTAMP_COLUMN;
-    private static final int DIRECTORY_NAME_COLUMN;
-    private static final int ID_COLUMN;
-    private static final Log LOG = LogFactory.getLog(ShowTablesFunctionFactory.class);
-    private static final int MAX_UNCOMMITTED_ROWS_COLUMN;
+public class TablesFunctionFactory implements FunctionFactory {
+    private static final int DEDUP_NAME_COLUMN = 8;
+    private static final int DESIGNATED_TIMESTAMP_COLUMN = 2;
+    private static final int DIRECTORY_NAME_COLUMN = 7;
+    private static final int ID_COLUMN = 0;
+    private static final int MAX_UNCOMMITTED_ROWS_COLUMN = 4;
+    private static final int O3_MAX_LAG_COLUMN = 5;
     private static final RecordMetadata METADATA;
-    private static final int O3_MAX_LAG_COLUMN;
-    private static final int PARTITION_BY_COLUMN;
-    private static final int WAL_ENABLED_COLUMN;
+    private static final int PARTITION_BY_COLUMN = 3;
+    private static final int TABLE_NAME = 1;
+    private static final int WAL_ENABLED_COLUMN = 6;
 
     @Override
     public String getSignature() {
@@ -70,7 +68,7 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new CursorFunction(new ShowTablesCursorFactory(configuration)) {
+        return new CursorFunction(new TablesCursorFactory()) {
             @Override
             public boolean isRuntimeConstant() {
                 return true;
@@ -78,33 +76,14 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
         };
     }
 
-    public static class ShowTablesCursorFactory extends AbstractRecordCursorFactory {
-        public static final Log LOG = LogFactory.getLog(ShowTablesCursorFactory.class);
+    public static class TablesCursorFactory extends AbstractRecordCursorFactory {
+        public static final Log LOG = LogFactory.getLog(TablesCursorFactory.class);
         public static final String TABLE_NAME_COLUMN_NAME = "table_name";
         public static final TableColumnMetadata TABLE_NAME_COLUMN_META = new TableColumnMetadata(TABLE_NAME_COLUMN_NAME, ColumnType.STRING);
-        private final TableListRecordCursor cursor = new TableListRecordCursor();
-        private final boolean hideTelemetryTables; // ignored when showAllTables is set to true
-        private final boolean showAllTables;
-        private final CharSequence sysTablePrefix;
-        private final CharSequence tempPendingRenameTablePrefix;
-        private final String toPlan;
-        private TableToken tableToken;
+        private final TablesRecordCursor cursor = new TablesRecordCursor();
 
-        public ShowTablesCursorFactory(CairoConfiguration configuration, RecordMetadata metadata, String toPlan, boolean showAllTables) {
-            super(metadata);
-            tempPendingRenameTablePrefix = configuration.getTempRenamePendingTablePrefix();
-            sysTablePrefix = configuration.getSystemTableNamePrefix();
-            hideTelemetryTables = configuration.getTelemetryConfiguration().hideTables();
-            this.toPlan = toPlan;
-            this.showAllTables = showAllTables;
-        }
-
-        public ShowTablesCursorFactory(CairoConfiguration configuration, RecordMetadata metadata, String toPlan) {
-            this(configuration, metadata, toPlan, false);
-        }
-
-        public ShowTablesCursorFactory(CairoConfiguration configuration) {
-            this(configuration, METADATA, "tables()");
+        public TablesCursorFactory() {
+            super(METADATA);
         }
 
         @Override
@@ -120,7 +99,7 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
 
         @Override
         public void toPlan(PlanSink sink) {
-            sink.type(toPlan);
+            sink.type("tables()");
         }
 
         @Override
@@ -128,7 +107,7 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
             cursor.close();
         }
 
-        private class TableListRecordCursor implements NoRandomAccessRecordCursor {
+        private static class TablesRecordCursor implements NoRandomAccessRecordCursor {
             private final TableListRecord record = new TableListRecord();
             private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
             private SqlExecutionContext executionContext;
@@ -146,19 +125,14 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                if (tableIndex < 0) {
-                    executionContext.getCairoEngine().getTableTokens(tableBucket, false);
-                    tableIndex = -1;
-                }
                 tableIndex++;
                 int n = tableBucket.size();
                 for (; tableIndex < n; tableIndex++) {
-                    tableToken = tableBucket.get(tableIndex);
-                    if (TableUtils.isFinalTableName(tableToken.getTableName(), tempPendingRenameTablePrefix) && record.open(tableToken)) {
-                        break;
+                    if (record.open(tableBucket.get(tableIndex))) {
+                        return true;
                     }
                 }
-                return tableIndex < n;
+                return false;
             }
 
             @Override
@@ -173,21 +147,24 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
 
             private void of(SqlExecutionContext executionContext) {
                 this.executionContext = executionContext;
+                executionContext.getCairoEngine().getTableTokens(tableBucket, false);
                 toTop();
             }
 
             private class TableListRecord implements Record {
-                private CairoTable table = new CairoTable();
+                private StringSink lazyStringSink = null;
+                private CairoTable table;
 
                 @Override
                 public boolean getBool(int col) {
-                    if (col == WAL_ENABLED_COLUMN) {
-                        return table.getWalEnabled();
+                    switch (col) {
+                        case WAL_ENABLED_COLUMN:
+                            return table.getWalEnabled();
+                        case DEDUP_NAME_COLUMN:
+                            return table.getIsDedup();
+                        default:
+                            return false;
                     }
-                    if (col == DEDUP_NAME_COLUMN) {
-                        return table.getIsDedup();
-                    }
-                    return false;
                 }
 
                 @Override
@@ -207,22 +184,26 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
 
                 @Override
                 public CharSequence getStrA(int col) {
-                    if (Chars.equals(ShowTablesCursorFactory.TABLE_NAME_COLUMN_NAME, getMetadata().getColumnName(col))) {
-                        return table.getName();
+                    switch (col) {
+                        case TABLE_NAME:
+                            return table.getTableName();
+                        case PARTITION_BY_COLUMN:
+                            return table.getPartitionByName();
+                        case DESIGNATED_TIMESTAMP_COLUMN:
+                            return table.getTimestampName();
+                        case DIRECTORY_NAME_COLUMN:
+                            if (table.getIsSoftLink()) {
+                                if (lazyStringSink == null) {
+                                    lazyStringSink = new StringSink();
+                                }
+                                lazyStringSink.clear();
+                                lazyStringSink.put(table.getDirectoryName()).put(" (->)");
+                                return lazyStringSink;
+                            }
+                            return table.getDirectoryName();
+                        default:
+                            return null;
                     }
-                    if (col == PARTITION_BY_COLUMN) {
-                        return table.getPartitionByName();
-                    }
-                    if (col == DESIGNATED_TIMESTAMP_COLUMN) {
-                        return table.getTimestampName();
-                    }
-                    if (col == DIRECTORY_NAME_COLUMN) {
-                        if (table.getIsSoftLink()) {
-                            return table.getDirectoryName() + " (->)";
-                        }
-                        return table.getDirectoryName();
-                    }
-                    return null;
                 }
 
                 @Override
@@ -237,39 +218,17 @@ public class ShowTablesFunctionFactory implements FunctionFactory {
                 }
 
                 private boolean open(TableToken tableToken) {
-                    if (!showAllTables) {
-                        // sys table
-                        if (Chars.startsWith(tableToken.getTableName(), sysTablePrefix)) {
-                            return false;
-                        }
-                        // telemetry table
-                        if (hideTelemetryTables && (Chars.equals(tableToken.getTableName(), TelemetryTask.TABLE_NAME)
-                                || Chars.equals(tableToken.getTableName(), TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME))) {
-                            return false;
-                        }
-                    }
-
-                    table = executionContext.getCairoEngine().metadataCacheGetTable(tableToken);
-
+                    table = executionContext.getCairoEngine().metadataCacheGetVisibleTable(tableToken);
                     return table != null;
-
                 }
             }
         }
     }
 
     static {
-        ID_COLUMN = 0;
-        DESIGNATED_TIMESTAMP_COLUMN = 2;
-        PARTITION_BY_COLUMN = 3;
-        MAX_UNCOMMITTED_ROWS_COLUMN = 4;
-        O3_MAX_LAG_COLUMN = 5;
-        WAL_ENABLED_COLUMN = 6;
-        DIRECTORY_NAME_COLUMN = 7;
-        DEDUP_NAME_COLUMN = 8;
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("id", ColumnType.INT));
-        metadata.add(ShowTablesCursorFactory.TABLE_NAME_COLUMN_META);
+        metadata.add(TablesCursorFactory.TABLE_NAME_COLUMN_META);
         metadata.add(new TableColumnMetadata("designatedTimestamp", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("partitionBy", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT));

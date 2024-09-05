@@ -24,10 +24,7 @@
 
 package io.questdb.cairo;
 
-import io.questdb.MessageBus;
-import io.questdb.MessageBusImpl;
-import io.questdb.Metrics;
-import io.questdb.Telemetry;
+import io.questdb.*;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.pool.*;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -96,7 +93,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final Telemetry<TelemetryWalTask> telemetryWal;
     private final ThreadLocal<ColumnVersionReader> tlColumnVersionReader = ThreadLocal.withInitial(ColumnVersionReader::new);
     private final ThreadLocal<Path> tlPath = ThreadLocal.withInitial(Path::new);
-    private final ThreadLocal<ObjHashSet<TableToken>> tlTokens = ThreadLocal.withInitial(ObjHashSet<TableToken>::new);
+    private final ThreadLocal<ObjHashSet<TableToken>> tlTokens = ThreadLocal.withInitial(ObjHashSet::new);
     // initial value of unpublishedWalTxnCount is 1 because we want to scan for non-applied WAL transactions on startup
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final WalWriterPool walWriterPool;
@@ -480,10 +477,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public CopyContext getCopyContext() {
         return copyContext;
-    }
-
-    public ConcurrentHashMap<TableToken> getCreateTableLock() {
-        return createTableLock;
     }
 
     public @NotNull DdlListener getDdlListener(TableToken tableToken) {
@@ -937,6 +930,25 @@ public class CairoEngine implements Closeable, WriterSource {
         return cairoTables.get(tableToken.getDirName());
     }
 
+    public CairoTable metadataCacheGetVisibleTable(@NotNull TableToken tableToken) {
+        if (Chars.startsWith(tableToken.getTableName(), configuration.getSystemTableNamePrefix())) {
+            return null;
+        }
+        // telemetry table
+        if (configuration.getTelemetryConfiguration().hideTables()
+                && (Chars.equals(tableToken.getTableName(), TelemetryTask.TABLE_NAME)
+                || Chars.equals(tableToken.getTableName(), TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME))
+        ) {
+            return null;
+        }
+
+        if (TableUtils.isFinalTableName(tableToken.getTableName(), configuration.getTempRenamePendingTablePrefix())) {
+            return metadataCacheGetTable(tableToken);
+        }
+
+        return null;
+    }
+
     /**
      * This is dangerous and may clobber any concurrent metadata changes. This should only be used in last-resort cases,
      * for example, for testing purposes.
@@ -1143,7 +1155,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     }
 
                     if (infoLog) {
-                        LOG.info().$("hydrated metadata [table=").$(table.getName()).I$();
+                        LOG.info().$("hydrated metadata [table=").$(table.getTableName()).I$();
                     }
                 } finally {
                     metaMem.close();
@@ -1155,7 +1167,7 @@ public class CairoEngine implements Closeable, WriterSource {
             metadataCacheRemoveTable(token); // get rid of stale metadata
             // if can't hydrate and table is not dropped, it's a critical error
             LogRecord root = this.isTableDropped(token) ? LOG.info() : LOG.critical();
-            root.$("could not hydrate metadata [table=").$(table.getName()).I$();
+            root.$("could not hydrate metadata [table=").$(table.getTableName()).I$();
         } finally {
             columnVersionReader.close();
             path.close();

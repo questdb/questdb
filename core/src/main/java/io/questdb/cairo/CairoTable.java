@@ -106,7 +106,7 @@ public class CairoTable implements Sinkable {
         return metadataVersion;
     }
 
-    public @NotNull String getName() {
+    public @NotNull String getTableName() {
         return this.getTableToken().getTableName();
     }
 
@@ -178,7 +178,7 @@ public class CairoTable implements Sinkable {
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.put("CairoTable [");
-        sink.put("name=").put(getName()).put(", ");
+        sink.put("name=").put(getTableName()).put(", ");
         sink.put("id=").put(getId()).put(", ");
         sink.put("directoryName=").put(getDirectoryName()).put(", ");
         sink.put("isDedup=").put(getIsDedup()).put(", ");
