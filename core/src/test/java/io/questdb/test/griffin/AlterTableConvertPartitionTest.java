@@ -65,7 +65,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             insert("insert into x(designated_ts) values('1970-01')");
             ddl("alter table x convert partition to parquet list '1970-01'");
-            assertPartitionExists("x", "1970-01.1");
+            assertPartitionExists("x", "1970-01.2");
         });
     }
 
