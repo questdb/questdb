@@ -167,6 +167,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         Misc.free(filter);
         Misc.free(fwdPageFrameCursor);
         Misc.free(bwdPageFrameCursor);
+        Misc.free(timeFrameCursor);
     }
 
     protected PageFrameCursor initBwdPageFrameCursor(

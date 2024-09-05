@@ -41,7 +41,7 @@ import java.io.Closeable;
  * Must be initialized with a {@link PageFrameMemoryPool#navigateTo(int, PageFrameMemoryRecord)}
  * or {@link #init(PageFrameMemory)} call for a given page frame before any use.
  */
-public class PageFrameMemoryRecord implements Record, StableStringSource, Closeable, Mutable {
+public class PageFrameMemoryRecord implements Record, StableStringSource, QuietCloseable, Mutable {
     // Letters are used to track usage in PageFrameMemoryPool
     public static final byte RECORD_A_LETTER = 0;
     public static final byte RECORD_B_LETTER = 1;

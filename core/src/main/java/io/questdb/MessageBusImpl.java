@@ -220,11 +220,14 @@ public class MessageBusImpl implements MessageBus {
         for (int i = 0, n = pageFrameReduceSubSeq.length; i < n; i++) {
             pageFrameReduceSubSeq[i].clear();
         }
-        // Reset reduce tasks to the original state.
+        // Reset tasks with native backing memory to the original state.
         for (int i = 0; i < pageFrameReduceShardCount; i++) {
             for (int j = 0, n = pageFrameReduceQueue[i].getCycle(); j < n; j++) {
                 pageFrameReduceQueue[i].get(j).clear();
             }
+        }
+        for (int i = 0, n = latestByQueue.getCycle(); i < n; i++) {
+            latestByQueue.get(i).clear();
         }
     }
 

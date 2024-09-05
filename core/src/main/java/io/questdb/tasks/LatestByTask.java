@@ -30,9 +30,10 @@ import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 
-public class LatestByTask implements QuietCloseable {
+public class LatestByTask implements QuietCloseable, Mutable {
     // We're using page frame memory only and do single scan, hence cache size of 1.
     private final PageFrameMemoryPool frameMemoryPool = new PageFrameMemoryPool(1);
     private long argsAddress;
@@ -51,6 +52,11 @@ public class LatestByTask implements QuietCloseable {
     private long valueBaseAddress;
     private int valueBlockCapacity;
     private long valuesMemorySize;
+
+    @Override
+    public void clear() {
+        frameMemoryPool.clear();
+    }
 
     @Override
     public void close() {
