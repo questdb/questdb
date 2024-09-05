@@ -323,6 +323,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelFilterPreTouchEnabled;
     private final boolean sqlParallelGroupByEnabled;
     private final int sqlParallelWorkStealingThreshold;
+    private final int sqlParquetFrameCacheCapacity;
     private final int sqlQueryRegistryPoolSize;
     private final int sqlRenameTableModelPoolCapacity;
     private final boolean sqlSampleByDefaultAlignment;
@@ -1337,6 +1338,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelWorkStealingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 16);
+            // TODO(puzpuzpuz): considering increasing default Parquet cache capacity
+            this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 3), 3);
             this.sqlOrderBySortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
             this.sqlOrderByRadixSortThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_THRESHOLD, 600);
             this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
@@ -2735,6 +2738,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlParallelWorkStealingThreshold() {
             return sqlParallelWorkStealingThreshold;
+        }
+
+        @Override
+        public int getSqlParquetFrameCacheCapacity() {
+            return sqlParquetFrameCacheCapacity;
         }
 
         @Override

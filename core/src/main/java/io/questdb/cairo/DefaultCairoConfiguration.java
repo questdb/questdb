@@ -784,6 +784,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlParquetFrameCacheCapacity() {
+        return 3;
+    }
+
+    @Override
     public int getSqlSmallMapKeyCapacity() {
         return 64;
     }

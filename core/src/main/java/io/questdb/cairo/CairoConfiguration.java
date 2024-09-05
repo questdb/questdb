@@ -443,6 +443,8 @@ public interface CairoConfiguration {
 
     int getSqlParallelWorkStealingThreshold();
 
+    int getSqlParquetFrameCacheCapacity();
+
     int getSqlSmallMapKeyCapacity();
 
     long getSqlSmallMapPageSize();

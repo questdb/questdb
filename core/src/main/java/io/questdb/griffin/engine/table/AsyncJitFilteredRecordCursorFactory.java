@@ -86,8 +86,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         this.base = base;
         this.compiledFilter = compiledFilter;
         this.filter = filter;
-        this.cursor = new AsyncFilteredRecordCursor(filter, base.getScanDirection());
-        this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(base.getScanDirection());
+        this.cursor = new AsyncFilteredRecordCursor(configuration, filter, base.getScanDirection());
+        this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(configuration, base.getScanDirection());
         this.bindVarMemory = Vm.getCARWInstance(
                 configuration.getSqlJitBindVarsMemoryPageSize(),
                 configuration.getSqlJitBindVarsMemoryMaxPages(),

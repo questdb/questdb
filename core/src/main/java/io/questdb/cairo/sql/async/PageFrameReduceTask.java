@@ -62,7 +62,9 @@ public class PageFrameReduceTask implements QuietCloseable {
             this.filteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
             this.dataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
             this.auxAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
-            this.frameMemoryPool = new PageFrameMemoryPool();
+            // We don't need to cache anything when reducing,
+            // and use page frame memory only, hence cache size of 1.
+            this.frameMemoryPool = new PageFrameMemoryPool(1);
         } catch (Throwable th) {
             close();
             throw th;

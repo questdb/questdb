@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataUnavailableException;
 import io.questdb.cairo.sql.Record;
@@ -36,9 +37,9 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.NotNull;
 
 class AsyncFilteredRecordCursor implements RecordCursor {
-
     private static final Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
 
     private final Function filter;
@@ -62,11 +63,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     // It is typically copied from LIMIT clause on SQL statement.
     private long rowsRemaining;
 
-    public AsyncFilteredRecordCursor(Function filter, int scanDirection) {
+    public AsyncFilteredRecordCursor(@NotNull CairoConfiguration configuration, Function filter, int scanDirection) {
         this.filter = filter;
         this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
         record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
-        frameMemoryPool = new PageFrameMemoryPool();
+        frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
     }
 
     @Override

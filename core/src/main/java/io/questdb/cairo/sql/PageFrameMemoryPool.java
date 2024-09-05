@@ -55,11 +55,9 @@ public class PageFrameMemoryPool implements QuietCloseable {
     private final PartitionDecoder parquetDecoder;
     private PageFrameAddressCache addressCache;
 
-    public PageFrameMemoryPool() {
-        // TODO(puzpuzpuz): move to config
-        final int cacheSize = 3;
+    public PageFrameMemoryPool(int parquetCacheSize) {
         try {
-            parquetCacheSize = cacheSize;
+            this.parquetCacheSize = parquetCacheSize;
             cachedParquetBuffers = new ObjList<>(parquetCacheSize);
             freeParquetBuffers = new ObjList<>(parquetCacheSize);
             for (int i = 0; i < parquetCacheSize; i++) {

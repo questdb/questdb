@@ -57,7 +57,7 @@ public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
         frameAddressCache = new PageFrameAddressCache(configuration);
         frameAddressCache.of(metadata);
         timestampIndex = metadata.getTimestampIndex();
-        frameMemoryPool = new PageFrameMemoryPool();
+        frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
     }
 
     @Override

@@ -33,7 +33,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 
 public class LatestByTask implements QuietCloseable {
-    private final PageFrameMemoryPool frameMemoryPool = new PageFrameMemoryPool();
+    // We're using page frame memory only and do single scan, hence cache size of 1.
+    private final PageFrameMemoryPool frameMemoryPool = new PageFrameMemoryPool(1);
     private long argsAddress;
     private ExecutionCircuitBreaker circuitBreaker;
     private CountDownLatchSPI doneLatch;

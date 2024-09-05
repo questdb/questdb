@@ -48,7 +48,7 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
         recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
         frameAddressCache = new PageFrameAddressCache(configuration);
         frameAddressCache.of(metadata);
-        frameMemoryPool = new PageFrameMemoryPool();
+        frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
     }
 
     @Override

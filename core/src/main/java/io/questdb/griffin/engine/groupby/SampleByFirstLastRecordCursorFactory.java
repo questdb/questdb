@@ -306,7 +306,9 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         ) {
             super(timestampSampler, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleFromFuncPos, sampleToFunc, sampleToFuncPos);
             frameAddressCache = new PageFrameAddressCache(configuration);
-            frameMemoryPool = new PageFrameMemoryPool();
+            // We're using page frame memory only and do single scan
+            // with no random access, hence cache size of 1.
+            frameMemoryPool = new PageFrameMemoryPool(1);
         }
 
         @Override

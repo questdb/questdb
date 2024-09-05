@@ -83,7 +83,8 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
             this.workStealingStrategy.of(startedCounter);
             this.frameMemoryPools = new ObjList<>(workerCount);
             for (int i = 0; i < workerCount; i++) {
-                frameMemoryPools.add(new PageFrameMemoryPool());
+                // We're using page frame memory only and do single scan, hence cache size of 1.
+                frameMemoryPools.add(new PageFrameMemoryPool(1));
             }
         } catch (Throwable th) {
             close();

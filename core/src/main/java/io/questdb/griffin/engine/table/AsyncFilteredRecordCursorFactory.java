@@ -75,8 +75,8 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         assert !(base instanceof AsyncFilteredRecordCursorFactory);
         this.base = base;
         this.filter = filter;
-        this.cursor = new AsyncFilteredRecordCursor(filter, base.getScanDirection());
-        this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(base.getScanDirection());
+        this.cursor = new AsyncFilteredRecordCursor(configuration, filter, base.getScanDirection());
+        this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(configuration, base.getScanDirection());
         final int columnCount = base.getMetadata().getColumnCount();
         final IntList columnTypes = new IntList(columnCount);
         for (int i = 0; i < columnCount; i++) {
