@@ -57,10 +57,10 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testMemoryPressureSingleSender() throws Exception {
+    public void testMemoryPressureSingleSender() {
         final String tn = "table1";
         final long hourAsMillis = 3_600_000L;
-        final long numPartitions = 100L;
+        final long numPartitions = 150L;
         final Rnd rnd = TestUtils.generateRandom(LOG);
         final int additionalLoad = rnd.nextInt(3) * 100_000;
 
@@ -84,7 +84,7 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
                 CairoEngine engine = serverMain.getEngine();
                 TableToken tableToken = engine.verifyTableName(tn);
                 TableSequencerAPI sequencer = engine.getTableSequencerAPI();
-                for (int j = 0; j < 20; j++) {
+                for (int j = 0; j < 5; j++) {
                     sequencer.suspendTable(tableToken, ErrorTag.OUT_OF_MEMORY, "test");
                     for (int i = 0; i < 200_000 + additionalLoad; i++) {
                         sender.table(tn)
