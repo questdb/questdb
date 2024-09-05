@@ -30,6 +30,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -41,6 +42,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
     @Test
     public void testMetadata() throws Exception {
         assertMemoryLeak(() -> {
+            final FilesFacade ff = configuration.getFilesFacade();
             final long columns = 24;
             final long rows = 1001;
             ddl("create table x as (select" +
@@ -100,5 +102,4 @@ public class PartitionDecoderTest extends AbstractCairoTest {
             }
         });
     }
-
 }
