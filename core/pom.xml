@@ -36,15 +36,14 @@
         <javac.target>11</javac.target>
         <argLine>-ea -Dfile.encoding=UTF-8</argLine>
         <test.exclude>None</test.exclude>
-        <test.include>%regex[.*[^o]\.class]</test.include><!-- exclude module-info.class-->
-        <web.console.version>0.5.1</web.console.version>
+        <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
+        <web.console.version>0.5.2</web.console.version>
         <qdbr.path>rust/qdbr</qdbr.path>
         <qdbr.release>false</qdbr.release>
 
         <!--
         For production builds, use -P qdbr-release
         -->
-        <qdbr.failpoints>fail/failpoints</qdbr.failpoints>
         <qdbr.rustflags>-D warnings</qdbr.rustflags>
     </properties>
 
@@ -702,7 +701,6 @@
             <id>qdbr-release</id>
             <properties>
                 <qdbr.release>true</qdbr.release>
-                <qdbr.failpoints/>
             </properties>
         </profile>
         <profile>
@@ -731,9 +729,6 @@
                                     <environmentVariables>
                                         <RUSTFLAGS>${qdbr.rustflags}</RUSTFLAGS>
                                     </environmentVariables>
-                                    <features>
-                                        <feature>${qdbr.failpoints}</feature>
-                                    </features>
                                 </configuration>
                             </execution>
                             <execution>
@@ -749,9 +744,6 @@
                                         <RUSTFLAGS>${qdbr.rustflags}</RUSTFLAGS>
                                         <LLVM_PROFILE_FILE>questdbr-cargo-test.profraw</LLVM_PROFILE_FILE>
                                     </environmentVariables>
-                                    <features>
-                                        <feature>${qdbr.failpoints}</feature>
-                                    </features>
                                 </configuration>
                             </execution>
                         </executions>

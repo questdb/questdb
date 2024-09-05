@@ -1608,28 +1608,6 @@ if __name__ == "__main__":
         });
     }
 
-//Testing through postgres - need to establish connection
-//    @Test
-//    public void testReadINet() throws SQLException, IOException {
-//        Properties properties = new Properties();
-//        properties.setProperty("user", "admin");
-//        properties.setProperty("password", "postgres");
-//        properties.setProperty("sslmode", "disable");
-//        properties.setProperty("binaryTransfer", Boolean.toString(true));
-//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
-//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
-//
-//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
-//
-//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
-//            var stmt = connection.prepareStatement("select * from ipv4");
-//            ResultSet rs = stmt.executeQuery();
-//            assertResultSet("a[OTHER]\n" +
-//                    "1.1.1.1\n" +
-//                    "12.2.65.90\n", sink, rs);
-//        }
-//    }
-
     @Test
     public void testBasicFetchIPv4Null() throws Exception {
         skipOnWalRun(); // Non-partitioned
@@ -1766,6 +1744,28 @@ if __name__ == "__main__":
             }
         });
     }
+
+//Testing through postgres - need to establish connection
+//    @Test
+//    public void testReadINet() throws SQLException, IOException {
+//        Properties properties = new Properties();
+//        properties.setProperty("user", "admin");
+//        properties.setProperty("password", "postgres");
+//        properties.setProperty("sslmode", "disable");
+//        properties.setProperty("binaryTransfer", Boolean.toString(true));
+//        properties.setProperty("preferQueryMode", Mode.EXTENDED.value);
+//        TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
+//
+//        final String url = String.format("jdbc:postgresql://127.0.0.1:%d/postgres", 5432);
+//
+//        try (final Connection connection = DriverManager.getConnection(url, properties)) {
+//            var stmt = connection.prepareStatement("select * from ipv4");
+//            ResultSet rs = stmt.executeQuery();
+//            assertResultSet("a[OTHER]\n" +
+//                    "1.1.1.1\n" +
+//                    "12.2.65.90\n", sink, rs);
+//        }
+//    }
 
     @Test
     public void testBatchInsertWithTransaction() throws Exception {
@@ -3901,6 +3901,132 @@ if __name__ == "__main__":
                 ">5800000004\n";
 
         assertHexScript(script);
+    }
+
+    @Test
+    public void testIPv4Operations() throws Exception {
+        skipOnWalRun(); // Non-partitioned
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            connection.setAutoCommit(false);
+
+            connection.prepareStatement("create table x (a ipv4)").execute();
+
+            connection.prepareStatement("insert into x values('1.1.1.1')").execute();
+            connection.prepareStatement("insert into x values('2.2.2.2')").execute();
+            connection.prepareStatement("insert into x values('3.3.3.3')").execute();
+            connection.commit();
+
+            // netmask
+            try (PreparedStatement stmt = connection.prepareStatement("select netmask(?)")) {
+                stmt.setString(1, null);
+                ResultSet rs = stmt.executeQuery();
+                sink.clear();
+                assertResultSet(
+                        "netmask[VARCHAR]\n" +
+                                "null\n",
+                        sink,
+                        rs
+                );
+
+                stmt.setString(1, "256.256.256.256/20");
+                rs = stmt.executeQuery();
+                sink.clear();
+                assertResultSet(
+                        "netmask[VARCHAR]\n" +
+                                "255.255.240.0\n",
+                        sink,
+                        rs
+                );
+            }
+
+            // <<
+            try (PreparedStatement stmt = connection.prepareStatement("x where a << ?")) {
+                stmt.setString(1, null);
+                ResultSet rs = stmt.executeQuery();
+                sink.clear();
+                assertResultSet(
+                        "a[VARCHAR]\n",
+                        sink,
+                        rs
+                );
+
+                stmt.setString(1, "1.1.1.1/30");
+                rs = stmt.executeQuery();
+                sink.clear();
+                assertResultSet(
+                        "a[VARCHAR]\n" +
+                                "1.1.1.1\n",
+                        sink,
+                        rs
+                );
+            }
+
+            // <<=
+            try (PreparedStatement stmt = connection.prepareStatement("x where a <<= ?")) {
+                stmt.setString(1, null);
+                ResultSet rs = stmt.executeQuery();
+                sink.clear();
+                assertResultSet(
+                        "a[VARCHAR]\n",
+                        sink,
+                        rs
+                );
+
+                stmt.setString(1, "2.2.2.2/30");
+                rs = stmt.executeQuery();
+                sink.clear();
+                assertResultSet(
+                        "a[VARCHAR]\n" +
+                                "2.2.2.2\n",
+                        sink,
+                        rs
+                );
+            }
+
+            // >>
+            try (PreparedStatement stmt = connection.prepareStatement("x where ? >> a")) {
+                stmt.setString(1, null);
+                ResultSet rs = stmt.executeQuery();
+                sink.clear();
+                assertResultSet(
+                        "a[VARCHAR]\n",
+                        sink,
+                        rs
+                );
+
+                stmt.setString(1, "3.3.3.3/31");
+                rs = stmt.executeQuery();
+                sink.clear();
+                assertResultSet(
+                        "a[VARCHAR]\n" +
+                                "3.3.3.3\n",
+                        sink,
+                        rs
+                );
+            }
+
+            // >>=
+            try (PreparedStatement stmt = connection.prepareStatement("x where ? >>= a")) {
+                stmt.setString(1, null);
+                ResultSet rs = stmt.executeQuery();
+                sink.clear();
+                assertResultSet(
+                        "a[VARCHAR]\n",
+                        sink,
+                        rs
+                );
+
+                stmt.setString(1, "1.1.1.1/32");
+                rs = stmt.executeQuery();
+                sink.clear();
+                assertResultSet(
+                        "a[VARCHAR]\n" +
+                                "1.1.1.1\n",
+                        sink,
+                        rs
+                );
+            }
+        });
     }
 
     @Test
@@ -7424,9 +7550,9 @@ nodejs code:
     public void testQueryTimeout() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_double() d from long_sequence(10000000))");
+            ddl("create table tab as (select rnd_double() d from long_sequence(1000000))");
             try (
-                    final PGWireServer server = createPGServer(1, Timestamps.SECOND_MILLIS);
+                    final PGWireServer server = createPGServer(1, 10); // 10ms query timeout
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);

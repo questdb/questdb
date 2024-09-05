@@ -36,7 +36,6 @@ import io.questdb.griffin.AnyRecordMetadata;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.join.LongChain;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
@@ -257,25 +256,6 @@ public final class TableUtils {
             }
         }
         return count;
-    }
-
-    public static long computeCursorSizeFromMap(RecordCursor masterCursor, Map map, RecordSink keySink) {
-        final Record masterRecord = masterCursor.getRecord();
-        long size = 0;
-        try {
-            masterCursor.toTop();
-            while (masterCursor.hasNext()) {
-                MapKey key = map.withKey();
-                key.put(masterRecord, keySink);
-                MapValue value = key.findValue();
-                if (value != null) {
-                    size += value.getLong(2);
-                }
-            }
-            return size;
-        } finally {
-            masterCursor.toTop();
-        }
     }
 
     public static void createColumnVersionFile(MemoryMARW mem) {
@@ -693,6 +673,11 @@ public final class TableUtils {
                 return GeoHashes.NULL;
             case ColumnType.IPv4:
                 return Numbers.IPv4_NULL;
+            case ColumnType.VARCHAR:
+            case ColumnType.BINARY:
+                return NULL_LEN;
+            case ColumnType.STRING:
+                return Numbers.encodeLowHighInts(NULL_LEN, NULL_LEN);
             default:
                 assert false : "Invalid column type: " + columnType;
                 return 0;
@@ -1223,32 +1208,6 @@ public final class TableUtils {
         }
     }
 
-    public static void populateRowIDHashMap(
-            SqlExecutionCircuitBreaker circuitBreaker,
-            RecordCursor cursor,
-            Map keyMap,
-            RecordSink recordSink,
-            LongChain rowIDChain
-    ) {
-        final Record record = cursor.getRecord();
-        while (cursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-
-            MapKey key = keyMap.withKey();
-            key.put(record, recordSink);
-            MapValue value = key.createValue();
-            if (value.isNew()) {
-                final long offset = rowIDChain.put(record.getRowId(), -1);
-                value.putLong(0, offset);
-                value.putLong(1, offset);
-                value.putLong(2, 1);
-            } else {
-                value.putLong(1, rowIDChain.put(record.getRowId(), value.getLong(1)));
-                value.addLong(2, 1);
-            }
-        }
-    }
-
     public static int readIntOrFail(FilesFacade ff, long fd, long offset, long tempMem8b, Path path) {
         if (ff.read(fd, tempMem8b, Integer.BYTES, offset) != Integer.BYTES) {
             throw CairoException.critical(ff.errno()).put("Cannot read: ").put(path);
@@ -1623,12 +1582,6 @@ public final class TableUtils {
                 final int type = Math.abs(getColumnType(metaMem, i));
                 if (ColumnType.sizeOf(type) == -1) {
                     throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(i).put(']');
-                }
-
-                if (isColumnDedupKey(metaMem, i)) {
-                    if (ColumnType.isVarSize(type)) {
-                        throw validationException(metaMem).put("DEDUPLICATION KEY flag is only supported for fixed size column types").put(" at [").put(i).put(']');
-                    }
                 }
 
                 if (isColumnIndexed(metaMem, i)) {

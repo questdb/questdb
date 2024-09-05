@@ -168,6 +168,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeStringAsVarcharB = new BitSet();
     private final BitSet writeSymbolAsString = new BitSet();
     private boolean enableJitNullChecks = true;
+    private boolean fastAsOfJoins = true;
     private boolean fullFatJoins = false;
 
     public SqlCodeGenerator(
@@ -192,6 +193,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             jitIRMem.truncate();
             this.expressionNodePool = expressionNodePool;
             this.reduceTaskFactory = () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER);
+            this.fastAsOfJoins = configuration.useFastAsOfJoin();
         } catch (Throwable th) {
             close();
             throw th;
@@ -853,13 +855,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 writeStringAsVarcharA
         );
 
-        valueTypes.clear();
-        valueTypes.add(ColumnType.LONG);
-        valueTypes.add(ColumnType.LONG);
-        valueTypes.add(ColumnType.LONG); // record count for the key
-
         if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
+            valueTypes.clear();
+            valueTypes.add(ColumnType.INT); // chain tail offset
+
             if (joinType == JOIN_INNER) {
+                // For inner join we can also store per-key count to speed up size calculation.
+                valueTypes.add(ColumnType.INT); // record count for the key
+
                 return new HashJoinLightRecordCursorFactory(
                         configuration,
                         metadata,
@@ -903,6 +906,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     context
             );
         }
+
+        valueTypes.clear();
+        valueTypes.add(ColumnType.LONG); // chain head offset
+        valueTypes.add(ColumnType.LONG); // chain tail offset
+        valueTypes.add(ColumnType.LONG); // record count for the key
 
         entityColumnFilter.of(slaveMetadata.getColumnCount());
         RecordSink slaveSink = RecordSinkFactory.getInstance(asm, slaveMetadata, entityColumnFilter);
@@ -2059,27 +2067,42 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 processJoinContext(index == 1, isSameTable(master, slave), slaveModel.getContext(), masterMetadata, slaveMetadata);
                                 if (slave.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
-                                        master = createAsOfJoin(
-                                                createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
-                                                master,
-                                                RecordSinkFactory.getInstance(
-                                                        asm,
-                                                        masterMetadata,
-                                                        listColumnFilterB,
-                                                        writeSymbolAsString,
-                                                        writeStringAsVarcharB
-                                                ),
-                                                slave,
-                                                RecordSinkFactory.getInstance(
-                                                        asm,
-                                                        slaveMetadata,
-                                                        listColumnFilterA,
-                                                        writeSymbolAsString,
-                                                        writeStringAsVarcharA
-                                                ),
-                                                masterMetadata.getColumnCount(),
-                                                slaveModel.getContext()
+                                        RecordSink masterSink = RecordSinkFactory.getInstance(
+                                                asm,
+                                                masterMetadata,
+                                                listColumnFilterB,
+                                                writeSymbolAsString,
+                                                writeStringAsVarcharB
                                         );
+                                        RecordSink slaveSink = RecordSinkFactory.getInstance(
+                                                asm,
+                                                slaveMetadata,
+                                                listColumnFilterA,
+                                                writeSymbolAsString,
+                                                writeStringAsVarcharA
+                                        );
+                                        if (slave.supportsTimeFrameCursor() && fastAsOfJoins) {
+                                            master = new AsOfJoinFastRecordCursorFactory(
+                                                    configuration,
+                                                    createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                    master,
+                                                    masterSink,
+                                                    slave,
+                                                    slaveSink,
+                                                    masterMetadata.getColumnCount(),
+                                                    slaveModel.getContext()
+                                            );
+                                        } else {
+                                            master = createAsOfJoin(
+                                                    createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
+                                                    master,
+                                                    masterSink,
+                                                    slave,
+                                                    slaveSink,
+                                                    masterMetadata.getColumnCount(),
+                                                    slaveModel.getContext()
+                                            );
+                                        }
                                     } else {
                                         if (slave.supportsTimeFrameCursor()) {
                                             master = new AsOfJoinNoKeyFastRecordCursorFactory(

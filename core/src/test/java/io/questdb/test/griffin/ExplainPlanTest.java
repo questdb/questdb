@@ -2416,13 +2416,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     args.add(new StrConstant("0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9652"));
                                 } else if (isIPv4StrFactory(factory) && sigArgType == ColumnType.STRING) {
                                     args.add(new StrConstant("10.8.6.5"));
-                                } else if (factory instanceof ContainsIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                                } else if (factory instanceof ContainsIPv4StrFunctionFactory && sigArgType == ColumnType.STRING) {
                                     args.add(new StrConstant("12.6.5.10/24"));
-                                } else if (factory instanceof ContainsEqIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                                } else if (factory instanceof ContainsEqIPv4StrFunctionFactory && sigArgType == ColumnType.STRING) {
                                     args.add(new StrConstant("12.6.5.10/24"));
-                                } else if (factory instanceof NegContainsEqIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                                } else if (factory instanceof NegContainsEqIPv4StrFunctionFactory && sigArgType == ColumnType.STRING) {
                                     args.add(new StrConstant("34.56.22.11/12"));
-                                } else if (factory instanceof NegContainsIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                                } else if (factory instanceof NegContainsIPv4StrFunctionFactory && sigArgType == ColumnType.STRING) {
                                     args.add(new StrConstant("32.12.22.11/12"));
                                 } else if (factory instanceof RndIPv4CCFunctionFactory) {
                                     args.add(new StrConstant("4.12.22.11/12"));
@@ -4364,7 +4364,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testLeftJoinWithEquality7() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                testHashAndAsOfJoin(compiler, true);
+                testHashAndAsOfJoin(compiler, true, true);
             }
         });
     }
@@ -4374,7 +4374,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                testHashAndAsOfJoin(compiler, false);
+                testHashAndAsOfJoin(compiler, false, false);
             }
         });
     }
@@ -10856,11 +10856,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     // left join maintains order metadata and can be part of asof join
-    private void testHashAndAsOfJoin(SqlCompiler compiler, boolean isLight) throws Exception {
+    private void testHashAndAsOfJoin(SqlCompiler compiler, boolean isLight, boolean isFastAsOfJoin) throws Exception {
         ddl("create table taba (a1 int, ts1 timestamp) timestamp(ts1)");
         ddl("create table tabb (b1 int, b2 long)");
         ddl("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
 
+        String asofJoinType = isFastAsOfJoin ? " Fast Scan" : (isLight ? "Light" : "");
         assertPlanNoLeakCheck(
                 compiler,
                 "select * " +
@@ -10868,7 +10869,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "left join tabb on a1=b1 " +
                         "asof join tabc on b1=c1",
                 "SelectedRecord\n" +
-                        "    AsOf Join" + (isLight ? " Light" : "") + "\n" +
+                        "    AsOf Join" + asofJoinType + "\n" +
                         "      condition: c1=b1\n" +
                         "        Hash Outer Join" + (isLight ? " Light" : "") + "\n" +
                         "          condition: b1=a1\n" +

@@ -373,7 +373,7 @@ public interface CairoConfiguration {
 
     int getSqlCopyBufferSize();
 
-    // null input root disables "copy" sql
+    // null or empty input root disables "copy" sql
     CharSequence getSqlCopyInputRoot();
 
     CharSequence getSqlCopyInputWorkRoot();
@@ -624,4 +624,6 @@ public interface CairoConfiguration {
 
     default void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
     }
+
+    boolean useFastAsOfJoin();
 }

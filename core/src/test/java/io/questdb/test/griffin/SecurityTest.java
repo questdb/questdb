@@ -38,7 +38,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
@@ -279,12 +278,12 @@ public class SecurityTest extends AbstractCairoTest {
             sqlExecutionContext.getRandom().reset();
             ddl("create table tab as (select" +
                     " rnd_double(2) d" +
-                    " from long_sequence(10000000))");
+                    " from long_sequence(1000000))");
             memoryRestrictedEngine.reloadTableNames();
 
             try {
                 setMaxCircuitBreakerChecks(Long.MAX_VALUE);
-                circuitBreakerTimeoutDeadline = MicrosecondClockImpl.INSTANCE.getTicks() + Timestamps.SECOND_MICROS;
+                circuitBreakerTimeoutDeadline = MicrosecondClockImpl.INSTANCE.getTicks() + 10; // 10ms query timeout
                 TestUtils.printSql(
                         engine,
                         readOnlyExecutionContext,
@@ -455,11 +454,13 @@ public class SecurityTest extends AbstractCairoTest {
     @Test
     public void testMemoryResizesWithImplicitGroupBy() throws Exception {
         SqlExecutionContext readOnlyExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                .with(ReadOnlySecurityContext.INSTANCE,
+                .with(
+                        ReadOnlySecurityContext.INSTANCE,
                         bindVariableService,
                         null,
                         -1,
-                        null);
+                        null
+                );
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             ddl("create table tb1 as (select" +
@@ -497,7 +498,7 @@ public class SecurityTest extends AbstractCairoTest {
                 );
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("Maximum number of pages (11) breached"));
+                Assert.assertTrue(ex.toString().contains("memory exceeded in LongTreeChain"));
             }
         });
     }
@@ -755,12 +756,17 @@ public class SecurityTest extends AbstractCairoTest {
                     " rnd_symbol(4,4,4,20000) sym," +
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
-                    " from long_sequence(10)) timestamp(ts)");
+                    " from long_sequence(20)) timestamp(ts)");
 
             assertQueryNoLeakCheck(
                     memoryRestrictedCompiler,
-                    "sym\td\nVTJW\t0.1985581797355932\nVTJW\t0.21583224269349388\n",
-                    "select sym, d from tb1 where d < 0.3 ORDER BY d",
+                    "sym\td\n" +
+                            "VTJW\t0.05384400312338511\n" +
+                            "PEHN\t0.16474369169931913\n" +
+                            "HYRX\t0.17370570324289436\n" +
+                            "VTJW\t0.18769708157331322\n" +
+                            "VTJW\t0.1985581797355932\n",
+                    "select sym, d from tb1 where d < 0.2 ORDER BY d",
                     null,
                     true,
                     readOnlyExecutionContext
@@ -770,14 +776,14 @@ public class SecurityTest extends AbstractCairoTest {
                 assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
                         "TOO MUCH",
-                        "select sym, d from tb1 where d < 0.5 ORDER BY d",
+                        "select sym, d from tb1 ORDER BY d",
                         null,
                         true,
                         readOnlyExecutionContext
                 );
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("Maximum number of pages (2) breached"));
+                Assert.assertTrue(ex.toString().contains("memory exceeded in RedBlackTree"));
             }
         });
     }
@@ -1081,30 +1087,35 @@ public class SecurityTest extends AbstractCairoTest {
     @Test
     public void testTreeResizesWithImplicitGroupBy() throws Exception {
         SqlExecutionContext readOnlyExecutionContext = new SqlExecutionContextImpl(engine, 1)
-                .with(ReadOnlySecurityContext.INSTANCE,
+                .with(
+                        ReadOnlySecurityContext.INSTANCE,
                         bindVariableService,
                         null,
                         -1,
-                        null);
+                        null
+                );
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             ddl("create table tb1 as (select" +
-                    " rnd_symbol(4,4,4,20000) sym1," +
+                    " rnd_symbol(8,8,8,20000) sym1," +
                     " rnd_symbol(2,2,2,20000) sym2," +
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
-                    " from long_sequence(2000)) timestamp(ts)");
+                    " from long_sequence(4000)) timestamp(ts)");
 
             memoryRestrictedEngine.reloadTableNames();
             assertQueryNoLeakCheck(
                     memoryRestrictedCompiler,
-                    "sym2\tcount\nGZ\t1040\nRX\t960\n",
+                    "sym2\tcount\n" +
+                            "ED\t1968\n" +
+                            "RQ\t2032\n",
                     "select sym2, count() from tb1 order by sym2",
                     null,
                     true,
                     readOnlyExecutionContext,
                     true
             );
+
             try {
                 assertQueryNoLeakCheck(
                         memoryRestrictedCompiler,
@@ -1117,7 +1128,7 @@ public class SecurityTest extends AbstractCairoTest {
                 );
                 Assert.fail();
             } catch (Exception ex) {
-                Assert.assertTrue(ex.toString().contains("Maximum number of pages (2) breached"));
+                Assert.assertTrue(ex.toString().contains("memory exceeded in RedBlackTree"));
             }
         });
     }

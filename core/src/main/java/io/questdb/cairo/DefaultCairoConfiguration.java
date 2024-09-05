@@ -675,7 +675,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getSqlHashJoinLightValuePageSize() {
-        return Numbers.SIZE_1MB;
+        return 128 * 1024;
     }
 
     @Override
@@ -795,12 +795,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getSqlSortKeyMaxPages() {
-        return 128;
+        return 1024;
     }
 
     @Override
     public long getSqlSortKeyPageSize() {
-        return 4 * Numbers.SIZE_1MB;
+        return 128 * 1024;
     }
 
     @Override
@@ -810,7 +810,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getSqlSortLightValuePageSize() {
-        return 8 * Numbers.SIZE_1MB;
+        return 128 * 1024;
     }
 
     @Override
@@ -1150,5 +1150,10 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean mangleTableDirNames() {
         return false;
+    }
+
+    @Override
+    public boolean useFastAsOfJoin() {
+        return true;
     }
 }

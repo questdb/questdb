@@ -983,7 +983,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "    Sort\n" +
                     "      keys: [s, ts]\n" +
                     "        SelectedRecord\n" +
-                    "            AsOf Join Light\n" +
+                    "            AsOf Join Fast Scan\n" +
                     "              condition: t2.s=t1.s\n" +
                     "                PageFrame\n" +
                     "                    Row forward scan\n" +
@@ -1018,7 +1018,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "    Sort\n" +
                     "      keys: [ts, s]\n" +
                     "        SelectedRecord\n" +
-                    "            AsOf Join Light\n" +
+                    "            AsOf Join Fast Scan\n" +
                     "              condition: t2.s=t1.s\n" +
                     "                PageFrame\n" +
                     "                    Row forward scan\n" +
@@ -1053,7 +1053,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "    Sort\n" +
                     "      keys: [s, ts1]\n" +
                     "        SelectedRecord\n" +
-                    "            AsOf Join Light\n" +
+                    "            AsOf Join Fast Scan\n" +
                     "              condition: t2.s=t1.s\n" +
                     "                PageFrame\n" +
                     "                    Row forward scan\n" +
@@ -1088,7 +1088,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "    Sort\n" +
                     "      keys: [s1, ts1]\n" +
                     "        SelectedRecord\n" +
-                    "            AsOf Join Light\n" +
+                    "            AsOf Join Fast Scan\n" +
                     "              condition: t2.s=t1.s\n" +
                     "                PageFrame\n" +
                     "                    Row forward scan\n" +
@@ -1123,7 +1123,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "    Sort\n" +
                     "      keys: [s, ts]\n" +
                     "        SelectedRecord\n" +
-                    "            AsOf Join Light\n" +
+                    "            AsOf Join Fast Scan\n" +
                     "              condition: t2.s=t1.s\n" +
                     "                PageFrame\n" +
                     "                    Row forward scan\n" +
@@ -1715,45 +1715,52 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "FROM t1\n" +
                     "JOIN t2 ON t1.s = t2.s\n" +
                     "WHERE t1.ts BETWEEN '2023-09-01T00:00:00.000Z' AND '2023-09-01T01:00:00.000Z'\n" +
-                    "ORDER BY t1.s, t1.ts\n" +
+                    "ORDER BY t1.s, t1.ts, t2.ts\n" +
                     "LIMIT 1000000;";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000", query);
-            assertPlanNoLeakCheck(query, "Limit lo: 1000000\n" +
-                    "    SelectedRecord\n" +
-                    "        Hash Join Light\n" +
-                    "          condition: t2.s=t1.s\n" +
-                    "            SortedSymbolIndex\n" +
-                    "                Index forward scan on: s\n" +
-                    "                  symbolOrder: asc\n" +
-                    "                Interval forward scan on: t1\n" +
-                    "                  intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
-                    "            Hash\n" +
-                    "                PageFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: t2\n");
-            assertSql("s\tts\ts1\tts1\n" +
-                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
-                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
-                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
-                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
-                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
-                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
-                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
-                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
-                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
-                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
-                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
-                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
-                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
-                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
-                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
-                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
-                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
-                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
-                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
-                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
-                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n", query);
+            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by s, ts, ts1 limit 1000000", query);
+            assertPlanNoLeakCheck(
+                    query,
+                    "Limit lo: 1000000\n" +
+                            "    Sort\n" +
+                            "      keys: [s, ts, ts1]\n" +
+                            "        SelectedRecord\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: t2.s=t1.s\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Interval forward scan on: t1\n" +
+                            "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
+                            "                Hash\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: t2\n"
+            );
+            assertSql(
+                    "s\tts\ts1\tts1\n" +
+                            "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                            "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                            "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                            "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                            "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                            "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                            "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                            "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                            "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                            "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                            "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                            "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                            "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                            "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                            "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                            "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                            "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                            "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                            "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                            "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                            "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n",
+                    query
+            );
         });
     }
 

@@ -277,15 +277,30 @@ public class VectTest {
                     colBuffs.setDedupColumnCount(keyCount);
                     long dedupColBuffPtr = colBuffs.allocateBlock();
                     for (int k = 0; k < keyCount; k++) {
-                        colBuffs.setArrayValues(
+                        long addr = DedupColumnCommitAddresses.setColValues(
                                 dedupColBuffPtr,
                                 k,
                                 ColumnType.SYMBOL,
                                 4,
-                                0,
+                                0
+                        );
+
+                        DedupColumnCommitAddresses.setColAddressValues(
+                                addr,
                                 keys.get(k).getAddress(),
                                 0L,
+                                0L
+                        );
+
+                        DedupColumnCommitAddresses.setO3DataAddressValues(
+                                addr,
                                 0L,
+                                0L,
+                                0L
+                        );
+
+                        DedupColumnCommitAddresses.setReservedValuesSet2(
+                                addr,
                                 0L,
                                 0L
                         );
@@ -298,7 +313,7 @@ public class VectTest {
                             index.getAddress(),
                             copy.getAddress(),
                             keyCount,
-                            colBuffs.getAddress(dedupColBuffPtr)
+                            DedupColumnCommitAddresses.getAddress(dedupColBuffPtr)
                     );
                     if (distinctKeys.size() == indexLen && dedupCount == -2) {
                         // No duplicates detected and that's correct. Assert that index is not messed up.
@@ -609,18 +624,17 @@ public class VectTest {
                     try (DedupColumnCommitAddresses colBuffs = new DedupColumnCommitAddresses()) {
                         colBuffs.setDedupColumnCount(1);
                         long address = colBuffs.allocateBlock();
-                        colBuffs.setArrayValues(
+
+                        long addr = DedupColumnCommitAddresses.setColValues(
                                 address,
                                 0,
                                 ColumnType.SYMBOL,
                                 4,
-                                0,
-                                srcDedupCol.getAddress(),
-                                indexDedupCol.getAddress(),
-                                0L,
-                                0L,
-                                0L
+                                0
                         );
+
+                        DedupColumnCommitAddresses.setColAddressValues(addr, srcDedupCol.getAddress());
+                        DedupColumnCommitAddresses.setO3DataAddressValues(addr, indexDedupCol.getAddress());
 
                         dest.setPos(index.size() + src.size() * 2);
                         long mergedCount = Vect.mergeDedupTimestampWithLongIndexIntKeys(
@@ -632,7 +646,7 @@ public class VectTest {
                                 index.size() / 2 - 1,
                                 dest.getAddress(),
                                 1,
-                                colBuffs.getAddress(address)
+                                DedupColumnCommitAddresses.getAddress(address)
                         );
                         dest.setPos(mergedCount * 2);
                         Assert.assertEquals("10 0:s, 10 0:i, 20 1:i, 20 1:i, 30 3:s, 30 2:i, 40 3:i, 40 5:s, 50 6:s", printMergeIndex(dest));

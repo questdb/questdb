@@ -288,6 +288,7 @@ impl<T: ColumnType> std::fmt::Display for Record<T> {
             Record::Control(c) => match c {
                 Control::SortMode(m) => write!(f, "control sortmode {}", m.as_str()),
                 Control::Substitution(s) => write!(f, "control substitution {}", s.as_str()),
+                Control::IsoTimestamp(s) => write!(f, "control iso_timestamp {}", s.as_str()),
             },
             Record::Condition(cond) => match cond {
                 Condition::OnlyIf { label } => write!(f, "onlyif {label}"),
@@ -437,6 +438,7 @@ pub enum Control {
     SortMode(SortMode),
     /// Control whether or not to substitute variables in the SQL.
     Substitution(bool),
+    IsoTimestamp(bool)
 }
 
 trait ControlItem: Sized {
@@ -524,6 +526,15 @@ pub enum SortMode {
     /// It works like rowsort except that it does not honor row groupings. Each individual result
     /// value is sorted on its own.
     ValueSort,
+}
+
+
+/// Whether to print timestamp in default SQLlogictest format or ISO microseconds.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum TimestampFormat {
+    /// The default option for compatibility with SQLite, DuckDB
+    Default,
+    Iso,
 }
 
 impl ControlItem for SortMode {
@@ -817,6 +828,10 @@ fn parse_inner<T: ColumnType>(loc: &Location, script: &str) -> Result<Vec<Record
                 },
                 ["substitution", on_off] => match bool::try_from_str(on_off) {
                     Ok(on_off) => records.push(Record::Control(Control::Substitution(on_off))),
+                    Err(k) => return Err(k.at(loc)),
+                },
+                ["iso_timestamp", on_off] => match bool::try_from_str(on_off) {
+                    Ok(on_off) => records.push(Record::Control(Control::IsoTimestamp(on_off))),
                     Err(k) => return Err(k.at(loc)),
                 },
                 _ => return Err(ParseErrorKind::InvalidLine(line.into()).at(loc)),
