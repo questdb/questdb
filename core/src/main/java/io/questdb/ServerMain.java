@@ -416,12 +416,7 @@ public class ServerMain implements Closeable {
         }
 
         // metadata hydration
-        Thread hydrateMetadataThread = new Thread() {
-            public void run() {
-                engine.metadataCacheAsyncHydrator();
-            }
-        };
-
+        Thread hydrateMetadataThread = new Thread(engine::metadataCacheAsyncHydrator);
         hydrateMetadataThread.start();
 
         System.gc(); // GC 1
