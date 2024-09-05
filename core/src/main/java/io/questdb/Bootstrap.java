@@ -101,8 +101,9 @@ public class Bootstrap {
         }
 
         // before we set up the logger, we need to copy the conf file
+        byte[] buffer = new byte[1024 * 1024];
         try {
-            copyLogConfResource(new byte[1024 * 1024]);
+            copyLogConfResource(buffer);
         } catch (IOException e) {
             throw new BootstrapException("Could not extract log configuration file");
         }
