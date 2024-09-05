@@ -305,15 +305,18 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "1970-01-01T00:00:00.459998Z\t2\t459998\t419998.0\t8.400379998E9\t379998.0\n" +
                     "1970-01-01T00:00:00.459999Z\t3\t459999\t419999.0\t8.400399999E9\t379999.0\n";
 
-            // cross-check with  re-write using aggregate functions
+            // cross-check with re-write using aggregate functions
             assertSql(
                     expected,
-                    " select max(data.ts) as ts, data.i as i, max(data.j) as j, avg(data.j) as avg, sum(data.j::double) as sum, first(data.j::double) as first_value " +
-                            "from " +
-                            "( select i, max(ts) as max from tab group by i) cnt " +
-                            "join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
-                            "group by data.i " +
-                            "order by data.i"
+                    "select max(ts) as ts, i, max(j) as j, avg(j) as avg, sum(j::double) as sum, first(j::double) as first_value " +
+                            "from (" +
+                            "  select data.ts, data.i, data.j " +
+                            "  from ( select i, max(ts) as max from tab group by i) cnt " +
+                            "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
+                            "  order by data.i, ts " +
+                            ") " +
+                            "group by i " +
+                            "order by i"
             );
 
             assertQueryNoLeakCheck(
@@ -371,12 +374,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // cross-check with re-write using aggregate functions
             assertSql(
                     expected,
-                    " select max(data.ts) as ts, data.i as i, avg(data.j) as avg, sum(data.j::double) as sum, first(data.j::double) as first_value " +
-                            "from " +
-                            "( select i, max(ts) as max from tab group by i) cnt " +
-                            "join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
-                            "group by data.i " +
-                            "order by data.i "
+                    "select max(ts) as ts, i, avg(j) as avg, sum(j::double) as sum, first(j::double) as first_value " +
+                            "from (" +
+                            "  select data.ts, data.i, data.j " +
+                            "  from (select i, max(ts) as max from tab group by i) cnt " +
+                            "  join tab data on cnt.i = data.i and data.ts >= (cnt.max - 80000) " +
+                            "  order by data.i, ts " +
+                            ") " +
+                            "group by i " +
+                            "order by i "
             );
 
             assertQueryNoLeakCheck(
@@ -2176,7 +2182,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "      orderedFunctions: [[j] => [rank() over (partition by [i])],[ts desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row )," +
                             "sum(j) over (partition by [i] rows between unbounded preceding and current row ),first_value(j) over (partition by [i] rows between unbounded preceding and current row )]]\n" +
                             "      unorderedFunctions: [row_number() over (partition by [i])]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
             );
@@ -2925,7 +2931,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab",
                     "CachedWindow\n" +
                             "  unorderedFunctions: [avg(j) over (),sum(j) over (),row_number(),rank()]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n",
                     "ts\ti\tj\tavg\tsum\trow_number\trank\n",
@@ -2938,7 +2944,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, j, avg(j) over (), sum(j) over () from tab order by ts desc",
                     "CachedWindow\n" +
                             "  unorderedFunctions: [avg(j) over (),sum(j) over ()]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row backward scan\n" +
                             "        Frame backward scan on: tab\n",
                     "ts\ti\tj\tavg\tsum\n",
@@ -2954,7 +2960,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab",
                     "Window\n" +
                             "  functions: [avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n",
                     "ts\ti\tj\tavg\tsum\n",
@@ -2970,7 +2976,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab order by ts desc",
                     "Window\n" +
                             "  functions: [avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row backward scan\n" +
                             "        Frame backward scan on: tab\n",
                     "ts\ti\tj\tavg\tsum\n",
@@ -2986,7 +2992,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab",
                     "CachedWindow\n" +
                             "  unorderedFunctions: [avg(j) over (partition by [i]),sum(j) over (partition by [i])]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n",
                     "ts\ti\tj\tavg\tsum\n",
@@ -3002,7 +3008,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab order by ts desc",
                     "CachedWindow\n" +
                             "  unorderedFunctions: [avg(j) over (partition by [i]),sum(j) over (partition by [i])]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row backward scan\n" +
                             "        Frame backward scan on: tab\n",
                     "ts\ti\tj\tavg\tsum\n",
@@ -3018,7 +3024,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab",
                     "Window\n" +
                             "  functions: [avg(j) over (partition by [i] rows between unbounded preceding and current row ),sum(j) over (partition by [i] rows between unbounded preceding and current row )]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n",
                     "ts\ti\tj\tavg\tsum\n",
@@ -3035,7 +3041,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "order by ts desc",
                     "Window\n" +
                             "  functions: [avg(j) over (partition by [i] rows between unbounded preceding and current row ),sum(j) over (partition by [i] rows between unbounded preceding and current row )]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row backward scan\n" +
                             "        Frame backward scan on: tab\n",
                     "ts\ti\tj\tavg\tsum\n",
@@ -3053,7 +3059,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Window\n" +
                             "      functions: [avg(j) over (partition by [i] rows between unbounded preceding and current row ),sum(j) over (partition by [i] rows between unbounded preceding and current row )]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n",
                     "i\tj\tavg\tsum\n",
@@ -3071,7 +3077,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Window\n" +
                             "      functions: [avg(j) over (partition by [i] rows between unbounded preceding and current row ),sum(j) over (partition by [i] rows between unbounded preceding and current row )]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: tab\n",
                     "i\tj\tavg\tsum\n",
@@ -3087,7 +3093,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "ts from tab",
                     "Window\n" +
                             "  functions: [avg(j) over (partition by [i] range between 10000000 preceding and current row),sum(j) over (partition by [i] range between 10000000 preceding and current row)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n",
                     "i\tj\tavg\tsum\tts\n",
@@ -3101,7 +3107,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, j, row_number() over () from tab where sym = 'X'",
                     "Window\n" +
                             "  functions: [row_number()]\n" +
-                            "    DeferredSingleSymbolFilterDataFrame\n" +
+                            "    DeferredSingleSymbolFilterPageFrame\n" +
                             "        Index forward scan on: sym deferred: true\n" +
                             "          filter: sym='X'\n" +
                             "        Frame forward scan on: tab\n",
@@ -3115,7 +3121,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, j, row_number() over () from tab where sym = 'X' order by ts desc",
                     "Window\n" +
                             "  functions: [row_number()]\n" +
-                            "    DeferredSingleSymbolFilterDataFrame\n" +
+                            "    DeferredSingleSymbolFilterPageFrame\n" +
                             "        Index backward scan on: sym deferred: true\n" +
                             "          filter: sym='X'\n" +
                             "        Frame backward scan on: tab\n",
@@ -3194,7 +3200,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select ts, i, j, #FUNCT_NAME(1) over (partition by i order by ts desc rows between 1 preceding and current row) from tab".replace("#FUNCT_NAME", func),
                         "CachedWindow\n" +
                                 "  orderedFunctions: [[ts desc] => [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]]\n".replace("#FUNCT_NAME", func.trim()) +
-                                "    DataFrame\n" +
+                                "    PageFrame\n" +
                                 "        Row forward scan\n" +
                                 "        Frame forward scan on: tab\n"
                 );
@@ -3203,7 +3209,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select ts, i, j, #FUNCT_NAME(1) over (partition by i order by ts asc rows between 1 preceding and current row)  from tab order by ts desc".replace("#FUNCT_NAME", func),
                         "CachedWindow\n" +
                                 "  orderedFunctions: [[ts] => [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]]\n".replace("#FUNCT_NAME", func.trim()) +
-                                "    DataFrame\n" +
+                                "    PageFrame\n" +
                                 "        Row backward scan\n" +
                                 "        Frame backward scan on: tab\n"
                 );
@@ -3238,7 +3244,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select ts, i, j, #FUNCT_NAME(1) over (partition by i order by ts desc rows between 1 preceding and current row)  from tab where sym = 'A'".replace("#FUNCT_NAME", func),
                         "CachedWindow\n" +
                                 "  orderedFunctions: [[ts desc] => [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]]\n".replace("#FUNCT_NAME", func.trim()) +
-                                "    DeferredSingleSymbolFilterDataFrame\n" +
+                                "    DeferredSingleSymbolFilterPageFrame\n" +
                                 "        Index forward scan on: sym deferred: true\n" +
                                 "          filter: sym='A'\n" +
                                 "        Frame forward scan on: tab\n"
@@ -3257,7 +3263,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select ts, i, j, #FUNCT_NAME(1) over (partition by i order by ts rows between 1 preceding and current row) from tab".replace("#FUNCT_NAME", func),
                         "Window\n" +
                                 "  functions: [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]\n".replace("#FUNCT_NAME", func.trim()) +
-                                "    DataFrame\n" +
+                                "    PageFrame\n" +
                                 "        Row forward scan\n" +
                                 "        Frame forward scan on: tab\n"
                 );
@@ -3266,7 +3272,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select ts, i, j, #FUNCT_NAME(1) over (partition by i order by ts rows between 1 preceding and current row)  from tab order by ts asc".replace("#FUNCT_NAME", func),
                         "Window\n" +
                                 "  functions: [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]\n".replace("#FUNCT_NAME", func.trim()) +
-                                "    DataFrame\n" +
+                                "    PageFrame\n" +
                                 "        Row forward scan\n" +
                                 "        Frame forward scan on: tab\n"
                 );
@@ -3275,7 +3281,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select ts, i, j, #FUNCT_NAME(1) over (partition by i order by ts desc rows between 1 preceding and current row)  from tab order by ts desc".replace("#FUNCT_NAME", func),
                         "Window\n" +
                                 "  functions: [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]\n".replace("#FUNCT_NAME", func.trim()) +
-                                "    DataFrame\n" +
+                                "    PageFrame\n" +
                                 "        Row backward scan\n" +
                                 "        Frame backward scan on: tab\n"
                 );
@@ -3284,7 +3290,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         "select ts, i, j, #FUNCT_NAME(1) over (partition by i order by ts asc rows between 1 preceding and current row)  from tab where sym = 'A'".replace("#FUNCT_NAME", func),
                         "Window\n" +
                                 "  functions: [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]\n".replace("#FUNCT_NAME", func.trim()) +
-                                "    DeferredSingleSymbolFilterDataFrame\n" +
+                                "    DeferredSingleSymbolFilterPageFrame\n" +
                                 "        Index forward scan on: sym deferred: true\n" +
                                 "          filter: sym='A'\n" +
                                 "        Frame forward scan on: tab\n"

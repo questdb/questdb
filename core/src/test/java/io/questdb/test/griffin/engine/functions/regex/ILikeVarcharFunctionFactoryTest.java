@@ -221,7 +221,9 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
             assertLike("s\nfoobar\n", "select * from x where s ilike '%r'", false);
             assertLike("s\nfoo\nfoobar\n", "select * from x where s ilike 'fOO%'", false);
             assertLike("s\nfoobar\n", "select * from x where s ilike '%baR'", false);
+            assertLike("s\nfoo\nfoobar\n", "select * from x where s ilike '%%'", false);
             assertLike("s\nfoo\nfoobar\n", "select * from x where s ilike '%OO%'", false);
+            assertLike("s\n", "select * from x where s ilike '%\\%'", false);
         });
     }
 
@@ -240,6 +242,7 @@ public class ILikeVarcharFunctionFactoryTest extends AbstractCairoTest {
             assertLike("s\nфу\n", "select * from x where s ilike 'фУ'", false);
             assertLike("s\nфубар\n", "select * from x where s ilike '%баР'", false);
             assertLike("s\nфу\nфубар\n", "select * from x where s ilike '%У%'", false);
+            assertLike("s\n", "select * from x where s ilike '\\_'", false);
         });
     }
 

@@ -32,6 +32,20 @@ import org.junit.Test;
 public class IntListTest {
 
     @Test
+    public void testAddAll() {
+        IntList src = new IntList();
+        for (int i = 0; i < 100; i++) {
+            src.add(i);
+        }
+
+        IntList dst = new IntList();
+        dst.clear();
+        dst.addAll(src);
+
+        Assert.assertEquals(dst, src);
+    }
+
+    @Test
     public void testBinarySearchFuzz() {
         final int N = 997; // prime
         final int skipRate = 4;
@@ -42,6 +56,61 @@ public class IntListTest {
         }
 
         testBinarySearchFuzz0(1, 0);
+    }
+
+    @Test
+    public void testEquals() {
+        final IntList list1 = new IntList();
+        list1.add(1);
+        list1.add(2);
+        list1.add(3);
+
+        // different order
+        final IntList list2 = new IntList();
+        list2.add(1);
+        list2.add(3);
+        list2.add(2);
+        Assert.assertNotEquals(list1, list2);
+
+        // longer
+        final IntList list3 = new IntList();
+        list3.add(1);
+        list3.add(2);
+        list3.add(3);
+        list3.add(4);
+        Assert.assertNotEquals(list1, list3);
+
+        // shorter
+        final IntList list4 = new IntList();
+        list4.add(1);
+        list4.add(2);
+        Assert.assertNotEquals(list1, list4);
+
+        // empty
+        final IntList list5 = new IntList();
+        Assert.assertNotEquals(list1, list5);
+
+        // null
+        Assert.assertNotEquals(list1, null);
+
+        // equals
+        final IntList list6 = new IntList();
+        list6.add(1);
+        list6.add(2);
+        list6.add(3);
+        Assert.assertEquals(list1, list6);
+    }
+
+    @Test
+    public void testIndexOf() {
+        IntList list = new IntList();
+        for (int i = 100; i > -1; i--) {
+            list.add(i);
+        }
+
+        for (int i = 100; i > -1; i--) {
+            Assert.assertEquals(100 - i, list.indexOf(i, 0, 101));
+        }
     }
 
     @Test
@@ -60,6 +129,26 @@ public class IntListTest {
         list.restoreInitialCapacity();
         Assert.assertEquals(0, list.size());
         Assert.assertEquals(initialCapacity, list.capacity());
+    }
+
+    @Test
+    public void testSmoke() {
+        IntList list = new IntList();
+        for (int i = 0; i < 100; i++) {
+            list.add(i);
+        }
+        Assert.assertEquals(100, list.size());
+        Assert.assertTrue(list.capacity() >= 100);
+
+        for (int i = 0; i < 100; i++) {
+            Assert.assertEquals(i, list.getQuick(i));
+            Assert.assertTrue(list.contains(i));
+        }
+
+        for (int i = 0; i < 100; i++) {
+            list.remove(i);
+        }
+        Assert.assertEquals(0, list.size());
     }
 
     private void testBinarySearchFuzz0(int N, int skipRate) {

@@ -73,7 +73,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "  keys: [x1]\n" +
                             "  values: [sum(x1)]\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n");
         });
@@ -96,7 +96,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "  values: [sum(x1)]\n" +
                             "  filter: null\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n");
         });
@@ -119,7 +119,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "      keys: [x1]\n" +
                             "      values: [count(*)]\n" +
                             "        SelectedRecord\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: y\n");
         });
@@ -141,7 +141,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "  keys: [X1]\n" +
                             "  values: [sum(X1),max(X1)]\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n");
         });
@@ -162,7 +162,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "GroupBy vectorized: true workers: 1\n" +
                             "  values: [sum(x1)]\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n");
         });
@@ -181,7 +181,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     "SelectedRecord\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: y\n");
         });
@@ -198,7 +198,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n"
             );
@@ -216,7 +216,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: y\n"
             );
@@ -234,7 +234,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: y\n"
             );
@@ -252,7 +252,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n"
             );
@@ -286,7 +286,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "          keys: [URL]\n" +
                     "          values: [count(*)]\n" +
                     "          filter: null\n" +
-                    "            DataFrame\n" +
+                    "            PageFrame\n" +
                     "                Row forward scan\n" +
                     "                Frame forward scan on: hits\n";
 
@@ -314,7 +314,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n"
             );
@@ -333,7 +333,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "Async Group By workers: 1\n" +
                             "  values: [first(x)]\n" +
                             "  filter: null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: y\n"
             );
@@ -375,18 +375,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "      condition: y2.LAST=y1.ts\n" +
                             "        Hash Outer Join Light\n" +
                             "          condition: y1.x=y.x\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: y\n" +
                             "            Hash\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: y1\n" +
                             "        Hash\n" +
                             "            Sort light lo: 1\n" +
                             "              keys: [LAST desc]\n" +
                             "                SelectedRecord\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: y2\n"
             );
@@ -413,7 +413,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "SelectedRecord\n" +
                             "    Hash Join\n" +
                             "      condition: y1.c=y.x\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n" +
                             "        Hash\n" +
@@ -421,7 +421,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "                Async JIT Group By workers: 1\n" +
                             "                  keys: [x]\n" +
                             "                  filter: x!=null\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: y1\n"
             );
@@ -439,7 +439,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: y\n"
             );
@@ -458,7 +458,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "Async Group By workers: 1\n" +
                             "  values: [last(x)]\n" +
                             "  filter: null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: y\n"
             );
@@ -476,7 +476,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: y\n"
             );
@@ -494,7 +494,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "GroupBy vectorized: true workers: 1\n" +
                             "  values: [max(x)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: y\n"
             );
@@ -512,7 +512,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n"
             );
@@ -530,7 +530,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "GroupBy vectorized: true workers: 1\n" +
                             "  values: [min(x)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: y\n"
             );
@@ -548,7 +548,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n"
             );
@@ -570,7 +570,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: y\n"
             );
@@ -592,7 +592,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: y\n"
             );
@@ -610,7 +610,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n"
             );
@@ -639,22 +639,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "        Union\n" +
                             "            Limit lo: 1\n" +
                             "                SelectedRecord\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: y\n" +
                             "            Limit lo: 1\n" +
                             "                SelectedRecord\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row backward scan\n" +
                             "                        Frame backward scan on: y\n" +
                             "        Limit lo: 1\n" +
                             "            SelectedRecord\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: y\n" +
                             "    Limit lo: 1\n" +
                             "        SelectedRecord\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: y\n"
             );
@@ -683,11 +683,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    SelectedRecord\n" +
                             "        Hash Join Light\n" +
                             "          condition: tab2.id=tab1.id\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tab1\n" +
                             "            Hash\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab2\n"
             );
@@ -717,11 +717,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "SelectedRecord\n" +
                             "    Hash Join Light\n" +
                             "      condition: tab2.id=tab1.id\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab1\n" +
                             "        Hash\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tab2\n"
             );
@@ -751,11 +751,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "SelectedRecord\n" +
                             "    Hash Join Light\n" +
                             "      condition: tab2.id=tab1.id\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab1\n" +
                             "        Hash\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tab2\n"
             );
@@ -786,11 +786,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "        SelectedRecord\n" +
                             "            Hash Join Light\n" +
                             "              condition: tab2.id=tab1.id\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab1\n" +
                             "                Hash\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: tab2\n"
             );
@@ -823,11 +823,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "            SelectedRecord\n" +
                             "                Hash Join Light\n" +
                             "                  condition: tab2.id=tab1.id\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: tab1\n" +
                             "                    Hash\n" +
-                            "                        DataFrame\n" +
+                            "                        PageFrame\n" +
                             "                            Row forward scan\n" +
                             "                            Frame forward scan on: tab2\n"
             );
@@ -887,11 +887,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "          filter: (ep0.ActionTypeId=13 and ep0.Message='2')\n" +
                             "            Empty table\n" +
                             "            Hash\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: WorkflowEventAction\n" +
                             "        Hash\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: WorkflowEventAction\n"
             );
@@ -983,13 +983,13 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "    Sort\n" +
                     "      keys: [s, ts]\n" +
                     "        SelectedRecord\n" +
-                    "            AsOf Join Light\n" +
+                    "            AsOf Join Fast Scan\n" +
                     "              condition: t2.s=t1.s\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: t1\n" +
                     "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
@@ -1018,13 +1018,13 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "    Sort\n" +
                     "      keys: [ts, s]\n" +
                     "        SelectedRecord\n" +
-                    "            AsOf Join Light\n" +
+                    "            AsOf Join Fast Scan\n" +
                     "              condition: t2.s=t1.s\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: t1\n" +
                     "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
@@ -1053,13 +1053,13 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "    Sort\n" +
                     "      keys: [s, ts1]\n" +
                     "        SelectedRecord\n" +
-                    "            AsOf Join Light\n" +
+                    "            AsOf Join Fast Scan\n" +
                     "              condition: t2.s=t1.s\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: t1\n" +
                     "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
@@ -1088,13 +1088,13 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "    Sort\n" +
                     "      keys: [s1, ts1]\n" +
                     "        SelectedRecord\n" +
-                    "            AsOf Join Light\n" +
+                    "            AsOf Join Fast Scan\n" +
                     "              condition: t2.s=t1.s\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: t1\n" +
                     "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
@@ -1123,13 +1123,13 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "    Sort\n" +
                     "      keys: [s, ts]\n" +
                     "        SelectedRecord\n" +
-                    "            AsOf Join Light\n" +
+                    "            AsOf Join Fast Scan\n" +
                     "              condition: t2.s=t1.s\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: t1\n" +
                     "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
@@ -1168,7 +1168,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                  symbolOrder: asc\n" +
                     "                Interval forward scan on: t1\n" +
                     "                  intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T00:00:00.000000Z\")]\n" +
-                    "            DataFrame\n" +
+                    "            PageFrame\n" +
                     "                Row forward scan\n" +
                     "                Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
@@ -1209,7 +1209,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                  symbolOrder: asc\n" +
                     "                Interval forward scan on: t1\n" +
                     "                  intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
-                    "            DataFrame\n" +
+                    "            PageFrame\n" +
                     "                Row forward scan\n" +
                     "                Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
@@ -1301,11 +1301,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "      keys: [s, ts, ts1, s1]\n" +
                     "        SelectedRecord\n" +
                     "            Cross Join\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: t1\n" +
                     "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
@@ -1400,7 +1400,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                  symbolOrder: asc\n" +
                     "                Interval forward scan on: t1\n" +
                     "                  intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
-                    "            DataFrame\n" +
+                    "            PageFrame\n" +
                     "                Row forward scan\n" +
                     "                Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
@@ -1492,11 +1492,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "      keys: [ts, s]\n" +
                     "        SelectedRecord\n" +
                     "            Cross Join\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: t1\n" +
                     "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
@@ -1588,11 +1588,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "      keys: [ts, s1, s, ts1]\n" +
                     "        SelectedRecord\n" +
                     "            Cross Join\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: t1\n" +
                     "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
@@ -1685,11 +1685,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "        SelectedRecord\n" +
                     "            Lt Join Light\n" +
                     "              condition: t2.s=t1.s\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: t1\n" +
                     "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: t2\n");
             assertSql("s\tts\ts1\tts1\n" +
@@ -1715,45 +1715,52 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "FROM t1\n" +
                     "JOIN t2 ON t1.s = t2.s\n" +
                     "WHERE t1.ts BETWEEN '2023-09-01T00:00:00.000Z' AND '2023-09-01T01:00:00.000Z'\n" +
-                    "ORDER BY t1.s, t1.ts\n" +
+                    "ORDER BY t1.s, t1.ts, t2.ts\n" +
                     "LIMIT 1000000;";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000", query);
-            assertPlanNoLeakCheck(query, "Limit lo: 1000000\n" +
-                    "    SelectedRecord\n" +
-                    "        Hash Join Light\n" +
-                    "          condition: t2.s=t1.s\n" +
-                    "            SortedSymbolIndex\n" +
-                    "                Index forward scan on: s\n" +
-                    "                  symbolOrder: asc\n" +
-                    "                Interval forward scan on: t1\n" +
-                    "                  intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
-                    "            Hash\n" +
-                    "                DataFrame\n" +
-                    "                    Row forward scan\n" +
-                    "                    Frame forward scan on: t2\n");
-            assertSql("s\tts\ts1\tts1\n" +
-                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
-                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
-                    "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
-                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
-                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
-                    "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
-                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
-                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
-                    "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
-                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
-                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
-                    "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
-                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
-                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
-                    "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
-                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
-                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
-                    "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
-                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
-                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
-                    "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n", query);
+            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z','2023-09-01T01:00:00.000Z')) order by s, ts, ts1 limit 1000000", query);
+            assertPlanNoLeakCheck(
+                    query,
+                    "Limit lo: 1000000\n" +
+                            "    Sort\n" +
+                            "      keys: [s, ts, ts1]\n" +
+                            "        SelectedRecord\n" +
+                            "            Hash Join Light\n" +
+                            "              condition: t2.s=t1.s\n" +
+                            "                PageFrame\n" +
+                            "                    Row forward scan\n" +
+                            "                    Interval forward scan on: t1\n" +
+                            "                      intervals: [(\"2023-09-01T00:00:00.000000Z\",\"2023-09-01T01:00:00.000000Z\")]\n" +
+                            "                Hash\n" +
+                            "                    PageFrame\n" +
+                            "                        Row forward scan\n" +
+                            "                        Frame forward scan on: t2\n"
+            );
+            assertSql(
+                    "s\tts\ts1\tts1\n" +
+                            "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                            "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                            "a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                            "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                            "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                            "a\t2023-09-01T00:10:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                            "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:00:00.000000Z\n" +
+                            "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:10:00.000000Z\n" +
+                            "a\t2023-09-01T00:20:00.000000Z\ta\t2023-09-01T00:20:00.000000Z\n" +
+                            "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                            "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                            "b\t2023-09-01T00:05:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                            "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                            "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                            "b\t2023-09-01T00:15:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                            "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:05:00.000000Z\n" +
+                            "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:15:00.000000Z\n" +
+                            "b\t2023-09-01T00:25:00.000000Z\tb\t2023-09-01T00:25:00.000000Z\n" +
+                            "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T01:00:00.000000Z\n" +
+                            "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T02:00:00.000000Z\n" +
+                            "c\t2023-09-01T01:00:00.000000Z\tc\t2023-09-01T03:00:00.000000Z\n",
+                    query
+            );
         });
     }
 
@@ -1771,7 +1778,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose s, ts from (select [s, ts] from t1 timestamp (ts)) order by s, ts limit 1000000", query);
             assertPlanNoLeakCheck(query, "Sort light lo: 1000000\n" +
                     "  keys: [s, ts]\n" +
-                    "    DataFrame\n" +
+                    "    PageFrame\n" +
                     "        Row forward scan\n" +
                     "        Frame forward scan on: t1\n");
 
@@ -1793,7 +1800,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose s, ts from (select [s, ts] from t1 timestamp (ts)) order by s, ts limit -(10)", query);
             assertPlanNoLeakCheck(query, "Sort light lo: -10\n" +
                     "  keys: [s, ts]\n" +
-                    "    DataFrame\n" +
+                    "    PageFrame\n" +
                     "        Row forward scan\n" +
                     "        Frame forward scan on: t1\n");
 
@@ -1815,7 +1822,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery("select-choose s, ts from (select [s, ts] from t1 timestamp (ts)) order by ts, s limit -(10)", query);
             assertPlanNoLeakCheck(query, "Sort light lo: -10 partiallySorted: true\n" +
                     "  keys: [ts, s]\n" +
-                    "    DataFrame\n" +
+                    "    PageFrame\n" +
                     "        Row forward scan\n" +
                     "        Frame forward scan on: t1\n");
 
@@ -1842,10 +1849,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "Limit lo: 10\n" +
                             "    SelectedRecord\n" +
                             "        Cross Join\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: a\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n"
             );
@@ -1886,7 +1893,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n");
         });
@@ -1904,7 +1911,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "Async Group By workers: 1\n" +
                             "  values: [first(x)]\n" +
                             "  filter: null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: y\n");
 
@@ -1941,18 +1948,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "      condition: y2.LAST=y1.ts\n" +
                             "        Hash Outer Join Light\n" +
                             "          condition: y1.x=y.x\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: y\n" +
                             "            Hash\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: y1\n" +
                             "        Hash\n" +
                             "            Sort light lo: 1\n" +
                             "              keys: [LAST desc]\n" +
                             "                SelectedRecord\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: y2\n");
 
@@ -1970,7 +1977,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: y\n");
         });
@@ -1988,7 +1995,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "Async Group By workers: 1\n" +
                             "  values: [last(x)]\n" +
                             "  filter: null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: y\n");
 
@@ -2006,7 +2013,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: y\n");
         });
@@ -2023,7 +2030,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "GroupBy vectorized: true workers: 1\n" +
                             "  values: [max(x)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: y\n");
 
@@ -2041,7 +2048,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n");
         });
@@ -2058,7 +2065,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "GroupBy vectorized: true workers: 1\n" +
                             "  values: [min(x)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: y\n");
 
@@ -2076,7 +2083,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n");
         });
@@ -2093,7 +2100,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: y\n");
         });
@@ -2110,7 +2117,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: y\n");
         });
@@ -2127,7 +2134,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n");
         });
@@ -2152,22 +2159,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "        Union\n" +
                             "            Limit lo: 1\n" +
                             "                SelectedRecord\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: y\n" +
                             "            Limit lo: 1\n" +
                             "                SelectedRecord\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row backward scan\n" +
                             "                        Frame backward scan on: y\n" +
                             "        Limit lo: 1\n" +
                             "            SelectedRecord\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: y\n" +
                             "    Limit lo: 1\n" +
                             "        SelectedRecord\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: y\n");
 
@@ -2187,7 +2194,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "  keys: [x]\n" +
                             "  values: [first(ts)]\n" +
                             "  filter: null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: y\n");
 
@@ -2207,7 +2214,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "  keys: [x]\n" +
                             "  values: [last(ts)]\n" +
                             "  filter: null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: y\n");
 
@@ -2226,7 +2233,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "GroupBy vectorized: true workers: 1\n" +
                             "  keys: [x]\n" +
                             "  values: [max(ts)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: y\n");
 
@@ -2245,7 +2252,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "GroupBy vectorized: true workers: 1\n" +
                             "  keys: [x]\n" +
                             "  values: [min(ts)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: y\n");
 
@@ -2270,22 +2277,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "        Union\n" +
                             "            Limit lo: 1\n" +
                             "                SelectedRecord\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: y\n" +
                             "            Limit lo: 1\n" +
                             "                SelectedRecord\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row backward scan\n" +
                             "                        Frame backward scan on: y\n" +
                             "        Limit lo: 1\n" +
                             "            SelectedRecord\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: y\n" +
                             "    Limit lo: 1\n" +
                             "        SelectedRecord\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: y\n");
 
@@ -2307,15 +2314,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    SelectedRecord\n" +
                             "        Async JIT Filter workers: 1\n" +
                             "          filter: x=3\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: y\n");
         });
     }
-
-    /*TODO: Line 722 and 723 are doing a forward scan on selected model y2 whereas it should be a backward scan
-        Suspected issue is with SqlOptimiser.optimiseOrderBy() , raise a github issue for the same
-     */
 
     @Test
     public void testQueryPlanForWhereClauseOnNestedModelWithLastAggregateFunctionOnParentModel() throws Exception {
@@ -2332,7 +2335,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    SelectedRecord\n" +
                             "        Async JIT Filter workers: 1\n" +
                             "          filter: x=3\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: y\n");
         });
@@ -2353,7 +2356,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    SelectedRecord\n" +
                             "        Async JIT Filter workers: 1\n" +
                             "          filter: x=3\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: y\n");
         });
@@ -2374,7 +2377,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    SelectedRecord\n" +
                             "        Async JIT Filter workers: 1\n" +
                             "          filter: x=3\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: y\n");
         });
@@ -2394,7 +2397,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    Async JIT Filter workers: 1\n" +
                             "      limit: 1\n" +
                             "      filter: x=3\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n");
         });
@@ -2415,7 +2418,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    Async JIT Filter workers: 1\n" +
                             "      limit: 1\n" +
                             "      filter: x=3\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: y\n");
         });
@@ -2436,7 +2439,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    Async JIT Filter workers: 1\n" +
                             "      limit: 1\n" +
                             "      filter: x=3\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: y\n");
         });
@@ -2456,7 +2459,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    Async JIT Filter workers: 1\n" +
                             "      limit: 1\n" +
                             "      filter: x=3\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n");
         });
@@ -2473,7 +2476,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n");
         });
@@ -2490,7 +2493,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: y\n");
         });
@@ -2507,7 +2510,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: y\n");
         });
@@ -2524,9 +2527,36 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     query,
                     "Limit lo: 1\n" +
                             "    SelectedRecord\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n");
+        });
+    }
+
+    @Test
+    public void testRangeFillWhenThereAreNoRecords() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE 'trades' (\n" +
+                    "  symbol SYMBOL capacity 256 CACHE,\n" +
+                    "  side SYMBOL capacity 256 CACHE,\n" +
+                    "  price DOUBLE,\n" +
+                    "  amount DOUBLE,\n" +
+                    "  timestamp TIMESTAMP\n" +
+                    ") timestamp (timestamp) PARTITION BY DAY WAL;");
+            drainWalQueue();
+
+            String query = "with a as (\n" +
+                    "SELECT \n" +
+                    "    timestamp,\n" +
+                    "    vwap(price, amount) AS vwap_price,\n" +
+                    "    sum(amount) AS volume\n" +
+                    "FROM trades\n" +
+                    "WHERE symbol = 'MEH' AND timestamp > dateadd('d', -1, now())\n" +
+                    "SAMPLE by 1h FILL(NULL)\n" +
+                    ")\n" +
+                    "select * from a;";
+
+            assertSql("timestamp\tvwap_price\tvolume\n", query);
         });
     }
 
@@ -2653,6 +2683,17 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByFromToDisallowedQueryWithKey() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(SampleByTest.DDL_FROMTO);
+            assertException("SELECT ts, count, s\n" +
+                    "FROM fromto\n" +
+                    "SAMPLE BY 5d FROM '2018-01-01' TO '2019-01-01'\n" +
+                    "LIMIT 6", 0, "are not supported for keyed SAMPLE BY");
+        });
+    }
+
+    @Test
     public void testSampleByFromToFillNullWithExtraColumns() throws Exception {
         assertMemoryLeak(() -> {
             ddl(SampleByTest.DDL_FROMTO);
@@ -2669,7 +2710,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "          keys: [ts]\n" +
                     "          values: [avg(x),sum(x)]\n" +
                     "          filter: null\n" +
-                    "            DataFrame\n" +
+                    "            PageFrame\n" +
                     "                Row forward scan\n" +
                     "                Interval forward scan on: fromto\n" +
                     "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
@@ -2726,7 +2767,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "          keys: [ts]\n" +
                     "          values: [avg(x)]\n" +
                     "          filter: null\n" +
-                    "            DataFrame\n" +
+                    "            PageFrame\n" +
                     "                Row forward scan\n" +
                     "                Interval forward scan on: fromto\n" +
                     "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
@@ -2743,7 +2784,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
-    // [NW] revisit
     @Test
     public void testSampleByFromToParallelSampleByRewriteMultipleFills() throws Exception {
         assertMemoryLeak(() -> {
@@ -2755,7 +2795,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "  fill: value\n" +
                     "  range: ('2017-12-20','2018-01-31')\n" +
                     "  values: [avg(x),sum(x)]\n" +
-                    "    DataFrame\n" +
+                    "    PageFrame\n" +
                     "        Row forward scan\n" +
                     "        Interval forward scan on: fromto\n" +
                     "          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
@@ -2789,7 +2829,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "          keys: [ts]\n" +
                     "          values: [avg(x)]\n" +
                     "          filter: null\n" +
-                    "            DataFrame\n" +
+                    "            PageFrame\n" +
                     "                Row forward scan\n" +
                     "                Interval forward scan on: fromto\n" +
                     "                  intervals: [(\"MIN\",\"2018-01-30T23:59:59.999999Z\")]\n");
@@ -2821,7 +2861,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "          keys: [ts]\n" +
                     "          values: [avg(x)]\n" +
                     "          filter: null\n" +
-                    "            DataFrame\n" +
+                    "            PageFrame\n" +
                     "                Row forward scan\n" +
                     "                Interval forward scan on: fromto\n" +
                     "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"MAX\")]\n");
@@ -2857,7 +2897,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "              keys: [ts]\n" +
                     "              values: [avg(x),sum(x)]\n" +
                     "              filter: null\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: fromto\n" +
                     "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
@@ -2870,7 +2910,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "              keys: [ts]\n" +
                     "              values: [avg(x),sum(x)]\n" +
                     "              filter: null\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: fromto2\n" +
                     "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
@@ -2888,7 +2928,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "              keys: [ts]\n" +
                     "              values: [avg(x),sum(x)]\n" +
                     "              filter: null\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: fromto\n" +
                     "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
@@ -2901,7 +2941,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "              keys: [ts]\n" +
                     "              values: [avg(x),sum(x)]\n" +
                     "              filter: null\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: fromto2\n" +
                     "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
@@ -2933,7 +2973,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "              keys: [ts]\n" +
                     "              values: [avg(x),sum(x)]\n" +
                     "              filter: null\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: fromto\n" +
                     "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
@@ -2946,7 +2986,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "              keys: [ts]\n" +
                     "              values: [avg(x),sum(x)]\n" +
                     "              filter: null\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: fromto2\n" +
                     "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
@@ -2973,7 +3013,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "              keys: [ts]\n" +
                     "              values: [avg(x),sum(x)]\n" +
                     "              filter: null\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: fromto\n" +
                     "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
@@ -2986,7 +3026,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "              keys: [ts]\n" +
                     "              values: [avg(x),sum(x)]\n" +
                     "              filter: null\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: fromto2\n" +
                     "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
@@ -3027,11 +3067,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "          values: [avg(x)]\n" +
                     "            SelectedRecord\n" +
                     "                AsOf Join Fast Scan\n" +
-                    "                    DataFrame\n" +
+                    "                    PageFrame\n" +
                     "                        Row forward scan\n" +
                     "                        Interval forward scan on: fromto\n" +
                     "                          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
-                    "                    DataFrame\n" +
+                    "                    PageFrame\n" +
                     "                        Row forward scan\n" +
                     "                        Frame forward scan on: fromto2\n");
             assertSql("ts\tavg\n" +
@@ -3069,7 +3109,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                  keys: [five_days]\n" +
                     "                  values: [avg(x)]\n" +
                     "                  filter: null\n" +
-                    "                    DataFrame\n" +
+                    "                    PageFrame\n" +
                     "                        Row forward scan\n" +
                     "                        Interval forward scan on: fromto\n" +
                     "                          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
@@ -3083,7 +3123,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "                  keys: [ten_days]\n" +
                     "                  values: [avg(x)]\n" +
                     "                  filter: null\n" +
-                    "                    DataFrame\n" +
+                    "                    PageFrame\n" +
                     "                        Row forward scan\n" +
                     "                        Interval forward scan on: fromto2\n" +
                     "                          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
@@ -3146,7 +3186,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "          keys: [ts]\n" +
                     "          values: [avg(x),sum(x)]\n" +
                     "          filter: null\n" +
-                    "            DataFrame\n" +
+                    "            PageFrame\n" +
                     "                Row forward scan\n" +
                     "                Interval forward scan on: fromto\n" +
                     "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"MAX\")]\n");
@@ -3156,7 +3196,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "  fill: null\n" +
                     "  range: ('2017-12-20',null)\n" +
                     "  values: [avg(x),sum(x)]\n" +
-                    "    DataFrame\n" +
+                    "    PageFrame\n" +
                     "        Row forward scan\n" +
                     "        Interval forward scan on: fromto\n" +
                     "          intervals: [(\"2017-12-20T00:00:00.000000Z\",\"MAX\")]\n");
@@ -3187,7 +3227,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "              keys: [ts]\n" +
                     "              values: [avg(x),sum(x)]\n" +
                     "              filter: null\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: fromto\n" +
                     "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
@@ -3199,7 +3239,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "          keys: [ts]\n" +
                     "          values: [avg(x),sum(x)]\n" +
                     "          filter: null\n" +
-                    "            DataFrame\n" +
+                    "            PageFrame\n" +
                     "                Row forward scan\n" +
                     "                Interval forward scan on: fromto2\n" +
                     "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
@@ -3235,7 +3275,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "              keys: [ts]\n" +
                     "              values: [avg(x),sum(x)]\n" +
                     "              filter: null\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Interval forward scan on: fromto\n" +
                     "                      intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n" +
@@ -3247,7 +3287,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "          keys: [ts]\n" +
                     "          values: [avg(x),sum(x)]\n" +
                     "          filter: null\n" +
-                    "            DataFrame\n" +
+                    "            PageFrame\n" +
                     "                Row forward scan\n" +
                     "                Interval forward scan on: fromto2\n" +
                     "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
@@ -3266,6 +3306,30 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByFromToParallelSequentialEquivalence() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(SampleByTest.DDL_FROMTO);
+
+            final String parallel = "select ts, avg(x) from fromto\n" +
+                    "sample by 1w from '2017-12-20' to '2018-01-31' fill(null)";
+
+            // offset is ignored
+            final String sequential = parallel + " align to calendar with offset '10:00'";
+
+            final String result = "ts\tavg\n" +
+                    "2017-12-20T00:00:00.000000Z\tnull\n" +
+                    "2017-12-27T00:00:00.000000Z\t48.5\n" +
+                    "2018-01-03T00:00:00.000000Z\t264.5\n" +
+                    "2018-01-10T00:00:00.000000Z\t456.5\n" +
+                    "2018-01-17T00:00:00.000000Z\tnull\n" +
+                    "2018-01-24T00:00:00.000000Z\tnull\n";
+
+            assertSql(result, parallel);
+            assertSql(result, sequential);
+        });
+    }
+
+    @Test
     public void testSampleByFromToPlansWithRewrite() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tbl (\n" +
@@ -3275,52 +3339,52 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             drainWalQueue();
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m from '2018-01-01' to '2019-01-01'",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [ts]\n" +
                             "      values: [avg(price)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Interval forward scan on: tbl\n" +
                             "              intervals: [(\"2018-01-01T00:00:00.000000Z\",\"2018-12-31T23:59:59.999999Z\")]\n"
             );
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m from '2018-01-01'",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [ts]\n" +
                             "      values: [avg(price)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Interval forward scan on: tbl\n" +
                             "              intervals: [(\"2018-01-01T00:00:00.000000Z\",\"MAX\")]\n"
             );
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m to '2019-01-01'",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [ts]\n" +
                             "      values: [avg(price)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Interval forward scan on: tbl\n" +
                             "              intervals: [(\"MIN\",\"2018-12-31T23:59:59.999999Z\")]\n"
             );
             assertPlanNoLeakCheck(
                     "select ts, avg(price) from tbl sample by 5m",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Async Group By workers: 1\n" +
                             "      keys: [ts]\n" +
                             "      values: [avg(price)]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tbl\n"
             );
@@ -3345,7 +3409,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "          keys: [five_days]\n" +
                     "          values: [avg(x)]\n" +
                     "          filter: null\n" +
-                    "            DataFrame\n" +
+                    "            PageFrame\n" +
                     "                Row forward scan\n" +
                     "                Interval forward scan on: fromto\n" +
                     "                  intervals: [(\"2017-12-20T00:00:00.000000Z\",\"2018-01-30T23:59:59.999999Z\")]\n");
@@ -3364,6 +3428,36 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSampleByGroupByFillNone() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE 'trades' (\n" +
+                    "  symbol SYMBOL capacity 256 CACHE,\n" +
+                    "  side SYMBOL capacity 256 CACHE,\n" +
+                    "  price DOUBLE,\n" +
+                    "  amount DOUBLE,\n" +
+                    "  timestamp TIMESTAMP\n" +
+                    ") timestamp (timestamp) PARTITION BY DAY WAL;");
+
+            assertPlanNoLeakCheck("SELECT last(price) value, symbol, timestamp \n" +
+                            "FROM trades\n" +
+                            "WHERE timestamp >= '2024-08-11T10:13:00' \n" +
+                            "AND timestamp < '2024-08-11T10:16:00' \n" +
+                            "AND (symbol LIKE ('BTC-USD')) \n" +
+                            "SAMPLE BY 1m FILL(NONE) ALIGN TO CALENDAR",
+                    "Radix sort light\n" +
+                            "  keys: [timestamp]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [symbol,timestamp]\n" +
+                            "      values: [last(price)]\n" +
+                            "      filter: symbol ~ BTC-USD\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Interval forward scan on: trades\n" +
+                            "              intervals: [(\"2024-08-11T10:13:00.000000Z\",\"2024-08-11T10:15:59.999999Z\")]\n");
+        });
+    }
+
+    @Test
     public void testSelectMultipleColumnsIncludingLastFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table y ( x int, ts timestamp) timestamp(ts);");
@@ -3376,7 +3470,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "  keys: [x]\n" +
                             "  values: [last(ts)]\n" +
                             "  filter: null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: y\n"
             );
@@ -3395,7 +3489,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "GroupBy vectorized: true workers: 1\n" +
                             "  keys: [x]\n" +
                             "  values: [max(ts)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: y\n"
             );
@@ -3414,7 +3508,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "GroupBy vectorized: true workers: 1\n" +
                             "  keys: [x]\n" +
                             "  values: [min(ts)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: y\n"
             );
@@ -3434,7 +3528,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "  keys: [x]\n" +
                             "  values: [first(ts)]\n" +
                             "  filter: null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: y\n"
             );
@@ -3457,7 +3551,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [x]\n" +
                             "      filter: x!=null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n"
             );
@@ -3485,22 +3579,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "        Union\n" +
                             "            Limit lo: 1\n" +
                             "                SelectedRecord\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: y\n" +
                             "            Limit lo: 1\n" +
                             "                SelectedRecord\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row backward scan\n" +
                             "                        Frame backward scan on: y\n" +
                             "        Limit lo: 1\n" +
                             "            SelectedRecord\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: y\n" +
                             "    Limit lo: 1\n" +
                             "        SelectedRecord\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: y\n"
             );
@@ -3526,14 +3620,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "        Async JIT Group By workers: 1\n" +
                             "          keys: [x]\n" +
                             "          filter: x!=null\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: y\n" +
                             "    Count\n" +
                             "        Async JIT Group By workers: 1\n" +
                             "          keys: [z]\n" +
                             "          filter: z!=null\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: y\n"
             );
@@ -3558,7 +3652,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    SelectedRecord\n" +
                             "        Async JIT Filter workers: 1\n" +
                             "          filter: x=3\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: y\n"
             );
@@ -3583,7 +3677,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    SelectedRecord\n" +
                             "        Async JIT Filter workers: 1\n" +
                             "          filter: x=3\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: y\n"
             );
@@ -3608,7 +3702,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    SelectedRecord\n" +
                             "        Async JIT Filter workers: 1\n" +
                             "          filter: x=3\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: y\n"
             );
@@ -3633,7 +3727,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    SelectedRecord\n" +
                             "        Async JIT Filter workers: 1\n" +
                             "          filter: x=3\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: y\n"
             );
@@ -3657,7 +3751,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    Async JIT Filter workers: 1\n" +
                             "      limit: 1\n" +
                             "      filter: x=3\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n"
             );
@@ -3682,7 +3776,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    Async JIT Filter workers: 1\n" +
                             "      limit: 1\n" +
                             "      filter: x=3\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: y\n"
             );
@@ -3707,7 +3801,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    Async JIT Filter workers: 1\n" +
                             "      limit: 1\n" +
                             "      filter: x=3\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: y\n"
             );
@@ -3731,7 +3825,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "    Async JIT Filter workers: 1\n" +
                             "      limit: 1\n" +
                             "      filter: x=3\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: y\n"
             );

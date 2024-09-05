@@ -485,10 +485,13 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
             drainWalQueue();
 
-            assertSql("timestamp\td\n" +
-                    "2044-02-24T00:00:00.000000Z\t1.0000\n" +
-                    "2044-02-25T00:00:00.000000Z\t1.2000\n" +
-                    "2044-02-25T00:00:00.000000Z\t1.0000\n", "select timestamp, d from x limit -3");
+            assertSql(
+                    "timestamp\td\n" +
+                            "2044-02-24T00:00:00.000000Z\t1.0000\n" +
+                            "2044-02-25T00:00:00.000000Z\t1.0000\n" +
+                            "2044-02-25T00:00:00.000000Z\t1.2000\n",
+                    "select timestamp, d from x order by timestamp, d limit -3"
+            );
         });
     }
 
@@ -499,7 +502,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (fail.get() != null && Misc.getThreadLocalUtf8Sink().put(name).toString().endsWith(fail.get())) {
                     fail.set(null);
                     return -1;
@@ -508,7 +511,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (fail.get() != null && Misc.getThreadLocalUtf8Sink().put(name).toString().endsWith(fail.get())) {
                     fail.set(null);
                     return -1;
@@ -598,7 +601,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConvertFromSymbolToStringDedupFlagNotAllowed() throws Exception {
+    public void testConvertFromSymbolToStringDedupFlagIsAllowed() throws Exception {
         assumeWal();
         assertMemoryLeak(() -> {
             createX();
@@ -607,37 +610,22 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             drainWalQueue();
             checkDedupSet("ik", true);
 
-            try {
-                ddl("alter table x alter column ik type varchar");
-                Assert.fail();
-            } catch (SqlException ex) {
-                TestUtils.assertContains(ex.getFlyweightMessage(), "cannot change type of deduplicated key column 'ik' to variable size type 'VARCHAR', deduplication is only supported for fixed size types");
-                Assert.assertEquals(35, ex.getPosition());
-            }
-
-            ddl("alter table x dedup disable");
-            drainWalQueue();
-
-            // In one go, enable dedup and change type
-            ddl("alter table x dedup enable upsert keys(timestamp, ik)");
             ddl("alter table x alter column ik type varchar");
             drainWalQueue();
-
-            checkDedupSet("ik", false);
-
-            engine.releaseInactive();
-            checkDedupSet("ik", false);
+            checkDedupSet("ik", true);
 
             insert("insert into x(ik, d, timestamp) values('abc', 2, '2044-02-24')", sqlExecutionContext);
-            insert("insert into x(ik, d, timestamp) values('abc', 3, '2044-02-25')", sqlExecutionContext);
-            insert("insert into x(ik, d, timestamp) values('def', 4, '2044-02-25')", sqlExecutionContext);
+            insert("insert into x(ik, d, timestamp) values('abc', 3, '2044-02-24')", sqlExecutionContext);
+            insert("insert into x(ik, d, timestamp) values('abc', 4, '2044-02-25')", sqlExecutionContext);
+            insert("insert into x(ik, d, timestamp) values('def', 5, '2044-02-25')", sqlExecutionContext);
 
             drainWalQueue();
 
             assertSql("timestamp\td\tik\n" +
                     "2018-01-01T02:00:00.000000Z\t0.04488373772232379\tCPSW\n" +
-                    "2044-02-24T00:00:00.000000Z\t2.0\tabc\n" +
-                    "2044-02-25T00:00:00.000000Z\t4.0\tdef\n", "select timestamp, d, ik from x limit -3");
+                    "2044-02-24T00:00:00.000000Z\t3.0\tabc\n" +
+                    "2044-02-25T00:00:00.000000Z\t4.0\tabc\n" +
+                    "2044-02-25T00:00:00.000000Z\t5.0\tdef\n", "select timestamp, d, ik from x limit -4");
         });
     }
 

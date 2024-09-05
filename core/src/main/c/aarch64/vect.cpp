@@ -22,11 +22,9 @@
  *
  ******************************************************************************/
 
-#include <cstdio>
 #include <jni.h>
 #include <cstdint>
 #include "../share/vec_agg_vanilla.h"
-
 
 extern "C" {
 

@@ -33,7 +33,6 @@ import io.questdb.log.LogRecord;
 import io.questdb.mp.*;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.Path;
@@ -72,10 +71,12 @@ public class ConvertOperatorImpl implements Closeable {
     private final TableWriter tableWriter;
     private final MicrosecondClock timer;
     private CharSequence columnName;
+    private long fixedFd;
     private int partitionUpdated;
     private SymbolMapReaderImpl symbolMapReader;
     private SymbolMapper symbolMapper;
     private final TableWriter.ColumnTaskHandler cthConvertPartitionHandler = this::cthConvertPartitionHandler;
+    private long varFd;
 
     public ConvertOperatorImpl(CairoConfiguration configuration, TableWriter tableWriter, ColumnVersionWriter columnVersionWriter, Path path, int rootLen, PurgingOperator purgingOperator, MessageBus messageBus) {
         this.configuration = configuration;
@@ -115,7 +116,7 @@ public class ConvertOperatorImpl implements Closeable {
         Misc.free(symbolMapReader);
     }
 
-    private void closeFds(int srcFixFd, int srcVarFd, int dstFixFd, int dstVarFd) {
+    private void closeFds(long srcFixFd, long srcVarFd, long dstFixFd, long dstVarFd) {
         ff.close(srcFixFd);
         ff.close(srcVarFd);
         ff.close(dstFixFd);
@@ -157,7 +158,7 @@ public class ConvertOperatorImpl implements Closeable {
                 if (symbolMapReader == null) {
                     symbolMapReader = new SymbolMapReaderImpl();
                 }
-                long existingColNameTxn = tableWriter.getDefaultColumnNameTxn(existingColIndex);
+                long existingColNameTxn = columnVersionWriter.getDefaultColumnNameTxn(existingColIndex);
                 int symbolCount = tableWriter.getSymbolMapWriter(existingColIndex).getSymbolCount();
                 symbolMapReader.of(configuration, path, columnName, existingColNameTxn, symbolCount);
             }
@@ -175,7 +176,7 @@ public class ConvertOperatorImpl implements Closeable {
                         final long maxRow = tableWriter.getPartitionSize(partitionIndex);
 
                         final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, existingColIndex);
-                        if (columnTop != -1) {
+                        if (columnTop > -1) {
                             long rowCount = maxRow - columnTop;
                             long partitionNameTxn = tableWriter.getPartitionNameTxn(partitionIndex);
 
@@ -184,15 +185,15 @@ public class ConvertOperatorImpl implements Closeable {
                                 TableUtils.setPathForPartition(path, tableWriter.getPartitionBy(), partitionTimestamp, partitionNameTxn);
                                 int pathTrimToLen = path.size();
 
-                                int srcFixFd = -1, srcVarFd = -1, dstFixFd = -1, dstVarFd = -1;
+                                long srcFixFd = -1, srcVarFd = -1, dstFixFd = -1, dstVarFd = -1;
                                 try {
-                                    long srcFds = openColumnsRO(columnName, partitionTimestamp, existingColIndex, existingType, pathTrimToLen);
-                                    srcFixFd = Numbers.decodeLowInt(srcFds);
-                                    srcVarFd = Numbers.decodeHighInt(srcFds);
+                                    openColumnsRO(columnName, partitionTimestamp, existingColIndex, existingType, pathTrimToLen);
+                                    srcFixFd = this.fixedFd;
+                                    srcVarFd = this.varFd;
 
-                                    long dstFds = openColumnsRW(columnName, partitionTimestamp, columnIndex, newType, pathTrimToLen);
-                                    dstFixFd = Numbers.decodeLowInt(dstFds);
-                                    dstVarFd = Numbers.decodeHighInt(dstFds);
+                                    openColumnsRW(columnName, partitionTimestamp, columnIndex, newType, pathTrimToLen);
+                                    dstFixFd = this.fixedFd;
+                                    dstVarFd = this.varFd;
 
                                     LOG.info().$("converting column [at=").$(path.trimTo(pathTrimToLen))
                                             .$(", column=").utf8(columnName)
@@ -217,11 +218,7 @@ public class ConvertOperatorImpl implements Closeable {
                         }
                         if (columnTop != tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1)) {
                             long partTs = tableWriter.getPartitionBy() != PartitionBy.NONE ? partitionTimestamp : TxReader.DEFAULT_PARTITION_TIMESTAMP;
-                            if (columnTop != -1) {
-                                columnVersionWriter.upsertColumnTop(partTs, columnIndex, columnTop);
-                            } else {
-                                columnVersionWriter.removeColumnTop(partTs, columnIndex);
-                            }
+                            columnVersionWriter.upsertColumnTop(partTs, columnIndex, columnTop > -1 ? columnTop : maxRow);
                         }
                     } catch (Throwable th) {
                         LOG.error().$("error converting column [at=").$(tableWriter.getTableToken().getDirNameUtf8())
@@ -248,14 +245,14 @@ public class ConvertOperatorImpl implements Closeable {
         }
     }
 
-    private void cthConvertPartitionHandler(int existingType, int newType, int srcFixFd, long srcVarFd, long dstFixFd, long dstVarFd, long partitionTimestamp, long rowCount) {
+    private void cthConvertPartitionHandler(int existingType, int newType, long srcFixFd, long srcVarFd, long dstFixFd, long dstVarFd, long partitionTimestamp, long rowCount) {
         try {
             if (asyncProcessingErrorCount.get() == 0) {
 
                 SymbolTable symbolTable = ColumnType.isSymbol(existingType) ? symbolMapReader.newSymbolTableView() : null;
                 boolean ok = ColumnTypeConverter.convertColumn(0, rowCount,
-                        existingType, srcFixFd, (int) srcVarFd, symbolTable,
-                        newType, (int) dstFixFd, (int) dstVarFd, symbolMapper,
+                        existingType, srcFixFd, srcVarFd, symbolTable,
+                        newType, dstFixFd, dstVarFd, symbolMapper,
                         ff, appendPageSize, noopConversionOffsetSink);
 
                 if (!ok) {
@@ -279,11 +276,11 @@ public class ConvertOperatorImpl implements Closeable {
             }
             log.$(", ex=").$(th).I$();
         } finally {
-            closeFds(srcFixFd, (int) srcVarFd, (int) dstFixFd, (int) dstVarFd);
+            closeFds(srcFixFd, srcVarFd, dstFixFd, dstVarFd);
         }
     }
 
-    private boolean dispatchConvertColumnPartitionTask(int existingType, int newType, int srcFixFd, int srcVarFd, int dstFixFd, int dstVarFd, long rowCount, long partitionTimestamp) {
+    private boolean dispatchConvertColumnPartitionTask(int existingType, int newType, long srcFixFd, long srcVarFd, long dstFixFd, long dstVarFd, long rowCount, long partitionTimestamp) {
         if (!ColumnType.isSymbol(newType)) {
             final Sequence pubSeq = this.messageBus.getColumnTaskPubSeq();
             final RingQueue<ColumnTask> queue = this.messageBus.getColumnTaskQueue();
@@ -305,37 +302,36 @@ public class ConvertOperatorImpl implements Closeable {
         return false;
     }
 
-    private long openColumnsRO(CharSequence name, long partitionTimestamp, int columnIndex, int columnType, int pathTrimToLen) {
+
+    private void openColumnsRO(CharSequence name, long partitionTimestamp, int columnIndex, int columnType, int pathTrimToLen) {
         long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
         if (isVarSize(columnType)) {
-            int fixedFd = TableUtils.openRO(ff, iFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG);
+            fixedFd = TableUtils.openRO(ff, iFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG);
             try {
-                int varFd = TableUtils.openRO(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG);
-                return Numbers.encodeLowHighInts(fixedFd, varFd);
+                varFd = TableUtils.openRO(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG);
             } catch (Throwable e) {
                 ff.close(fixedFd);
                 throw e;
             }
         } else {
-            int fixedFd = TableUtils.openRO(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG);
-            return Numbers.encodeLowHighInts(fixedFd, -1);
+            fixedFd = TableUtils.openRO(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG);
+            varFd = -1;
         }
     }
 
-    private long openColumnsRW(CharSequence name, long partitionTimestamp, int columnIndex, int columnType, int pathTrimToLen) {
+    private void openColumnsRW(CharSequence name, long partitionTimestamp, int columnIndex, int columnType, int pathTrimToLen) {
         long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
         if (isVarSize(columnType)) {
-            int fixedFd = TableUtils.openRW(ff, iFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
+            fixedFd = TableUtils.openRW(ff, iFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
             try {
-                int varFd = TableUtils.openRW(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
-                return Numbers.encodeLowHighInts(fixedFd, varFd);
+                varFd = TableUtils.openRW(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
             } catch (Throwable e) {
                 ff.close(fixedFd);
                 throw e;
             }
         } else {
-            int fixedFd = TableUtils.openRW(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
-            return Numbers.encodeLowHighInts(fixedFd, -1);
+            fixedFd = TableUtils.openRW(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
+            varFd = -1;
         }
     }
 

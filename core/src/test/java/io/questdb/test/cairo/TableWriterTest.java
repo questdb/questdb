@@ -28,7 +28,6 @@ import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
@@ -108,7 +107,7 @@ public class TableWriterTest extends AbstractCairoTest {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
         class X extends TestFilesFacadeImpl {
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -321,7 +320,7 @@ public class TableWriterTest extends AbstractCairoTest {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
         testAddColumnRecoverableFault(new TestFilesFacadeImpl() {
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -335,7 +334,7 @@ public class TableWriterTest extends AbstractCairoTest {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.k";
         testAddColumnRecoverableFault(new TestFilesFacadeImpl() {
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -351,7 +350,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 1;
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -371,7 +370,7 @@ public class TableWriterTest extends AbstractCairoTest {
         String abcColumnNamePattern = Files.SEPARATOR + "abc.d";
         testAddColumnRecoverableFault(new TestFilesFacadeImpl() {
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -388,7 +387,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int toCount = 5;
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, abcColumnNamePattern)) {
                     return -1;
                 }
@@ -447,7 +446,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int counter = 2;
 
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && --counter == 0) {
                     return -1;
                 }
@@ -492,7 +491,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int counter = 2;
 
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && --counter == 0) {
                     return -1;
                 }
@@ -513,7 +512,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int counter = 2;
 
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME) && --counter == 0) {
                     return -1;
                 }
@@ -606,7 +605,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 5;
 
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, "supplier.d") && count-- == 0) {
                     return -1;
                 }
@@ -659,33 +658,33 @@ public class TableWriterTest extends AbstractCairoTest {
             AbstractCairoTest.create(model);
 
             final int N = 1000;
-            try (TableWriter w = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
                 final Rnd rnd = new Rnd();
                 for (int i = 0; i < N; i++) {
-                    TableWriter.Row r = w.newRow();
+                    TableWriter.Row r = writer.newRow();
                     r.putSym(0, rnd.nextChars(3));
                     r.putStr(1, rnd.nextChars(10));
                     r.append();
                 }
-                w.commit();
+                writer.commit();
 
                 try {
-                    w.addColumn("c", ColumnType.STRING, 0, false, true, 1024, false);
+                    writer.addColumn("c", ColumnType.STRING, 0, false, true, 1024, false);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "only supported");
                 }
 
                 for (int i = 0; i < N; i++) {
-                    TableWriter.Row r = w.newRow();
+                    TableWriter.Row r = writer.newRow();
                     r.putSym(0, rnd.nextChars(3));
                     r.putStr(1, rnd.nextChars(10));
                     r.append();
                 }
-                w.commit();
+                writer.commit();
 
                 // re-add column  with index flag switched off
-                w.addColumn("c", ColumnType.STRING, 0, false, false, 0, false);
+                writer.addColumn("c", ColumnType.STRING, 0, false, false, 0, false);
             }
         });
     }
@@ -700,33 +699,33 @@ public class TableWriterTest extends AbstractCairoTest {
             AbstractCairoTest.create(model);
 
             final int N = 1000;
-            try (TableWriter w = newOffPoolWriter(configuration, "x", metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, "x", metrics)) {
                 final Rnd rnd = new Rnd();
                 for (int i = 0; i < N; i++) {
-                    TableWriter.Row r = w.newRow();
+                    TableWriter.Row r = writer.newRow();
                     r.putSym(0, rnd.nextChars(3));
                     r.putStr(1, rnd.nextChars(10));
                     r.append();
                 }
-                w.commit();
+                writer.commit();
 
                 try {
-                    w.addColumn("c", ColumnType.SYMBOL, 0, false, true, 0, false);
+                    writer.addColumn("c", ColumnType.SYMBOL, 0, false, true, 0, false);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "Invalid index value block capacity");
                 }
 
                 for (int i = 0; i < N; i++) {
-                    TableWriter.Row r = w.newRow();
+                    TableWriter.Row r = writer.newRow();
                     r.putSym(0, rnd.nextChars(3));
                     r.putStr(1, rnd.nextChars(10));
                     r.append();
                 }
-                w.commit();
+                writer.commit();
 
                 // re-add column  with index flag switched off
-                w.addColumn("c", ColumnType.STRING, 0, false, false, 0, false);
+                writer.addColumn("c", ColumnType.STRING, 0, false, false, 0, false);
             }
         });
     }
@@ -814,7 +813,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 boolean fail = false;
 
                 @Override
-                public boolean allocate(int fd, long size) {
+                public boolean allocate(long fd, long size) {
                     return !fail && super.allocate(fd, size);
                 }
             }
@@ -890,7 +889,7 @@ public class TableWriterTest extends AbstractCairoTest {
         ff = new TestFilesFacadeImpl() {
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, "2013-03-04") && Utf8s.endsWithAscii(name, "category.k")) {
                     return this.fd = super.openRW(name, opts);
                 }
@@ -1133,11 +1132,14 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.assertEquals(2, writer.size());
             }
 
-            try (TableReader rdr = newOffPoolReader(configuration, PRODUCT)) {
+            try (
+                    TableReader reader = newOffPoolReader(configuration, PRODUCT);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
                 String expected = "productId\tproductName\tsupplier\tcategory\tprice\tlocationByte\tlocationShort\tlocationInt\tlocationLong\ttimestamp\n" +
                         "1148479920\tTJWCPSW\tHYRX\tPEHNRXGZSXU\t0.4621835429127854\tq\ttp0\tttmt7w\tcs4bdw4y4dpw\t2013-03-04T00:00:00.000000Z\n" +
                         "null\t\tGOOD\tGOOD2\t123.0\te\t0p6\t\t\t2013-03-04T00:00:00.000000Z\n";
-                assertCursor(expected, rdr.getCursor(), rdr.getMetadata(), true);
+                assertCursor(expected, cursor, reader.getMetadata(), true);
             }
         });
     }
@@ -1267,7 +1269,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 boolean ran = false;
 
                 @Override
-                public int openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, long opts) {
                     if (Utf8s.endsWithAscii(name, PRODUCT_FS + ".lock")) {
                         ran = true;
                         return -1;
@@ -1301,7 +1303,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 1;
 
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (fd == this.fd) {
                     this.fd = -1;
                     return -1;
@@ -1310,7 +1312,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, TableUtils.TXN_FILE_NAME) && --count == 0) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1323,7 +1325,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testCannotOpenColumnFile() throws Exception {
         testConstructor(new TestFilesFacadeImpl() {
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, "productName.i")) {
                     return -1;
                 }
@@ -1352,7 +1354,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int counter = 1;
 
             @Override
-            public int openRW(LPSZ path, long opts) {
+            public long openRW(LPSZ path, long opts) {
                 if (Utf8s.endsWithAscii(path, TableUtils.TODO_FILE_NAME) && --counter == 0) {
                     return -1;
                 }
@@ -1367,7 +1369,7 @@ public class TableWriterTest extends AbstractCairoTest {
             int count = 1;
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, TableUtils.TXN_FILE_NAME) && --count == 0) {
                     return -1;
                 }
@@ -1384,7 +1386,7 @@ public class TableWriterTest extends AbstractCairoTest {
         testConstructor(new TestFilesFacadeImpl() {
 
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (fd == this.fd) {
                     return -1;
                 }
@@ -1392,7 +1394,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, "supplier.d")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1408,7 +1410,7 @@ public class TableWriterTest extends AbstractCairoTest {
         populateTable0(FF, N);
         testConstructor(new TestFilesFacadeImpl() {
             @Override
-            public boolean allocate(int fd, long size) {
+            public boolean allocate(long fd, long size) {
                 if (this.fd == fd) {
                     return false;
                 }
@@ -1416,7 +1418,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, "productName.i")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1433,7 +1435,7 @@ public class TableWriterTest extends AbstractCairoTest {
         testConstructor(new TestFilesFacadeImpl() {
 
             @Override
-            public boolean allocate(int fd, long size) {
+            public boolean allocate(long fd, long size) {
                 if (this.fd == fd) {
                     return false;
                 }
@@ -1441,7 +1443,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, "productName.i")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1456,7 +1458,7 @@ public class TableWriterTest extends AbstractCairoTest {
         int N = 100000;
         create(FF, PartitionBy.NONE, N);
         testTruncateOnClose(new TestFilesFacade() {
-            int fd = -1;
+            long fd = -1;
             boolean ran = false;
 
             @Override
@@ -1465,7 +1467,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, "price.d")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1473,7 +1475,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean truncate(int fd, long size) {
+            public boolean truncate(long fd, long size) {
                 if (this.fd == fd) {
                     ran = true;
                     return false;
@@ -1496,7 +1498,7 @@ public class TableWriterTest extends AbstractCairoTest {
         int N = 100000;
         create(FF, PartitionBy.NONE, N);
         testTruncateOnClose(new TestFilesFacade() {
-            int fd = -1;
+            long fd = -1;
             boolean ran = false;
 
             @Override
@@ -1505,7 +1507,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, "price.d")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1513,7 +1515,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean truncate(int fd, long size) {
+            public boolean truncate(long fd, long size) {
                 if (this.fd == fd) {
                     ran = true;
                     return false;
@@ -1535,7 +1537,7 @@ public class TableWriterTest extends AbstractCairoTest {
         int N = 100000;
         create(FF, PartitionBy.NONE, N);
         testTruncateOnClose(new TestFilesFacade() {
-            int fd = -1;
+            long fd = -1;
             boolean ran = false;
 
             @Override
@@ -1544,7 +1546,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, "price.d")) {
                     return fd = super.openRW(name, opts);
                 }
@@ -1552,7 +1554,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean truncate(int fd, long size) {
+            public boolean truncate(long fd, long size) {
                 if (this.fd == fd) {
                     ran = true;
                     return false;
@@ -1886,8 +1888,11 @@ public class TableWriterTest extends AbstractCairoTest {
             Assert.assertEquals(1, w.getPartitionCount());
 
             // ensure indexes can be read
-            try (TableReader reader = getReader(tableToken)) {
-                final TableReaderRecord record = (TableReaderRecord) reader.getCursor().getRecord();
+            try (
+                    TableReader reader = getReader(tableToken);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
+                final TestTableReaderRecord record = (TestTableReaderRecord) cursor.getRecord();
                 assertIndex(reader, record, 0);
                 assertIndex(reader, record, 1);
 
@@ -1904,7 +1909,7 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testMetaFileDoesNotExist() throws Exception {
         testConstructor(new TestFilesFacadeImpl() {
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
                     return -1;
                 }
@@ -1991,9 +1996,11 @@ public class TableWriterTest extends AbstractCairoTest {
                     IntervalUtils.parseFloorPartialTimestamp("2021-01-31"),
                     IntervalUtils.parseFloorPartialTimestamp("2021-02-01")
             };
-            try (TableReader reader = newOffPoolReader(configuration, "weather")) {
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "weather");
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
                 int col = reader.getMetadata().getColumnIndex("timestamp");
-                RecordCursor cursor = reader.getCursor();
                 final Record r = cursor.getRecord();
                 int i = 0;
                 while (cursor.hasNext()) {
@@ -2054,9 +2061,11 @@ public class TableWriterTest extends AbstractCairoTest {
             writer.commit();
         }
 
-        try (TableReader rdr = newOffPoolReader(configuration, tableName)) {
-            RecordCursor cursor = rdr.getCursor();
-            RecordMetadata metadata = rdr.getMetadata();
+        try (
+                TableReader reader = newOffPoolReader(configuration, tableName);
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
+            RecordMetadata metadata = reader.getMetadata();
             println(metadata, cursor);
         }
     }
@@ -2099,9 +2108,11 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (TableReader reader = newOffPoolReader(configuration, "weather")) {
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "weather");
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
                 int col = reader.getMetadata().getColumnIndex("timestamp");
-                RecordCursor cursor = reader.getCursor();
                 final Record r = cursor.getRecord();
                 int i = 0;
                 while (cursor.hasNext()) {
@@ -2190,7 +2201,7 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean hit = false;
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
                     hit = true;
                     return -1;
@@ -2425,7 +2436,7 @@ public class TableWriterTest extends AbstractCairoTest {
             boolean hit = false;
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, TableUtils.META_SWAP_FILE_NAME)) {
                     hit = true;
                     return -1;
@@ -3009,17 +3020,17 @@ public class TableWriterTest extends AbstractCairoTest {
                     return getFilesFacade().getPageSize();
                 }
             };
-            try (TableWriter w = newOffPoolWriter(configuration, PRODUCT, metrics)) {
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT, metrics)) {
                 long ts = TimestampFormatUtils.parseTimestamp("2013-03-04T00:00:00.000Z");
 
                 Rnd rnd = new Rnd();
                 for (int i = 0; i < 100; i++) {
-                    ts = populateRow(w, rnd, ts, 60L * 60000L * 1000L);
+                    ts = populateRow(writer, rnd, ts, 60L * 60000L * 1000L);
                 }
-                w.commit();
+                writer.commit();
 
-                for (int i = 0, n = w.getColumnCount(); i < n; i++) {
-                    MemoryMA m = w.getStorageColumn(i);
+                for (int i = 0, n = writer.getColumnCount(); i < n; i++) {
+                    MemoryMA m = writer.getStorageColumn(i);
                     if (m != null) {
                         Assert.assertEquals(configuration.getDataAppendPageSize(), m.getExtendSegmentSize());
                     }
@@ -3075,9 +3086,11 @@ public class TableWriterTest extends AbstractCairoTest {
         }
 
         rnd.reset();
-        try (TableReader reader = newOffPoolReader(configuration, name)) {
+        try (
+                TableReader reader = newOffPoolReader(configuration, name);
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
             int col = reader.getMetadata().getColumnIndex("секьюрити");
-            RecordCursor cursor = reader.getCursor();
             final Record r = cursor.getRecord();
             while (cursor.hasNext()) {
                 TestUtils.assertEquals(rnd.nextChars(5), r.getStrA(col));
@@ -3090,7 +3103,7 @@ public class TableWriterTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             class X extends CountingFilesFacade {
                 @Override
-                public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+                public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                     if (--count > 0) {
                         return super.mmap(fd, len, offset, flags, memoryTag);
                     }
@@ -3152,8 +3165,10 @@ public class TableWriterTest extends AbstractCairoTest {
             writer.commit();
         }
 
-        try (TableReader reader = newOffPoolReader(configuration, name)) {
-            RecordCursor cursor = reader.getCursor();
+        try (
+                TableReader reader = newOffPoolReader(configuration, name);
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
             final Record r = cursor.getRecord();
             while (cursor.hasNext()) {
                 TestUtils.assertEquals(something, r.getStrA(0));
@@ -3321,10 +3336,12 @@ public class TableWriterTest extends AbstractCairoTest {
             writer.commit();
         }
 
-        try (TableReader r = newOffPoolReader(configuration, tableName)) {
-            final RecordCursor cursor = r.getCursor();
+        try (
+                TableReader reader = newOffPoolReader(configuration, tableName);
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
             final Record record = cursor.getRecord();
-            final int type = r.getMetadata().getColumnType(0);
+            final int type = reader.getMetadata().getColumnType(0);
             Assert.assertTrue(cursor.hasNext());
             final long actual;
 
@@ -3350,7 +3367,7 @@ public class TableWriterTest extends AbstractCairoTest {
         assertGeoStringy(hash, tableBits, expected, false);
     }
 
-    private void assertIndex(TableReader reader, TableReaderRecord record, int columnIndex) {
+    private void assertIndex(TableReader reader, TestTableReaderRecord record, int columnIndex) {
         final int partitionIndex = 0;
         reader.openPartition(partitionIndex);
         final BitmapIndexReader indexReader = reader.getBitmapIndexReader(partitionIndex, columnIndex, BitmapIndexReader.DIR_FORWARD);
@@ -4114,10 +4131,10 @@ public class TableWriterTest extends AbstractCairoTest {
             CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE);
 
             class X extends FilesFacadeImpl {
-                int fd = -1;
+                long fd = -1;
 
                 @Override
-                public boolean allocate(int fd, long size) {
+                public boolean allocate(long fd, long size) {
                     if (fd == this.fd) {
                         return false;
                     }
@@ -4125,7 +4142,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public int openRW(LPSZ name, long opts) {
+                public long openRW(LPSZ name, long opts) {
                     if (Utf8s.endsWithAscii(name, "bin.i")) {
                         return fd = super.openRW(name, opts);
                     }
@@ -4169,12 +4186,14 @@ public class TableWriterTest extends AbstractCairoTest {
             writer.commit();
         }
 
-        try (TableReader reader = newOffPoolReader(configuration, "x")) {
+        try (
+                TableReader reader = newOffPoolReader(configuration, "x");
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
             rnd.reset();
             int count = 0;
             Assert.assertEquals(cacheFlag, reader.isColumnCached(0));
             Assert.assertNotEquals(cacheFlag, reader.isColumnCached(2));
-            RecordCursor cursor = reader.getCursor();
             final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
                 TestUtils.assertEquals(rnd.nextChars(5), record.getSymA(0));
@@ -4239,8 +4258,11 @@ public class TableWriterTest extends AbstractCairoTest {
             Assert.assertEquals(1, w.getPartitionCount());
 
             // ensure indexes can be read
-            try (TableReader reader = getReader(tableToken)) {
-                final TableReaderRecord record = (TableReaderRecord) reader.getCursor().getRecord();
+            try (
+                    TableReader reader = getReader(tableToken);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
+                final TestTableReaderRecord record = (TestTableReaderRecord) cursor.getRecord();
                 assertIndex(reader, record, 0);
                 assertIndex(reader, record, 1);
 
@@ -4263,8 +4285,11 @@ public class TableWriterTest extends AbstractCairoTest {
             Assert.assertEquals(1, w.getPartitionCount());
 
             // ensure indexes can be read
-            try (TableReader reader = getReader(tableToken)) {
-                final TableReaderRecord record = (TableReaderRecord) reader.getCursor().getRecord();
+            try (
+                    TableReader reader = getReader(tableToken);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
+                final TestTableReaderRecord record = (TestTableReaderRecord) cursor.getRecord();
                 assertIndex(reader, record, 0);
                 assertIndex(reader, record, 1);
 
@@ -4383,8 +4408,11 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     protected void assertTable(CharSequence expected, CharSequence tableName) {
-        try (TableReader reader = newOffPoolReader(configuration, Chars.toString(tableName))) {
-            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
+        try (
+                TableReader reader = newOffPoolReader(configuration, Chars.toString(tableName));
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
+            assertCursorTwoPass(expected, cursor, reader.getMetadata());
         }
     }
 

@@ -69,7 +69,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
 
         circuitBreaker = new NetworkSqlExecutionCircuitBreaker(config, MemoryTag.NATIVE_CB5) {
             @Override
-            protected boolean testConnection(int fd) {
+            protected boolean testConnection(long fd) {
                 return false;
             }
 

@@ -82,7 +82,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
             cursor.of(baseCursor, recordSink, rowIndexes, rowIndexesInitialCapacity, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable th) {
-            baseCursor.close();
+            cursor.close();
             throw th;
         }
     }
@@ -141,7 +141,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         public void close() {
             if (isOpen) {
                 isOpen = false;
-                Misc.free(baseCursor);
+                baseCursor = Misc.free(baseCursor);
                 if (rowIndexes != null) {
                     rowIndexes.clear();
                     if (rowIndexes.getCapacity() > rowIndexesCapacityThreshold) {
@@ -198,19 +198,18 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
                 long rowIndexesCapacityThreshold,
                 SqlExecutionCircuitBreaker circuitBreaker
         ) {
+            this.baseCursor = baseCursor;
+            baseRecord = baseCursor.getRecord();
             if (!isOpen) {
                 isOpen = true;
                 latestByMap.reopen();
             }
-
-            this.baseCursor = baseCursor;
-            baseRecord = baseCursor.getRecord();
             this.recordSink = recordSink;
             this.rowIndexes = rowIndexes;
             this.circuitBreaker = circuitBreaker;
-            index = 0;
-            rowIndexesPos = 0;
             this.rowIndexesCapacityThreshold = rowIndexesCapacityThreshold;
+            rowIndexesPos = 0;
+            index = 0;
             isMapBuilt = false;
         }
 

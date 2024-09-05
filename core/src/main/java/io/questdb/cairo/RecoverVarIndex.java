@@ -47,7 +47,6 @@ public class RecoverVarIndex extends RebuildColumnBase {
             ColumnVersionReader columnVersionReader,
             int columnWriterIndex,
             CharSequence columnName,
-
             long partitionNameTxn,
             long partitionSize,
             long partitionTimestamp,
@@ -58,7 +57,10 @@ public class RecoverVarIndex extends RebuildColumnBase {
         long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, columnWriterIndex);
 
         if (columnTop == -1L) {
-            LOG.info().$("not rebuilding column ").$(columnName).$(" in partition ").$ts(partitionTimestamp).$(", column not added to partition").$();
+            LOG.info().$("not rebuilding column ").$(columnName)
+                    .$(" in partition ").$ts(partitionTimestamp)
+                    .$(", column not added to partition")
+                    .$();
             return;
         }
 
@@ -76,28 +78,14 @@ public class RecoverVarIndex extends RebuildColumnBase {
 
             long maxOffset = ff.length(path.$());
 
-            try (MemoryCMR roMem = new MemoryCMRImpl(
-                    ff,
-                    path.$(),
-                    maxOffset,
-                    MemoryTag.MMAP_DEFAULT,
-                    false
-            )) {
-
+            try (MemoryCMR roMem = new MemoryCMRImpl(ff, path.$(), maxOffset, MemoryTag.MMAP_DEFAULT)) {
                 path.trimTo(colNameLen).put(".i");
                 if (columnNameTxn != -1L) {
                     path.put('.').put(columnNameTxn);
                 }
                 LOG.info().$("writing: ").$(path).$();
 
-                try (MemoryCMARW rwMem = new MemoryCMARWImpl(
-                        ff,
-                        path.$(),
-                        8 * 1024 * 1024,
-                        0,
-                        MemoryTag.MMAP_DEFAULT,
-                        0
-                )) {
+                try (MemoryCMARW rwMem = new MemoryCMARWImpl(ff, path.$(), 8 * 1024 * 1024, 0, MemoryTag.MMAP_DEFAULT, 0)) {
                     long expectedRowCount = partitionSize - columnTop;
                     LOG.info().$("data file length: ").$(maxOffset).$(", expected record count: ").$(expectedRowCount).$();
 

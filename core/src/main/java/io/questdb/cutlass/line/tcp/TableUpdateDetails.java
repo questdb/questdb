@@ -530,9 +530,9 @@ public class TableUpdateDetails implements Closeable {
             return metadata;
         }
 
-        private int getColumnIndex0(DirectUtf8Sequence colNameUtf8, boolean hasNonAsciiChars, @NotNull TableRecordMetadata metadata) {
+        private int getColumnIndex0(DirectUtf8Sequence colNameUtf8, @NotNull TableRecordMetadata metadata) {
             // lookup was unsuccessful we have to check whether the column can be passed by name to the writer
-            final CharSequence colNameUtf16 = utf8ToUtf16(colNameUtf8, hasNonAsciiChars);
+            final CharSequence colNameUtf16 = utf8ToUtf16(colNameUtf8);
             final int index = addedColsUtf16.keyIndex(colNameUtf16);
             if (index > -1) {
                 // column has not been sent to the writer by name on this line before
@@ -670,11 +670,11 @@ public class TableUpdateDetails implements Closeable {
         // returns the column index for column name passed in colNameUtf8,
         // or COLUMN_NOT_FOUND if column index cannot be resolved (i.e. new column),
         // or DUPLICATED_COLUMN if the column has already been processed on the current event
-        int getColumnWriterIndex(DirectUtf8Sequence colNameUtf8, boolean hasNonAsciiChars) {
+        int getColumnWriterIndex(DirectUtf8Sequence colNameUtf8) {
             int colWriterIndex = columnIndexByNameUtf8.get(colNameUtf8);
             if (colWriterIndex < 0) {
                 // lookup was unsuccessful we have to check whether the column can be passed by name to the writer
-                final CharSequence colNameUtf16 = utf8ToUtf16(colNameUtf8, hasNonAsciiChars);
+                final CharSequence colNameUtf16 = utf8ToUtf16(colNameUtf8);
                 final int index = addedColsUtf16.keyIndex(colNameUtf16);
                 if (index > -1) {
                     // column has not been sent to the writer by name on this line before
@@ -709,12 +709,12 @@ public class TableUpdateDetails implements Closeable {
             return colWriterIndex;
         }
 
-        int getColumnWriterIndex(DirectUtf8Sequence colNameUtf8, boolean hasNonAsciiChars, @NotNull TableRecordMetadata metadata) {
+        int getColumnWriterIndex(DirectUtf8Sequence colNameUtf8, @NotNull TableRecordMetadata metadata) {
             final int colWriterIndex = columnIndexByNameUtf8.get(colNameUtf8);
             if (colWriterIndex < 0) {
                 // Hot path optimisation to allow the body of the current method to be small
                 // enough for inlining. Rarely used code is extracted into a method call.
-                return getColumnIndex0(colNameUtf8, hasNonAsciiChars, metadata);
+                return getColumnIndex0(colNameUtf8, metadata);
             }
 
             if (processedCols.getAndSet(colWriterIndex)) {
@@ -742,9 +742,9 @@ public class TableUpdateDetails implements Closeable {
             return NOT_FOUND_LOOKUP;
         }
 
-        void removeFromCaches(DirectUtf8Sequence colNameUtf8, boolean hasNonAsciiChars) {
+        void removeFromCaches(DirectUtf8Sequence colNameUtf8) {
             columnIndexByNameUtf8.remove(colNameUtf8);
-            addedColsUtf16.remove(utf8ToUtf16(colNameUtf8, hasNonAsciiChars));
+            addedColsUtf16.remove(utf8ToUtf16(colNameUtf8));
         }
 
         void resetStateIfNecessary() {
@@ -782,7 +782,7 @@ public class TableUpdateDetails implements Closeable {
             }
         }
 
-        CharSequence utf8ToUtf16(DirectUtf8Sequence colNameUtf8, boolean hasNonAsciiChars) {
+        CharSequence utf8ToUtf16(DirectUtf8Sequence colNameUtf8) {
             return Utf8s.directUtf8ToUtf16(colNameUtf8, tempSink);
         }
     }

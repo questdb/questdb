@@ -108,6 +108,7 @@ public class TxSerializer {
             final int symbolsSize = tx.TX_OFFSET_MAP_WRITER_COUNT * Long.BYTES;
             final int partitionSegmentSize = tx.ATTACHED_PARTITIONS_COUNT * LONGS_PER_TX_ATTACHED_PARTITION * Long.BYTES;
             final long fileSize = calculateTxRecordSize(symbolsSize, partitionSegmentSize);
+            rwTxMem.jumpTo(fileSize);
             Vect.memset(rwTxMem.addressOf(0), fileSize, 0);
             rwTxMem.setTruncateSize(fileSize);
 

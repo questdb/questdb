@@ -49,7 +49,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
     protected Path path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
     protected int rootLen;
     protected String unsupportedColumnMessage = "Wrong column type";
-    private int lockFd;
+    private long lockFd;
 
     public RebuildColumnBase(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -179,7 +179,7 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
         }
 
         if (this.lockFd == -1) {
-            throw CairoException.nonCritical().put("Cannot lock table: ").put(path.$());
+            throw CairoException.nonCritical().put("cannot lock table: ").put(path.$());
         }
     }
 

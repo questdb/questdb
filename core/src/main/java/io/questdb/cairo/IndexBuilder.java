@@ -147,7 +147,7 @@ public class IndexBuilder extends RebuildColumnBase {
                         LOG.info().$("indexing [path=").$(path).I$();
                         createIndexFiles(ff, columnName, indexValueBlockCapacity, plen, columnNameTxn);
 
-                        int columnDataFd = TableUtils.openRO(ff, TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn), LOG);
+                        long columnDataFd = TableUtils.openRO(ff, TableUtils.dFile(path.trimTo(plen), columnName, columnNameTxn), LOG);
                         try {
                             indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop);
                             indexer.index(ff, columnDataFd, columnTop, partitionSize);

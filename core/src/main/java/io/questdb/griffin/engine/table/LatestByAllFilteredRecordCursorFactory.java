@@ -29,8 +29,8 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
-import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.IntList;
@@ -40,26 +40,27 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
-
     private Function filter;
 
     public LatestByAllFilteredRecordCursorFactory(
-            @NotNull RecordMetadata metadata,
             @NotNull CairoConfiguration configuration,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull RecordMetadata metadata,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             @NotNull RecordSink recordSink,
             @Transient @NotNull ColumnTypes columnTypes,
             @Nullable Function filter,
-            @NotNull IntList columnIndexes
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
     ) {
-        super(metadata, dataFrameCursorFactory, configuration);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
+
         try {
             this.filter = filter;
             Map map = MapFactory.createOrderedMap(configuration, columnTypes);
             if (filter == null) {
-                cursor = new LatestByAllRecordCursor(map, rows, recordSink, columnIndexes);
+                cursor = new LatestByAllRecordCursor(configuration, metadata, map, rows, recordSink);
             } else {
-                cursor = new LatestByAllFilteredRecordCursor(map, rows, recordSink, filter, columnIndexes);
+                cursor = new LatestByAllFilteredRecordCursor(configuration, metadata, map, rows, recordSink, filter);
             }
         } catch (Throwable th) {
             close();
@@ -76,7 +77,7 @@ public class LatestByAllFilteredRecordCursorFactory extends AbstractTreeSetRecor
     public void toPlan(PlanSink sink) {
         sink.type("LatestByAllFiltered");
         sink.child(cursor);
-        sink.child(dataFrameCursorFactory);
+        sink.child(partitionFrameCursorFactory);
     }
 
     @Override

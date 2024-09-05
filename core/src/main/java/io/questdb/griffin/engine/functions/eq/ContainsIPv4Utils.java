@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.NumericException;
+import io.questdb.std.str.Utf8Sequence;
 
 import static io.questdb.std.Numbers.IPv4_NULL;
 import static io.questdb.std.Numbers.getIPv4Subnet;
@@ -44,9 +45,9 @@ public class ContainsIPv4Utils {
     private ContainsIPv4Utils() {
     }
 
-    public static Function containsIPv4(Function ipv4Func, Function strFunc, int strFuncPosition) throws SqlException {
+    public static Function containsIPv4Str(Function ipv4Func, Function strFunc, int strFuncPosition) throws SqlException {
         if (strFunc.isConstant()) {
-            CharSequence constValue = strFunc.getStrA(null);
+            final CharSequence constValue = strFunc.getStrA(null);
             if (constValue == null) {
                 return BooleanConstant.FALSE;
             }
@@ -62,7 +63,28 @@ public class ContainsIPv4Utils {
         } else if (strFunc.isRuntimeConstant()) {
             return new RuntimeConstStrFunc(ipv4Func, strFunc, strFuncPosition);
         }
-        throw SqlException.$(strFuncPosition, "STRING constant expected");
+        return new StrFunc(ipv4Func, strFunc);
+    }
+
+    public static Function containsIPv4Varchar(Function ipv4Func, Function varcharFunc, int varcharFuncPosition) throws SqlException {
+        if (varcharFunc.isConstant()) {
+            final CharSequence constValue = varcharFunc.getStrA(null);
+            if (constValue == null) {
+                return BooleanConstant.FALSE;
+            }
+
+            try {
+                long subnetAndNetmask = getIPv4Subnet(constValue);
+                int subnet = (int) (subnetAndNetmask >> 32);
+                int netmask = (int) subnetAndNetmask;
+                return new ConstStrFunc(ipv4Func, subnet & netmask, netmask);
+            } catch (NumericException ne) {
+                throw SqlException.$(varcharFuncPosition, "invalid argument: ").put(constValue);
+            }
+        } else if (varcharFunc.isRuntimeConstant()) {
+            return new RuntimeConstStrFunc(ipv4Func, varcharFunc, varcharFuncPosition);
+        }
+        return new VarcharFunc(ipv4Func, varcharFunc);
     }
 
     private static class ConstStrFunc extends BooleanFunction implements UnaryFunction {
@@ -113,7 +135,7 @@ public class ContainsIPv4Utils {
         @Override
         public boolean getBool(Record rec) {
             // if netmask = 32 then IP can't be strictly contained, if netmask = -1 that means arg is a single host - both are invalid
-            if (subnet == IPv4_NULL || netmask == 32 || netmask == -1) {
+            if (netmask == 32 || netmask == -1) {
                 return false;
             }
             return (ipv4Func.getIPv4(rec) & netmask) == subnet;
@@ -133,7 +155,7 @@ public class ContainsIPv4Utils {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             BinaryFunction.super.init(symbolTableSource, executionContext);
 
-            CharSequence value = strFunc.getStrA(null);
+            final CharSequence value = strFunc.getStrA(null);
             if (value == null) {
                 // act as a null check
                 subnet = IPv4_NULL;
@@ -154,6 +176,108 @@ public class ContainsIPv4Utils {
         public void toPlan(PlanSink sink) {
             sink.val(ipv4Func);
             sink.val("<<").val(strFunc).val('\'');
+        }
+    }
+
+    private static class StrFunc extends BooleanFunction implements BinaryFunction {
+        private final Function ipv4Func;
+        private final Function strFunc;
+
+        public StrFunc(Function ipv4Func, Function strFunc) {
+            this.ipv4Func = ipv4Func;
+            this.strFunc = strFunc;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            final CharSequence value = strFunc.getStrA(rec);
+            if (value == null) {
+                return false;
+            }
+
+            int subnet;
+            int netmask;
+            try {
+                long subnetAndNetmask = getIPv4Subnet(value);
+                subnet = (int) (subnetAndNetmask >> 32);
+                netmask = (int) subnetAndNetmask;
+                subnet = subnet & netmask;
+            } catch (NumericException ne) {
+                return false;
+            }
+
+            // if netmask = 32 then IP can't be strictly contained, if netmask = -1 that means arg is a single host - both are invalid
+            if (netmask == 32 || netmask == -1) {
+                return false;
+            }
+            return (ipv4Func.getIPv4(rec) & netmask) == subnet;
+        }
+
+        @Override
+        public Function getLeft() {
+            return ipv4Func;
+        }
+
+        @Override
+        public Function getRight() {
+            return strFunc;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(ipv4Func);
+            sink.val("<<").val(strFunc).val('\'');
+        }
+    }
+
+    private static class VarcharFunc extends BooleanFunction implements BinaryFunction {
+        private final Function ipv4Func;
+        private final Function varcharFunc;
+
+        public VarcharFunc(Function ipv4Func, Function varcharFunc) {
+            this.ipv4Func = ipv4Func;
+            this.varcharFunc = varcharFunc;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            final Utf8Sequence value = varcharFunc.getVarcharA(rec);
+            if (value == null) {
+                return false;
+            }
+
+            int subnet;
+            int netmask;
+            try {
+                long subnetAndNetmask = getIPv4Subnet(value.asAsciiCharSequence());
+                subnet = (int) (subnetAndNetmask >> 32);
+                netmask = (int) subnetAndNetmask;
+                subnet = subnet & netmask;
+            } catch (NumericException ne) {
+                return false;
+            }
+
+            // if netmask = 32 then IP can't be strictly contained, if netmask = -1 that means arg is a single host - both are invalid
+            if (netmask == 32 || netmask == -1) {
+                return false;
+            }
+            return (ipv4Func.getIPv4(rec) & netmask) == subnet;
+        }
+
+        @Override
+        public Function getLeft() {
+            return ipv4Func;
+        }
+
+        @Override
+        public Function getRight() {
+            return varcharFunc;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(ipv4Func);
+            sink.val("<<").val(varcharFunc).val('\'');
         }
     }
 }

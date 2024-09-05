@@ -72,7 +72,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         Misc.free(indexReader);
         Misc.free(charMem);
         this.cache.clear();
-        int fd = this.offsetMem.getFd();
+        long fd = this.offsetMem.getFd();
         Misc.free(offsetMem);
         Misc.free(path);
         LOG.debug().$("closed [fd=").$(fd).$(']').$();
@@ -284,6 +284,8 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         public int keyOf(CharSequence value) {
             if (value != null) {
                 int hash = Hash.boundedHash(value, maxHash);
+                // Here we need absolute row indexes within the partition while the cursor gives us relative ones.
+                // But since the minimum row index (minValue) is 0, they match.
                 rowCursor = indexReader.initCursor(rowCursor, hash, 0, maxOffset - Long.BYTES);
                 while (rowCursor.hasNext()) {
                     final long offsetOffset = rowCursor.next();

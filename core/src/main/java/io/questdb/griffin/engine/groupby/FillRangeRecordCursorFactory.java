@@ -104,7 +104,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             cursor.of(baseCursor, fromFunc, toFunc, stride, valueFuncs, timestampIndex, executionContext);
             return cursor;
         } catch (Throwable th) {
-            baseCursor.close();
+            cursor.close();
             throw th;
         }
     }
@@ -234,6 +234,13 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                     if (rangeBound == RANGE_UPPER_BOUND || rangeBound == RANGE_UNBOUNDED) {
                         bucketIndex = timestampSampler.bucketIndex(minTimestamp);
                         nextBucketTimestamp = minTimestamp;
+                    }
+
+                    // if there are no records, then timestamps won't be set correctly i.e
+                    // therefore bucket index is garbage
+                    // check for this and fall out, since we can't fill
+                    if (bucketIndex < 0) {
+                        return false;
                     }
 
                     while (recordWasPresent()) {

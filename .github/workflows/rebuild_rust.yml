@@ -1,4 +1,4 @@
-name: Build Rust libraries
+name: Build and Push Release Rust Libraries
 on:
   workflow_dispatch:
 # This workflow is triggered manually from the Actions tab.
@@ -28,12 +28,12 @@ jobs:
           cargo build --release
       - name: Copy Rust Library to the final directory
         run: |
-          cp core/rust/qdbr/target/release/questdbr.dll core/src/main/resources/io/questdb/bin/windows-amd64/
+          cp core/rust/qdbr/target/release/questdbr.dll core/src/main/resources/io/questdb/bin/windows-x86-64/
       - name: Save Windows Rust Library to Cache
         uses: actions/cache/save@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/windows-amd64/questdbr.dll
+            core/src/main/resources/io/questdb/bin/windows-x86-64/questdbr.dll
           key: nativelibs-windows-rust-${{ github.sha }}
           enableCrossOsArchive: true
   build-all-macos:
@@ -58,11 +58,11 @@ jobs:
         run: |
           mkdir -p core/src/main/resources/io/questdb/bin/darwin-aarch64/
           cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/darwin-aarch64/
-      - name: Copy darwin-amd64 Rust Library to the final directory
+      - name: Copy darwin-x86-64 Rust Library to the final directory
         if: ${{ matrix.os == 'macos-13' }}
         run: |
-          mkdir -p core/src/main/resources/io/questdb/bin/darwin-amd64/
-          cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/darwin-amd64/
+          mkdir -p core/src/main/resources/io/questdb/bin/darwin-x86-64/
+          cp core/rust/qdbr/target/release/libquestdbr.dylib core/src/main/resources/io/questdb/bin/darwin-x86-64/
       - name: Save darwin-aarch64 Libraries to Cache
         if: ${{ matrix.os == 'macos-14' }}
         uses: actions/cache/save@v3
@@ -70,14 +70,14 @@ jobs:
           path: |
             core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdbr.dylib
           key: nativelibs-armosx-${{ github.sha }}
-      - name: Save darwin-amd64 Libraries to Cache
+      - name: Save darwin-x86-64 Libraries to Cache
         if: ${{ matrix.os == 'macos-13' }}
         uses: actions/cache/save@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/darwin-amd64/libquestdbr.dylib
+            core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdbr.dylib
           key: nativelibs-osx-${{ github.sha }}
-  build-all-linux-amd64:
+  build-all-linux-x86-64:
     runs-on: ubuntu-latest
     # this is very bare container, we use it to restrict GLIBC to 2.28
     # everything has to be installed on it manually
@@ -96,18 +96,18 @@ jobs:
         run: |
           python3 ./.github/prepare_rust_env.py
           echo "PATH=/github/home/.cargo/bin/:$PATH" >> "$GITHUB_ENV"
-      - name: Build linux-amd64 Rust Library
+      - name: Build linux-x86-64 Rust Library
         run: |
           cd core/rust/qdbr
           cargo clean
           cargo build --release
-          mkdir -p ../../src/main/resources/io/questdb/bin/linux-amd64/
-          cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux-amd64/
-      - name: Save linux-amd64 Libraries to Cache
+          mkdir -p ../../src/main/resources/io/questdb/bin/linux-x86-64/
+          cp target/release/libquestdbr.so ../../src/main/resources/io/questdb/bin/linux-x86-64/
+      - name: Save linux-x86-64 Libraries to Cache
         uses: actions/cache/save@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/linux-amd64/libquestdbr.so
+            core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdbr.so
           key: nativelibs-linux-${{ github.sha }}
   build-all-linux-aarch64:
     runs-on: ubuntu-latest
@@ -135,7 +135,7 @@ jobs:
             core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdbr.so
           key: nativelibs-armlinux-${{ github.sha }}
   collect-commit-and-push:
-    needs: [ build-all-macos, build-rust-windows, build-all-linux-amd64, build-all-linux-aarch64 ]
+    needs: [ build-all-macos, build-rust-windows, build-all-linux-x86-64, build-all-linux-aarch64 ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -151,17 +151,17 @@ jobs:
           path: |
             core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdbr.dylib
           key: nativelibs-armosx-${{ github.sha }}
-      - name: Restore darwin-amd64 Libraries from Cache
+      - name: Restore darwin-x86-64 Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/darwin-amd64/libquestdbr.dylib
+            core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdbr.dylib
           key: nativelibs-osx-${{ github.sha }}
-      - name: Restore linux-amd64 Libraries from Cache
+      - name: Restore linux-x86-64 Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/linux-amd64/libquestdbr.so
+            core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdbr.so
           key: nativelibs-linux-${{ github.sha }}
       - name: Restore linux-aarch64 Libraries from Cache
         uses: actions/cache/restore@v3
@@ -173,7 +173,7 @@ jobs:
         uses: actions/cache/restore@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/windows-amd64/questdbr.dll
+            core/src/main/resources/io/questdb/bin/windows-x86-64/questdbr.dll
           key: nativelibs-windows-rust-${{ github.sha }}
           enableCrossOsArchive: true
       - name: Check git status before
@@ -184,12 +184,12 @@ jobs:
           git config --global user.name 'GitHub Actions - Rebuild Native Libraries'
           git config --global user.email 'jaromir@questdb.io'
           git add core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdbr.dylib
-          git add core/src/main/resources/io/questdb/bin/darwin-amd64/libquestdbr.dylib
-          git add core/src/main/resources/io/questdb/bin/linux-amd64/libquestdbr.so
+          git add core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdbr.dylib
+          git add core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdbr.so
           git add core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdbr.so
-          git add core/src/main/resources/io/questdb/bin/windows-amd64/questdbr.dll
+          git add core/src/main/resources/io/questdb/bin/windows-x86-64/questdbr.dll
           
-          git commit -m "chore(build): rebuild Rust libraries"
+          git commit -m "Rebuild Rust libraries"
       - name: Check git status after
         run: |
           git status
@@ -205,4 +205,3 @@ jobs:
         # So even if a bad actor takes over the repo, and rewrites tags to point to malicious commits, we will still be safe.
         with:
           branch: ${{ github.head_ref || github.ref_name }}
-

@@ -25,15 +25,16 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
-import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Os;
-import io.questdb.std.str.*;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
@@ -50,6 +51,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.ATTACHABLE_DIR_MARKER;
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
+import static io.questdb.test.tools.TestUtils.replaceSizeToMatchOS;
 
 @RunWith(Parameterized.class)
 public class ShowPartitionsTest extends AbstractCairoTest {
@@ -71,30 +73,6 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                 {WalMode.WITH_WAL, "テンション"},
                 {WalMode.NO_WAL, "テンション"}
         });
-    }
-
-    public static String replaceSizeToMatchOS(
-            String expected,
-            Utf8Sequence root,
-            String tableName,
-            CairoEngine engine
-    ) {
-        ObjObjHashMap<String, Long> sizes = findPartitionSizes(root, tableName, engine);
-        String[] lines = expected.split("\n");
-        sink.clear();
-        sink.put(lines[0]).put('\n');
-        StringSink auxSink = new StringSink();
-        for (int i = 1; i < lines.length; i++) {
-            String line = lines[i];
-            String nameColumn = line.split("\t")[2];
-            Long s = sizes.get(nameColumn);
-            long size = s != null ? s : 0L;
-            SizePrettyFunctionFactory.toSizePretty(auxSink, size);
-            line = line.replaceAll("SIZE", String.valueOf(size));
-            line = line.replaceAll("HUMAN", auxSink.toString());
-            sink.put(line).put('\n');
-        }
-        return sink.toString();
     }
 
     public static String testTableName(String tableName, @Nullable String tableNameSuffix) {
@@ -379,7 +357,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                     replaceSizeToMatchOS(
                             "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tisParquet\tparquetFileSize\n" +
                                     "5\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n",
-                            tableName),
+                            tableName, configuration, engine, sink),
                     "SELECT * FROM table_partitions('" + tableName + "') WHERE active = true;",
                     null,
                     false,
@@ -397,7 +375,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                     replaceSizeToMatchOS(
                             "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tisParquet\tparquetFileSize\n" +
                                     "25\tWEEK\t2023-W25\t2023-06-19T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t25\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n",
-                            tableName),
+                            tableName, configuration, engine, sink),
                     "SELECT * FROM table_partitions('" + tableName + "') WHERE active = true;",
                     null,
                     false,
@@ -419,7 +397,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                     replaceSizeToMatchOS(
                             "index\tpartitionBy\tname\tminTimestamp\tmaxTimestamp\tnumRows\tdiskSize\tdiskSizeHuman\treadOnly\tactive\tattached\tdetached\tattachable\tisParquet\tparquetFileSize\n" +
                                     "5\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n",
-                            tableName),
+                            tableName, configuration, engine, sink),
                     "SELECT * FROM partitions WHERE active = true;",
                     null,
                     true,
@@ -467,7 +445,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
                         "null\tMONTH\t2023-04\t\t\t120\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
                         "4\tMONTH\t2023-05\t2023-05-01T00:00:00.000000Z\t2023-05-31T18:00:00.000000Z\t124\tSIZE\tHUMAN\tfalse\tfalse\ttrue\tfalse\tfalse\tfalse\t-1\n" +
                         "5\tMONTH\t2023-06\t2023-06-01T00:00:00.000000Z\t2023-06-25T00:00:00.000000Z\t97\tSIZE\tHUMAN\tfalse\ttrue\ttrue\tfalse\tfalse\tfalse\t-1\n",
-                tableName
+                tableName, configuration, engine, sink
         );
 
         engine.releaseInactive();
@@ -505,48 +483,9 @@ public class ShowPartitionsTest extends AbstractCairoTest {
         }
     }
 
-    private static ObjObjHashMap<String, Long> findPartitionSizes(
-            Utf8Sequence root,
-            String tableName,
-            CairoEngine engine
-    ) {
-        ObjObjHashMap<String, Long> sizes = new ObjObjHashMap<>();
-        TableToken tableToken = engine.verifyTableName(tableName);
-        try (Path path = new Path().of(root).concat(tableToken)) {
-            int len = path.size();
-            long pFind = Files.findFirst(path.$());
-            try {
-                do {
-                    long namePtr = Files.findName(pFind);
-                    if (Files.notDots(namePtr)) {
-                        sink.clear();
-                        Utf8s.utf8ToUtf16Z(namePtr, sink);
-                        path.trimTo(len).concat(sink).$();
-                        int n = sink.length();
-                        int limit = n;
-                        for (int i = 0; i < n; i++) {
-                            if (sink.charAt(i) == '.' && i < n - 1) {
-                                char c = sink.charAt(i + 1);
-                                if (c >= '0' && c <= '9') {
-                                    limit = i;
-                                    break;
-                                }
-                            }
-                        }
-                        sink.clear(limit);
-                        sizes.put(sink.toString(), Files.getDirSize(path));
-                    }
-                } while (Files.findNext(pFind) > 0);
-            } finally {
-                Files.findClose(pFind);
-            }
-        }
-        return sizes;
-    }
-
     private void assertShowPartitions(String expected, String tableName) throws SqlException {
         SOCountDownLatch done = new SOCountDownLatch(1);
-        String finallyExpected = replaceSizeToMatchOS(expected, tableName);
+        String finallyExpected = replaceSizeToMatchOS(expected, tableName, configuration, engine, sink);
         AtomicInteger failureCounter = new AtomicInteger();
         new Thread(() -> {
             try {
@@ -608,10 +547,6 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             returned.await();
         }
         return engine.verifyTableName(tableName);
-    }
-
-    private String replaceSizeToMatchOS(String expected, String tableName) {
-        return replaceSizeToMatchOS(expected, new Utf8String(configuration.getRoot()), tableName, engine);
     }
 
     private String testTableName(String tableName) {

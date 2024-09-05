@@ -59,7 +59,7 @@ public class PartitionDecoder implements QuietCloseable {
     private final FilesFacade ff;
     private final Metadata metadata = new Metadata();
     private long columnsPtr;
-    private int fd;
+    private long fd;
     private long ptr;
 
     public PartitionDecoder(FilesFacade ff) {

@@ -51,7 +51,6 @@ import java.util.Collection;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static io.questdb.test.griffin.ShowPartitionsTest.replaceSizeToMatchOS;
 import static io.questdb.test.griffin.ShowPartitionsTest.testTableName;
 import static io.questdb.test.tools.TestUtils.*;
 
@@ -121,7 +120,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 TableToken tableToken = createPopulateTable(cairoConfig, engine, defaultCompiler, defaultContext, tableName);
                 engine.awaitTable(tableName, 30, TimeUnit.SECONDS);
 
-                String finallyExpected = replaceSizeToMatchOS(EXPECTED, dbPath, tableToken.getTableName(), engine);
+                String finallyExpected = replaceSizeToMatchOS(EXPECTED, dbPath, tableToken.getTableName(), engine, new StringSink());
                 assertShowPartitions(finallyExpected, tableToken, defaultCompiler, defaultContext);
 
                 int numThreads = 5;

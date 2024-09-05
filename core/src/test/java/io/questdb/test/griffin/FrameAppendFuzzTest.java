@@ -37,7 +37,6 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class FrameAppendFuzzTest extends AbstractFuzzTest {
-
     private int partitionCount;
 
     @Test
@@ -130,7 +129,7 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
 
         // Force overwrite partitioning to by YEAR
         Path path = Path.getThreadLocal(configuration.getRoot()).concat(merged).concat(TableUtils.META_FILE_NAME);
-        int metaFd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
+        long metaFd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
 
         long addr = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
         Unsafe.getUnsafe().putInt(addr, PartitionBy.YEAR);
@@ -162,7 +161,7 @@ public class FrameAppendFuzzTest extends AbstractFuzzTest {
             copyTableDir(src, merged);
             mergeAllPartitions(merged);
 
-            String limit = "";
+            String limit = ""; // For debugging
             TestUtils.assertSqlCursors(
                     engine,
                     sqlExecutionContext,

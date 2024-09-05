@@ -32,7 +32,7 @@ import org.jetbrains.annotations.Nullable;
  * to accumulate messages, so they require extra calls to convert encrypted data to raw data.
  * <p>
  * {@link #close()} implementations must be idempotent. Also, supports object reuse after
- * {@link #close()}: see {@link #of(int)}.
+ * {@link #close()}: see {@link #of(long)}.
  */
 public interface Socket extends QuietCloseable {
     int HAS_MORE_PLAINTEXT_FLAG = 1 << 2;
@@ -42,7 +42,7 @@ public interface Socket extends QuietCloseable {
     /**
      * @return file descriptor associated with the socket.
      */
-    int getFd();
+    long getFd();
 
     boolean isClosed();
 
@@ -67,7 +67,7 @@ public interface Socket extends QuietCloseable {
      *
      * @param fd file descriptor
      */
-    void of(int fd);
+    void of(long fd);
 
     /**
      * Receives plain data into the given buffer from the socket. On encrypted

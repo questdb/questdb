@@ -32,10 +32,9 @@ int64_t find_latest_for_key(int64_t k,
                             int64_t unindexed_null_count,
                             int64_t max_value,
                             int64_t min_value,
-                            int32_t partition_index,
+                            int32_t frame_index,
                             uint32_t vblock_capacity_mask
 ) {
-
     const auto values_memory = reinterpret_cast<const uint8_t *>(values_memory_addr);
     const auto vblock_capacity = vblock_capacity_mask + 1;
     const auto key_count = static_cast<int64_t>(keys.key_count()); // assert(key_count <= Long.MAX_VALUE)
@@ -65,7 +64,7 @@ int64_t find_latest_for_key(int64_t k,
                 inconsistent_tail.move_next();
                 block_traversed += 1;
             }
-            //assuming blocks are full
+            // assuming blocks are full
             value_count = vblock_capacity * block_traversed;
         }
 
@@ -74,14 +73,14 @@ int64_t find_latest_for_key(int64_t k,
         if (value_count > 0) {
             int64_t local_row_id = current_block[value_count - 1];
             if (local_row_id >= min_value) {
-                return to_row_id(partition_index, local_row_id) + 1;
+                return to_row_id(frame_index, local_row_id - min_value) + 1;
             }
         }
     }
 
     if (k == 0 && unindexed_null_count > 0) {
         if (unindexed_null_count - 1 >= min_value) {
-            return to_row_id(partition_index, unindexed_null_count);
+            return to_row_id(frame_index, unindexed_null_count - min_value);
         }
     }
     return -1;
@@ -95,10 +94,9 @@ void latest_scan_backward(uint64_t keys_memory_addr,
                           int64_t unindexed_null_count,
                           int64_t max_value,
                           int64_t min_value,
-                          int32_t partition_index,
+                          int32_t frame_index,
                           uint32_t vblock_capacity_mask
 ) {
-
     auto keys_memory = reinterpret_cast<const uint8_t *>(keys_memory_addr);
     auto out_args = reinterpret_cast<out_arguments *>(args_memory_addr);
 
@@ -114,15 +112,16 @@ void latest_scan_backward(uint64_t keys_memory_addr,
 
     // we are mutating k here
     auto first_not_found = std::partition(first, last, [&](auto &k) {
-        int64_t row_id = find_latest_for_key(k,
-                                             keys,
-                                             values_memory_addr,
-                                             value_memory_size,
-                                             unindexed_null_count,
-                                             max_value,
-                                             min_value,
-                                             partition_index,
-                                             vblock_capacity_mask
+        int64_t row_id = find_latest_for_key(
+                k,
+                keys,
+                values_memory_addr,
+                value_memory_size,
+                unindexed_null_count,
+                max_value,
+                min_value,
+                frame_index,
+                vblock_capacity_mask
         );
         const bool r = row_id > -1;
         if (r) {
@@ -283,7 +282,7 @@ Java_io_questdb_std_BitmapIndexUtilsNative_latestScanBackward0(
         jlong unIndexedNullCount,
         jlong maxValue,
         jlong minValue,
-        jint partitionIndex,
+        jint frameIndex,
         jint blockValueCountMod
 ) {
     latest_scan_backward(
@@ -295,7 +294,7 @@ Java_io_questdb_std_BitmapIndexUtilsNative_latestScanBackward0(
             unIndexedNullCount,
             maxValue,
             minValue,
-            partitionIndex,
+            frameIndex,
             blockValueCountMod
     );
 }
