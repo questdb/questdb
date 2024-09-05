@@ -903,6 +903,7 @@ io.questdb.griffin.engine.functions.table.MemoryMetricsFunctionFactory
 io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory
 io.questdb.griffin.engine.functions.table.ParquetScanFunctionFactory
 io.questdb.griffin.engine.functions.table.HydrateTableMetadataFunctionFactory
+io.questdb.griffin.engine.functions.table.WaitWalTableFunctionFactory
 
 io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.FirstStrGroupByFunctionFactory
@@ -999,3 +1000,4 @@ io.questdb.griffin.engine.functions.geohash.GeoHashFromCoordinatesFunctionFactor
 
 # bin functions
 io.questdb.griffin.engine.functions.bin.Base64FunctionFactory
+io.questdb.griffin.engine.functions.bin.Base64DecodeFunctionFactory

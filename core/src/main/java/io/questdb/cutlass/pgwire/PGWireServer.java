@@ -50,8 +50,8 @@ public class PGWireServer implements Closeable {
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final Metrics metrics;
     private final CircuitBreakerRegistry registry;
-    private final AssociativeCache<TypesAndSelect> typesAndSelectCache;
     private final WorkerPool workerPool;
+    private AssociativeCache<TypesAndSelect> typesAndSelectCache;
 
     public PGWireServer(
             PGWireConfiguration configuration,
@@ -142,7 +142,7 @@ public class PGWireServer implements Closeable {
         Misc.free(dispatcher);
         Misc.free(registry);
         Misc.free(contextFactory);
-        Misc.free(typesAndSelectCache);
+        typesAndSelectCache = Misc.free(typesAndSelectCache);
     }
 
     public int getPort() {
@@ -152,6 +152,12 @@ public class PGWireServer implements Closeable {
     @TestOnly
     public WorkerPool getWorkerPool() {
         return workerPool;
+    }
+
+    public void resetQueryCache() {
+        if (typesAndSelectCache != null) {
+            typesAndSelectCache.clear();
+        }
     }
 
     private static class PGConnectionContextFactory extends IOContextFactoryImpl<PGConnectionContext> {

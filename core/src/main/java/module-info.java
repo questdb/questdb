@@ -912,6 +912,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory,
             io.questdb.griffin.engine.functions.table.ParquetScanFunctionFactory,
             io.questdb.griffin.engine.functions.table.HydrateTableMetadataFunctionFactory,
+            io.questdb.griffin.engine.functions.table.WaitWalTableFunctionFactory,
 
             // strpos
             io.questdb.griffin.engine.functions.str.StrPosFunctionFactory,
@@ -982,6 +983,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.geohash.GeoHashFromCoordinatesFunctionFactory,
             // bin functions
             io.questdb.griffin.engine.functions.bin.Base64FunctionFactory,
+            io.questdb.griffin.engine.functions.bin.Base64DecodeFunctionFactory,
             // bit operations
             io.questdb.griffin.engine.functions.math.BitwiseAndLongFunctionFactory,
             io.questdb.griffin.engine.functions.math.BitwiseOrLongFunctionFactory,

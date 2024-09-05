@@ -55,6 +55,7 @@ import io.questdb.std.filewatch.FileWatcher;
 import io.questdb.std.filewatch.FileWatcherFactory;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.io.File;
@@ -70,6 +71,7 @@ public class ServerMain implements Closeable {
     private final CairoEngine engine;
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean running = new AtomicBoolean();
+    protected PGWireServer pgWireServer;
     private FileWatcher fileWatcher;
     private HttpServer httpServer;
     private boolean initialized;
@@ -243,6 +245,11 @@ public class ServerMain implements Closeable {
         return running.get();
     }
 
+    @TestOnly
+    public void resetQueryCache() {
+        pgWireServer.resetQueryCache();
+    }
+
     public void start() {
         start(false);
     }
@@ -384,7 +391,6 @@ public class ServerMain implements Closeable {
         ));
 
         // pg wire
-        PGWireServer pgWireServer;
         freeOnExit.register(pgWireServer = services().createPGWireServer(
                 config.getPGWireConfiguration(),
                 engine,

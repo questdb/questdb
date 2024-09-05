@@ -714,6 +714,11 @@ public final class TableUtils {
                 return GeoHashes.NULL;
             case ColumnType.IPv4:
                 return Numbers.IPv4_NULL;
+            case ColumnType.VARCHAR:
+            case ColumnType.BINARY:
+                return NULL_LEN;
+            case ColumnType.STRING:
+                return Numbers.encodeLowHighInts(NULL_LEN, NULL_LEN);
             default:
                 assert false : "Invalid column type: " + columnType;
                 return 0;
@@ -1618,12 +1623,6 @@ public final class TableUtils {
                 final int type = Math.abs(getColumnType(metaMem, i));
                 if (ColumnType.sizeOf(type) == -1) {
                     throw validationException(metaMem).put("Invalid column type ").put(type).put(" at [").put(i).put(']');
-                }
-
-                if (isColumnDedupKey(metaMem, i)) {
-                    if (ColumnType.isVarSize(type)) {
-                        throw validationException(metaMem).put("DEDUPLICATION KEY flag is only supported for fixed size column types").put(" at [").put(i).put(']');
-                    }
                 }
 
                 if (isColumnIndexed(metaMem, i)) {

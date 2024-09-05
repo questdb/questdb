@@ -1154,6 +1154,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
         getDelegate().populateSettings(settings);
     }
 
+    @Override
+    public boolean useFastAsOfJoin() {
+        return getDelegate().useFastAsOfJoin();
+    }
+
     protected CairoConfiguration getDelegate() {
         return delegate;
     }

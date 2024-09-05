@@ -983,7 +983,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "    Sort\n" +
                     "      keys: [s, ts]\n" +
                     "        SelectedRecord\n" +
-                    "            AsOf Join Light\n" +
+                    "            AsOf Join Fast Scan\n" +
                     "              condition: t2.s=t1.s\n" +
                     "                PageFrame\n" +
                     "                    Row forward scan\n" +
@@ -1018,7 +1018,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "    Sort\n" +
                     "      keys: [ts, s]\n" +
                     "        SelectedRecord\n" +
-                    "            AsOf Join Light\n" +
+                    "            AsOf Join Fast Scan\n" +
                     "              condition: t2.s=t1.s\n" +
                     "                PageFrame\n" +
                     "                    Row forward scan\n" +
@@ -1053,7 +1053,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "    Sort\n" +
                     "      keys: [s, ts1]\n" +
                     "        SelectedRecord\n" +
-                    "            AsOf Join Light\n" +
+                    "            AsOf Join Fast Scan\n" +
                     "              condition: t2.s=t1.s\n" +
                     "                PageFrame\n" +
                     "                    Row forward scan\n" +
@@ -1088,7 +1088,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "    Sort\n" +
                     "      keys: [s1, ts1]\n" +
                     "        SelectedRecord\n" +
-                    "            AsOf Join Light\n" +
+                    "            AsOf Join Fast Scan\n" +
                     "              condition: t2.s=t1.s\n" +
                     "                PageFrame\n" +
                     "                    Row forward scan\n" +
@@ -1123,7 +1123,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     "    Sort\n" +
                     "      keys: [s, ts]\n" +
                     "        SelectedRecord\n" +
-                    "            AsOf Join Light\n" +
+                    "            AsOf Join Fast Scan\n" +
                     "              condition: t2.s=t1.s\n" +
                     "                PageFrame\n" +
                     "                    Row forward scan\n" +

@@ -47,6 +47,10 @@ public class OuterJoinRecord extends JoinRecord {
         }
     }
 
+    boolean hasSlave() {
+        return slave != nullRecord;
+    }
+
     void of(Record master, Record slave) {
         super.of(master, slave);
         this.flappingSlave = slave;

@@ -4367,7 +4367,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testLeftJoinWithEquality7() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                testHashAndAsOfJoin(compiler, true);
+                testHashAndAsOfJoin(compiler, true, true);
             }
         });
     }
@@ -4377,7 +4377,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                testHashAndAsOfJoin(compiler, false);
+                testHashAndAsOfJoin(compiler, false, false);
             }
         });
     }
@@ -10859,11 +10859,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     // left join maintains order metadata and can be part of asof join
-    private void testHashAndAsOfJoin(SqlCompiler compiler, boolean isLight) throws Exception {
+    private void testHashAndAsOfJoin(SqlCompiler compiler, boolean isLight, boolean isFastAsOfJoin) throws Exception {
         ddl("create table taba (a1 int, ts1 timestamp) timestamp(ts1)");
         ddl("create table tabb (b1 int, b2 long)");
         ddl("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
 
+        String asofJoinType = isFastAsOfJoin ? " Fast Scan" : (isLight ? "Light" : "");
         assertPlanNoLeakCheck(
                 compiler,
                 "select * " +
@@ -10871,7 +10872,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "left join tabb on a1=b1 " +
                         "asof join tabc on b1=c1",
                 "SelectedRecord\n" +
-                        "    AsOf Join" + (isLight ? " Light" : "") + "\n" +
+                        "    AsOf Join" + asofJoinType + "\n" +
                         "      condition: c1=b1\n" +
                         "        Hash Outer Join" + (isLight ? " Light" : "") + "\n" +
                         "          condition: b1=a1\n" +

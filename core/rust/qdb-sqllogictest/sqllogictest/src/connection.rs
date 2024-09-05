@@ -66,6 +66,6 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Connections<D, M> {
     ///
     /// This is a shortcut for calling `get(Default)` then `run`.
     pub async fn run_default(&mut self, sql: &str) -> Result<DBOutput<D::ColumnType>, D::Error> {
-        self.get(ConnectionName::Default).await?.run(sql).await
+        self.get(ConnectionName::Default).await?.run(sql, Default::default()).await
     }
 }
