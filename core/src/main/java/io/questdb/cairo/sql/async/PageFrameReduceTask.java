@@ -191,10 +191,14 @@ public class PageFrameReduceTask implements QuietCloseable {
     }
 
     public void reset() {
+        resetCapacities();
+        releaseFrameMemory();
+    }
+
+    public void resetCapacities() {
         filteredRows.resetCapacity();
         dataAddresses.resetCapacity();
         auxAddresses.resetCapacity();
-        releaseFrameMemory();
     }
 
     public void setErrorMsg(Throwable th) {

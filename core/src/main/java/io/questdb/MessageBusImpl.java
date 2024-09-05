@@ -222,7 +222,7 @@ public class MessageBusImpl implements MessageBus {
         }
         for (int i = 0; i < pageFrameReduceShardCount; i++) {
             for (int j = 0, n = pageFrameReduceQueue[i].getCycle(); j < n; j++) {
-                pageFrameReduceQueue[i].get(j).reset();
+                pageFrameReduceQueue[i].get(j).resetCapacities();
             }
         }
     }

@@ -51,9 +51,9 @@ public class PageFrameMemoryPool implements QuietCloseable {
     private final PageFrameMemoryImpl frameMemory;
     private final ObjList<ParquetBuffers> freeParquetBuffers;
     private final int parquetCacheSize;
+    private final DirectIntList parquetColumnTypes;
+    private final PartitionDecoder parquetDecoder;
     private PageFrameAddressCache addressCache;
-    private DirectIntList parquetColumnTypes; // Lazily initialized
-    private PartitionDecoder parquetDecoder; // Lazily initialized
 
     public PageFrameMemoryPool() {
         // TODO(puzpuzpuz): move to config
@@ -66,6 +66,8 @@ public class PageFrameMemoryPool implements QuietCloseable {
                 freeParquetBuffers.add(new ParquetBuffers());
             }
             frameMemory = new PageFrameMemoryImpl();
+            parquetColumnTypes = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
+            parquetDecoder = new PartitionDecoder();
         } catch (Throwable th) {
             close();
             throw th;
@@ -160,12 +162,6 @@ public class PageFrameMemoryPool implements QuietCloseable {
 
     public void of(PageFrameAddressCache addressCache) {
         this.addressCache = addressCache;
-        if (parquetColumnTypes == null) {
-            parquetColumnTypes = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
-        }
-        if (parquetDecoder == null) {
-            parquetDecoder = new PartitionDecoder();
-        }
         parquetColumnTypes.reopen();
         addressCache.copyColumnTypes(parquetColumnTypes);
         for (int i = 0, n = freeParquetBuffers.size(); i < n; i++) {
