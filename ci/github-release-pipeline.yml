@@ -39,7 +39,7 @@ stages:
             lfs: false
             submodules: true
           - task: Maven@3
-            displayName: "Building QuestDB Enterprise"
+            displayName: "Building QuestDB"
             inputs:
               mavenPomFile: "core/pom.xml"
               goals: "package"
@@ -48,7 +48,7 @@ stages:
               jdkVersionOption: $(jdk)
           - task: CopyFiles@2
             inputs:
-              SourceFolder: '$(build.sourcesDirectory)/questdb-ent/target'
+              SourceFolder: '$(build.sourcesDirectory)/questdb/core/questdb/target'
               Contents: '$(build.sourcesDirectory)/questdb/core/target/questdb-*.gz'
               TargetFolder: '$(build.artifactstagingdirectory)'
           - task: PublishBuildArtifacts@1
