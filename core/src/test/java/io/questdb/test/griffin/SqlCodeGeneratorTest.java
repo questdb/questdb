@@ -55,6 +55,31 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
+
+
+    /*
+
+
+
+WITH raw AS (
+    SELECT * FROM foo3
+    WHERE a >= dateadd('y', -1, now()) AND b != ''
+), summary AS (
+SELECT
+    b,
+    c,
+    d,
+    e,
+    f,
+    g,
+    h,
+    a,
+    MAX(i) max_bill_amount
+FROM raw
+)
+SELECT * FROM summary;
+     */
+
     @Test
     public void testAliasedColumnFollowedByWildcard() throws Exception {
         assertQuery(
@@ -6635,6 +6660,44 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "92.050039469858\t\t1970-01-20T16:13:20.000000Z\n" +
                 "45.6344569609078\t\t1970-01-21T20:00:00.000000Z\n" +
                 "40.455469747939254\t\t1970-01-22T23:46:40.000000Z\n", true, true, false);
+    }
+
+    @Test
+    public void testParallelFilterNullPointerExceptionCase() throws Exception {
+        assertQuery(
+                "b\tc\td\te\tf\tg\th\ta\tmax_bill_amount\n",
+                "WITH raw AS (\n" +
+                        "    SELECT * FROM foo\n" +
+                        "    WHERE a >= dateadd('y', -1, now()) AND b != ''\n" +
+                        "), summary AS (\n" +
+                        "SELECT\n" +
+                        "    b,\n" +
+                        "    c,\n" +
+                        "    d,\n" +
+                        "    e,\n" +
+                        "    f,\n" +
+                        "    g,\n" +
+                        "    h,\n" +
+                        "    a,\n" +
+                        "    MAX(i) max_bill_amount\n" +
+                        "FROM raw\n" +
+                        ")\n" +
+                        "SELECT * FROM summary;",
+                "CREATE TABLE foo (\n" +
+                        "a timestamp,\n" +
+                        "b symbol,\n" +
+                        "c int,\n" +
+                        "d int,\n" +
+                        "e varchar,\n" +
+                        "f long,\n" +
+                        "g timestamp,\n" +
+                        "h timestamp,\n" +
+                        "i double\n" +
+                        ") timestamp(a) partition by day wal",
+                "",
+                true,
+                true
+        );
     }
 
     @Test

@@ -4039,7 +4039,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             executionContext,
                                             filter,
                                             executionContext.getSharedWorkerCount(),
-                                            nested.getWhereClause(),
+                                            locatePotentiallyFurtherNestedWhereClause(nested),
                                             factory.getMetadata()
                                     ),
                                     executionContext.getSharedWorkerCount()
@@ -5672,6 +5672,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private boolean isSameTable(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {
         return masterFactory.getTableToken() != null && masterFactory.getTableToken().equals(slaveFactory.getTableToken());
+    }
+
+    private ExpressionNode locatePotentiallyFurtherNestedWhereClause(QueryModel model) {
+        ExpressionNode expr = null;
+        QueryModel curr = model;
+
+        while (expr == null && curr != null) {
+            expr = curr.getWhereClause();
+            curr = curr.getNestedModel();
+        }
+
+        return expr;
     }
 
     private void lookupColumnIndexes(
