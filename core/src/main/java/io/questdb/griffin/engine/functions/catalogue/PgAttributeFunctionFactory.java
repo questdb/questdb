@@ -27,17 +27,13 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 
 import java.util.Collection;
@@ -95,12 +91,10 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
     private static class AttributeCatalogueCursorFactory extends AbstractRecordCursorFactory {
 
         private final AttributeClassCatalogueCursor cursor;
-        private final MemoryMR metaMem = Vm.getCMRInstance();
-        private final Path path = new Path();
 
         public AttributeCatalogueCursorFactory(CairoEngine engine, RecordMetadata metadata) {
             super(metadata);
-            this.cursor = new AttributeClassCatalogueCursor(engine, path, metaMem);
+            this.cursor = new AttributeClassCatalogueCursor(engine);
         }
 
         @Override
@@ -121,8 +115,6 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
         @Override
         protected void _close() {
-            Misc.free(path);
-            Misc.free(metaMem);
         }
     }
 
@@ -135,7 +127,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
         private CairoTable nextTable;
         private int tableId = 1000;
 
-        public AttributeClassCatalogueCursor(CairoEngine engine, Path path, MemoryMR metaMem) {
+        public AttributeClassCatalogueCursor(CairoEngine engine) {
             this.cairoTables = engine.metadataCacheGetTableList();
         }
 

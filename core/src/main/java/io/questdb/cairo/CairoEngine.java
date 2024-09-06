@@ -57,8 +57,8 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.lang.ThreadLocal;
-import java.util.Comparator;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.concurrent.TimeUnit;
@@ -920,16 +920,13 @@ public class CairoEngine implements Closeable, WriterSource {
             getTableTokens(tableTokensSet, false);
             final ObjList<TableToken> tableTokens = tableTokensSet.getList();
 
-            LOG.info().$("metadata hydration started [all_tables=").$(tableTokens.size()).I$();
+            LOG.info().$("metadata hydration started [tables=").$(tableTokens.size()).I$();
 
             for (int i = 0, n = tableTokens.size(); i < n; i++) {
-                final TableToken tableToken = tableTokens.getQuick(i);
-                if (!tableToken.isSystem()) {
-                    metadataCacheHydrateTable(tableTokens.getQuick(i), false, false);
-                }
+                metadataCacheHydrateTable(tableTokens.getQuick(i), false, false);
             }
 
-            LOG.info().$("metaata hydration completed [user_tables=").$(metadataCacheTablesCount()).I$();
+            LOG.info().$("metadata hydration completed [tables=").$(metadataCacheTablesCount()).I$();
         } catch (CairoException e) {
             LogRecord l = e.isCritical() ? LOG.critical() : LOG.error();
             l.$(e.getMessage()).$();
@@ -957,6 +954,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return cairoTables.get(tableToken.getDirName());
     }
 
+    public Collection<CairoTable> metadataCacheGetTableList() {
+        return cairoTables.values();
+    }
+
     public CairoTable metadataCacheGetVisibleTable(@NotNull TableToken tableToken) {
         if (Chars.startsWith(tableToken.getTableName(), configuration.getSystemTableNamePrefix())) {
             return null;
@@ -976,10 +977,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return null;
     }
 
-    public Collection<CairoTable> metadataCacheGetTableList() {
-        return cairoTables.values();
-    }
-
     /**
      * This is dangerous and may clobber any concurrent metadata changes. This should only be used in last-resort cases,
      * for example, for testing purposes.
@@ -987,16 +984,15 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void metadataCacheHydrateAllTables() {
         ObjHashSet<TableToken> tableTokensSet = tlTokens.get();
+
+
         getTableTokens(tableTokensSet, false);
         ObjList<TableToken> tableTokens = tableTokensSet.getList();
         TableToken tableToken = tableTokens.getQuick(0);
 
         try {
             for (int i = 0, n = tableTokens.size(); i < n; i++) {
-                tableToken = tableTokens.getQuick(i);
-                if (!tableToken.isSystem()) {
-                    metadataCacheHydrateTable(tableTokens.getQuick(i), true, true);
-                }
+                metadataCacheHydrateTable(tableTokens.getQuick(i), true, true);
             }
         } catch (CairoException ex) {
             LOG.error().$("could not hydrate metadata, exception:  ").$(ex.getMessage()).$(" [table=").$(tableToken).I$();
@@ -1332,7 +1328,8 @@ public class CairoEngine implements Closeable, WriterSource {
                     }
                 } else {
                     throw CairoException.nonCritical()
-                            .put("cannot rename table, new name is already in use [table=").put(fromTableName)
+                            .put("cannot rename table, new name is already in use" +
+                                    " [table=").put(fromTableName)
                             .put(", toTableName=").put(toTableName)
                             .put(']');
                 }
