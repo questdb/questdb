@@ -1,0 +1,114 @@
+trigger:
+  branches:
+    exclude:
+      - "*"
+  tags:
+    include:
+      - '*.*.*'
+
+stages:
+  - stage: BuildAndRunOnAzure
+    displayName: "Building on Azure"
+    jobs:
+      - job: RunOn
+        displayName: "on Azure workers"
+        strategy:
+          matrix:
+            linux-jdk17:
+              imageName: 'ubuntu-latest'
+              poolName: "Azure Pipelines"
+              os: Linux
+              jdk: "1.17"
+            mac-amd64:
+              imageName: "macos-latest"
+              poolName: "Azure Pipelines"
+              os: macOS
+              jdk: "1.17"
+            windows:
+              imageName: "windows-latest"
+              poolName: "Azure Pipelines"
+              os: macOS
+              jdk: "1.17"
+        pool:
+          vmImage: $(imageName)
+          name: $(poolName)
+        timeoutInMinutes: 60
+        steps:
+          - checkout: self
+            fetchDepth: 1
+            lfs: false
+            submodules: true
+          - task: Maven@3
+            displayName: "Building QuestDB Enterprise"
+            inputs:
+              mavenPomFile: "core/pom.xml"
+              goals: "package"
+              options:
+                "-DskipTests -Dhttp.keepAlive=false -P build-web-console,build-binaries"
+              jdkVersionOption: $(jdk)
+          - task: CopyFiles@2
+            inputs:
+              SourceFolder: '$(build.sourcesDirectory)/questdb-ent/target'
+              Contents: '$(build.sourcesDirectory)/questdb/core/target/questdb-*.gz'
+              TargetFolder: '$(build.artifactstagingdirectory)'
+          - task: PublishBuildArtifacts@1
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'drop'
+              publishLocation: 'Container'
+
+  - stage: SignArtifacts
+    displayName: "Sign Artifacts"
+    dependsOn:
+      - BuildAndRunOnAzure
+    jobs:
+      - job: Sign
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: DownloadBuildArtifacts@1
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: 'drop'
+              downloadPath: '$(System.ArtifactsDirectory)'
+              cleanDestinationFolder: true
+          - script: |
+              find . -type f -exec bash -c 'sha256sum "$0" > "../$0.sha256.txt"' {} \;
+              cd ..
+              rm -r drop
+            workingDirectory: '$(System.ArtifactsDirectory)/drop'
+            displayName: "SHA256 checksum"
+          - task: PublishBuildArtifacts@1
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'drop'
+              publishLocation: 'Container'
+
+  - stage: Release
+    displayName: "Release binaries to github"
+    dependsOn:
+      - SignArtifacts
+    jobs:
+      - job: Upload
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: DownloadBuildArtifacts@1
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: 'drop'
+              downloadPath: '$(Build.ArtifactStagingDirectory)'
+              cleanDestinationFolder: true
+
+          - task: GitHubRelease@1
+            inputs:
+              gitHubConnection: 'ideoma'  # Replace with your GitHub service connection
+              repositoryName: 'questdb/questdb'  # e.g., my-org/my-repo
+              target: '$(Build.SourceVersion)'
+              tagSource: 'manual'
+              tag: '$(Build.SourceVersion)'  # Or use $(Build.BuildId) for build ID
+              releaseTitle: 'Release $(Build.SourceVersion)'
+              assets: '$(Build.ArtifactStagingDirectory)/*'
+              isDraft: true
