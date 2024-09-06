@@ -113,9 +113,6 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
             sink.type(SIGNATURE);
         }
 
-        @Override
-        protected void _close() {
-        }
     }
 
     private static class AttributeClassCatalogueCursor implements NoRandomAccessRecordCursor {
