@@ -127,12 +127,13 @@ public class CairoTable implements Sinkable {
     }
 
     public CharSequence getTimestampName() {
-        final CairoColumn timestampColumn = getColumnQuiet(this.timestampIndex);
-        if (timestampColumn != null) {
-            return timestampColumn.getName();
-        } else {
-            return null;
+        if (this.timestampIndex != -1) {
+            final CairoColumn timestampColumn = getColumnQuiet(this.timestampIndex);
+            if (timestampColumn != null) {
+                return timestampColumn.getName();
+            }
         }
+        return null;
     }
 
     public boolean getWalEnabled() {
