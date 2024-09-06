@@ -9076,6 +9076,7 @@ public class IODispatcherTest extends AbstractTest {
         return testJsonQuery0(2, engine -> {
             // create table with all column types
             createTableX(engine, recordCount);
+            engine.metadataCacheHydrateAllTables();
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
                     request,
