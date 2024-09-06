@@ -19,11 +19,6 @@ stages:
               poolName: "Azure Pipelines"
               os: Linux
               jdk: "1.17"
-            mac-amd64:
-              imageName: "macos-latest"
-              poolName: "Azure Pipelines"
-              os: macOS
-              jdk: "1.17"
             windows:
               imageName: "windows-latest"
               poolName: "Azure Pipelines"
