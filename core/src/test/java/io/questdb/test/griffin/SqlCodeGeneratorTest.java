@@ -55,31 +55,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
-
-
-    /*
-
-
-
-WITH raw AS (
-    SELECT * FROM foo3
-    WHERE a >= dateadd('y', -1, now()) AND b != ''
-), summary AS (
-SELECT
-    b,
-    c,
-    d,
-    e,
-    f,
-    g,
-    h,
-    a,
-    MAX(i) max_bill_amount
-FROM raw
-)
-SELECT * FROM summary;
-     */
-
     @Test
     public void testAliasedColumnFollowedByWildcard() throws Exception {
         assertQuery(
