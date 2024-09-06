@@ -24,14 +24,9 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.cairo.*;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.str.Path;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.TableModel;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -217,6 +212,55 @@ public class ParquetTest extends AbstractCairoTest {
                             "10\t1970-01-01T00:01:30.000000Z\n",
                     "x"
             );
+        });
+    }
+
+    @Test
+    public void testSymbols() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table x (\n" +
+                            "  id int,\n" +
+                            "  ts timestamp,\n" +
+                            "  name symbol\n" +
+                            ") timestamp(ts) partition by day;"
+            );
+
+            insert("insert into x values (0, 0, 'abc')");  // 0
+            insert("insert into x values (1, 10000000, 'def')");  // 1
+            insert("insert into x values (2, 20000000, 'ghi')");  // 2
+            insert("insert into x values (3, 30000000, 'abc')");
+            insert("insert into x values (4, 40000000, 'def')");
+            insert("insert into x values (5, 50000000, 'ghi')");
+            insert("insert into x values (6, 60000000, 'abc')");
+            insert("insert into x values (7, 70000000, 'def')");
+            insert("insert into x values (8, 80000000, 'ghi')");
+            insert("insert into x values (9, 90000000, 'abc')");
+
+            TestUtils.LeakProneCode checkData = () -> {
+                assertQueryNoLeakCheck(
+                        "id\tts\tname\n" +
+                                "0\t1970-01-01T00:00:00.000000Z\tabc\n" +
+                                "1\t1970-01-01T00:00:10.000000Z\tdef\n" +
+                                "2\t1970-01-01T00:00:20.000000Z\tghi\n" +
+                                "3\t1970-01-01T00:00:30.000000Z\tabc\n" +
+                                "4\t1970-01-01T00:00:40.000000Z\tdef\n" +
+                                "5\t1970-01-01T00:00:50.000000Z\tghi\n" +
+                                "6\t1970-01-01T00:01:00.000000Z\tabc\n" +
+                                "7\t1970-01-01T00:01:10.000000Z\tdef\n" +
+                                "8\t1970-01-01T00:01:20.000000Z\tghi\n" +
+                                "9\t1970-01-01T00:01:30.000000Z\tabc\n",
+                        "x",
+                        "ts",
+                        true,
+                        true);
+            };
+
+            checkData.run();
+
+            ddl("alter table x convert partition to parquet where ts >= 0");
+
+            checkData.run();
         });
     }
 }

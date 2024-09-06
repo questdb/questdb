@@ -531,7 +531,6 @@ pub fn decoder_page(
         (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String), _)
         | (PhysicalType::ByteArray, _, Some(PrimitiveConvertedType::Utf8)) => {
             let encoding = page.encoding();
-
             match (encoding, dict, column_type) {
                 (Encoding::DeltaLengthByteArray, None, ColumnType::String) => {
                     let mut slicer = DeltaLengthArraySlicer::try_new(values_buffer, row_count)?;
@@ -607,6 +606,15 @@ pub fn decoder_page(
                         &mut VarcharColumnSink::new(&mut slicer, bufs),
                     )?;
                     Ok(row_count)
+                }
+
+                (Encoding::RleDictionary, Some(_dict_page), ColumnType::Symbol) => {
+                    eprintln!("TODO(amunra) implement symbol support");
+                    eprintln!("dict page: {:?}", dict);
+                    eprintln!("page: {:?}", page);
+                    let page_buffer = page.buffer();
+                    eprintln!("page_buffer: {:?}", page_buffer);
+                    Err(encoding_error)
                 }
 
                 _ => Err(encoding_error),

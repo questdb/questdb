@@ -35,9 +35,14 @@ import io.questdb.cairo.vm.api.MemoryR;
 public interface SymbolMapReader extends StaticSymbolTable {
     int getSymbolCapacity();
 
+    // Mapped memory to the .o file
     MemoryR getSymbolOffsetsColumn();
 
+    // Mapped memory to the .c file
     MemoryR getSymbolValuesColumn();
+
+    // Mapped memory to the .k file
+    // todo: MemoryR getSymbolKeysColumn();
 
     /**
      * @return true if symbol table is cached, otherwise false.

@@ -8,6 +8,7 @@ mod decode;
 mod jni;
 mod meta;
 mod slicer;
+mod symbols;
 
 // The metadata fields are accessed from Java.
 #[repr(C)]
