@@ -71,10 +71,13 @@ stages:
               cleanDestinationFolder: true
 
           - script: |
-              echo "Checking if release already exists..."
+              tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
+              echo "##vso[task.setvariable variable=TAG_NAME]false"
+              
+              echo "Checking if release ${tag_name} already exists..."
               release_info=$(curl -H \
                 -H "Accept: application/vnd.github.v3+json" \
-                "https://api.github.com/repos/$(Build.Repository.Name)/releases/tags/$(Build.SourceVersion)" || true)
+                "https://api.github.com/repos/questdb/questdb/releases/tags/${tag_name}" || true)
               
               if echo "$release_info" | grep -q 'Not Found'; then
                 echo "Release does not exist."
@@ -102,8 +105,8 @@ stages:
               target: '$(Build.SourceVersion)'
               action: 'create'
               tagSource: 'userSpecifiedTag'
-              tag: '$(Build.SourceVersion)'
-              title: '$(Build.SourceVersion)'
+              tag: '$(TAG_NAME)'
+              title: '$(TAG_NAME)'
               assets: '$(Build.ArtifactStagingDirectory)/drop/*'
               changeLogCompareToRelease: 'lastFullRelease'
               changeLogType: 'commitBased'
