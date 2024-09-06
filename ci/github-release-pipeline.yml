@@ -48,8 +48,8 @@ stages:
               jdkVersionOption: $(jdk)
           - task: CopyFiles@2
             inputs:
-              SourceFolder: '$(build.sourcesDirectory)/questdb/core/target'
-              Contents: '$(build.sourcesDirectory)/questdb/core/target/questdb-*.gz'
+              SourceFolder: '$(build.sourcesDirectory)/core/target'
+              Contents: '$(build.sourcesDirectory)/core/target/questdb-*.gz'
               TargetFolder: '$(build.artifactstagingdirectory)'
           - task: PublishBuildArtifacts@1
             inputs:
