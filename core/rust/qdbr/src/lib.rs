@@ -22,11 +22,10 @@
  *
  ******************************************************************************/
 
-mod parquet_read;
-mod parquet_write;
-
 extern crate core;
 pub extern crate jni;
+mod parquet_read;
+mod parquet_write;
 
 use jni::sys::jlong;
 use jni::{objects::JClass, JNIEnv};
@@ -58,6 +57,7 @@ pub extern "system" fn Java_io_questdb_std_Os_initRust(_env: JNIEnv, _class: JCl
     if std::env::var("RUST_BACKTRACE").is_err() {
         std::env::set_var("RUST_BACKTRACE", "1");
     }
+    println!("mock line of code");
 }
 
 #[no_mangle]
