@@ -57,7 +57,7 @@ stages:
     dependsOn:
       - BuildAndRunOnAzure
     jobs:
-      - job: Sign
+      - job: Release
         pool:
           vmImage: 'ubuntu-latest'
         steps:
@@ -101,9 +101,9 @@ stages:
               repositoryName: 'questdb/questdb'
               target: '$(Build.SourceVersion)'
               action: 'create'
-              tagSource: 'gitTag'
+              tagSource: 'userSpecifiedTag'
               tag: '$(Build.SourceVersion)'
-              releaseTitle: 'Release $(Build.SourceVersion)'
+              title: '$(Build.SourceVersion)'
               assets: '$(Build.ArtifactStagingDirectory)/drop/*'
               changeLogCompareToRelease: 'lastFullRelease'
               changeLogType: 'commitBased'
