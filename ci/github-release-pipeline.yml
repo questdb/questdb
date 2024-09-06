@@ -72,7 +72,7 @@ stages:
 
           - script: |
               tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
-              echo "##vso[task.setvariable variable=TAG_NAME]false"
+              echo "##vso[task.setvariable variable=TAG_NAME]${tag_name}"
               
               echo "Checking if release ${tag_name} already exists..."
               release_info=$(curl -H \
