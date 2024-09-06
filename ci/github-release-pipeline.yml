@@ -86,7 +86,7 @@ stages:
     dependsOn:
       - SignArtifacts
     jobs:
-      - job: Github release
+      - job: Github_Release
         pool:
           vmImage: 'ubuntu-latest'
         steps:
