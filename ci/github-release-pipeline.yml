@@ -53,7 +53,7 @@ stages:
               publishLocation: 'Container'
 
   - stage: SignArtifacts
-    displayName: "Sign Artifacts"
+    displayName: "Release binaries to github"
     dependsOn:
       - BuildAndRunOnAzure
     jobs:
@@ -68,36 +68,6 @@ stages:
               downloadType: 'single'
               artifactName: 'drop'
               downloadPath: '$(System.ArtifactsDirectory)'
-              cleanDestinationFolder: true
-          - script: |
-              find . -type f -exec bash -c 'sha256sum "$0" > "../$0.sha256.txt"' {} \;
-              cd ..
-              rm -r drop
-            workingDirectory: '$(System.ArtifactsDirectory)/drop'
-            displayName: "SHA256 checksum"
-          - task: PublishBuildArtifacts@1
-            inputs:
-              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
-              ArtifactName: 'drop'
-              publishLocation: 'Container'
-
-  - stage: Release
-    displayName: "Release binaries to github"
-    dependsOn:
-      - SignArtifacts
-    jobs:
-      - job: Github_Release
-        pool:
-          vmImage: 'ubuntu-latest'
-        steps:
-          - checkout: none
-            displayName: "Download binaries"
-          - task: DownloadBuildArtifacts@1
-            inputs:
-              buildType: 'current'
-              downloadType: 'single'
-              artifactName: 'drop'
-              downloadPath: '$(Build.ArtifactStagingDirectory)'
               cleanDestinationFolder: true
 
           - script: |
@@ -121,7 +91,7 @@ stages:
               gitHubConnection: 'ideoma'  # Replace with your GitHub service connection
               repositoryName: 'questdb/questdb'  # e.g., my-org/my-repo
               action: 'edit'
-              assets: '$(Build.ArtifactStagingDirectory)/*'
+              assets: '$(Build.ArtifactStagingDirectory)/drop/*'
 
           - task: GitHubRelease@1
             displayName: "Create release"
@@ -134,7 +104,7 @@ stages:
               tagSource: 'gitTag'
               tag: '$(Build.SourceVersion)'
               releaseTitle: 'Release $(Build.SourceVersion)'
-              assets: '$(Build.ArtifactStagingDirectory)/*'
+              assets: '$(Build.ArtifactStagingDirectory)/drop/*'
               changeLogCompareToRelease: 'lastFullRelease'
               changeLogType: 'commitBased'
               isDraft: true

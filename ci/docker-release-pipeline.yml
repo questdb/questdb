@@ -57,10 +57,15 @@ jobs:
             # We use cut instead to trim the first 2 components off the Build.SourceBranch ("refs/tags")
             tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
             echo $tag_name
-            docker buildx build --build-arg tag_name=$tag_name --tag questdb/questdb:latest --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$tag_name .
+            pattern='^[0-9]+\.[0-9]+\.[0-9]+$'
+            if [[ "$tag_name" =~ $pattern ]]; then
+              echo "labeling latest"
+              docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$tag_name -t questdb/questdb:latest .
+            else
+              echo "NOT labeling latest"
+              docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$tag_name .
+            fi
             docker buildx build --build-arg tag_name=$tag_name --build-arg base_image=registry.access.redhat.com/ubi9/ubi --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$tag_name-rhel .
           workingDirectory: core
-        condition: and(succeeded()
-          , startsWith(variables['Build.SourceBranch'], 'refs/tags/')
-          , match('refs/tags/[0-9]+\\.[0-9]+\\.[0-9]+', variables['Build.SourceBranchName']))
+        condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))
 
