@@ -61,6 +61,7 @@ stages:
         pool:
           vmImage: 'ubuntu-latest'
         steps:
+          - checkout: none
           - task: DownloadBuildArtifacts@1
             inputs:
               buildType: 'current'
@@ -85,10 +86,12 @@ stages:
     dependsOn:
       - SignArtifacts
     jobs:
-      - job: Upload
+      - job: Github release
         pool:
           vmImage: 'ubuntu-latest'
         steps:
+          - checkout: none
+            displayName: "Download binaries"
           - task: DownloadBuildArtifacts@1
             inputs:
               buildType: 'current'
@@ -97,13 +100,41 @@ stages:
               downloadPath: '$(Build.ArtifactStagingDirectory)'
               cleanDestinationFolder: true
 
+          - script: |
+              echo "Checking if release already exists..."
+              release_info=$(curl -H \
+                -H "Accept: application/vnd.github.v3+json" \
+                "https://api.github.com/repos/$(Build.Repository.Name)/releases/tags/$(Build.SourceVersion)" || true)
+              
+              if echo "$release_info" | grep -q 'Not Found'; then
+                echo "Release does not exist."
+                echo "##vso[task.setvariable variable=releaseExists;isOutput=true]false"
+              else
+                echo "Release already exists."
+                echo "##vso[task.setvariable variable=releaseExists;isOutput=true]true"
+              fi
+
           - task: GitHubRelease@1
+            displayName: "Upload binaries to release"
+            condition: eq(variables['releaseExists'], 'true')
             inputs:
               gitHubConnection: 'ideoma'  # Replace with your GitHub service connection
               repositoryName: 'questdb/questdb'  # e.g., my-org/my-repo
+              action: 'edit'
+              assets: '$(Build.ArtifactStagingDirectory)/*'
+
+          - task: GitHubRelease@1
+            displayName: "Create release"
+            condition: eq(variables['releaseExists'], 'false')
+            inputs:
+              gitHubConnection: 'ideoma'
+              repositoryName: 'questdb/questdb'
               target: '$(Build.SourceVersion)'
-              tagSource: 'manual'
-              tag: '$(Build.SourceVersion)'  # Or use $(Build.BuildId) for build ID
+              action: 'create'
+              tagSource: 'gitTag'
+              tag: '$(Build.SourceVersion)'
               releaseTitle: 'Release $(Build.SourceVersion)'
               assets: '$(Build.ArtifactStagingDirectory)/*'
+              changeLogCompareToRelease: 'lastFullRelease'
+              changeLogType: 'commitBased'
               isDraft: true
