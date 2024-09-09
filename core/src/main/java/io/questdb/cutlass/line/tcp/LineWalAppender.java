@@ -31,6 +31,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.Uuid;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8s;
@@ -318,7 +319,15 @@ public class LineWalAppender {
                                     r.putSymUtf8(columnIndex, entityValue);
                                     break;
                                 case ColumnType.UUID:
-                                    r.putUuidUtf8(columnIndex, entityValue);
+                                    CharSequence asciiCharSequence = entityValue.asAsciiCharSequence();
+                                    try {
+                                        Uuid.checkDashesAndLength(asciiCharSequence);
+                                        long uuidLo = Uuid.parseLo(asciiCharSequence);
+                                        long uuidHi = Uuid.parseHi(asciiCharSequence);
+                                        r.putLong128(columnIndex, uuidLo, uuidHi);
+                                    } catch (NumericException e) {
+                                        throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
+                                    }
                                     break;
                                 default:
                                     throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
