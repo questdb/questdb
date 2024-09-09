@@ -31,7 +31,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
@@ -51,7 +50,6 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
     private final Path path = new Path();
     private CairoConfiguration configuration;
     private SqlExecutionContext executionContext;
-    private FilesFacade ff;
     private TxReader reader;
 
 
@@ -72,8 +70,7 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         this.executionContext = executionContext;
         this.configuration = executionContext.getCairoEngine().getConfiguration();
-        this.ff = configuration.getFilesFacade();
-        reader = new TxReader(ff);
+        reader = new TxReader(configuration.getFilesFacade());
         return cursor.initialize();
     }
 
@@ -215,7 +212,7 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
                 diskSize = Files.getDirSize(path);
 
                 // TxReader
-                TableUtils.setTxReaderPath(reader, ff, path, partitionBy); // modifies path
+                TableUtils.setTxReaderPath(reader, path, partitionBy); // modifies path
                 rowCount = reader.unsafeLoadRowCount();
                 partitionCount = reader.getPartitionCount();
                 reader.close();

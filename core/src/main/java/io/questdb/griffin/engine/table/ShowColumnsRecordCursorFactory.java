@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
 public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -74,13 +73,11 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         private CairoColumn cairoColumn = new CairoColumn();
         private CairoTable cairoTable;
         private int columnIndex;
-        private ObjList<CharSequence> columnNames;
 
         @Override
         public void close() {
             cairoTable = null;
             cairoColumn = null;
-            columnNames = null;
         }
 
         @Override
@@ -97,7 +94,6 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
         public ShowColumnsCursor of(CairoTable table) {
             cairoTable = table;
-            columnNames = cairoTable.getColumnNames();
             toTop();
             return this;
         }

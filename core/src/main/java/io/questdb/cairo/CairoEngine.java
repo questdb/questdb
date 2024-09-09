@@ -1051,8 +1051,9 @@ public class CairoEngine implements Closeable, WriterSource {
 
         CairoTable potentiallyExistingTable = cairoTables.get(tableToken.getDirName());
         if (potentiallyExistingTable != null && potentiallyExistingTable.getMetadataVersion() > metadataVersion) {
-            LOG.info().$("table in cache with newer version [table=")
-                    .$(tableToken.getTableName()).$(", version=").$(potentiallyExistingTable.getMetadataVersion()).I$();
+            LOG.info()
+                    .$("table in cache with newer version [table=").$(tableToken.getTableName())
+                    .$(", version=").$(potentiallyExistingTable.getMetadataVersion()).I$();
             return;
         }
 
@@ -1633,7 +1634,6 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    @SuppressWarnings("TryFinallyCanBeTryWithResources")
     private void metadataCacheHydrateTable(@NotNull TableToken token, @NotNull Path path,
                                            @NotNull ColumnVersionReader columnVersionReader,
                                            boolean blindUpsert, boolean infoLog) {
@@ -1759,8 +1759,7 @@ public class CairoEngine implements Closeable, WriterSource {
                                 , columnName, columnNameTxn);
 
                         // initialise symbol map memory
-                        MemoryCMR offsetMem = Vm.getCMRInstance();
-                        try {
+                        try (MemoryCMR offsetMem = Vm.getCMRInstance()) {
                             final long offsetMemSize = SymbolMapWriter.keyToOffset(0) + Long.BYTES;
                             offsetMem.of(configuration.getFilesFacade(), offsetFileName, offsetMemSize, offsetMemSize, MemoryTag.NATIVE_METADATA_READER);
 
@@ -1769,8 +1768,6 @@ public class CairoEngine implements Closeable, WriterSource {
                             assert column.getSymbolCapacity() > 0;
 
                             column.setSymbolCached(offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED));
-                        } finally {
-                            offsetMem.close();
                         }
                     }
                 }

@@ -32,13 +32,13 @@ import org.jetbrains.annotations.Nullable;
 public class TableColumnMetadata implements Plannable {
     @Nullable
     private final RecordMetadata metadata;
+    private final int replacingIndex;
     private final boolean symbolTableStatic;
     private final int writerIndex;
     private int indexValueBlockCapacity;
     private boolean indexed;
     private boolean isDedupKey;
     private String name;
-    private int replacingIndex;
     private int type;
 
     public TableColumnMetadata(String name, int type) {
@@ -73,15 +73,7 @@ public class TableColumnMetadata implements Plannable {
             int writerIndex,
             boolean dedupKeyFlag
     ) {
-        this.name = name;
-        this.type = type;
-        this.indexed = indexed;
-        this.indexValueBlockCapacity = indexValueBlockCapacity;
-        this.symbolTableStatic = symbolTableStatic;
-        this.metadata = GenericRecordMetadata.copyOf(metadata);
-        this.writerIndex = writerIndex;
-        this.isDedupKey = dedupKeyFlag;
-        this.replacingIndex = 0;
+        this(name, type, indexed, indexValueBlockCapacity, symbolTableStatic, metadata, writerIndex, dedupKeyFlag, 0);
     }
 
     public TableColumnMetadata(
@@ -165,10 +157,6 @@ public class TableColumnMetadata implements Plannable {
 
     public void setName(String name) {
         this.name = name;
-    }
-
-    public void setReplacingIndex(int replacingIndex) {
-        this.replacingIndex = replacingIndex;
     }
 
     @Override

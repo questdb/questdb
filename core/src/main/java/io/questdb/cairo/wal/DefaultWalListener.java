@@ -52,9 +52,4 @@ public class DefaultWalListener implements WalListener {
     @Override
     public void tableRenamed(TableToken tableToken, long txn, long timestamp, TableToken oldTableToken) {
     }
-
-    @Override
-    public long getLastProcessedTxn(TableToken tableToken) {
-        return Long.MAX_VALUE;
-    }
 }

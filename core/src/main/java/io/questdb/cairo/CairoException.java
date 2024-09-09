@@ -65,10 +65,6 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return e;
     }
 
-    public static CairoException columnDoesNotExist(CharSequence columnName) {
-        return nonCritical().put("column does not exist [column=").put(columnName).put(']');
-    }
-
     public static CairoException critical(int errno) {
         return instance(errno);
     }
