@@ -360,7 +360,8 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                             boolean isProtected = tableFlagResolver.isProtected(tableName);
                             boolean isSystem = tableFlagResolver.isSystem(tableName);
                             boolean isPublic = tableFlagResolver.isPublic(tableName);
-                            TableToken token = new TableToken(tableName, dirName, tableId, isWal, isSystem, isProtected, isPublic);
+                            // TODO: set isMatView flag based on metadata, hardcoded as 'false' for now
+                            TableToken token = new TableToken(tableName, dirName, tableId, false, isWal, isSystem, isProtected, isPublic);
                             TableToken existingTableToken = tableNameToTableTokenMap.get(tableName);
 
                             if (existingTableToken != null) {
@@ -469,7 +470,8 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                     boolean isProtected = tableFlagResolver.isProtected(tableName);
                     boolean isSystem = tableFlagResolver.isSystem(tableName);
                     boolean isPublic = tableFlagResolver.isPublic(tableName);
-                    final TableToken token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL, isSystem, isProtected, isPublic);
+                    // TODO: save isMatView flag into tables file, hardcoded as 'false' for now
+                    final TableToken token = new TableToken(tableName, dirName, tableId, false, tableType == TableUtils.TABLE_TYPE_WAL, isSystem, isProtected, isPublic);
                     TableToken existing = tableNameToTableTokenMap.get(tableName);
 
                     if (existing != null) {

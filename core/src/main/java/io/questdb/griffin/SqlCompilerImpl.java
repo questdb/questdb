@@ -95,6 +95,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final FilesFacade ff;
     private final FunctionParser functionParser;
     private final ListColumnFilter listColumnFilter = new ListColumnFilter();
+    private final MatViewStructureAdapter matViewStructureAdapter = new MatViewStructureAdapter();
     private final int maxRecompileAttempts;
     private final MemoryMARW mem = Vm.getMARWInstance();
     private final MessageBus messageBus;
@@ -115,6 +116,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     // Helper var used to pass back count in cases it can't be done via method result.
     private long insertCount;
     private final ExecutableMethod createTableMethod = this::createTable;
+    private final ExecutableMethod createMatViewMethod = this::createMatView;
     //determines how compiler parses query text
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
@@ -1661,6 +1663,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         ExecutionModel executionModel = null;
         try {
             executionModel = compileExecutionModel(executionContext);
+            // TODO: use TableToken::isMatView() to reject INSERT, UPDATE, RENAME, COPY
             switch (executionModel.getModelType()) {
                 case ExecutionModel.QUERY:
                     QueryModel queryModel = (QueryModel) executionModel;
@@ -1700,6 +1703,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     sqlId = queryRegistry.register(sqlText, executionContext);
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     compiledQuery.ofExplain(generateExplain((ExplainModel) executionModel, executionContext));
+                    QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
+                    break;
+                case ExecutionModel.CREATE_MAT_VIEW:
+                    sqlId = queryRegistry.register(sqlText, executionContext);
+                    QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    createMatViewWithRetries(executionModel, executionContext);
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
                     break;
                 default:
@@ -2039,6 +2048,101 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         writer.commit();
 
         return rowCount;
+    }
+
+    private void createMatView(final ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
+        final CreateMatViewModel createMatViewModel = (CreateMatViewModel) model;
+        final ExpressionNode name = createMatViewModel.getName();
+
+        // Fast path for CREATE MATERIALIZED VIEW IF NOT EXISTS in scenario when the view already exists
+        final int status = executionContext.getTableStatus(path, name.token);
+        if (createMatViewModel.isIgnoreIfExists() && status == TableUtils.TABLE_EXISTS) {
+            compiledQuery.ofCreateTable(executionContext.getTableTokenIfExists(name.token));
+        } else if (status == TableUtils.TABLE_EXISTS) {
+            throw SqlException.$(name.position, "A view or a table already exists with this name");
+        } else {
+            final TableToken tableToken;
+            this.insertCount = -1;
+            if (createMatViewModel.getQueryModel() != null) {
+                tableToken = createMatViewFromCursorExecutor(createMatViewModel, executionContext, name.position);
+            } else {
+                throw SqlException.position(0).put("cannot create materialized view without a query");
+            }
+
+            final MaterializedViewDefinition matViewDefinition = createMatViewModel.generateDefinition();
+
+            // TODO: persist view definition, i.e. save mat view metadata 
+
+            // TODO: register mat view definition with refresh job
+
+            compiledQuery.ofCreateMatView(tableToken);
+        }
+    }
+
+    private TableToken createMatViewFromCursorExecutor(
+            CreateMatViewModel model,
+            SqlExecutionContext executionContext,
+            int position
+    ) throws SqlException {
+        executionContext.setUseSimpleCircuitBreaker(true);
+        try (
+                final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
+                final RecordCursor cursor = factory.getCursor(executionContext)
+        ) {
+            typeCast.clear();
+            final RecordMetadata metadata = factory.getMetadata();
+            validateMatViewModelAndCreateTypeCast(model, metadata, typeCast);
+            boolean keepLock = !model.isWalEnabled();
+
+            final TableToken tableToken = engine.createTable(
+                    executionContext.getSecurityContext(),
+                    mem,
+                    path,
+                    false,
+                    matViewStructureAdapter.of(model, metadata, typeCast),
+                    keepLock
+            );
+
+            final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+            try {
+                copyTableDataAndUnlock(
+                        executionContext.getSecurityContext(),
+                        tableToken,
+                        model.isWalEnabled(),
+                        cursor,
+                        metadata,
+                        model.getBatchSize(),
+                        model.getBatchO3MaxLag(),
+                        circuitBreaker
+                );
+            } catch (CairoException e) {
+                e.position(position);
+                LogRecord record = LOG.error()
+                        .$("could not create view [model=`").$(model)
+                        .$("`, message=[")
+                        .$(e.getFlyweightMessage());
+                if (!e.isCancellation()) {
+                    record.$(", errno=").$(e.getErrno());
+                } else {
+                    record.$(']'); // we are closing bracket for the underlying message
+                }
+                record.I$();
+                engine.drop(path, tableToken);
+                engine.unlockTableName(tableToken);
+                throw e;
+            }
+            return tableToken;
+        } finally {
+            executionContext.setUseSimpleCircuitBreaker(false);
+        }
+    }
+
+    private void createMatViewWithRetries(
+            ExecutionModel executionModel,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        // TODO: add a separate max retry config for create mat view, do not use configuration.getCreateAsSelectRetryCount()
+        executeWithRetries(createMatViewMethod, executionModel, configuration.getCreateAsSelectRetryCount(), executionContext);
     }
 
     private void createTable(final ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -2963,6 +3067,69 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         model.setQueryModel(queryModel);
     }
 
+    private void validateMatViewModelAndCreateTypeCast(
+            @Transient CreateMatViewModel model,
+            @Transient RecordMetadata metadata,
+            @Transient IntIntHashMap typeCast
+    ) throws SqlException {
+        CharSequenceObjHashMap<ColumnCastModel> castModels = model.getColumnCastModels();
+        ObjList<CharSequence> castColumnNames = castModels.keys();
+
+        for (int i = 0, n = castColumnNames.size(); i < n; i++) {
+            CharSequence columnName = castColumnNames.getQuick(i);
+            int index = metadata.getColumnIndexQuiet(columnName);
+            ColumnCastModel ccm = castModels.get(columnName);
+            // the only reason why columns cannot be found at this stage is
+            // concurrent table modification of table structure
+            if (index == -1) {
+                // Cast isn't going to go away when we reparse SQL. We must make this
+                // permanent error
+                throw SqlException.invalidColumn(ccm.getColumnNamePos(), columnName);
+            }
+            int from = metadata.getColumnType(index);
+            int to = ccm.getColumnType();
+            if (isCompatibleCase(from, to)) {
+                int modelColumnIndex = model.getColumnIndex(columnName);
+                if (!ColumnType.isSymbol(to) && model.isIndexed(modelColumnIndex)) {
+                    throw SqlException.$(ccm.getColumnTypePos(), "indexes are supported only for SYMBOL columns: ").put(columnName);
+                }
+                typeCast.put(index, to);
+            } else {
+                throw SqlException.unsupportedCast(ccm.getColumnTypePos(), columnName, from, to);
+            }
+        }
+
+        // validate that all indexes are specified only on columns with symbol type
+        for (int i = 0, n = model.getColumnCount(); i < n; i++) {
+            CharSequence columnName = model.getColumnName(i);
+            ColumnCastModel ccm = castModels.get(columnName);
+            if (ccm != null) {
+                // We already checked this column when validating casts.
+                continue;
+            }
+            int index = metadata.getColumnIndexQuiet(columnName);
+            assert index > -1 : "wtf? " + columnName;
+            if (!ColumnType.isSymbol(metadata.getColumnType(index)) && model.isIndexed(i)) {
+                throw SqlException.$(0, "indexes are supported only for SYMBOL columns: ").put(columnName);
+            }
+
+            if (ColumnType.isNull(metadata.getColumnType(index))) {
+                throw SqlException.$(0, "cannot create NULL-type column, please use type cast, e.g. ").put(columnName).put("::").put("type");
+            }
+        }
+
+        // validate type of timestamp column
+        // no need to worry that column will not resolve
+        ExpressionNode timestamp = model.getTimestamp();
+        if (timestamp != null && metadata.getColumnType(timestamp.token) != ColumnType.TIMESTAMP) {
+            throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(metadata.getColumnType(timestamp.token))).put(']');
+        }
+
+        if (PartitionBy.isPartitioned(model.getPartitionBy()) && model.getTimestampIndex() == -1 && metadata.getTimestampIndex() == -1) {
+            throw SqlException.position(0).put("timestamp is not defined");
+        }
+    }
+
     private void validateTableModelAndCreateTypeCast(
             @Transient CreateTableModel model,
             @Transient RecordMetadata metadata,
@@ -3214,6 +3381,113 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @FunctionalInterface
     public interface KeywordBasedExecutor {
         void execute(SqlExecutionContext executionContext) throws SqlException;
+    }
+
+    private static class MatViewStructureAdapter implements TableStructure {
+        private RecordMetadata metadata;
+        private CreateMatViewModel model;
+        private int timestampIndex;
+        private IntIntHashMap typeCast;
+
+        @Override
+        public int getColumnCount() {
+            return model.getColumnCount();
+        }
+
+        @Override
+        public CharSequence getColumnName(int columnIndex) {
+            return model.getColumnName(columnIndex);
+        }
+
+        @Override
+        public int getColumnType(int columnIndex) {
+            int castIndex = typeCast.keyIndex(columnIndex);
+            if (castIndex < 0) {
+                return typeCast.valueAt(castIndex);
+            }
+            return metadata.getColumnType(columnIndex);
+        }
+
+        @Override
+        public int getIndexBlockCapacity(int columnIndex) {
+            return model.getIndexBlockCapacity(columnIndex);
+        }
+
+        @Override
+        public int getMaxUncommittedRows() {
+            return model.getMaxUncommittedRows();
+        }
+
+        @Override
+        public long getO3MaxLag() {
+            return model.getO3MaxLag();
+        }
+
+        @Override
+        public int getPartitionBy() {
+            return model.getPartitionBy();
+        }
+
+        @Override
+        public boolean getSymbolCacheFlag(int columnIndex) {
+            final ColumnCastModel ccm = model.getColumnCastModels().get(metadata.getColumnName(columnIndex));
+            if (ccm != null) {
+                return ccm.getSymbolCacheFlag();
+            }
+            return model.getSymbolCacheFlag(columnIndex);
+        }
+
+        @Override
+        public int getSymbolCapacity(int columnIndex) {
+            final ColumnCastModel ccm = model.getColumnCastModels().get(metadata.getColumnName(columnIndex));
+            if (ccm != null) {
+                return ccm.getSymbolCapacity();
+            } else {
+                return model.getSymbolCapacity(columnIndex);
+            }
+        }
+
+        @Override
+        public CharSequence getTableName() {
+            return model.getTableName();
+        }
+
+        @Override
+        public int getTimestampIndex() {
+            return timestampIndex;
+        }
+
+        @Override
+        public boolean isDedupKey(int columnIndex) {
+            return model.isDedupKey(columnIndex);
+        }
+
+        @Override
+        public boolean isIndexed(int columnIndex) {
+            return model.isIndexed(columnIndex);
+        }
+
+        @Override
+        public boolean isSequential(int columnIndex) {
+            return model.isSequential(columnIndex);
+        }
+
+        @Override
+        public boolean isWalEnabled() {
+            return model.isWalEnabled();
+        }
+
+        MatViewStructureAdapter of(CreateMatViewModel model, RecordMetadata metadata, IntIntHashMap typeCast) {
+            if (model.getTimestampIndex() != -1) {
+                timestampIndex = model.getTimestampIndex();
+            } else {
+                timestampIndex = metadata.getTimestampIndex();
+            }
+            this.model = model;
+            this.metadata = metadata;
+            this.typeCast = typeCast;
+            return this;
+        }
     }
 
     public final static class PartitionAction {

@@ -33,8 +33,8 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
 
-public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, TableStructure {
-    public static final ObjectFactory<CreateTableModel> FACTORY = CreateTableModel::new;
+public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable, TableStructure {
+    public static final ObjectFactory<CreateMatViewModel> FACTORY = CreateMatViewModel::new;
     private static final int COLUMN_FLAG_CACHED = 1;
     private static final int COLUMN_FLAG_INDEXED = COLUMN_FLAG_CACHED << 1;
     private static final int COLUMN_FLAG_DEDUP_KEY = COLUMN_FLAG_INDEXED << 1;
@@ -42,20 +42,23 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private final CharSequenceObjHashMap<ColumnCastModel> columnCastModels = new CharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
+    private CharSequence baseTableName;
     private long batchO3MaxLag = -1;
     private long batchSize = -1;
     private boolean ignoreIfExists = false;
-    private ExpressionNode likeTableName;
+    private long intervalMicros;
     private int maxUncommittedRows;
     private ExpressionNode name;
     private long o3MaxLag;
     private ExpressionNode partitionBy;
+    private CharSequence query;
     private QueryModel queryModel;
+    private long startEpochMicros;
     private ExpressionNode timestamp;
     private CharSequence volumeAlias;
     private boolean walEnabled;
 
-    private CreateTableModel() {
+    private CreateMatViewModel() {
     }
 
     public void addColumn(CharSequence name, int type, int symbolCapacity) throws SqlException {
@@ -77,7 +80,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         return columnCastModels.put(model.getName().token, model);
     }
 
-    public CreateTableModel cached(boolean cached) {
+    public CreateMatViewModel cached(boolean cached) {
         int last = columnBits.size() - 1;
         assert last > 0;
         assert ColumnType.isSymbol(getLowAt(last - 1));
@@ -95,7 +98,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         queryModel = null;
         timestamp = null;
         partitionBy = null;
-        likeTableName = null;
         name = null;
         volumeAlias = null;
         columnBits.clear();
@@ -105,6 +107,10 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         o3MaxLag = -1;
         batchO3MaxLag = -1;
         batchSize = -1;
+    }
+
+    public MaterializedViewDefinition generateDefinition() {
+        return new MaterializedViewDefinition(baseTableName, startEpochMicros, intervalMicros, query);
     }
 
     public long getBatchO3MaxLag() {
@@ -143,10 +149,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         return getHighAt(index * 2 + 1);
     }
 
-    public ExpressionNode getLikeTableName() {
-        return likeTableName;
-    }
-
     @Override
     public int getMaxUncommittedRows() {
         return maxUncommittedRows;
@@ -154,7 +156,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
 
     @Override
     public int getModelType() {
-        return CREATE_TABLE;
+        return CREATE_MAT_VIEW;
     }
 
     public ExpressionNode getName() {
@@ -260,10 +262,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         setIndexFlags0(columnIndex * 2 + 1, indexFlag, indexValueBlockSize);
     }
 
-    public void setLikeTableName(ExpressionNode tableName) {
-        this.likeTableName = tableName;
-    }
-
     public void setMaxUncommittedRows(int maxUncommittedRows) {
         this.maxUncommittedRows = maxUncommittedRows;
     }
@@ -363,33 +361,28 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
             }
         } else {
             sink.putAscii(" (");
-            if (getLikeTableName() != null) {
-                sink.putAscii("like ");
-                sink.put(getLikeTableName().token);
-            } else {
-                int count = getColumnCount();
-                for (int i = 0; i < count; i++) {
-                    if (i > 0) {
-                        sink.putAscii(", ");
-                    }
-                    sink.put(getColumnName(i));
-                    sink.putAscii(' ');
-                    sink.put(ColumnType.nameOf(getColumnType(i)));
+            int count = getColumnCount();
+            for (int i = 0; i < count; i++) {
+                if (i > 0) {
+                    sink.putAscii(", ");
+                }
+                sink.put(getColumnName(i));
+                sink.putAscii(' ');
+                sink.put(ColumnType.nameOf(getColumnType(i)));
 
-                    if (ColumnType.isSymbol(getColumnType(i))) {
-                        sink.putAscii(" capacity ");
-                        sink.put(getSymbolCapacity(i));
-                        if (getSymbolCacheFlag(i)) {
-                            sink.putAscii(" cache");
-                        } else {
-                            sink.putAscii(" nocache");
-                        }
+                if (ColumnType.isSymbol(getColumnType(i))) {
+                    sink.putAscii(" capacity ");
+                    sink.put(getSymbolCapacity(i));
+                    if (getSymbolCacheFlag(i)) {
+                        sink.putAscii(" cache");
+                    } else {
+                        sink.putAscii(" nocache");
                     }
+                }
 
-                    if (isIndexed(i)) {
-                        sink.putAscii(" index capacity ");
-                        sink.put(getIndexBlockCapacity(i));
-                    }
+                if (isIndexed(i)) {
+                    sink.putAscii(" index capacity ");
+                    sink.put(getIndexBlockCapacity(i));
                 }
             }
             sink.putAscii(')');

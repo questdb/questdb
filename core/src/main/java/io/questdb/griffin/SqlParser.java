@@ -24,10 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.model.*;
@@ -56,6 +53,7 @@ public class SqlParser {
     private final ObjectPool<ColumnCastModel> columnCastModelPool;
     private final CairoConfiguration configuration;
     private final ObjectPool<CopyModel> copyModelPool;
+    private final ObjectPool<CreateMatViewModel> createMatViewModelPool;
     private final ObjectPool<CreateTableModel> createTableModelPool;
     private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<ExpressionNode> expressionNodePool;
@@ -95,6 +93,8 @@ public class SqlParser {
         this.expressionTreeBuilder = new ExpressionTreeBuilder();
         this.windowColumnPool = new ObjectPool<>(WindowColumn.FACTORY, configuration.getWindowColumnPoolCapacity());
         this.createTableModelPool = new ObjectPool<>(CreateTableModel.FACTORY, configuration.getCreateTableModelPoolCapacity());
+        // TODO: add configuration.getCreateMatViewModelPoolCapacity()
+        this.createMatViewModelPool = new ObjectPool<>(CreateMatViewModel.FACTORY, configuration.getCreateTableModelPoolCapacity());
         this.columnCastModelPool = new ObjectPool<>(ColumnCastModel.FACTORY, configuration.getColumnCastModelPoolCapacity());
         this.renameTableModelPool = new ObjectPool<>(RenameTableModel.FACTORY, configuration.getRenameTableModelPoolCapacity());
         this.withClauseModelPool = new ObjectPool<>(WithClauseModel.FACTORY, configuration.getWithClauseModelPoolCapacity());
@@ -533,15 +533,108 @@ public class SqlParser {
         throw SqlException.$(lexer.lastTokenPosition(), "'from' expected");
     }
 
+    private ExecutionModel parseCreate(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        final CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch' or 'materialized'");
+        if (SqlKeywords.isMaterializedKeyword(tok)) {
+            return parseCreateMatView(lexer, executionContext, sqlParserCallback);
+        }
+        return parseCreateTable(lexer, tok, executionContext, sqlParserCallback);
+    }
+
+    private ExecutionModel parseCreateMatView(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        final CreateMatViewModel model = createMatViewModelPool.next();
+        final CharSequence matViewName;
+        CharSequence baseTableName = null;
+
+        expectTok(lexer, "view");
+        CharSequence tok = tok(lexer, "view name or 'if'");
+        if (SqlKeywords.isIfKeyword(tok)) {
+            if (SqlKeywords.isNotKeyword(tok(lexer, "'not'")) && SqlKeywords.isExistsKeyword(tok(lexer, "'exists'"))) {
+                model.setIgnoreIfExists(true);
+                matViewName = tok(lexer, "view name");
+            } else {
+                throw SqlException.$(lexer.lastTokenPosition(), "'if not exists' expected");
+            }
+        } else {
+            matViewName = tok;
+        }
+        assertTableNameIsQuotedOrNotAKeyword(matViewName, lexer.lastTokenPosition());
+        model.setName(nextLiteral(GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(matViewName), lexer.lastTokenPosition()), lexer.lastTokenPosition()));
+
+        tok = tok(lexer, "'as' or 'with' expected");
+        if (SqlKeywords.isWithKeyword(tok)) {
+            expectTok(lexer, "base");
+            baseTableName = tok(lexer, "base table expected").toString();
+            tok = tok(lexer, "'as' expected");
+        }
+
+        if (SqlKeywords.isAsKeyword(tok)) {
+            QueryModel queryModel = optimiser.optimise(
+                    parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback),
+                    executionContext,
+                    sqlParserCallback
+            );
+
+            ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
+            assert columns.size() > 0;
+
+            // we do not know types of columns at this stage
+            // compiler must put table together using query metadata.
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                model.addColumn(columns.getQuick(i).getName(), -1, configuration.getDefaultSymbolCapacity());
+            }
+
+            model.setQueryModel(queryModel);
+
+            // find base table if not set
+            if (baseTableName == null) {
+                QueryModel m = queryModel;
+                do {
+                    final CharSequence t = m.getTableName();
+                    if (t != null) {
+                        if (baseTableName == null) {
+                            baseTableName = t;
+                        } else if (!Chars.equals(baseTableName, t)) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "More than one table used in query, base table has to be set using 'WITH BASE'");
+                        }
+                    }
+                    m = m.getNestedModel();
+                } while (m != null);
+            }
+            TableToken tt = executionContext.getTableToken(baseTableName);
+
+            // TODO: check that query is SAMPLE BY (or GROUP BY timestamp), reject if not
+
+            // TODO: set SAMPLE BY interval on model
+
+            // TODO: find dedup keys and set them on the model
+
+            tok = optTok(lexer);
+            if (tok != null && !Chars.equals(tok, ';')) {
+                throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+            }
+            return model;
+        }
+        throw SqlException.position(lexer.getPosition()).put("'as' expected");
+    }
+
     private ExecutionModel parseCreateTable(
             GenericLexer lexer,
+            CharSequence tok,
             SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
         final CreateTableModel model = createTableModelPool.next();
         final CharSequence tableName;
         // default to non-atomic, batched, creation
-        CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch'");
         model.setBatchSize(configuration.getInsertModelBatchSize());
         boolean atomicSpecified = false;
         boolean batchSpecified = false;
@@ -1288,7 +1381,7 @@ public class SqlParser {
         }
 
         if (isCreateKeyword(tok)) {
-            return parseCreateTable(lexer, executionContext, sqlParserCallback);
+            return parseCreate(lexer, executionContext, sqlParserCallback);
         }
 
         if (isUpdateKeyword(tok)) {
@@ -2892,6 +2985,7 @@ public class SqlParser {
         expressionNodePool.clear();
         windowColumnPool.clear();
         createTableModelPool.clear();
+        createMatViewModelPool.clear();
         columnCastModelPool.clear();
         renameTableModelPool.clear();
         withClauseModelPool.clear();
@@ -2941,7 +3035,7 @@ public class SqlParser {
         }
 
         if (isCreateKeyword(tok)) {
-            return parseCreateTable(lexer, executionContext, sqlParserCallback);
+            return parseCreate(lexer, executionContext, sqlParserCallback);
         }
 
         if (isUpdateKeyword(tok)) {
