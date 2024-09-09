@@ -572,7 +572,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         bumpMetadataAndColumnStructureVersion();
 
-        metadata.addColumn(columnName, columnType, isIndexed, indexValueBlockCapacity, columnIndex, isSequential, symbolCapacity, isDedupKey);
+        metadata.addColumn(columnName, columnType, isIndexed, indexValueBlockCapacity, columnIndex, isSequential, symbolCapacity, isDedupKey, symbolCacheFlag);
 
         if (!Os.isWindows()) {
             ff.fsyncAndClose(TableUtils.openRO(ff, path.$(), LOG));
@@ -828,9 +828,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final MapWriter symbolMapWriter = symbolMapWriters.getQuick(columnIndex);
         if (symbolMapWriter.isCached() != cache) {
             symbolMapWriter.updateCacheFlag(cache);
+            TableWriterMetadata.WriterTableColumnMetadata columnMetadata = (TableWriterMetadata.WriterTableColumnMetadata) metadata.getColumnMetadata(columnIndex);
+            columnMetadata.setSymbolCached(cache);
             updateMetaStructureVersion();
             txWriter.bumpTruncateVersion();
-            engine.metadataCacheHydrateTable(tableToken, true, true);
+            engine.metadataCacheHydrateTable(metadata, true, true);
         }
     }
 
@@ -906,7 +908,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // remove old column to in-memory metadata object and add new one
                 metadata.removeColumn(existingColIndex);
-                metadata.addColumn(columnName, newType, isIndexed, indexValueBlockCapacity, existingColIndex, isSequential, symbolCapacity, isDedupKey, existingColIndex + 1); // by convention, replacingIndex is +1
+                metadata.addColumn(columnName, newType, isIndexed, indexValueBlockCapacity, existingColIndex, isSequential, symbolCapacity, isDedupKey, existingColIndex + 1, symbolCacheFlag); // by convention, replacingIndex is +1
 
                 // open new column files
                 if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
