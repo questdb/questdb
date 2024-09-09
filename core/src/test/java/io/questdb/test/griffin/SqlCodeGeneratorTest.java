@@ -6640,7 +6640,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     @Test
     public void testParallelFilterNullPointerExceptionCase() throws Exception {
         assertQuery(
-                "b\tc\td\te\tf\tg\th\ta\tmax_bill_amount\n",
+                "b\tc\td\te\tf\tg\th\ta\tj\n",
                 "WITH raw AS (\n" +
                         "    SELECT * FROM foo\n" +
                         "    WHERE a >= dateadd('y', -1, now()) AND b != ''\n" +
@@ -6654,7 +6654,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         "    g,\n" +
                         "    h,\n" +
                         "    a,\n" +
-                        "    MAX(i) max_bill_amount\n" +
+                        "    MAX(i) j\n" +
                         "FROM raw\n" +
                         ")\n" +
                         "SELECT * FROM summary;",
