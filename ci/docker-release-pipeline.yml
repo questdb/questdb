@@ -6,6 +6,8 @@ trigger:
     include:
       - '*.*.*'
 
+pr: none
+
 schedules:
   - cron: "0 0 * * *"
     displayName: Midnight Trigger

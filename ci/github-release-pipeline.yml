@@ -6,9 +6,11 @@ trigger:
     include:
       - '*.*.*'
 
+pr: none
+
 stages:
   - stage: BuildAndRunOnAzure
-    displayName: "Building on Azure"
+    displayName: "Building Binaires"
     jobs:
       - job: RunOn
         displayName: "on Azure workers"
@@ -52,7 +54,7 @@ stages:
               ArtifactName: 'drop'
               publishLocation: 'Container'
 
-  - stage: SignArtifacts
+  - stage: Release_Artifacts
     displayName: "Release binaries to github"
     dependsOn:
       - BuildAndRunOnAzure
@@ -61,7 +63,7 @@ stages:
         pool:
           vmImage: 'ubuntu-latest'
         steps:
-          - checkout: none
+
           - task: DownloadBuildArtifacts@1
             inputs:
               buildType: 'current'
@@ -111,3 +113,16 @@ stages:
               changeLogCompareToRelease: 'lastFullRelease'
               changeLogType: 'commitBased'
               isDraft: true
+
+          - script: |
+              sudo apt-get update
+              sudo apt-get install awscli
+              cd "$(Build.SourcesDirectory)"/pkg/ami/marketplace
+              make install_aws_plugin
+              make build_release
+            env:
+              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+              AWS_DEFAULT_REGION: eu-west-1
+            displayName: "AMI: Deploy public image"
+
