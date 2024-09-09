@@ -53,6 +53,10 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     private long walBackoffUntil = -1;
     private volatile long writerTxn = -1;
 
+    public long getAppliedToParentTxn() {
+        return -1;
+    }
+
     public String getErrorMessage() {
         return errorMessage;
     }

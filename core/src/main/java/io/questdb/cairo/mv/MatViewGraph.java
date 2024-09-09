@@ -24,22 +24,77 @@
 
 package io.questdb.cairo.mv;
 
-import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
+import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ObjList;
+import io.questdb.std.SimpleReadWriteLock;
+
+import java.util.concurrent.locks.ReadWriteLock;
 
 public class MatViewGraph {
-    public MatViewGraph(CairoEngine engine) {
+    private final ConcurrentHashMap<DependentMatViewList> dependantViewsByTableName = new ConcurrentHashMap<>();
 
+    public synchronized void getAffectedViews(TableToken table, AffectedMatViewsSink sink) {
+        DependentMatViewList list = dependantViewsByTableName.get(table.getTableName());
+        if (list != null) {
+            // TODO: lock/unlock instead of sycnronized
+            sink.viewsList.addAll(list.matViews);
+        }
     }
 
-    public void getAffectedViews(TableToken table, AffectedMatViewsSink sink) {
-        
+    public synchronized void getAllParents(ObjList<CharSequence> sink) {
+        for (CharSequence key : dependantViewsByTableName.keySet()) {
+            DependentMatViewList list = dependantViewsByTableName.get(key);
+            if (list.matViews.size() > 0) {
+                sink.add(key);
+            }
+        }
+    }
+
+    public synchronized void upsertView(TableToken parent, MaterializedViewDefinition viewDefinition) {
+        DependentMatViewList list = dependantViewsByTableName.get(parent.getTableName());
+        if (list != null) {
+            // TODO: lock/unlock instead of sycnronized
+            for (int i = 0, size = list.matViews.size(); i < size; i++) {
+                MaterializedViewDefinition existingView = list.matViews.get(0);
+                if (existingView.getTableToken().equals(viewDefinition.getTableToken())) {
+                    list.matViews.set(i, viewDefinition);
+                    return;
+                }
+            }
+            list.matViews.add(viewDefinition);
+        } else {
+            list = new DependentMatViewList();
+            list.matViews.add(viewDefinition);
+            dependantViewsByTableName.put(parent.getTableName(), list);
+        }
     }
 
     public static class AffectedMatViewsSink {
         public ObjList<MaterializedViewDefinition> viewsList;
 
+    }
 
+    private static class DependentMatViewList {
+        private final ReadWriteLock lock = new SimpleReadWriteLock();
+        ObjList<MaterializedViewDefinition> matViews = new ObjList<>();
+        private long lastCommitWallClockMicro;
+        private long lastParentTxnSeq;
+
+        void readLock() {
+            lock.readLock().lock();
+        }
+
+        void unlockRead() {
+            lock.readLock().unlock();
+        }
+
+        void unlockWrite() {
+            lock.writeLock().unlock();
+        }
+
+        void writeLock() {
+            lock.writeLock().lock();
+        }
     }
 }
