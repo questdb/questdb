@@ -3477,6 +3477,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         if (entity) {
+            model.setSkipped(true);
             return factory;
         }
 
@@ -3993,7 +3994,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         executionContext,
                                         filter,
                                         executionContext.getSharedWorkerCount(),
-                                        nested.getWhereClause(),
+                                        locatePotentiallyFurtherNestedWhereClause(nested),
                                         factory.getMetadata()
                                 ),
                                 executionContext.getSharedWorkerCount()
@@ -5674,15 +5675,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return masterFactory.getTableToken() != null && masterFactory.getTableToken().equals(slaveFactory.getTableToken());
     }
 
+    // skips skipped models until finding a WHERE clause
     private ExpressionNode locatePotentiallyFurtherNestedWhereClause(QueryModel model) {
         ExpressionNode expr = null;
         QueryModel curr = model;
 
-        while (expr == null && curr != null) {
-            expr = curr.getWhereClause();
+        while (curr.isSkipped()) {
             curr = curr.getNestedModel();
         }
 
+        expr = curr.getWhereClause();
+        assert expr != null;
         return expr;
     }
 
