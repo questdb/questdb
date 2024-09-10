@@ -34,7 +34,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.StringSink;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_SIZE_MAP;
 
@@ -188,7 +187,6 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
         static class PgAttributeRecord implements Record {
             public final int[] intValues = new int[9];
             public final short[] shortValues = new short[9];
-            private final StringSink strBSink = new StringSink();
             public CharSequence name = null;
 
             @Override
@@ -220,12 +218,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
             @Override
             public CharSequence getStrB(int col) {
-                if (name != null) {
-                    strBSink.clear();
-                    strBSink.put(name);
-                    return strBSink;
-                }
-                return null;
+                return getStrA(col);
             }
 
             @Override

@@ -946,7 +946,7 @@ public class CairoEngine implements Closeable, WriterSource {
      * @param tableToken A current table token for the table.
      * @return The cached table metadata.
      */
-    public CairoTable metadataCacheGetTable(@NotNull TableToken tableToken) {
+    public @Nullable CairoTable metadataCacheGetTable(@NotNull TableToken tableToken) {
         final CairoTable table = cairoTables.get(tableToken.getDirName());
         if (table == null) {
             metadataCacheHydrateTable(tableToken, false, true);
@@ -967,7 +967,7 @@ public class CairoEngine implements Closeable, WriterSource {
         return cairoTables.size();
     }
 
-    public CairoTable metadataCacheGetVisibleTable(@NotNull TableToken tableToken) {
+    public @Nullable CairoTable metadataCacheGetVisibleTable(@NotNull TableToken tableToken) {
         if (Chars.startsWith(tableToken.getTableName(), configuration.getSystemTableNamePrefix())) {
             return null;
         }
@@ -1637,10 +1637,13 @@ public class CairoEngine implements Closeable, WriterSource {
         return cairoTables.get(tableToken.getDirName());
     }
 
-    @SuppressWarnings("TryFinallyCanBeTryWithResources")
-    private void metadataCacheHydrateTable(@NotNull TableToken token, @NotNull Path path,
-                                           @NotNull ColumnVersionReader columnVersionReader,
-                                           boolean blindUpsert, boolean infoLog) {
+    private void metadataCacheHydrateTable(
+            @NotNull TableToken token,
+            @NotNull Path path,
+            @NotNull ColumnVersionReader columnVersionReader,
+            boolean blindUpsert,
+            boolean infoLog
+    ) throws CairoException {
         if (infoLog) {
             LOG.info().$("hydrating metadata [table=").$(token.getTableName()).I$();
         }
