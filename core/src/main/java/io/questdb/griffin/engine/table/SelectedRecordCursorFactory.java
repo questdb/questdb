@@ -134,6 +134,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean supportsPageFrameCursor() {
+        return base.supportsPageFrameCursor();
+    }
+
+    @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return base.supportsUpdateRowId(tableToken);
     }
