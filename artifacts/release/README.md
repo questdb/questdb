@@ -38,7 +38,31 @@ mode that follows.
 
 Azure [Build Docker Image](https://dev.azure.com/questdb/questdb/_build?definitionId=22) pipeline will automatically
 build and release the docker image to Docker Hub once the tag is pushed to the repo.
-See previous versions of this readme to find out how to manually build and push the image.
+
+### Manual way of building the docker
+
+In case of [Build Docker Image](https://dev.azure.com/questdb/questdb/_build?definitionId=22) job fails, here are the
+steps to build the images.
+
+Prune docker images to ensure clean build
+
+```
+docker system prune -a
+```
+
+Build for multiple platforms at once and release version tag, `7.1.1` in this
+case. This will take some time. Please note that tag is used twice in the command line:
+
+```bash
+cd core
+docker buildx build --push --platform linux/arm64,linux/amd64 --tag questdb/questdb:7.1.1 --build-arg tag_name=7.1.1 .
+```
+
+Then build `latest`. This should be instant. Note tag name on the end of the command line.
+
+```
+docker buildx build --push --platform linux/arm64,linux/amd64 --tag questdb/questdb:latest --build-arg tag_name=7.1.1 .
+```
 
 ## Edit release notes
 
@@ -49,8 +73,17 @@ in https://github.com/questdb/questdb/releases
 and edit the release notes. When crafting new release note, please take previous release notes as style
 guidelines. Releases should not look too dissimilar.
 
-In case of errors in Azure pipeline, see previous versions of this readme to find out how to manually build
-the release binaries to attach to Github release.
+### Manual way to build QuestDB binaries
+
+In case of [Github Binaries Release](https://dev.azure.com/questdb/questdb/_build?definitionId=33) job failure, the
+binaries can be compiled using maven on Windows and Linux
+and uploaded to GH release page
+
+```bash
+git fetch --tags
+git checkout tags/7.1.1
+mvn clean package -DskipTests -P build-web-console,build-binaries
+```
 
 ## Release Java Library
 
