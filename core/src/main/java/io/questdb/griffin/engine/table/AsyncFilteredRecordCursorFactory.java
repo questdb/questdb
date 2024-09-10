@@ -173,7 +173,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     public boolean supportsFilterStealing() {
         return limitLoFunction == null;
     }
-
+    
     @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return base.supportsUpdateRowId(tableToken);
