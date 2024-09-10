@@ -84,6 +84,7 @@ impl<'a, const N: usize, const R: usize, T: DataPageSlicer> FixedColumnSink<'a, 
         Self { slicer, buffers, null_value }
     }
 }
+
 pub struct ReverseFixedColumnSink<'a, const N: usize, T: DataPageSlicer> {
     slicer: &'a mut T,
     buffers: &'a mut ColumnChunkBuffers,

@@ -43,12 +43,18 @@ pub struct RowGroupBuffers {
     pub column_bufs: Vec<ColumnChunkBuffers>,
 }
 
-// The metadata fields are accessed from Java.
+/// QuestDB-format Column Data
+///
+/// The memory is owned by the Rust code, read by Java.
+/// The `(data|aux)_vec` are vectors since these are grown dynamically.
+/// After each growth the `_size` and `_ptr` fields are updated
+/// and then accessed from Java via base pointer + field offset via `Unsafe`.
 #[repr(C)]
 pub struct ColumnChunkBuffers {
     pub data_size: usize,
     pub data_ptr: *mut u8,
     pub data_vec: Vec<u8>,
+
     pub aux_size: usize,
     pub aux_ptr: *mut u8,
     pub aux_vec: Vec<u8>,

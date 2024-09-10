@@ -23,10 +23,10 @@
  ******************************************************************************/
 #![allow(dead_code)]
 
+use anyhow::Context;
+use memmap2::Mmap;
 use std::fs::File;
 use std::path::Path;
-use memmap2::Mmap;
-use anyhow::Context;
 
 // const SYMBOL_MAP_OFFSET_HEADER_SIZE: usize = 64;
 
@@ -50,6 +50,6 @@ impl SymbolMapReader {
             .with_context(|| format!("Cannot open values file: {:?}", values_path))?;
         let values = unsafe { Mmap::map(&values_file) }
             .with_context(|| format!("Cannot mmap values file: {:?}", values_path))?;
-        Ok(Self {offsets, keys, values})
+        Ok(Self { offsets, keys, values })
     }
 }

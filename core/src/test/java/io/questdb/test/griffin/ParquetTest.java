@@ -226,30 +226,71 @@ public class ParquetTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by day;"
             );
 
-            insert("insert into x values (0, 0, 'abc')");  // 0
-            insert("insert into x values (1, 10000000, 'def')");  // 1
-            insert("insert into x values (2, 20000000, 'ghi')");  // 2
-            insert("insert into x values (3, 30000000, 'abc')");
-            insert("insert into x values (4, 40000000, 'def')");
-            insert("insert into x values (5, 50000000, 'ghi')");
-            insert("insert into x values (6, 60000000, 'abc')");
-            insert("insert into x values (7, 70000000, 'def')");
-            insert("insert into x values (8, 80000000, 'ghi')");
-            insert("insert into x values (9, 90000000, 'abc')");
+            // Day 0 -- using every symbol, two nulls
+            insert("insert into x values (0, 0, 'SYM_A')");
+            insert("insert into x values (1, 10000000, 'SYM_A')");
+            insert("insert into x values (2, 20000000, 'SYM_B_junk123')");
+            insert("insert into x values (3, 30000000, 'SYM_C_junk123123123123')");
+            insert("insert into x values (4, 40000000, 'SYM_D_junk12319993')");
+            insert("insert into x values (5, 50000000, 'SYM_E_junk9923')");
+            insert("insert into x values (6, 60000000, 'SYM_A')");
+            insert("insert into x values (7, 70000000, NULL)");
+            insert("insert into x values (8, 80000000, 'SYM_C_junk123123123123')");
+            insert("insert into x values (9, 90000000, NULL)");
+
+            // Day 1, NULLS, using two symbols
+            insert("insert into x values (10, 86400000000, 'SYM_B_junk123')");
+            insert("insert into x values (11, 86410000000, NULL)");
+            insert("insert into x values (12, 86420000000, 'SYM_B_junk123')");
+            insert("insert into x values (13, 86430000000, 'SYM_B_junk123')");
+            insert("insert into x values (14, 86440000000, 'SYM_B_junk123')");
+            insert("insert into x values (15, 86450000000, NULL)");
+            insert("insert into x values (16, 86460000000, NULL)");
+            insert("insert into x values (17, 86470000000, 'SYM_D_junk12319993')");
+            insert("insert into x values (18, 86480000000, NULL)");
+            insert("insert into x values (19, 86490000000, NULL)");
+
+            // Day 2, no nulls, using first and last symbols only
+            insert("insert into x values (20, 172800000000, 'SYM_A')");
+            insert("insert into x values (21, 172810000000, 'SYM_A')");
+            insert("insert into x values (22, 172820000000, 'SYM_A')");
+            insert("insert into x values (23, 172830000000, 'SYM_A')");
+            insert("insert into x values (24, 172840000000, 'SYM_E_junk9923')");
+            insert("insert into x values (25, 172850000000, 'SYM_E_junk9923')");
+            insert("insert into x values (26, 172860000000, 'SYM_E_junk9923')");
 
             TestUtils.LeakProneCode checkData = () -> {
                 assertQueryNoLeakCheck(
                         "id\tts\tname\n" +
-                                "0\t1970-01-01T00:00:00.000000Z\tabc\n" +
-                                "1\t1970-01-01T00:00:10.000000Z\tdef\n" +
-                                "2\t1970-01-01T00:00:20.000000Z\tghi\n" +
-                                "3\t1970-01-01T00:00:30.000000Z\tabc\n" +
-                                "4\t1970-01-01T00:00:40.000000Z\tdef\n" +
-                                "5\t1970-01-01T00:00:50.000000Z\tghi\n" +
-                                "6\t1970-01-01T00:01:00.000000Z\tabc\n" +
-                                "7\t1970-01-01T00:01:10.000000Z\tdef\n" +
-                                "8\t1970-01-01T00:01:20.000000Z\tghi\n" +
-                                "9\t1970-01-01T00:01:30.000000Z\tabc\n",
+                                "0\t1970-01-01T00:00:00.000000Z\tSYM_A\n" +
+                                "1\t1970-01-01T00:00:10.000000Z\tSYM_A\n" +
+                                "2\t1970-01-01T00:00:20.000000Z\tSYM_B_junk123\n" +
+                                "3\t1970-01-01T00:00:30.000000Z\tSYM_C_junk123123123123\n" +
+                                "4\t1970-01-01T00:00:40.000000Z\tSYM_D_junk12319993\n" +
+                                "5\t1970-01-01T00:00:50.000000Z\tSYM_E_junk9923\n" +
+                                "6\t1970-01-01T00:01:00.000000Z\tSYM_A\n" +
+                                "7\t1970-01-01T00:01:10.000000Z\t\n" +
+                                "8\t1970-01-01T00:01:20.000000Z\tSYM_C_junk123123123123\n" +
+                                "9\t1970-01-01T00:01:30.000000Z\t\n" +
+
+                                "10\t1970-01-02T00:00:00.000000Z\tSYM_B_junk123\n" +
+                                "11\t1970-01-02T00:00:10.000000Z\t\n" +
+                                "12\t1970-01-02T00:00:20.000000Z\tSYM_B_junk123\n" +
+                                "13\t1970-01-02T00:00:30.000000Z\tSYM_B_junk123\n" +
+                                "14\t1970-01-02T00:00:40.000000Z\tSYM_B_junk123\n" +
+                                "15\t1970-01-02T00:00:50.000000Z\t\n" +
+                                "16\t1970-01-02T00:01:00.000000Z\t\n" +
+                                "17\t1970-01-02T00:01:10.000000Z\tSYM_D_junk12319993\n" +
+                                "18\t1970-01-02T00:01:20.000000Z\t\n" +
+                                "19\t1970-01-02T00:01:30.000000Z\t\n" +
+
+                                "20\t1970-01-03T00:00:00.000000Z\tSYM_A\n" +
+                                "21\t1970-01-03T00:00:10.000000Z\tSYM_A\n" +
+                                "22\t1970-01-03T00:00:20.000000Z\tSYM_A\n" +
+                                "23\t1970-01-03T00:00:30.000000Z\tSYM_A\n" +
+                                "24\t1970-01-03T00:00:40.000000Z\tSYM_E_junk9923\n" +
+                                "25\t1970-01-03T00:00:50.000000Z\tSYM_E_junk9923\n" +
+                                "26\t1970-01-03T00:01:00.000000Z\tSYM_E_junk9923\n",
                         "x",
                         "ts",
                         true,

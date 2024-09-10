@@ -8,7 +8,7 @@ use crate::parquet_read::column_sink::var::{
 };
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::dict_decoder::{FixedDictDecoder, VarDictDecoder};
-use crate::parquet_read::slicer::rle::RleDictionarySlicer;
+use crate::parquet_read::slicer::rle::{RleDictionarySlicer, RleLocalIsGlobalSymbolDecoder};
 use crate::parquet_read::slicer::{
     BooleanBitmapSlicer, DataPageFixedSlicer, DeltaBinaryPackedSlicer, DeltaBytesArraySlicer,
     DeltaLengthArraySlicer, PlainVarSlicer, ValueConvertSlicer,
@@ -72,6 +72,7 @@ const LONG256_NULL: [u8; 32] = unsafe { std::mem::transmute([i64::MIN; 4]) };
 const BYTE_NULL: [u8; 1] = [0u8];
 const INT_NULL: [u8; 4] = i32::MIN.to_le_bytes();
 const SHORT_NULL: [u8; 2] = 0i16.to_le_bytes();
+const SYMBOL_NULL: [u8; 4] = i32::MIN.to_le_bytes();
 const LONG_NULL: [u8; 8] = i64::MIN.to_le_bytes();
 const DOUBLE_NULL: [u8; 8] = unsafe { std::mem::transmute([f64::NAN]) };
 const FLOAT_NULL: [u8; 4] = unsafe { std::mem::transmute([f32::NAN]) };
@@ -609,12 +610,18 @@ pub fn decoder_page(
                 }
 
                 (Encoding::RleDictionary, Some(_dict_page), ColumnType::Symbol) => {
-                    eprintln!("TODO(amunra) implement symbol support");
-                    eprintln!("dict page: {:?}", dict);
-                    eprintln!("page: {:?}", page);
-                    let page_buffer = page.buffer();
-                    eprintln!("page_buffer: {:?}", page_buffer);
-                    Err(encoding_error)
+                    let mut slicer = RleLocalIsGlobalSymbolDecoder::try_new(
+                        values_buffer,
+                        row_count,
+                        &SYMBOL_NULL,
+                    )?;
+                    decode_page(
+                        version,
+                        page,
+                        row_count,
+                        &mut FixedIntColumnSink::new(&mut slicer, bufs, &SYMBOL_NULL),
+                    )?;
+                    Ok(row_count)
                 }
 
                 _ => Err(encoding_error),
