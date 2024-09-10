@@ -35,10 +35,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
+import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class MaxNumericFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "max(V)";
@@ -52,31 +54,72 @@ public class MaxNumericFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        boolean anyFloats = false;
+        final int[] counters = new int[11];
 
         for (int i = 0; i < args.size(); i++) {
             final Function arg = args.getQuick(i);
             final int type = arg.getType();
+            counters[type]++;
             switch (type) {
                 case ColumnType.FLOAT:
                 case ColumnType.DOUBLE:
-                    anyFloats = true;
                 case ColumnType.LONG:
                 case ColumnType.INT:
                 case ColumnType.SHORT:
                 case ColumnType.BYTE:
+                case ColumnType.TIMESTAMP:
                     continue;
                 default:
                     throw SqlException.position(argPositions.getQuick(i)).put("unsupported type");
             }
         }
 
-        if (anyFloats) {
+        if (counters[ColumnType.FLOAT] > 0) {
+            return new CastDoubleToFloatFunctionFactory()
+                    .newInstance(position,
+                            new ObjList<>(new MaxDoubleRecordFunction(new ObjList<>(args), argPositions)),
+                            null, configuration, sqlExecutionContext);
+        }
+
+        if (counters[ColumnType.DOUBLE] > 0) {
             return new MaxDoubleRecordFunction(new ObjList<>(args), argPositions);
-        } else {
+        }
+
+        if (counters[ColumnType.LONG] > 0) {
             return new MaxLongRecordFunction(new ObjList<>(args), argPositions);
         }
+
+        if (counters[ColumnType.TIMESTAMP] > 0) {
+            return new CastLongToTimestampFunctionFactory()
+                    .newInstance(position,
+                            new ObjList<>(new MaxLongRecordFunction(new ObjList<>(args), argPositions)),
+                            null, configuration, sqlExecutionContext);
+        }
+
+        if (counters[ColumnType.INT] > 0) {
+            return new CastLongToIntFunctionFactory()
+                    .newInstance(position,
+                            new ObjList<>(new MaxLongRecordFunction(new ObjList<>(args), argPositions)),
+                            null, configuration, sqlExecutionContext);
+        }
+
+        if (counters[ColumnType.SHORT] > 0) {
+            return new CastLongToShortFunctionFactory()
+                    .newInstance(position,
+                            new ObjList<>(new MaxLongRecordFunction(new ObjList<>(args), argPositions)),
+                            null, configuration, sqlExecutionContext);
+        }
+
+        if (counters[ColumnType.BYTE] > 0) {
+            return new CastLongToByteFunctionFactory()
+                    .newInstance(position,
+                            new ObjList<>(new MaxLongRecordFunction(new ObjList<>(args), argPositions)),
+                            null, configuration, sqlExecutionContext);
+        }
+
+        throw SqlException.$(-1, "unreachable code!");
     }
+
 
     private static class MaxDoubleRecordFunction extends DoubleFunction implements MultiArgFunction {
         final IntList argPositions;
@@ -104,7 +147,7 @@ public class MaxNumericFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return "max[DOUBLE]";
+            return "max[VARDOUBLE]";
         }
 
         @Override
@@ -139,7 +182,7 @@ public class MaxNumericFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return "max[LONG]";
+            return "max[VARLONG]";
         }
 
         @Override
