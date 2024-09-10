@@ -32,15 +32,58 @@ import org.junit.Test;
 public class MaxNumericFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
-    public void tesLongMaxFunctionFactory() throws Exception {
-        assertQuery("max\n4\n", "select max(1, 4)");
-        assertQuery("max\n12\n", "select max(1, 4, 3, 12, 8)");
+    public void testByteMax() throws Exception {
+        assertSqlWithTypes("max\n40:BYTE\n", "select max(1::byte, 40::byte)");
+        assertSqlWithTypes("max\n12:BYTE\n", "select max(1::byte, 4::byte, 3::byte, 12::byte, 8::byte)");
     }
 
     @Test
-    public void testDoubleMaxFunctionFactory() throws Exception {
-        assertQuery("max\n9.2\n", "select max(5.3, 9.2)");
-        assertQuery("max\n11.6\n", "select max(5.3, 9.2, 6.5, 11.6, 3.2)");
+    public void testDoubleMax() throws Exception {
+        assertSqlWithTypes("max\n9.2:DOUBLE\n", "select max(5.3, 9.2)");
+        assertSqlWithTypes("max\n11.6:DOUBLE\n", "select max(5.3, 9.2, 6.5, 11.6, 3.2)");
+    }
+
+    @Test
+    public void testFloatMax() throws Exception {
+        assertSqlWithTypes("max\n9.2000:FLOAT\n", "select max(5.3f, 9.2f)");
+        assertSqlWithTypes("max\n11.6000:FLOAT\n", "select max(5.3f, 9.2f, 6.5f, 11.6f, 3.2f)");
+    }
+
+    @Test
+    public void testIntMax() throws Exception {
+        assertSqlWithTypes("max\n40:INT\n", "select max(1, 40)");
+        assertSqlWithTypes("max\n12:INT\n", "select max(1, 4, 3, 12, 8)");
+    }
+
+    @Test
+    public void testLongMax() throws Exception {
+        assertSqlWithTypes("max\n40:LONG\n", "select max(1L, 40L)");
+        assertSqlWithTypes("max\n12:LONG\n", "select max(1L, 4L, 3L, 12L, 8L)");
+    }
+
+    @Test
+    public void testShortMax() throws Exception {
+        assertSqlWithTypes("max\n40:SHORT\n", "select max(1::short, 40::short)");
+        assertSqlWithTypes("max\n12:SHORT\n", "select max(1::short, 4::short, 3::short, 12::short, 8::short)");
+    }
+
+
+    @Test
+    public void testTypeHierarchyIsRespectedMax() throws Exception {
+//        assertSqlWithTypes("max\n4:INT\n", "select max(1, 4)");
+//        assertSqlWithTypes("max\n4:LONG\n", "select max(1, 4L)");
+//        assertSqlWithTypes("max\n4:LONG\n", "select max(1::short, 4L)");
+//        assertSqlWithTypes("max\n4:SHORT\n", "select max(1::short, 4::byte)");
+//        assertSqlWithTypes("max\n4.0000:FLOAT\n", "select max(1::short, 4f)");
+//        assertSqlWithTypes("max\n4.0:DOUBLE\n", "select max(1::short, 4.0)");
+        assertSqlWithTypes("max\n4.0:DOUBLE\n", "select max(1f, 4.0::double)");
+//        assertSqlWithTypes("max\n4.0000:FLOAT\n", "select max(1f, 4::int)");
+    }
+
+    @Test
+    public void testUnsupportedTypesMax() throws Exception {
+        assertException("select max(5, 5.2, 'abc', 2)", 19, "unsupported type");
+        assertException("select max(5, 5.2, 'abc'::varchar, 2)", 24, "unsupported type");
     }
 
     @Override

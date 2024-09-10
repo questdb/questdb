@@ -59,7 +59,7 @@ public class MaxNumericFunctionFactory implements FunctionFactory {
         for (int i = 0; i < args.size(); i++) {
             final Function arg = args.getQuick(i);
             final int type = arg.getType();
-            counters[type]++;
+
             switch (type) {
                 case ColumnType.FLOAT:
                 case ColumnType.DOUBLE:
@@ -68,10 +68,15 @@ public class MaxNumericFunctionFactory implements FunctionFactory {
                 case ColumnType.SHORT:
                 case ColumnType.BYTE:
                 case ColumnType.TIMESTAMP:
+                    counters[type]++;
                     continue;
                 default:
                     throw SqlException.position(argPositions.getQuick(i)).put("unsupported type");
             }
+        }
+
+        if (counters[ColumnType.DOUBLE] > 0) {
+            return new MaxDoubleRecordFunction(new ObjList<>(args), argPositions);
         }
 
         if (counters[ColumnType.FLOAT] > 0) {
@@ -81,9 +86,6 @@ public class MaxNumericFunctionFactory implements FunctionFactory {
                             null, configuration, sqlExecutionContext);
         }
 
-        if (counters[ColumnType.DOUBLE] > 0) {
-            return new MaxDoubleRecordFunction(new ObjList<>(args), argPositions);
-        }
 
         if (counters[ColumnType.LONG] > 0) {
             return new MaxLongRecordFunction(new ObjList<>(args), argPositions);
@@ -117,7 +119,11 @@ public class MaxNumericFunctionFactory implements FunctionFactory {
                             null, configuration, sqlExecutionContext);
         }
 
-        throw SqlException.$(-1, "unreachable code!");
+
+        assert false;
+
+        // unreachable
+        return null;
     }
 
 
