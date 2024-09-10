@@ -5676,13 +5676,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // skips skipped models until finding a WHERE clause
     private ExpressionNode locatePotentiallyFurtherNestedWhereClause(QueryModel model) {
         QueryModel curr = model;
+        ExpressionNode expr = curr.getWhereClause();
 
-        while (curr.isSkipped()) {
+        while (curr.isSkipped() && expr == null) {
+            expr = curr.getWhereClause();
             curr = curr.getNestedModel();
         }
 
-        final ExpressionNode expr = curr.getWhereClause();
-        assert expr != null;
+        if (expr == null) {
+            expr = curr.getWhereClause();
+        }
+
         return expr;
     }
 
