@@ -6738,6 +6738,48 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelFilterNullPointerExceptionCase3() throws Exception {
+        String ddl = "CREATE TABLE foo (\n" +
+                "a timestamp,\n" +
+                "b symbol,\n" +
+                "c int,\n" +
+                "d int,\n" +
+                "e varchar,\n" +
+                "f long,\n" +
+                "g timestamp,\n" +
+                "h timestamp,\n" +
+                "i double\n" +
+                ") timestamp(a) partition by day wal";
+
+        String query = "WITH raw AS (\n" +
+                "    SELECT b, c, d, e, f, g, h, a, i FROM foo\n" +
+                "    WHERE a >= dateadd('y', -1, now()) AND b != ''\n" +
+                "), summary AS (\n" +
+                "SELECT\n" +
+                "    b,\n" +
+                "    c,\n" +
+                "    d,\n" +
+                "    e,\n" +
+                "    f,\n" +
+                "    g,\n" +
+                "    h,\n" +
+                "    a,\n" +
+                "    MAX(i) j\n" +
+                "FROM raw\n" +
+                ")\n" +
+                "SELECT * FROM summary;";
+
+        assertQuery(
+                "b\tc\td\te\tf\tg\th\ta\tj\n",
+                query,
+                ddl,
+                "",
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testRecordJoinExpansion() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x(a int)");
