@@ -107,6 +107,10 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable, Ta
         o3MaxLag = -1;
         batchO3MaxLag = -1;
         batchSize = -1;
+        baseTableName = null;
+        query = null;
+        intervalMicros = -1;
+        startEpochMicros = -1;
     }
 
     public MaterializedViewDefinition generateDefinition() {
@@ -241,6 +245,10 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable, Ta
         return walEnabled;
     }
 
+    public void setBaseTableName(CharSequence baseTableName) {
+        this.baseTableName = baseTableName;
+    }
+
     public void setBatchO3MaxLag(long batchO3MaxLag) {
         this.batchO3MaxLag = batchO3MaxLag;
     }
@@ -267,6 +275,10 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable, Ta
         setIndexFlags0(columnIndex * 2 + 1, indexFlag, indexValueBlockSize);
     }
 
+    public void setIntervalMicros(long intervalMicros) {
+        this.intervalMicros = intervalMicros;
+    }
+
     public void setMaxUncommittedRows(int maxUncommittedRows) {
         this.maxUncommittedRows = maxUncommittedRows;
     }
@@ -283,8 +295,16 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable, Ta
         this.partitionBy = partitionBy;
     }
 
+    public void setQuery(CharSequence query) {
+        this.query = query;
+    }
+
     public void setQueryModel(QueryModel queryModel) {
         this.queryModel = queryModel;
+    }
+
+    public void setStartEpochMicros(long startEpochMicros) {
+        this.startEpochMicros = startEpochMicros;
     }
 
     public void setTimestamp(ExpressionNode timestamp) {

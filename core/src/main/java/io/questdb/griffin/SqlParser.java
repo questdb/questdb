@@ -24,7 +24,10 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.model.*;
@@ -68,6 +71,7 @@ public class SqlParser {
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCount0Ref = this::rewriteCount0;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteJsonExtractCast0Ref = this::rewriteJsonExtractCast0;
     private final PostOrderTreeTraversalAlgo.Visitor rewritePgCast0Ref = this::rewritePgCast0;
+    private final CharSequenceHashSet tableNames = new CharSequenceHashSet();
     private final ObjList<ExpressionNode> tempExprNodes = new ObjList<>();
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCase0Ref = this::rewriteCase0;
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> topLevelWithModel = new LowerCaseCharSequenceObjHashMap<>();
@@ -129,6 +133,32 @@ public class SqlParser {
 
     public static boolean isFullSampleByPeriod(ExpressionNode n) {
         return n != null && (n.type == ExpressionNode.CONSTANT || (n.type == ExpressionNode.LITERAL && isValidSampleByPeriodLetter(n.token)));
+    }
+
+    private static void collectTables(QueryModel model, CharSequenceHashSet tableNames) {
+        QueryModel m = model;
+        do {
+            final CharSequence t = m.getTableName();
+            if (t != null) {
+                tableNames.add(t);
+            }
+
+            final ObjList<QueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final QueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel == m) {
+                    continue;
+                }
+                collectTables(joinModel, tableNames);
+            }
+
+            final QueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                collectTables(unionModel, tableNames);
+            }
+
+            m = m.getNestedModel();
+        } while (m != null);
     }
 
     private static SqlException err(GenericLexer lexer, @Nullable CharSequence tok, @NotNull String msg) {
@@ -596,24 +626,23 @@ public class SqlParser {
 
             // find base table if not set
             if (baseTableName == null) {
-                QueryModel m = queryModel;
-                do {
-                    final CharSequence t = m.getTableName();
-                    if (t != null) {
-                        if (baseTableName == null) {
-                            baseTableName = t;
-                        } else if (!Chars.equals(baseTableName, t)) {
-                            throw SqlException.$(lexer.lastTokenPosition(), "More than one table used in query, base table has to be set using 'WITH BASE'");
-                        }
-                    }
-                    m = m.getNestedModel();
-                } while (m != null);
+                tableNames.clear();
+                collectTables(queryModel, tableNames);
+                if (tableNames.size() < 1) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "Missing base table, materialized views have to be based on a table");
+                }
+                if (tableNames.size() > 1) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "More than one table used in query, base table has to be set using 'WITH BASE'");
+                }
+                baseTableName = tableNames.get(0);
             }
-            TableToken tt = executionContext.getTableToken(baseTableName);
+            model.setBaseTableName(baseTableName.toString());
 
             // TODO: check that query is SAMPLE BY (or GROUP BY timestamp), reject if not
 
             // TODO: set SAMPLE BY interval on model
+
+            // TODO: set query on model
 
             // TODO: find dedup keys and set them on the model
 
