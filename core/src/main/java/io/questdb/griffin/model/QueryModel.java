@@ -195,6 +195,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private QueryModel updateTableModel;
     private TableToken updateTableToken;
     private ExpressionNode whereClause;
+
     private QueryModel() {
         joinModels.add(this);
     }
