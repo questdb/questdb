@@ -128,7 +128,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.finance.SpreadFunctionFactory,
             io.questdb.griffin.engine.functions.finance.MidPriceFunctionFactory,
             io.questdb.griffin.engine.functions.finance.WeightedMidPriceFunctionFactory,
-
+            io.questdb.griffin.engine.functions.finance.MaxNumericFunctionFactory,
 
             // query activity functions
             io.questdb.griffin.engine.functions.activity.CancelQueryFunctionFactory,
