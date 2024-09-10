@@ -113,6 +113,21 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCannotInsertIntoMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select * from long_sequence(10))");
+            ddl("create materialized view x_mv as (select count() from x)");
+            try {
+                insert("insert into x_mv values (1)");
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot insert into materialized view [view=x_mv]");
+                Assert.assertEquals(12, e.getPosition());
+            }
+        });
+    }
+
+    @Test
     public void testGeoHash() throws Exception {
         final TimestampFunction timestampFunction = new TimestampFunction() {
             private long last = TimestampFormatUtils.parseTimestamp("2019-03-10T00:00:00.000000Z");
@@ -362,7 +377,6 @@ public class InsertTest extends AbstractCairoTest {
         assertInsertTimestamp("seq\tts\n" + "1\t1970-01-01T00:00:00.123456Z\n", "with x as (select 1, '123456'::varchar) insert atomic into tab select * from x", null, false);
     }
 
-
     @Test
     public void testInsertContextSwitch() throws Exception {
         assertMemoryLeak(() -> {
@@ -608,6 +622,19 @@ public class InsertTest extends AbstractCairoTest {
             String expected = "timestamp\tfield\tvalue\n" + "2019-12-04T13:20:49.000000Z\tX\t123.33\n";
 
             assertReaderCheckWal(expected, "TS");
+        });
+    }
+
+    @Test
+    public void testInsertIntoNonExistingTable() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                insert("insert into tab values (1)");
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=tab]");
+                Assert.assertEquals(12, e.getPosition());
+            }
         });
     }
 

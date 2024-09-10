@@ -1713,6 +1713,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     break;
                 default:
                     final InsertModel insertModel = (InsertModel) executionModel;
+                    CharSequence tableName = insertModel.getTableName();
+                    TableToken tt = engine.getTableTokenIfExists(tableName);
+                    if (tt != null && tt.isMatView()) {
+                        throw SqlException.position(insertModel.getTableNameExpr().position).put("cannot insert into materialized view [view=").put(tableName).put(']');
+                    }
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
                     if (insertModel.getQueryModel() != null) {
                         sqlId = queryRegistry.register(sqlText, executionContext);
