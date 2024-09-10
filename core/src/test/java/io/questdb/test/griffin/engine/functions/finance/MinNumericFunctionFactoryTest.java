@@ -85,6 +85,35 @@ public class MinNumericFunctionFactoryTest extends AbstractFunctionFactoryTest {
         assertException("select min(5, 5.2, 'abc'::varchar, 2)", 24, "unsupported type");
     }
 
+    @Test
+    public void testMinNumericFunctionFactoryWithData() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select rnd_int() a, rnd_int() b from long_sequence(20))");
+            drainWalQueue();
+            assertSqlWithTypes("min\n" +
+                    "-1532328444:INT\n" +
+                    "-409854405:INT\n" +
+                    "-1792928964:INT\n" +
+                    "-1432278050:INT\n" +
+                    "592859671:INT\n" +
+                    "-1849627000:INT\n" +
+                    "806715481:INT\n" +
+                    "-1148479920:INT\n" +
+                    "-1575378703:INT\n" +
+                    "-1715058769:INT\n" +
+                    "-1153445279:INT\n" +
+                    "-1975183723:INT\n" +
+                    "1530831067:INT\n" +
+                    "-2041844972:INT\n" +
+                    "-948263339:INT\n" +
+                    "-727724771:INT\n" +
+                    "-1844391305:INT\n" +
+                    "1569490116:INT\n" +
+                    "-847531048:INT\n" +
+                    "-1125169127:INT\n", "select min(a, b) from x");
+        });
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new MinNumericFunctionFactory();

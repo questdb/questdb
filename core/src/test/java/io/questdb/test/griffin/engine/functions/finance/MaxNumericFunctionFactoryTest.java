@@ -85,6 +85,35 @@ public class MaxNumericFunctionFactoryTest extends AbstractFunctionFactoryTest {
         assertException("select max(5, 5.2, 'abc'::varchar, 2)", 24, "unsupported type");
     }
 
+    @Test
+    public void testMaxNumericFunctionFactoryWithData() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select rnd_int() a, rnd_int() b from long_sequence(20))");
+            drainWalQueue();
+            assertSqlWithTypes("max\n" +
+                    "1868723706:INT\n" +
+                    "-1101822104:INT\n" +
+                    "339631474:INT\n" +
+                    "-1252906348:INT\n" +
+                    "1125579207:INT\n" +
+                    "-1458132197:INT\n" +
+                    "-1191262516:INT\n" +
+                    "73575701:INT\n" +
+                    "-1436881714:INT\n" +
+                    "1548800833:INT\n" +
+                    "315515118:INT\n" +
+                    "426455968:INT\n" +
+                    "-1520872171:INT\n" +
+                    "1904508147:INT\n" +
+                    "1404198:INT\n" +
+                    "-85170055:INT\n" +
+                    "1326447242:INT\n" +
+                    "1631244228:INT\n" +
+                    "1545253512:INT\n" +
+                    "1573662097:INT\n", "select max(a, b) from x");
+        });
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new MaxNumericFunctionFactory();
