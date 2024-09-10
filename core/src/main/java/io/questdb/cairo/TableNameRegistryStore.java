@@ -457,7 +457,8 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                         boolean isProtected = tableFlagResolver.isProtected(tableName);
                         boolean isSystem = tableFlagResolver.isSystem(tableName);
                         boolean isPublic = tableFlagResolver.isPublic(tableName);
-                        token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL, isSystem, isProtected, isPublic);
+                        boolean isWal = tableType == TableUtils.TABLE_TYPE_WAL || tableType == TableUtils.TABLE_TYPE_MAT;
+                        token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_MAT, isWal, isSystem, isProtected, isPublic);
                     }
                     dirNameToTableTokenMap.put(dirName, ReverseTableMapItem.ofDropped(token));
                 }
@@ -470,8 +471,8 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                     boolean isProtected = tableFlagResolver.isProtected(tableName);
                     boolean isSystem = tableFlagResolver.isSystem(tableName);
                     boolean isPublic = tableFlagResolver.isPublic(tableName);
-                    // TODO: save isMatView flag into tables file, hardcoded as 'false' for now
-                    final TableToken token = new TableToken(tableName, dirName, tableId, false, tableType == TableUtils.TABLE_TYPE_WAL, isSystem, isProtected, isPublic);
+                    boolean isWal = tableType == TableUtils.TABLE_TYPE_WAL || tableType == TableUtils.TABLE_TYPE_MAT;
+                    final TableToken token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_MAT, isWal, isSystem, isProtected, isPublic);
                     TableToken existing = tableNameToTableTokenMap.get(tableName);
 
                     if (existing != null) {

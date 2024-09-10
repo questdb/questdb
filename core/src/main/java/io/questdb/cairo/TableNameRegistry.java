@@ -109,7 +109,7 @@ public interface TableNameRegistry extends Closeable {
      * @param isWal     true if table is WAL enabled
      * @return table token or null if table name with the same tableId, private name is already registered
      */
-    TableToken lockTableName(String tableName, String dirName, int tableId, boolean isWal);
+    TableToken lockTableName(String tableName, String dirName, int tableId, boolean isMatView, boolean isWal);
 
     /**
      * Purges token from registry after table, and it's WAL segments have been removed on disk. This method is

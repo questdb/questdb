@@ -881,24 +881,24 @@ public class CairoEngine implements Closeable, WriterSource {
         return createTableLock.putIfAbsent(tableToken.getTableName(), tableToken) == null;
     }
 
-    public TableToken lockTableName(CharSequence tableName, boolean isWal) {
+    public TableToken lockTableName(CharSequence tableName, boolean isMatView, boolean isWal) {
         int tableId = (int) getTableIdGenerator().getNextId();
-        return lockTableName(tableName, tableId, isWal);
+        return lockTableName(tableName, tableId, isMatView, isWal);
     }
 
     @Nullable
-    public TableToken lockTableName(CharSequence tableName, int tableId, boolean isWal) {
+    public TableToken lockTableName(CharSequence tableName, int tableId, boolean isMatView, boolean isWal) {
         String tableNameStr = Chars.toString(tableName);
         final String dirName = TableUtils.getTableDir(configuration.mangleTableDirNames(), tableNameStr, tableId, isWal);
-        return lockTableName(tableNameStr, dirName, tableId, isWal);
+        return lockTableName(tableNameStr, dirName, tableId, isMatView, isWal);
     }
 
     @SuppressWarnings("unused")
     @Nullable
-    public TableToken lockTableName(CharSequence tableName, String dirName, int tableId, boolean isWal) {
+    public TableToken lockTableName(CharSequence tableName, String dirName, int tableId, boolean isMatView, boolean isWal) {
         validNameOrThrow(tableName);
         String tableNameStr = Chars.toString(tableName);
-        return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isWal);
+        return tableNameRegistry.lockTableName(tableNameStr, dirName, tableId, isMatView, isWal);
     }
 
     public void notifyDropped(TableToken tableToken) {
@@ -1316,7 +1316,7 @@ public class CairoEngine implements Closeable, WriterSource {
         final int tableId = (int) tableIdGenerator.getNextId();
 
         while (true) {
-            TableToken tableToken = lockTableName(tableName, tableId, struct.isWalEnabled());
+            TableToken tableToken = lockTableName(tableName, tableId, struct.isMatView(), struct.isWalEnabled());
             if (tableToken == null) {
                 if (ifNotExists) {
                     tableToken = getTableTokenIfExists(tableName);
@@ -1383,7 +1383,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
         fromPath.of(root).concat(fromTableToken).$();
 
-        TableToken toTableToken = lockTableName(toTableName, fromTableToken.getTableId(), false);
+        TableToken toTableToken = lockTableName(toTableName, fromTableToken.getTableId(), false, false);
 
         if (toTableToken == null) {
             LOG.error()

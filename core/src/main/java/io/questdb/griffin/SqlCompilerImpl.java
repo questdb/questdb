@@ -3468,6 +3468,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         @Override
+        public boolean isMatView() {
+            return true;
+        }
+
+        @Override
         public boolean isSequential(int columnIndex) {
             return model.isSequential(columnIndex);
         }
@@ -3579,6 +3584,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         @Override
         public boolean isIndexed(int columnIndex) {
             return model.isIndexed(columnIndex);
+        }
+
+        @Override
+        public boolean isMatView() {
+            return false;
         }
 
         @Override

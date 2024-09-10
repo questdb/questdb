@@ -753,7 +753,8 @@ public final class TestUtils {
 
     public static TableToken create(TableModel model, CairoEngine engine) {
         int tableId = (int) engine.getTableIdGenerator().getNextId();
-        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, model.isWalEnabled());
+        // todo: Update TableModel for Materialized Views. Maybe.
+        TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false, model.isWalEnabled());
         if (tableToken == null) {
             throw new RuntimeException("table already exists: " + model.getTableName());
         }

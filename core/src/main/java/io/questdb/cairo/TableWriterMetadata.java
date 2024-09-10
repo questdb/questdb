@@ -48,11 +48,6 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
-    public boolean isSoftLink() {
-        return false;
-    }
-
-    @Override
     public void close() {
         // nothing to release
     }
@@ -117,8 +112,18 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public boolean isMatView() {
+        return false;
+    }
+
+    @Override
     public boolean isSequential(int columnIndex) {
         return ((WriterTableColumnMetadata) getColumnMetadata(columnIndex)).sequential;
+    }
+
+    @Override
+    public boolean isSoftLink() {
+        return false;
     }
 
     @Override

@@ -358,7 +358,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         clear();
         this.circuitBreaker = circuitBreaker;
         this.tableName = tableName;
-        this.tableToken = cairoEngine.lockTableName(tableName, false);
+        this.tableToken = cairoEngine.lockTableName(tableName, false, false);
         if (tableToken == null) {
             tableToken = cairoEngine.verifyTableName(tableName);
         }
@@ -1622,6 +1622,11 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         @Override
         public boolean isIndexed(int columnIndex) {
             return !ignoreColumnIndexedFlag && Numbers.decodeHighInt(columnBits.getQuick(columnIndex)) != 0;
+        }
+
+        @Override
+        public boolean isMatView() {
+            return false;
         }
 
         @Override

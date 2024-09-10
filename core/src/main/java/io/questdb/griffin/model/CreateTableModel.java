@@ -45,6 +45,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private long batchO3MaxLag = -1;
     private long batchSize = -1;
     private boolean ignoreIfExists = false;
+    private boolean isMatView;
     private ExpressionNode likeTableName;
     private int maxUncommittedRows;
     private ExpressionNode name;
@@ -224,6 +225,11 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     }
 
     @Override
+    public boolean isMatView() {
+        return false;
+    }
+
+    @Override
     public boolean isSequential(int columnIndex) {
         // todo: expose this flag on CREATE TABLE statement
         return false;
@@ -262,6 +268,10 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
 
     public void setLikeTableName(ExpressionNode tableName) {
         this.likeTableName = tableName;
+    }
+
+    public void setMatView(boolean matView) {
+        isMatView = matView;
     }
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {

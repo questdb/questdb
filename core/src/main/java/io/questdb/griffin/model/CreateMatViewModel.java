@@ -226,6 +226,11 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable, Ta
     }
 
     @Override
+    public boolean isMatView() {
+        return true;
+    }
+
+    @Override
     public boolean isSequential(int columnIndex) {
         // todo: expose this flag on CREATE TABLE statement
         return false;
