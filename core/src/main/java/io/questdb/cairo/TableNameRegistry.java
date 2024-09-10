@@ -125,9 +125,9 @@ public interface TableNameRegistry extends Closeable {
     void reconcile();
 
     /**
-     * Registers table name and releases lock. This method must be called after {@link #lockTableName(String, String, int, boolean)}.
+     * Registers table name and releases lock. This method must be called after {@link #lockTableName(String, String, int, boolean, boolean)}.
      *
-     * @param tableToken table token returned by {@link #lockTableName(String, String, int, boolean)}
+     * @param tableToken table token returned by {@link #lockTableName(String, String, int, boolean, boolean)}
      */
     void registerName(TableToken tableToken);
 
@@ -167,10 +167,10 @@ public interface TableNameRegistry extends Closeable {
     void resetMemory();
 
     /**
-     * Unlocks table name. This method must be called after {@link #lockTableName(String, String, int, boolean)}.
+     * Unlocks table name. This method must be called after {@link #lockTableName(String, String, int, boolean, boolean)}.
      * If table name is not locked, does nothing.
      *
-     * @param tableToken table token returned by {@link #lockTableName(String, String, int, boolean)}
+     * @param tableToken table token returned by {@link #lockTableName(String, String, int, boolean, boolean)}
      */
     void unlockTableName(TableToken tableToken);
 }

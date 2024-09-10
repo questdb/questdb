@@ -58,13 +58,13 @@ public interface ExecutionModel {
 
         static {
             typeNameMap[ExecutionModel.QUERY] = "Query";
-            typeNameMap[ExecutionModel.CREATE_TABLE] = "Create Table";
+            typeNameMap[ExecutionModel.CREATE_TABLE] = "Create";
             typeNameMap[ExecutionModel.RENAME_TABLE] = "Rename";
-            typeNameMap[ExecutionModel.INSERT] = "Insert Into";
+            typeNameMap[ExecutionModel.INSERT] = "Insert into";
             typeNameMap[ExecutionModel.COPY] = "Copy";
             typeNameMap[ExecutionModel.UPDATE] = "Update";
             typeNameMap[ExecutionModel.EXPLAIN] = "Explain";
-            typeNameMap[ExecutionModel.CREATE_MAT_VIEW] = "Create Materialized View";
+            typeNameMap[ExecutionModel.CREATE_MAT_VIEW] = "Create materialized";
         }
     }
 }

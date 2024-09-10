@@ -128,6 +128,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             this.queryExecutors.extendAndSet(CompiledQuery.CREATE_USER, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.ALTER_USER, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.CANCEL_QUERY, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.CREATE_MAT_VIEW, sendConfirmation);
             // Query types start with 1 instead of 0, so we have to add 1 to the expected size.
             // todo: implement executor for CREATE_MAT_VIEW
             assert this.queryExecutors.size() == (CompiledQuery.TYPES_COUNT + 1);

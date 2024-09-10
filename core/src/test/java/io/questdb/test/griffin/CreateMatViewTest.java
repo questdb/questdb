@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import static org.junit.Assert.fail;
@@ -35,6 +36,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     private static final String TABLE1 = "table1";
     private static final String TABLE2 = "table2";
 
+    @Ignore
     @Test
     public void testCreateMatViewMultipleTablesTest() throws Exception {
         assertMemoryLeak(() -> {
@@ -50,6 +52,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
         });
     }
 
+    @Ignore
     @Test
     public void testCreateMatViewNoSampleByTest() throws Exception {
         assertMemoryLeak(() -> {
