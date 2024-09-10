@@ -73,6 +73,7 @@ public final class LineHttpSender implements Sender {
     private JsonErrorParser jsonErrorParser;
     private long pendingRows;
     private HttpClient.Request request;
+    private int rowBookmark;
     private RequestState state = RequestState.EMPTY;
 
     public LineHttpSender(String host,
@@ -138,6 +139,7 @@ public final class LineHttpSender implements Sender {
         if (rowAdded()) {
             flush();
         }
+        rowBookmark = request.getContentLength();
     }
 
     @Override
@@ -145,6 +147,13 @@ public final class LineHttpSender implements Sender {
         writeFieldName(name);
         request.put(value ? 't' : 'f');
         return this;
+    }
+
+    @Override
+    public void cancelRow() {
+        validateNotClosed();
+        request.trimContentToLen(rowBookmark);
+        state = RequestState.EMPTY;
     }
 
     @Override
@@ -455,6 +464,7 @@ public final class LineHttpSender implements Sender {
             r.authToken(null, authToken);
         }
         r.withContent();
+        rowBookmark = r.getContentLength();
         return r;
     }
 
