@@ -3944,18 +3944,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 Function filter = null;
                 // Try to steal the filter from the nested factory, if possible.
                 // We aim for simple cases such as select key, avg(value) from t where value > 0
-                if (!supportsParallelism && (factory instanceof StealableFilterRecordCursorFactory)) {
-                    StealableFilterRecordCursorFactory filterFactory = (StealableFilterRecordCursorFactory) factory;
-                    if (filterFactory.supportsFilterStealing()) {
-                        factory = factory.getBaseFactory();
-                        assert factory.supportsPageFrameCursor();
-                        compiledFilter = filterFactory.getCompiledFilter();
-                        bindVarMemory = filterFactory.getBindVarMemory();
-                        bindVarFunctions = filterFactory.getBindVarFunctions();
-                        filter = filterFactory.getFilter();
-                        supportsParallelism = true;
-                        filterFactory.halfClose();
-                    }
+                if (!supportsParallelism && factory.supportsFilterStealing()) {
+                    assert factory.getBaseFactory().supportsPageFrameCursor();
+                    compiledFilter = factory.getCompiledFilter();
+                    bindVarMemory = factory.getBindVarMemory();
+                    bindVarFunctions = factory.getBindVarFunctions();
+                    filter = factory.getFilter();
+                    supportsParallelism = true;
+                    factory.halfClose();
                 }
 
                 if (supportsParallelism) {
