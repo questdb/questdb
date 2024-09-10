@@ -32,11 +32,16 @@ import org.junit.Test;
 public class MaxNumericFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
+    public void tesLongMaxFunctionFactory() throws Exception {
+        assertQuery("max\n4\n", "select max(1, 4)");
+        assertQuery("max\n12\n", "select max(1, 4, 3, 12, 8)");
+    }
+
+    @Test
     public void testDoubleMaxFunctionFactory() throws Exception {
         assertQuery("max\n9.2\n", "select max(5.3, 9.2)");
         assertQuery("max\n11.6\n", "select max(5.3, 9.2, 6.5, 11.6, 3.2)");
     }
-
 
     @Override
     protected FunctionFactory getFunctionFactory() {
