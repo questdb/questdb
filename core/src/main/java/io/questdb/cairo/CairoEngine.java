@@ -953,7 +953,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         return cairoTables.get(tableToken.getDirName());
     }
-    
+
     public void metadataCacheGetTables(ObjList<CairoTable> out) {
         final Collection<CairoTable> values = cairoTables.values(); // check that this is O(1)
         final int size = values.size();
@@ -993,8 +993,6 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void metadataCacheHydrateAllTables() {
         ObjHashSet<TableToken> tableTokensSet = tlTokens.get();
-
-
         getTableTokens(tableTokensSet, false);
         ObjList<TableToken> tableTokens = tableTokensSet.getList();
         TableToken tableToken = tableTokens.getQuick(0);
@@ -1038,7 +1036,6 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-
     /**
      * @see CairoEngine#metadataCacheHydrateTable(TableToken, boolean, boolean)
      */
@@ -1049,7 +1046,6 @@ public class CairoEngine implements Closeable, WriterSource {
             LOG.info().$("hydrating metadata [table=").$(tableToken).I$();
         }
 
-
         CairoTable table = new CairoTable(tableToken);
         final long metadataVersion = tableMetadata.getMetadataVersion();
         table.setMetadataVersion(metadataVersion);
@@ -1058,7 +1054,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 .$(", version=").$(metadataVersion)
                 .I$();
 
-        CairoTable potentiallyExistingTable = cairoTables.get(tableToken.getDirName());
+        CairoTable potentiallyExistingTable = metadataCacheGetNullableTable(tableToken);
         if (potentiallyExistingTable != null && potentiallyExistingTable.getMetadataVersion() > metadataVersion) {
             LOG.info()
                     .$("table in cache with newer version [table=").$(tableToken.getTableName())
@@ -1125,18 +1121,13 @@ public class CairoEngine implements Closeable, WriterSource {
             table.columnNameIndexMap.put(table.columns.getQuick(i).getName(), i);
         }
 
-        if (blindUpsert) {
-            cairoTables.put(tableToken.getDirName(), table);
-        } else {
-            cairoTables.putIfAbsent(tableToken.getDirName(), table);
-        }
+        metadataCacheSetTable(table, blindUpsert);
 
         if (infoLog) {
             LOG.info().$("hydrated metadata [table=").$(table.getTableName()).I$();
         }
 
     }
-
 
     public void metadataCacheRemoveTable(@NotNull TableToken tableToken) {
         cairoTables.remove(tableToken.getDirName());
@@ -1146,7 +1137,6 @@ public class CairoEngine implements Closeable, WriterSource {
     public int metadataCacheTablesCount() {
         return cairoTables.size();
     }
-
 
     /**
      * For debug printing the metadata object.
@@ -1643,6 +1633,11 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    private @Nullable CairoTable metadataCacheGetNullableTable(@NotNull TableToken tableToken) {
+        return cairoTables.get(tableToken.getDirName());
+    }
+
+    @SuppressWarnings("TryFinallyCanBeTryWithResources")
     private void metadataCacheHydrateTable(@NotNull TableToken token, @NotNull Path path,
                                            @NotNull ColumnVersionReader columnVersionReader,
                                            boolean blindUpsert, boolean infoLog) {
@@ -1665,7 +1660,6 @@ public class CairoEngine implements Closeable, WriterSource {
         MemoryCMR metaMem = Vm.getCMRInstance();
 
         try {
-
             // open metadata
             metaMem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.NATIVE_METADATA_READER);
             TableUtils.validateMeta(metaMem, null, ColumnType.VERSION);
@@ -1675,7 +1669,7 @@ public class CairoEngine implements Closeable, WriterSource {
             int metadataVersion = metaMem.getInt(TableUtils.META_OFFSET_METADATA_VERSION);
 
             // make sure we aren't duplicating work
-            CairoTable potentiallyExistingTable = cairoTables.get(token.getDirName());
+            CairoTable potentiallyExistingTable = metadataCacheGetNullableTable(token);
             if (potentiallyExistingTable != null && potentiallyExistingTable.getMetadataVersion() > metadataVersion) {
                 LOG.debug().$("table in cache with newer version [table=")
                         .$(token.getTableName()).$(", version=").$(potentiallyExistingTable.getMetadataVersion()).I$();
@@ -1782,11 +1776,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
             }
 
-            if (blindUpsert) {
-                cairoTables.put(token.getDirName(), table);
-            } else {
-                cairoTables.putIfAbsent(token.getDirName(), table);
-            }
+            metadataCacheSetTable(table, blindUpsert);
 
             if (infoLog) {
                 LOG.info().$("hydrated metadata [table=").$(table.getTableName()).I$();
@@ -1801,6 +1791,15 @@ public class CairoEngine implements Closeable, WriterSource {
             path.close();
             metaMem.close();
             Misc.free(metaMem);
+        }
+    }
+
+    private void metadataCacheSetTable(@NotNull CairoTable table, boolean blindUpsert) {
+        final TableToken token = table.getTableToken();
+        if (blindUpsert) {
+            cairoTables.put(token.getDirName(), table);
+        } else {
+            cairoTables.putIfAbsent(token.getDirName(), table);
         }
     }
 
