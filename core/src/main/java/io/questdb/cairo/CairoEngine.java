@@ -953,9 +953,18 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         return cairoTables.get(tableToken.getDirName());
     }
+    
+    public void metadataCacheGetTables(ObjList<CairoTable> out) {
+        final Collection<CairoTable> values = cairoTables.values(); // check that this is O(1)
+        final int size = values.size();
+        out.checkCapacity(size);
+        for (CairoTable table : values) {
+            out.add(table);
+        }
+    }
 
-    public Collection<CairoTable> metadataCacheGetTableList() {
-        return cairoTables.values();
+    public int metadataCacheGetTablesCount() {
+        return cairoTables.size();
     }
 
     public CairoTable metadataCacheGetVisibleTable(@NotNull TableToken tableToken) {

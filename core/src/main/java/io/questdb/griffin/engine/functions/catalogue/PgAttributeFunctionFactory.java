@@ -36,9 +36,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
-import java.util.Collection;
-import java.util.Iterator;
-
 import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_SIZE_MAP;
 
 public class PgAttributeFunctionFactory implements FunctionFactory {
@@ -116,16 +113,17 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
     }
 
     private static class AttributeClassCatalogueCursor implements NoRandomAccessRecordCursor {
-        private final Collection<CairoTable> cairoTables;
-        private final DiskReadingRecord diskReadingRecord = new DiskReadingRecord();
-        private Iterator<CairoTable> cairoTablesIterator;
+        private final PgAttributeRecord record = new PgAttributeRecord();
+        CairoEngine engine;
+        private ObjList<CairoTable> cairoTables;
         private int columnCount;
         private int columnIndex = 0;
         private CairoTable nextTable;
+        private int pos = -1;
         private int tableId = 1000;
 
         public AttributeClassCatalogueCursor(CairoEngine engine) {
-            this.cairoTables = engine.metadataCacheGetTableList();
+            this.engine = engine;
         }
 
         @Override
@@ -135,7 +133,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
         @Override
         public Record getRecord() {
-            return diskReadingRecord;
+            return record;
         }
 
 
@@ -147,8 +145,9 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
             }
 
             if (nextTable == null) {
-                if (cairoTablesIterator.hasNext()) {
-                    nextTable = cairoTablesIterator.next();
+                if (pos < cairoTables.size() - 1) {
+                    pos++;
+                    nextTable = cairoTables.getQuiet(pos);
                     columnCount = (int) nextTable.getColumnCount();
                     tableId = nextTable.getId();
                 }
@@ -158,11 +157,11 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
                 if (columnIndex < columnCount) {
                     final CairoColumn nextColumn = nextTable.columns.getQuick(columnIndex);
                     final int type = PGOids.getTypeOid(nextColumn.getType());
-                    diskReadingRecord.intValues[N_ATTTYPID_COL] = type;
-                    diskReadingRecord.name = nextColumn.getName();
-                    diskReadingRecord.shortValues[N_ATTNUM_COL] = (short) (columnIndex + 1);
-                    diskReadingRecord.shortValues[N_ATTLEN_COL] = (short) PG_TYPE_TO_SIZE_MAP.get(type);
-                    diskReadingRecord.intValues[N_ATTRELID_COL] = tableId;
+                    record.intValues[N_ATTTYPID_COL] = type;
+                    record.name = nextColumn.getName();
+                    record.shortValues[N_ATTNUM_COL] = (short) (columnIndex + 1);
+                    record.shortValues[N_ATTLEN_COL] = (short) PG_TYPE_TO_SIZE_MAP.get(type);
+                    record.intValues[N_ATTRELID_COL] = tableId;
                     columnIndex++;
                     return true;
                 }
@@ -178,10 +177,15 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
         @Override
         public void toTop() {
-            this.cairoTablesIterator = cairoTables.iterator();
+            this.cairoTables = new ObjList<>(engine.metadataCacheGetTablesCount());
+            engine.metadataCacheGetTables(this.cairoTables);
+            pos = -1;
+            nextTable = null;
+            columnCount = 0;
+            columnIndex = 0;
         }
 
-        static class DiskReadingRecord implements Record {
+        static class PgAttributeRecord implements Record {
             public final int[] intValues = new int[9];
             public final short[] shortValues = new short[9];
             private final StringSink strBSink = new StringSink();
