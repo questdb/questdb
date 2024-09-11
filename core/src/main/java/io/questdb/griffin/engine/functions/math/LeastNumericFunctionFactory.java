@@ -36,7 +36,9 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.cast.*;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class LeastNumericFunctionFactory implements FunctionFactory {
@@ -71,6 +73,9 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
                     counters[type]++;
                     continue;
                 default:
+                    if (arg.isNullConstant()) {
+                        return NullConstant.NULL;
+                    }
                     throw SqlException.position(argPositions.getQuick(i)).put("unsupported type");
             }
         }
@@ -145,6 +150,9 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
             double value = Double.MAX_VALUE;
             for (int i = 0, n = args.size(); i < n; i++) {
                 final double v = args.getQuick(i).getDouble(rec);
+                if (Numbers.isNull(v)) {
+                    return Double.NaN;
+                }
                 value = Math.min(value, v);
             }
             return value;
@@ -180,6 +188,9 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
             long value = Long.MAX_VALUE;
             for (int i = 0, n = args.size(); i < n; i++) {
                 final long v = args.getQuick(i).getLong(rec);
+                if (v == Long.MIN_VALUE) {
+                    return Long.MIN_VALUE;
+                }
                 value = Math.min(value, v);
             }
             return value;

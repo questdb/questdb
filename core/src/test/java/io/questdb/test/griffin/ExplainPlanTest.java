@@ -51,6 +51,8 @@ import io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.engine.functions.lt.LtIPv4StrFunctionFactory;
 import io.questdb.griffin.engine.functions.lt.LtStrIPv4FunctionFactory;
+import io.questdb.griffin.engine.functions.math.GreatestNumericFunctionFactory;
+import io.questdb.griffin.engine.functions.math.LeastNumericFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory;
@@ -2432,6 +2434,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 } else if (factory instanceof InUuidFunctionFactory && p == 1) {
                                     // this factory requires valid UUID string, otherwise it will fail
                                     args.add(new StrConstant("11111111-1111-1111-1111-111111111111"));
+                                } else if (factory instanceof GreatestNumericFunctionFactory) {
+                                    args.add(new DoubleConstant(1.5));
+                                    args.add(new DoubleConstant(3.2));
+                                } else if (factory instanceof LeastNumericFunctionFactory) {
+                                    args.add(new DoubleConstant(1.5));
+                                    args.add(new DoubleConstant(3.2));
                                 } else if ((factory instanceof JsonExtractTypedFunctionFactory)) {
                                     if (p == 0) {
                                         args.add(new VarcharConstant("{\"a\": 1}"));

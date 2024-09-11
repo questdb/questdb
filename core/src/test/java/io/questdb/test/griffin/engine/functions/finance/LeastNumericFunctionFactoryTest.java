@@ -31,6 +31,7 @@ import org.junit.Test;
 
 public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
+
     @Test
     public void testLeastNumericFunctionFactoryBytes() throws Exception {
         assertSqlWithTypes("least\n1:BYTE\n", "select least(1::byte, 40::byte)");
@@ -75,7 +76,7 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
 
     @Test
     public void testLeastNumericFunctionFactoryNulls() throws Exception {
-
+        assertSqlWithTypes("least\nnull:unknown\n", "select least(1L, null, 2L)");
     }
 
     @Test

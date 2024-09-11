@@ -74,6 +74,11 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
     }
 
     @Test
+    public void testGreatestNumericFunctionFactoryNulls() throws Exception {
+        assertSqlWithTypes("greatest\nnull:unknown\n", "select greatest(1L, null, 2L)");
+    }
+
+    @Test
     public void testGreatestNumericFunctionFactoryShorts() throws Exception {
         assertSqlWithTypes("greatest\n40:SHORT\n", "select greatest(1::short, 40::short)");
         assertSqlWithTypes("greatest\n12:SHORT\n", "select greatest(1::short, 4::short, 3::short, 12::short, 8::short)");
