@@ -1025,7 +1025,7 @@ public class CairoEngine implements Closeable, WriterSource {
      */
     public void metadataCacheHydrateTable(@NotNull TableToken token, boolean blindUpsert, boolean infoLog) {
         LOG.debug().$("hydrating table using thread-local path and column version reader [table=")
-                .$(token.getTableName()).I$();
+                .$(token).I$();
         try {
             metadataCacheHydrateTable(token, tlPath.get(), tlColumnVersionReader.get(), blindUpsert, infoLog);
         } finally {
@@ -1057,7 +1057,7 @@ public class CairoEngine implements Closeable, WriterSource {
         CairoTable potentiallyExistingTable = metadataCacheGetNullableTable(tableToken);
         if (potentiallyExistingTable != null && potentiallyExistingTable.getMetadataVersion() > metadataVersion) {
             LOG.info()
-                    .$("table in cache with newer version [table=").$(tableToken.getTableName())
+                    .$("table in cache with newer version [table=").$(tableToken)
                     .$(", version=").$(potentiallyExistingTable.getMetadataVersion()).I$();
             return;
         }
@@ -1087,7 +1087,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 continue; // marked for deletion
             }
 
-            LOG.debug().$("hydrating column [table=").$(tableToken.getTableName()).$(", column=").$(columnName).I$();
+            LOG.debug().$("hydrating column [table=").$(tableToken).$(", column=").$(columnName).I$();
 
             CairoColumn column = new CairoColumn();
 
@@ -1106,7 +1106,7 @@ public class CairoEngine implements Closeable, WriterSource {
             }
 
             if (ColumnType.isSymbol(column.getType())) {
-                LOG.debug().$("hydrating symbol metadata [table=").$(tableToken.getTableName()).$(", column=").$(columnName).I$();
+                LOG.debug().$("hydrating symbol metadata [table=").$(tableToken).$(", column=").$(columnName).I$();
 
                 column.setSymbolCapacity(tableMetadata.getSymbolCapacity(i));
                 column.setSymbolCached(tableMetadata.getSymbolCacheFlag(i));
@@ -1131,7 +1131,7 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void metadataCacheRemoveTable(@NotNull TableToken tableToken) {
         cairoTables.remove(tableToken.getDirName());
-        LOG.info().$("dropped metadata [table=").$(tableToken.getTableName()).I$();
+        LOG.info().$("dropped metadata [table=").$(tableToken).I$();
     }
 
     public int metadataCacheTablesCount() {
