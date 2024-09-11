@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.finance;
+package io.questdb.griffin.engine.functions.math;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
@@ -39,11 +39,11 @@ import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class MaxNumericFunctionFactory implements FunctionFactory {
+public class GreatestNumericFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "max(V)";
+        return "greatest(V)";
     }
 
     @Override
@@ -76,49 +76,49 @@ public class MaxNumericFunctionFactory implements FunctionFactory {
         }
 
         if (counters[ColumnType.DOUBLE] > 0) {
-            return new MaxDoubleRecordFunction(new ObjList<>(args), argPositions);
+            return new GreatestDoubleRecordFunction(new ObjList<>(args), argPositions);
         }
 
         if (counters[ColumnType.FLOAT] > 0) {
             return new CastDoubleToFloatFunctionFactory()
                     .newInstance(position,
-                            new ObjList<>(new MaxDoubleRecordFunction(new ObjList<>(args), argPositions)),
+                            new ObjList<>(new GreatestDoubleRecordFunction(new ObjList<>(args), argPositions)),
                             null, configuration, sqlExecutionContext);
         }
 
 
         if (counters[ColumnType.LONG] > 0) {
-            return new MaxLongRecordFunction(new ObjList<>(args), argPositions);
+            return new GreatestLongRecordFunction(new ObjList<>(args), argPositions);
         }
 
         if (counters[ColumnType.TIMESTAMP] > 0) {
             return new CastLongToTimestampFunctionFactory()
                     .newInstance(position,
-                            new ObjList<>(new MaxLongRecordFunction(new ObjList<>(args), argPositions)),
+                            new ObjList<>(new GreatestLongRecordFunction(new ObjList<>(args), argPositions)),
                             null, configuration, sqlExecutionContext);
         }
 
         if (counters[ColumnType.INT] > 0) {
             return new CastLongToIntFunctionFactory()
                     .newInstance(position,
-                            new ObjList<>(new MaxLongRecordFunction(new ObjList<>(args), argPositions)),
+                            new ObjList<>(new GreatestLongRecordFunction(new ObjList<>(args), argPositions)),
                             null, configuration, sqlExecutionContext);
         }
 
         if (counters[ColumnType.SHORT] > 0) {
             return new CastLongToShortFunctionFactory()
                     .newInstance(position,
-                            new ObjList<>(new MaxLongRecordFunction(new ObjList<>(args), argPositions)),
+                            new ObjList<>(new GreatestLongRecordFunction(new ObjList<>(args), argPositions)),
                             null, configuration, sqlExecutionContext);
         }
 
         if (counters[ColumnType.BYTE] > 0) {
             return new CastLongToByteFunctionFactory()
                     .newInstance(position,
-                            new ObjList<>(new MaxLongRecordFunction(new ObjList<>(args), argPositions)),
+                            new ObjList<>(new GreatestLongRecordFunction(new ObjList<>(args), argPositions)),
                             null, configuration, sqlExecutionContext);
         }
-        
+
         assert false;
 
         // unreachable
@@ -126,11 +126,11 @@ public class MaxNumericFunctionFactory implements FunctionFactory {
     }
 
 
-    private static class MaxDoubleRecordFunction extends DoubleFunction implements MultiArgFunction {
+    private static class GreatestDoubleRecordFunction extends DoubleFunction implements MultiArgFunction {
         final IntList argPositions;
         final ObjList<Function> args;
 
-        public MaxDoubleRecordFunction(ObjList<Function> args, IntList argPositions) {
+        public GreatestDoubleRecordFunction(ObjList<Function> args, IntList argPositions) {
             this.args = args;
             this.argPositions = argPositions;
         }
@@ -152,7 +152,7 @@ public class MaxNumericFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return "max[VARDOUBLE]";
+            return "greatest[DOUBLE]";
         }
 
         @Override
@@ -161,11 +161,11 @@ public class MaxNumericFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class MaxLongRecordFunction extends LongFunction implements MultiArgFunction {
+    private static class GreatestLongRecordFunction extends LongFunction implements MultiArgFunction {
         final IntList argPositions;
         final ObjList<Function> args;
 
-        public MaxLongRecordFunction(ObjList<Function> args, IntList argPositions) {
+        public GreatestLongRecordFunction(ObjList<Function> args, IntList argPositions) {
             this.args = args;
             this.argPositions = argPositions;
         }
@@ -187,7 +187,7 @@ public class MaxNumericFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return "max[VARLONG]";
+            return "greatest[LONG]";
         }
 
         @Override

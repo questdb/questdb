@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.finance;
+package io.questdb.griffin.engine.functions.math;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
@@ -39,11 +39,11 @@ import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class MinNumericFunctionFactory implements FunctionFactory {
+public class LeastNumericFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "min(V)";
+        return "least(V)";
     }
 
     @Override
@@ -76,46 +76,46 @@ public class MinNumericFunctionFactory implements FunctionFactory {
         }
 
         if (counters[ColumnType.DOUBLE] > 0) {
-            return new MinDoubleRecordFunction(new ObjList<>(args), argPositions);
+            return new LeastDoubleRecordFunction(new ObjList<>(args), argPositions);
         }
 
         if (counters[ColumnType.FLOAT] > 0) {
             return new CastDoubleToFloatFunctionFactory()
                     .newInstance(position,
-                            new ObjList<>(new MinDoubleRecordFunction(new ObjList<>(args), argPositions)),
+                            new ObjList<>(new LeastDoubleRecordFunction(new ObjList<>(args), argPositions)),
                             null, configuration, sqlExecutionContext);
         }
 
 
         if (counters[ColumnType.LONG] > 0) {
-            return new MinLongRecordFunction(new ObjList<>(args), argPositions);
+            return new LeastLongRecordFunction(new ObjList<>(args), argPositions);
         }
 
         if (counters[ColumnType.TIMESTAMP] > 0) {
             return new CastLongToTimestampFunctionFactory()
                     .newInstance(position,
-                            new ObjList<>(new MinLongRecordFunction(new ObjList<>(args), argPositions)),
+                            new ObjList<>(new LeastLongRecordFunction(new ObjList<>(args), argPositions)),
                             null, configuration, sqlExecutionContext);
         }
 
         if (counters[ColumnType.INT] > 0) {
             return new CastLongToIntFunctionFactory()
                     .newInstance(position,
-                            new ObjList<>(new MinLongRecordFunction(new ObjList<>(args), argPositions)),
+                            new ObjList<>(new LeastLongRecordFunction(new ObjList<>(args), argPositions)),
                             null, configuration, sqlExecutionContext);
         }
 
         if (counters[ColumnType.SHORT] > 0) {
             return new CastLongToShortFunctionFactory()
                     .newInstance(position,
-                            new ObjList<>(new MinLongRecordFunction(new ObjList<>(args), argPositions)),
+                            new ObjList<>(new LeastLongRecordFunction(new ObjList<>(args), argPositions)),
                             null, configuration, sqlExecutionContext);
         }
 
         if (counters[ColumnType.BYTE] > 0) {
             return new CastLongToByteFunctionFactory()
                     .newInstance(position,
-                            new ObjList<>(new MinLongRecordFunction(new ObjList<>(args), argPositions)),
+                            new ObjList<>(new LeastLongRecordFunction(new ObjList<>(args), argPositions)),
                             null, configuration, sqlExecutionContext);
         }
 
@@ -126,11 +126,11 @@ public class MinNumericFunctionFactory implements FunctionFactory {
     }
 
 
-    private static class MinDoubleRecordFunction extends DoubleFunction implements MultiArgFunction {
+    private static class LeastDoubleRecordFunction extends DoubleFunction implements MultiArgFunction {
         final IntList argPositions;
         final ObjList<Function> args;
 
-        public MinDoubleRecordFunction(ObjList<Function> args, IntList argPositions) {
+        public LeastDoubleRecordFunction(ObjList<Function> args, IntList argPositions) {
             this.args = args;
             this.argPositions = argPositions;
         }
@@ -152,7 +152,7 @@ public class MinNumericFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return "min[VARDOUBLE]";
+            return "least[DOUBLE]";
         }
 
         @Override
@@ -161,11 +161,11 @@ public class MinNumericFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class MinLongRecordFunction extends LongFunction implements MultiArgFunction {
+    private static class LeastLongRecordFunction extends LongFunction implements MultiArgFunction {
         final IntList argPositions;
         final ObjList<Function> args;
 
-        public MinLongRecordFunction(ObjList<Function> args, IntList argPositions) {
+        public LeastLongRecordFunction(ObjList<Function> args, IntList argPositions) {
             this.args = args;
             this.argPositions = argPositions;
         }
@@ -187,7 +187,7 @@ public class MinNumericFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return "min[VARLONG]";
+            return "least[LONG]";
         }
 
         @Override
