@@ -1434,7 +1434,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     Chars.toString(text), // todo: we just need an immutable copy of the text, not a new string
                     sqlExecutionContext,
                     cq,
-                    taiPool
+                    taiPool,
+                    tasCache
             );
             transactionState = pipelineCurrentEntry.execute(
                     sqlExecutionContext,

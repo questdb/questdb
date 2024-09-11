@@ -395,7 +395,8 @@ public class PGPipelineEntry implements QuietCloseable {
                     parseNew(
                             engine,
                             sqlExecutionContext,
-                            taiPool
+                            taiPool,
+                            tasCache
                     );
                 }
                 buildResultSetColumnTypes();
@@ -414,7 +415,8 @@ public class PGPipelineEntry implements QuietCloseable {
             CharSequence sqlText,
             SqlExecutionContext sqlExecutionContext,
             CompiledQuery cq,
-            WeakSelfReturningObjectPool<TypesAndInsert> taiPool
+            WeakSelfReturningObjectPool<TypesAndInsert> taiPool,
+            AssociativeCache<TypesAndSelect> tasCache
     ) throws BadProtocolException {
         // pipeline entries begin life as anonymous, typical pipeline length is 1-3 entries
         // we do not need to create new objects until we know we're caching the entry
@@ -430,7 +432,7 @@ public class PGPipelineEntry implements QuietCloseable {
             // try insert, peek because this is our private cache,
             // and we do not want to remove statement from it
             try {
-                resolveSqlType(sqlExecutionContext, taiPool, cq);
+                resolveSqlType(sqlExecutionContext, taiPool, cq, tasCache);
                 buildResultSetColumnTypes();
             } catch (Throwable e) {
                 if (e instanceof FlyweightMessageContainer) {
@@ -859,6 +861,7 @@ public class PGPipelineEntry implements QuietCloseable {
             tas.defineBindVariables(bindVariableService);
             factory = tas.getFactory();
             sqlTag = TAG_SELECT;
+            sqlType = CompiledQuery.SELECT;
             return true;
         }
 
@@ -1599,15 +1602,15 @@ public class PGPipelineEntry implements QuietCloseable {
     private void parseNew(
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
-            WeakSelfReturningObjectPool<TypesAndInsert> taiPool
-    ) throws SqlException {
+            WeakSelfReturningObjectPool<TypesAndInsert> taiPool,
+            AssociativeCache<TypesAndSelect> tasCache) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             CompiledQuery cq = compiler.compile(sqlText, sqlExecutionContext);
-            resolveSqlType(sqlExecutionContext, taiPool, cq);
+            resolveSqlType(sqlExecutionContext, taiPool, cq, tasCache);
         }
     }
 
-    private void resolveSqlType(SqlExecutionContext sqlExecutionContext, WeakSelfReturningObjectPool<TypesAndInsert> taiPool, CompiledQuery cq) {
+    private void resolveSqlType(SqlExecutionContext sqlExecutionContext, WeakSelfReturningObjectPool<TypesAndInsert> taiPool, CompiledQuery cq, AssociativeCache<TypesAndSelect> tasCache) {
         sqlExecutionContext.storeTelemetry(cq.getType(), TelemetryOrigin.POSTGRES);
 
         this.sqlType = cq.getType();
@@ -1636,6 +1639,7 @@ public class PGPipelineEntry implements QuietCloseable {
                 this.factory = cq.getRecordCursorFactory();
                 tas = new TypesAndSelect(this.factory);
                 tas.copyTypesFrom(sqlExecutionContext.getBindVariableService());
+                tasCache.put(sqlText, tas);
                 sqlTag = TAG_SELECT;
                 break;
             case CompiledQuery.PSEUDO_SELECT:
@@ -1661,6 +1665,7 @@ public class PGPipelineEntry implements QuietCloseable {
                 break;
             case CompiledQuery.INSERT_AS_SELECT:
                 this.insertOp = cq.getInsertOperation();
+                stateParseExecuted = true;
                 sqlTag = TAG_INSERT_AS_SELECT;
                 break;
             case CompiledQuery.SET:
