@@ -851,6 +851,7 @@ public class PGPipelineEntry implements QuietCloseable {
             tai.defineBindVariables(bindVariableService);
             insertOp = tai.getInsert();
             sqlTag = TAG_INSERT;
+            sqlType = CompiledQuery.INSERT;
             return true;
         }
 
