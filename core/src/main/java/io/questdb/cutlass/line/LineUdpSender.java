@@ -55,6 +55,11 @@ public class LineUdpSender extends AbstractLineSender {
     }
 
     @Override
+    public void cancelRow() {
+        throw new LineSenderException("cancelRow() not supported by UDP transport");
+    }
+
+    @Override
     public final AbstractLineSender timestampColumn(CharSequence name, Instant value) {
         writeFieldName(name).put((value.getEpochSecond() * Timestamps.SECOND_NANOS + value.getNano()) / 1000);
         return this;
