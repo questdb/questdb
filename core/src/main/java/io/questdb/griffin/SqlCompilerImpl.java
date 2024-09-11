@@ -2901,7 +2901,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 engine.unlockReaders(tableToken);
                             }
                         } else {
-                            throw SqlException.$(0, "there is an active query against '").put(tableToken).put("'. Try again.");
+                            throw SqlException.$(0, "there is an active query against '").put(tableToken.getTableName()).put("'. Try again.");
                         }
                     }
                 } catch (CairoException | CairoError e) {

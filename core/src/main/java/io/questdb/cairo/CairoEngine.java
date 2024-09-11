@@ -396,7 +396,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 try {
                     path.of(configuration.getRoot()).concat(tableToken).$();
                     if (!configuration.getFilesFacade().unlinkOrRemove(path, LOG)) {
-                        throw CairoException.critical(configuration.getFilesFacade().errno()).put("could not remove table [name=").put(tableToken)
+                        throw CairoException.critical(configuration.getFilesFacade().errno()).put("could not remove table [name=").put(tableToken.getTableName())
                                 .put(", dirName=").put(tableToken.getDirName()).put(']');
                     }
                 } finally {
@@ -407,7 +407,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 tableNameRegistry.dropTable(tableToken);
                 return;
             }
-            throw CairoException.nonCritical().put("could not lock '").put(tableToken).put("' [reason='").put(lockedReason).put("']");
+            throw CairoException.nonCritical().put("could not lock '").put(tableToken.getTableName()).put("' [reason='").put(lockedReason).put("']");
         }
     }
 
@@ -779,7 +779,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (tableToken.isWal()) {
             return new WalReader(configuration, tableToken, walName, segmentId, walRowCount);
         }
-        throw CairoException.nonCritical().put("WAL reader is not supported for table ").put(tableToken);
+        throw CairoException.nonCritical().put("WAL reader is not supported for table ").put(tableToken.getTableName());
     }
 
     public @NotNull WalWriter getWalWriter(TableToken tableToken) {
