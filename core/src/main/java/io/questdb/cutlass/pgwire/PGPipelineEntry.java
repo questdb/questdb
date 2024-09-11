@@ -242,6 +242,10 @@ public class PGPipelineEntry implements QuietCloseable {
         return stateClosed;
     }
 
+    public boolean isStateParse() {
+        return stateParse;
+    }
+
     public boolean isStateParseExecuted() {
         return stateParseExecuted;
     }

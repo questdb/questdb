@@ -1298,10 +1298,10 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testBasicFetch() throws Exception {
         skipOnWalRun(); // Non-partitioned
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_TEXT, (connection, binary, mode, port) -> {
+        // TODO PGWire 2.0: revert to the original: CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_TEXT
+        assertWithPgServer(CONN_AWARE_ALL & (~CONN_AWARE_SIMPLE_TEXT & ~CONN_AWARE_EXTENDED_PREPARED_TEXT & ~CONN_AWARE_EXTENDED_CACHED_TEXT), (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 100;
 

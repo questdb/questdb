@@ -731,6 +731,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                                 tasCache,
                                 taiPool
                         );
+                        boolean stateParse = pipelineCurrentEntry.isStateParse();
+                        pipelineCurrentEntry.setStateParse(false);
                         pe.setParentPreparedStatement(pipelineCurrentEntry);
                         // Keep the reference to the portal name on the prepared statement before we overwrite the
                         // reference. Keeping list of portal names is required in case the client closes the prepared
@@ -738,6 +740,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         pipelineCurrentEntry.bindPortalName(portalName);
                         pipelineCurrentEntry = pe;
                         pipelineCurrentEntry.setStateBind(true);
+                        pipelineCurrentEntry.setStateParse(stateParse);
                     }
                     // else:
                     // portal is being created from "parse" message (i am not 100% the client will be
@@ -1001,10 +1004,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     // processes one or more queries (batch/script). "Simple Query" in PostgreSQL docs.
     private void msgQuery(long lo, long limit) throws BadProtocolException, PeerIsSlowToReadException, QueryPausedException, PeerDisconnectedException {
-        System.out.println("********************* OOPSIE *************************");
-
         CharacterStoreEntry e = characterStore.newEntry();
-
         if (Utf8s.utf8ToUtf16(lo, limit - 1, e)) {
             CharSequence activeSqlText = characterStore.toImmutable();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
@@ -1310,7 +1310,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (portalName != null) {
             final int index = namedPortals.keyIndex(portalName);
             if (index < 0) {
-                PGPipelineEntry pe = namedStatements.valueAt(index);
+                PGPipelineEntry pe = namedPortals.valueAt(index);
                 PGPipelineEntry peParent = pe.getParentPreparedStatementPipelineEntry();
                 if (peParent != null) {
                     int parentIndex = peParent.getPortalNames().indexOf(portalName);
