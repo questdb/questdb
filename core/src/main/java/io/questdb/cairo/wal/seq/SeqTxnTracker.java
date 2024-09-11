@@ -38,6 +38,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     private static final long SEQ_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "seqTxn");
     private static final long SUSPENDED_STATE_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "suspendedState");
     private static final long WRITER_TXN_OFFSET = Unsafe.getFieldOffset(SeqTxnTracker.class, "writerTxn");
+    private volatile long appliedToParentTxn = -1;
     private volatile String errorMessage = "";
     private volatile ErrorTag errorTag = ErrorTag.NONE;
     private int maxRecordedInflightPartitions = 1;
@@ -54,7 +55,11 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     private volatile long writerTxn = -1;
 
     public long getAppliedToParentTxn() {
-        return -1;
+        return appliedToParentTxn;
+    }
+
+    public void setAppliedToParentTxn(long txn) {
+        appliedToParentTxn = txn;
     }
 
     public String getErrorMessage() {

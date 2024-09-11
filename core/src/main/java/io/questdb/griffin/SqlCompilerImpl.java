@@ -2485,7 +2485,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         executionContext.setUseSimpleCircuitBreaker(true);
         try (
-                TableWriterAPI writer = engine.getTableWriterAPI(tableToken, "insertAsSelect");
+                TableWriterAPI writer = executionContext.getTableWriterAPI(tableToken, "insertAsSelect");
                 RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
                 TableMetadata writerMetadata = executionContext.getMetadataForWrite(tableToken)
         ) {

@@ -205,4 +205,8 @@ public interface SqlExecutionContext extends Closeable {
     void setCacheHit(boolean value);
 
     boolean isCacheHit();
+
+    default TableWriterAPI getTableWriterAPI(TableToken tableToken, String reason) {
+        return getCairoEngine().getTableWriterAPI(tableToken, reason);
+    }
 }

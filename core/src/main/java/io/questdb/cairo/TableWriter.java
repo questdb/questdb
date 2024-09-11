@@ -1610,6 +1610,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return ff;
     }
 
+    public long getMatViewBaseTxn() {
+        return txWriter.getMatViewBaseTxn();
+    }
+
     public long getMaxTimestamp() {
         return txWriter.getMaxTimestamp();
     }

@@ -27,7 +27,7 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.TableToken;
 
 public class MaterializedViewDefinition {
-    long sampleByPeriodMicros;
+    private long sampleByPeriodMicros;
     private CharSequence parentTableName;
     private long sampleByFromEpochMicros;
     private CharSequence viewSql;
@@ -39,6 +39,10 @@ public class MaterializedViewDefinition {
 
     public long getSampleByFromEpochMicros() {
         return sampleByFromEpochMicros;
+    }
+
+    public long getSampleByPeriodMicros() {
+        return sampleByPeriodMicros;
     }
 
     public TableToken getTableToken() {
@@ -55,6 +59,10 @@ public class MaterializedViewDefinition {
 
     public void setSampleByFromEpochMicros(long sampleByFromEpochMicros) {
         this.sampleByFromEpochMicros = sampleByFromEpochMicros;
+    }
+
+    public void setSampleByPeriodMicros(long sampleByPeriodMicros) {
+        this.sampleByPeriodMicros = sampleByPeriodMicros;
     }
 
     public void setTableToken(TableToken tableToken) {

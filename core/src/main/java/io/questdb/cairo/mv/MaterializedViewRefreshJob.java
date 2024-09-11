@@ -24,32 +24,83 @@
 
 package io.questdb.cairo.mv;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.TableToken;
+import io.questdb.cairo.*;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+
+import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
 
 public class MaterializedViewRefreshJob extends SynchronizedJob {
+    public static final String MAT_VIEW_REFRESH_TABLE_WRITE_REASON = "Mat View refresh";
     private static final Log LOG = LogFactory.getLog(MaterializedViewRefreshJob.class);
     private final MatViewGraph.AffectedMatViewsSink childViewSink = new MatViewGraph.AffectedMatViewsSink();
     private final CairoEngine engine;
+    private final MatViewRefreshExecutionContext matViewRefreshExecutionContext;
     private final ObjList<CharSequence> parents = new ObjList<>();
+    private long baseRefreshRangeFrom;
+    private long baseRefreshRangeTo;
 
     public MaterializedViewRefreshJob(CairoEngine engine) {
         this.engine = engine;
+        this.matViewRefreshExecutionContext = new MatViewRefreshExecutionContext(engine);
     }
 
-    private void refreshView(MaterializedViewDefinition viewDef, long fromParentTxn, long toParentTxn) {
+    private void findCommitTimestampRanges(MatViewRefreshExecutionContext executionContext, TableReader baseTableReader, long toParentTxn) throws SqlException {
+        long baseRefreshRangeFrom = 0;
+        long baseRefreshRangeTo = Long.MAX_VALUE;
+        executionContext.getBindVariableService().setTimestamp("from", baseRefreshRangeFrom);
+        executionContext.getBindVariableService().setTimestamp("to", baseRefreshRangeTo);
+    }
+
+    private void refreshView(TableToken baseToken, SeqTxnTracker viewTxnTracker, TableToken viewToken, MaterializedViewDefinition viewDef, long fromBaseTxn, long toParentTxn) {
         // Steps:
-        // - if fromParentTxn is not set, find the last parent txn the view was refreshed if any
-        // - find the commit ranges fromParentTxn to latest parent transaction
+        // - find the commit ranges fromBaseTxn to latest parent transaction
         // - compile view and execute with timestamp ranges from the unprocessed commits
         // - write the result set to WAL (or directly to table writer O3 area)
         // - apply resulting commit
         // - update applied to Txn in MatViewGraph
+        try (TableWriter viewTableWriter = engine.getWriterUnsafe(viewToken, MAT_VIEW_REFRESH_TABLE_WRITE_REASON)) {
+            assert viewTableWriter.getMetadata().getTableId() == viewToken.getTableId();
+
+            if (fromBaseTxn < 0) {
+                fromBaseTxn = viewTableWriter.getMatViewBaseTxn();
+                if (fromBaseTxn >= toParentTxn) {
+                    // Already refreshed
+                    viewTxnTracker.setAppliedToParentTxn(fromBaseTxn);
+                    return;
+                }
+            }
+
+            if (viewTxnTracker.shouldBackOffDueToMemoryPressure(MicrosecondClockImpl.INSTANCE.getTicks())) {
+                // rely on another pass of refresh job to re-try
+                return;
+            }
+
+            try (TableReader baseTableReader = engine.getReader(baseToken)) {
+                matViewRefreshExecutionContext.of(baseTableReader, viewTableWriter);
+                findCommitTimestampRanges(matViewRefreshExecutionContext, baseTableReader, fromBaseTxn);
+                try (var compiler = engine.getSqlCompiler()) {
+                    CompiledQuery compiledQuery = compiler.compile(viewDef.getViewSql(), matViewRefreshExecutionContext);
+                }
+            } catch (SqlException sqlException) {
+                LOG.error().$("error refreshing materialized view [view=").$(viewToken).$(", error=")
+                        .$((Throwable) sqlException).I$();
+            }
+        } catch (EntryUnavailableException tableBusy) {
+            //noinspection StringEquality
+            if (tableBusy.getReason() != NO_LOCK_REASON) {
+                LOG.critical().$("unsolicited table lock [table=").utf8(viewToken.getDirName()).$(", lockReason=").$(tableBusy.getReason()).I$();
+            }
+            // Do not suspend table. Perhaps writer will be unlocked with no transaction applied.
+            // We do not suspend table because of having initial value on lastWriterTxn. It will either be
+            // "ignore" or last txn we applied.
+        }
     }
 
     @Override
@@ -81,7 +132,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
                     SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
                     long appliedToParentTxn = viewSeqTracker.getAppliedToParentTxn();
                     if (appliedToParentTxn < 0 || appliedToParentTxn < lastParentApplied) {
-                        refreshView(viewDef, appliedToParentTxn, lastParentApplied);
+                        refreshView(parentToken, viewSeqTracker, viewToken, viewDef, lastParentApplied, appliedToParentTxn);
                         refreshed = true;
                     }
                 }

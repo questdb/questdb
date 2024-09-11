@@ -71,7 +71,7 @@ public class MatViewGraph {
     }
 
     public static class AffectedMatViewsSink {
-        public ObjList<MaterializedViewDefinition> viewsList;
+        public ObjList<MaterializedViewDefinition> viewsList = new ObjList<>();
 
     }
 
