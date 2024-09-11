@@ -1010,6 +1010,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compileBatch(activeSqlText, sqlExecutionContext, batchCallback);
             } catch (Throwable ex) {
+                transactionState = ERROR_TRANSACTION;
                 if (pipelineCurrentEntry == null) {
                     pipelineCurrentEntry = new PGPipelineEntry(engine);
                 }
@@ -1020,9 +1021,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     errorSink.put(ex.getMessage());
                 }
                 throw BadProtocolException.INSTANCE;
+            } finally {
+                msgSync();
             }
-            // todo: send error on simple query error
-            msgSync();
         } else {
             LOG.error().$("invalid UTF8 bytes in parse query").$();
             throw BadProtocolException.INSTANCE;
