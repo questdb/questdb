@@ -33,6 +33,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_SIZE_MAP;
@@ -113,16 +114,18 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
     private static class AttributeClassCatalogueCursor implements NoRandomAccessRecordCursor {
         private final PgAttributeRecord record = new PgAttributeRecord();
+        private final ObjHashSet<TableToken> tableTokenSet;
         CairoEngine engine;
-        private ObjList<CairoTable> cairoTables;
         private int columnCount;
         private int columnIndex = 0;
         private CairoTable nextTable;
         private int pos = -1;
         private int tableId = 1000;
+        private ObjList<TableToken> tableTokens;
 
         public AttributeClassCatalogueCursor(CairoEngine engine) {
             this.engine = engine;
+            tableTokenSet = new ObjHashSet<>(engine.getTableTokenCount(false));
         }
 
         @Override
@@ -144,9 +147,11 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
             }
 
             if (nextTable == null) {
-                if (pos < cairoTables.size() - 1) {
-                    pos++;
-                    nextTable = cairoTables.getQuiet(pos);
+                if (pos < tableTokens.size() - 1) {
+                    do {
+                        pos++;
+                        nextTable = engine.metadataCacheGetTable(tableTokens.getQuiet(pos));
+                    } while (nextTable == null);
                     columnCount = (int) nextTable.getColumnCount();
                     tableId = nextTable.getId();
                 }
@@ -176,8 +181,8 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
         @Override
         public void toTop() {
-            this.cairoTables = new ObjList<>(engine.metadataCacheGetTablesCount());
-            engine.metadataCacheGetTables(this.cairoTables);
+            engine.getTableTokens(tableTokenSet, false);
+            tableTokens = tableTokenSet.getList();
             pos = -1;
             nextTable = null;
             columnCount = 0;
