@@ -159,6 +159,54 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testCancelRow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.start();
+
+                String tableName = "h2o_feet";
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .autoFlushRows(Integer.MAX_VALUE) // we want to flush manually
+                        .autoFlushIntervalMillis(Integer.MAX_VALUE) // flush manually...
+                        .build()) {
+
+                    sender.cancelRow(); // this should be no-op
+
+                    // this row should be inserted
+                    sender.table(tableName)
+                            .symbol("async", "true")
+                            .doubleColumn("water_level", 3)
+                            .at(Instant.parse("2024-09-09T14:38:26.361110Z"));
+
+                    // this one is cancelled
+                    sender.table(tableName)
+                            .symbol("async", "true")
+                            .doubleColumn("water_level", 1);
+                    sender.cancelRow();
+
+                    // and this one should be inserted again
+                    sender.table(tableName)
+                            .symbol("async", "true")
+                            .doubleColumn("water_level", 2)
+                            .at(Instant.parse("2024-09-09T14:28:26.361110Z"));
+
+                    sender.flush();
+                }
+
+                serverMain.awaitTxn(tableName, 1);
+                serverMain.assertSql("SELECT * FROM h2o_feet",
+                        "async\twater_level\ttimestamp\n" +
+                                "true\t2.0\t2024-09-09T14:28:26.361110Z\n" +
+                                "true\t3.0\t2024-09-09T14:38:26.361110Z\n");
+            }
+        });
+    }
+
+    @Test
     public void testFlushAfterTimeout() throws Exception {
         // this is a regression test
         // there was a bug that flushes due to interval did not increase row count
