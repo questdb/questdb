@@ -1050,7 +1050,7 @@ public class CairoEngine implements Closeable, WriterSource {
         final long metadataVersion = tableMetadata.getMetadataVersion();
         table.setMetadataVersion(metadataVersion);
 
-        LOG.debug().$("set metadata version [table=").$(tableToken.getTableName())
+        LOG.debug().$("set metadata version [table=").$(tableToken)
                 .$(", version=").$(metadataVersion)
                 .I$();
 
@@ -1081,13 +1081,13 @@ public class CairoEngine implements Closeable, WriterSource {
             final TableColumnMetadata columnMetadata = tableMetadata.getColumnMetadata(i);
             CharSequence columnName = columnMetadata.getName();
 
-            LOG.debug().$("hydrating column [table=").$(tableToken.getTableName()).$(", column=").$(columnName).I$();
-
             int columnType = columnMetadata.getType();
 
             if (columnType < 0) {
                 continue; // marked for deletion
             }
+
+            LOG.debug().$("hydrating column [table=").$(tableToken.getTableName()).$(", column=").$(columnName).I$();
 
             CairoColumn column = new CairoColumn();
 
@@ -1124,7 +1124,7 @@ public class CairoEngine implements Closeable, WriterSource {
         metadataCacheSetTable(table, blindUpsert);
 
         if (infoLog) {
-            LOG.info().$("hydrated metadata [table=").$(table.getTableName()).I$();
+            LOG.info().$("hydrated metadata [table=").$(table.getTableToken()).I$();
         }
 
     }
@@ -1145,7 +1145,7 @@ public class CairoEngine implements Closeable, WriterSource {
     public String metadataCacheToString0() {
         StringSink sink = Misc.getThreadLocalSink();
         sink.put("MetadataCache [");
-        sink.put("tableCount=").put(metadataCacheTablesCount()).put("]");
+        sink.put("tableCount=").put(metadataCacheTablesCount()).put(']');
         sink.put('\n');
 
         for (CairoTable table : cairoTables.values()) {
@@ -1645,7 +1645,7 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean infoLog
     ) throws CairoException {
         if (infoLog) {
-            LOG.info().$("hydrating metadata [table=").$(token.getTableName()).I$();
+            LOG.info().$("hydrating metadata [table=").$(token).I$();
         }
 
         // set up dir path
@@ -1675,20 +1675,20 @@ public class CairoEngine implements Closeable, WriterSource {
             CairoTable potentiallyExistingTable = metadataCacheGetNullableTable(token);
             if (potentiallyExistingTable != null && potentiallyExistingTable.getMetadataVersion() > metadataVersion) {
                 LOG.debug().$("table in cache with newer version [table=")
-                        .$(token.getTableName()).$(", version=").$(potentiallyExistingTable.getMetadataVersion()).I$();
+                        .$(token).$(", version=").$(potentiallyExistingTable.getMetadataVersion()).I$();
                 return;
             }
 
             // get basic metadata
             int columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
 
-            LOG.debug().$("reading columns [table=").$(token.getTableName())
+            LOG.debug().$("reading columns [table=").$(token)
                     .$(", count=").$(columnCount)
                     .I$();
 
             table.setMetadataVersion(metadataVersion);
 
-            LOG.debug().$("set metadata version [table=").$(token.getTableName())
+            LOG.debug().$("set metadata version [table=").$(token)
                     .$(", version=").$(metadataVersion)
                     .I$();
 
@@ -1717,7 +1717,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     String columnName = Chars.toString(name);
                     CairoColumn column = new CairoColumn();
 
-                    LOG.debug().$("hydrating column [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
+                    LOG.debug().$("hydrating column [table=").$(token).$(", column=").$(columnName).I$();
 
                     column.setName(columnName);
                     table.upsertColumn(column);
@@ -1745,7 +1745,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     }
 
                     if (ColumnType.isSymbol(columnType)) {
-                        LOG.debug().$("hydrating symbol metadata [table=").$(token.getTableName()).$(", column=").$(columnName).I$();
+                        LOG.debug().$("hydrating symbol metadata [table=").$(token).$(", column=").$(columnName).I$();
 
 
                         // get column version
@@ -1782,13 +1782,13 @@ public class CairoEngine implements Closeable, WriterSource {
             metadataCacheSetTable(table, blindUpsert);
 
             if (infoLog) {
-                LOG.info().$("hydrated metadata [table=").$(table.getTableName()).I$();
+                LOG.info().$("hydrated metadata [table=").$(table.getTableToken()).I$();
             }
         } catch (CairoException e) {
             metadataCacheRemoveTable(token); // get rid of stale metadata
             // if can't hydrate and table is not dropped, it's a critical error
             LogRecord root = this.isTableDropped(token) ? LOG.info() : LOG.critical();
-            root.$("could not hydrate metadata [table=").$(table.getTableName()).I$();
+            root.$("could not hydrate metadata [table=").$(table.getTableToken()).I$();
         } finally {
             columnVersionReader.close();
             path.close();
