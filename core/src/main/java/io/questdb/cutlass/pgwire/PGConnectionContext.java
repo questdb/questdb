@@ -453,54 +453,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         recvBufferReadOffset = 0;
     }
 
-    private PGPipelineEntry uncacheNamedPortal(CharSequence portalName) {
-        if (portalName != null) {
-            final int index = namedPortals.keyIndex(portalName);
-            if (index < 0) {
-                PGPipelineEntry pe = namedStatements.valueAt(index);
-                PGPipelineEntry peParent = pe.getParentPreparedStatementPipelineEntry();
-                if (peParent != null) {
-                    int parentIndex = peParent.getPortalNames().indexOf(portalName);
-                    if (parentIndex != -1) {
-                        peParent.getPortalNames().remove(parentIndex);
-                    }
-                }
-                namedPortals.removeAt(index);
-                return pe;
-            }
-        }
-        return null;
-    }
-
-    private PGPipelineEntry uncacheNamedStatement(CharSequence statementName) {
-        if (statementName != null) {
-            int index = namedStatements.keyIndex(statementName);
-            if (index < 0) {
-                PGPipelineEntry pe = namedStatements.valueAt(index);
-                namedStatements.removeAt(index);
-                // also remove entries for the matching portal names
-                ObjList<CharSequence> portalNames = pe.getPortalNames();
-                for (int i = 0, n = portalNames.size(); i < n; i++) {
-                    int portalKeyIndex = this.namedPortals.keyIndex(portalNames.getQuick(i));
-                    if (portalKeyIndex < 0) {
-                        // release the entry, it must not be referenced from anywhere other than
-                        // this list (we enforce portal name uniqueness)
-                        Misc.free(this.namedPortals.valueAt(portalKeyIndex));
-                        this.namedPortals.removeAt(portalKeyIndex);
-                    } else {
-                        // else: do not make a fuss if portal name does not exist
-                        LOG.debug()
-                                .$("ignoring non-existent portal [portalName=").$(portalNames.getQuick(i))
-                                .$(", statementName=").$(statementName)
-                                .I$();
-                    }
-                }
-                return pe;
-            }
-        }
-        return null;
-    }
-
     private void closePendingWriters(boolean commit) {
         for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
             final TableWriterAPI m = pendingWriter.value;
@@ -511,42 +463,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
             Misc.free(m);
         }
-    }
-
-    // processes one or more queries (batch/script). "Simple Query" in PostgreSQL docs.
-    private void cmdQuery(long lo, long limit) {
-        System.out.println("********************* OOPSIE *************************");
-/*
-        sendRNQ = true;
-        prepareForNewQuery();
-        isEmptyQuery = true; // assume SQL text contains no query until we find out otherwise
-        CharacterStoreEntry e = characterStore.newEntry();
-
-        if (Utf8s.utf8ToUtf16(lo, limit - 1, e)) {
-            activeSqlText = characterStore.toImmutable();
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compileBatch(activeSqlText, sqlExecutionContext, batchCallback);
-                clearCursorAndFactory();
-                if (isEmptyQuery) {
-                    prepareEmptyQueryResponse();
-                }
-                // we need to continue parsing receive buffer even if we errored out
-                // this is because PG client might expect separate responses to everything it sent
-            } catch (SqlException ex) {
-                prepareNonCriticalError(ex.getPosition(), ex.getFlyweightMessage());
-            } catch (CairoException ex) {
-                if (ex.isInterruption()) {
-                    prepareErrorResponse(-1, ex.getFlyweightMessage());
-                } else {
-                    prepareError(ex.getPosition(), ex.getFlyweightMessage(), ex.isCritical(), ex.getErrno());
-                }
-            }
-        } else {
-            LOG.error().$("invalid UTF8 bytes in parse query").$();
-            throw BadProtocolException.INSTANCE;
-        }
-        sendReadyForNewQuery();
-*/
     }
 
     private void doSendWithRetries(int bufferOffset, int bufferSize) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -1083,6 +999,36 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
+    // processes one or more queries (batch/script). "Simple Query" in PostgreSQL docs.
+    private void msgQuery(long lo, long limit) throws BadProtocolException, PeerIsSlowToReadException, QueryPausedException, PeerDisconnectedException {
+        System.out.println("********************* OOPSIE *************************");
+
+        CharacterStoreEntry e = characterStore.newEntry();
+
+        if (Utf8s.utf8ToUtf16(lo, limit - 1, e)) {
+            CharSequence activeSqlText = characterStore.toImmutable();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.compileBatch(activeSqlText, sqlExecutionContext, batchCallback);
+            } catch (Throwable ex) {
+                if (pipelineCurrentEntry == null) {
+                    pipelineCurrentEntry = new PGPipelineEntry(engine);
+                }
+                StringSink errorSink = pipelineCurrentEntry.getErrorMessageSink();
+                if (e instanceof FlyweightMessageContainer) {
+                    errorSink.put(((FlyweightMessageContainer) e).getFlyweightMessage());
+                } else {
+                    errorSink.put(ex.getMessage());
+                }
+                throw BadProtocolException.INSTANCE;
+            }
+            // todo: send error on simple query error
+            msgSync();
+        } else {
+            LOG.error().$("invalid UTF8 bytes in parse query").$();
+            throw BadProtocolException.INSTANCE;
+        }
+    }
+
     private void msgSync() throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, BadProtocolException {
         addPipelineEntry();
 
@@ -1183,7 +1129,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 msgExecute(msgLo, msgLimit);
                 break;
             case 'Q': // simple query
-                cmdQuery(msgLo, msgLimit);
+                msgQuery(msgLo, msgLimit);
                 break;
             case 'S': // sync
                 msgSync();
@@ -1359,6 +1305,54 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
+    private PGPipelineEntry uncacheNamedPortal(CharSequence portalName) {
+        if (portalName != null) {
+            final int index = namedPortals.keyIndex(portalName);
+            if (index < 0) {
+                PGPipelineEntry pe = namedStatements.valueAt(index);
+                PGPipelineEntry peParent = pe.getParentPreparedStatementPipelineEntry();
+                if (peParent != null) {
+                    int parentIndex = peParent.getPortalNames().indexOf(portalName);
+                    if (parentIndex != -1) {
+                        peParent.getPortalNames().remove(parentIndex);
+                    }
+                }
+                namedPortals.removeAt(index);
+                return pe;
+            }
+        }
+        return null;
+    }
+
+    private PGPipelineEntry uncacheNamedStatement(CharSequence statementName) {
+        if (statementName != null) {
+            int index = namedStatements.keyIndex(statementName);
+            if (index < 0) {
+                PGPipelineEntry pe = namedStatements.valueAt(index);
+                namedStatements.removeAt(index);
+                // also remove entries for the matching portal names
+                ObjList<CharSequence> portalNames = pe.getPortalNames();
+                for (int i = 0, n = portalNames.size(); i < n; i++) {
+                    int portalKeyIndex = this.namedPortals.keyIndex(portalNames.getQuick(i));
+                    if (portalKeyIndex < 0) {
+                        // release the entry, it must not be referenced from anywhere other than
+                        // this list (we enforce portal name uniqueness)
+                        Misc.free(this.namedPortals.valueAt(portalKeyIndex));
+                        this.namedPortals.removeAt(portalKeyIndex);
+                    } else {
+                        // else: do not make a fuss if portal name does not exist
+                        LOG.debug()
+                                .$("ignoring non-existent portal [portalName=").$(portalNames.getQuick(i))
+                                .$(", statementName=").$(statementName)
+                                .I$();
+                    }
+                }
+                return pe;
+            }
+        }
+        return null;
+    }
+
     static void dumpBuffer(char direction, long buffer, int len, boolean dumpNetworkTraffic) {
         if (dumpNetworkTraffic && len > 0) {
             StdoutSink.INSTANCE.put(direction);
@@ -1436,12 +1430,27 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         @Override
         public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence text) throws Exception {
+            pipelineCurrentEntry.ofSimpleQuery(
+                    Chars.toString(text), // todo: we just need an immutable copy of the text, not a new string
+                    sqlExecutionContext,
+                    cq,
+                    taiPool
+            );
+            transactionState = pipelineCurrentEntry.execute(
+                    sqlExecutionContext,
+                    transactionState,
+                    taiCache,
+                    pendingWriters,
+                    PGConnectionContext.this,
+                    namedStatements
+            );
+            pipelineCurrentEntry.setStateExec(true);
         }
 
         @Override
         public void preCompile(SqlCompiler compiler) {
-            prepareForNewBatchQuery();
-            circuitBreaker.resetTimer();
+            addPipelineEntry();
+            pipelineCurrentEntry = new PGPipelineEntry(engine);
         }
     }
 

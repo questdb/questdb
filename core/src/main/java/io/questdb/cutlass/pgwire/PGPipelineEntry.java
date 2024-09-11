@@ -30,6 +30,7 @@ import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.*;
+import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -397,6 +398,39 @@ public class PGPipelineEntry implements QuietCloseable {
                             taiPool
                     );
                 }
+                buildResultSetColumnTypes();
+            } catch (Throwable e) {
+                if (e instanceof FlyweightMessageContainer) {
+                    getErrorMessageSink().put(((FlyweightMessageContainer) e).getFlyweightMessage());
+                } else {
+                    getErrorMessageSink().put(e.getMessage());
+                }
+                throw BadProtocolException.INSTANCE;
+            }
+        }
+    }
+
+    public void ofSimpleQuery(
+            CharSequence sqlText,
+            SqlExecutionContext sqlExecutionContext,
+            CompiledQuery cq,
+            WeakSelfReturningObjectPool<TypesAndInsert> taiPool
+    ) throws BadProtocolException {
+        // pipeline entries begin life as anonymous, typical pipeline length is 1-3 entries
+        // we do not need to create new objects until we know we're caching the entry
+        this.sqlText = sqlText;
+        this.empty = sqlText == null || sqlText.length() == 0;
+        cacheHit = false;
+
+        // todo: this is a hack it does not belong here
+        if (cq.getType() == CompiledQuery.SELECT) {
+            setStateDesc(2); // 2 = portal
+        }
+        if (!empty) {
+            // try insert, peek because this is our private cache,
+            // and we do not want to remove statement from it
+            try {
+                resolveSqlType(sqlExecutionContext, taiPool, cq);
                 buildResultSetColumnTypes();
             } catch (Throwable e) {
                 if (e instanceof FlyweightMessageContainer) {
@@ -1328,6 +1362,8 @@ public class PGPipelineEntry implements QuietCloseable {
             stateSync = 100; // query is paused
             utf8Sink.resetToBookmark();
             throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
+        } catch (NoSpaceLeftInResponseBufferException e) {
+            throw e;
         } catch (Throwable e) {
             utf8Sink.resetToBookmark();
             if (e instanceof FlyweightMessageContainer) {
@@ -1567,97 +1603,100 @@ public class PGPipelineEntry implements QuietCloseable {
     ) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             CompiledQuery cq = compiler.compile(sqlText, sqlExecutionContext);
+            resolveSqlType(sqlExecutionContext, taiPool, cq);
+        }
+    }
 
-            sqlExecutionContext.storeTelemetry(cq.getType(), TelemetryOrigin.POSTGRES);
+    private void resolveSqlType(SqlExecutionContext sqlExecutionContext, WeakSelfReturningObjectPool<TypesAndInsert> taiPool, CompiledQuery cq) {
+        sqlExecutionContext.storeTelemetry(cq.getType(), TelemetryOrigin.POSTGRES);
 
-            this.sqlType = cq.getType();
+        this.sqlType = cq.getType();
 
-            switch (sqlType) {
-                case CompiledQuery.CREATE_TABLE_AS_SELECT:
-                    sqlTag = TAG_OK;
-                    sqlAffectedRowCount = cq.getAffectedRowsCount();
-                    stateParseExecuted = true;
-                    break;
-                case CompiledQuery.EXPLAIN:
-                    this.factory = cq.getRecordCursorFactory();
-                    // After parsing SQL text the bind variable service contains types of the variables
-                    // the compiler could work out. Caching SQL plan involved not recompiling SQL text over
-                    // and over. For that reason the types of the bind variables will have to be
-                    // preserved when SQL factory is taken from cache and reused. This is what
-                    // TypesAndSelect is for.
+        switch (sqlType) {
+            case CompiledQuery.CREATE_TABLE_AS_SELECT:
+                sqlTag = TAG_OK;
+                sqlAffectedRowCount = cq.getAffectedRowsCount();
+                stateParseExecuted = true;
+                break;
+            case CompiledQuery.EXPLAIN:
+                this.factory = cq.getRecordCursorFactory();
+                // After parsing SQL text the bind variable service contains types of the variables
+                // the compiler could work out. Caching SQL plan involved not recompiling SQL text over
+                // and over. For that reason the types of the bind variables will have to be
+                // preserved when SQL factory is taken from cache and reused. This is what
+                // TypesAndSelect is for.
 
-                    // SQL cache is global and multithreaded. For that reason we must
-                    // move "tas" into the cache only when the current context is guaranteed not
-                    // to use it.
-                    tas = new TypesAndSelect(this.factory);
-                    tas.copyTypesFrom(sqlExecutionContext.getBindVariableService());
-                    sqlTag = TAG_EXPLAIN;
-                case CompiledQuery.SELECT:
-                    this.factory = cq.getRecordCursorFactory();
-                    tas = new TypesAndSelect(this.factory);
-                    tas.copyTypesFrom(sqlExecutionContext.getBindVariableService());
-                    sqlTag = TAG_SELECT;
-                    break;
-                case CompiledQuery.PSEUDO_SELECT:
-                    // the PSEUDO_SELECT comes from a "copy" SQL, which is why
-                    // we do not intend to cache it. The fact we don't have
-                    // TypesAndSelect instance here should be enough to tell the
-                    // system not to cache.
-                    this.factory = cq.getRecordCursorFactory();
-                    sqlTag = TAG_PSEUDO_SELECT;
-                    break;
-                case CompiledQuery.INSERT:
-                    this.insertOp = cq.getInsertOperation();
-                    tai = taiPool.pop();
-                    // todo: check why TypeAndSelect has separate method for copying types from BindVariableService
-                    tai.of(insertOp, sqlExecutionContext.getBindVariableService());
-                    sqlTag = TAG_INSERT;
-                    break;
-                case CompiledQuery.UPDATE:
-                    // copy contents of the mutable CompiledQuery into our cache
-                    compiledQuery.ofUpdate(cq.getUpdateOperation());
-                    compiledQuery.withSqlText(cq.getSqlText());
-                    sqlTag = TAG_UPDATE;
-                    break;
-                case CompiledQuery.INSERT_AS_SELECT:
-                    this.insertOp = cq.getInsertOperation();
-                    sqlTag = TAG_INSERT_AS_SELECT;
-                    break;
-                case CompiledQuery.SET:
-                    sqlTag = TAG_SET;
-                    break;
-                case CompiledQuery.DEALLOCATE:
-                    this.preparedStatementNameToDeallocate = cq.getStatementName();
-                    sqlTag = TAG_DEALLOCATE;
-                    break;
-                case CompiledQuery.BEGIN:
-                    sqlTag = TAG_BEGIN;
-                    break;
-                case CompiledQuery.COMMIT:
-                    sqlTag = TAG_COMMIT;
-                    break;
-                case CompiledQuery.ROLLBACK:
-                    sqlTag = TAG_ROLLBACK;
-                    break;
-                case CompiledQuery.ALTER_USER:
-                    sqlTextHasSecret = sqlExecutionContext.containsSecret();
-                    sqlTag = TAG_ALTER_ROLE;
-                    break;
-                case CompiledQuery.CREATE_USER:
-                    sqlTextHasSecret = sqlExecutionContext.containsSecret();
-                    sqlTag = TAG_CREATE_ROLE;
-                    break;
-                case CompiledQuery.ALTER:
-                    // future-proofing ALTER execution
-                    compiledQuery.ofAlter(cq.getAlterOperation());
-                    compiledQuery.withSqlText(cq.getSqlText());
-                    // fall through
-                default:
-                    // DDL
-                    sqlTag = TAG_OK;
-                    stateParseExecuted = true;
-                    break;
-            }
+                // SQL cache is global and multithreaded. For that reason we must
+                // move "tas" into the cache only when the current context is guaranteed not
+                // to use it.
+                tas = new TypesAndSelect(this.factory);
+                tas.copyTypesFrom(sqlExecutionContext.getBindVariableService());
+                sqlTag = TAG_EXPLAIN;
+            case CompiledQuery.SELECT:
+                this.factory = cq.getRecordCursorFactory();
+                tas = new TypesAndSelect(this.factory);
+                tas.copyTypesFrom(sqlExecutionContext.getBindVariableService());
+                sqlTag = TAG_SELECT;
+                break;
+            case CompiledQuery.PSEUDO_SELECT:
+                // the PSEUDO_SELECT comes from a "copy" SQL, which is why
+                // we do not intend to cache it. The fact we don't have
+                // TypesAndSelect instance here should be enough to tell the
+                // system not to cache.
+                this.factory = cq.getRecordCursorFactory();
+                sqlTag = TAG_PSEUDO_SELECT;
+                break;
+            case CompiledQuery.INSERT:
+                this.insertOp = cq.getInsertOperation();
+                tai = taiPool.pop();
+                // todo: check why TypeAndSelect has separate method for copying types from BindVariableService
+                tai.of(insertOp, sqlExecutionContext.getBindVariableService());
+                sqlTag = TAG_INSERT;
+                break;
+            case CompiledQuery.UPDATE:
+                // copy contents of the mutable CompiledQuery into our cache
+                compiledQuery.ofUpdate(cq.getUpdateOperation());
+                compiledQuery.withSqlText(cq.getSqlText());
+                sqlTag = TAG_UPDATE;
+                break;
+            case CompiledQuery.INSERT_AS_SELECT:
+                this.insertOp = cq.getInsertOperation();
+                sqlTag = TAG_INSERT_AS_SELECT;
+                break;
+            case CompiledQuery.SET:
+                sqlTag = TAG_SET;
+                break;
+            case CompiledQuery.DEALLOCATE:
+                this.preparedStatementNameToDeallocate = cq.getStatementName();
+                sqlTag = TAG_DEALLOCATE;
+                break;
+            case CompiledQuery.BEGIN:
+                sqlTag = TAG_BEGIN;
+                break;
+            case CompiledQuery.COMMIT:
+                sqlTag = TAG_COMMIT;
+                break;
+            case CompiledQuery.ROLLBACK:
+                sqlTag = TAG_ROLLBACK;
+                break;
+            case CompiledQuery.ALTER_USER:
+                sqlTextHasSecret = sqlExecutionContext.containsSecret();
+                sqlTag = TAG_ALTER_ROLE;
+                break;
+            case CompiledQuery.CREATE_USER:
+                sqlTextHasSecret = sqlExecutionContext.containsSecret();
+                sqlTag = TAG_CREATE_ROLE;
+                break;
+            case CompiledQuery.ALTER:
+                // future-proofing ALTER execution
+                compiledQuery.ofAlter(cq.getAlterOperation());
+                compiledQuery.withSqlText(cq.getSqlText());
+                // fall through
+            default:
+                // DDL
+                sqlTag = TAG_OK;
+                stateParseExecuted = true;
+                break;
         }
     }
 
