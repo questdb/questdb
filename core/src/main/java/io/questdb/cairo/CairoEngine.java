@@ -57,7 +57,6 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.lang.ThreadLocal;
-import java.util.Collection;
 import java.util.Comparator;
 import java.util.Map;
 import java.util.ServiceLoader;
@@ -952,19 +951,6 @@ public class CairoEngine implements Closeable, WriterSource {
             metadataCacheHydrateTable(tableToken, false, true);
         }
         return cairoTables.get(tableToken.getDirName());
-    }
-
-    public void metadataCacheGetTables(ObjList<CairoTable> out) {
-        final Collection<CairoTable> values = cairoTables.values(); // check that this is O(1)
-        final int size = values.size();
-        out.checkCapacity(size);
-        for (CairoTable table : values) {
-            out.add(table);
-        }
-    }
-
-    public int metadataCacheGetTablesCount() {
-        return cairoTables.size();
     }
 
     public @Nullable CairoTable metadataCacheGetVisibleTable(@NotNull TableToken tableToken) {
