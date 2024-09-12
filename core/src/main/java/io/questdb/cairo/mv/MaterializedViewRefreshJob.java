@@ -33,6 +33,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.str.Path;
 
 import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
 
@@ -43,24 +44,38 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
     private final CairoEngine engine;
     private final MatViewRefreshExecutionContext matViewRefreshExecutionContext;
     private final ObjList<CharSequence> parents = new ObjList<>();
-    private long baseRefreshRangeFrom;
-    private long baseRefreshRangeTo;
+    private final WalTxnRangeLoader txnRangeLoader;
 
     public MaterializedViewRefreshJob(CairoEngine engine) {
         this.engine = engine;
         this.matViewRefreshExecutionContext = new MatViewRefreshExecutionContext(engine);
+        this.txnRangeLoader = new WalTxnRangeLoader(engine.getConfiguration().getFilesFacade());
     }
 
-    private void findCommitTimestampRanges(MatViewRefreshExecutionContext executionContext, TableReader baseTableReader, long toParentTxn) throws SqlException {
-        long baseRefreshRangeFrom = 0;
-        long baseRefreshRangeTo = Long.MAX_VALUE;
-        executionContext.getBindVariableService().setTimestamp("from", baseRefreshRangeFrom);
-        executionContext.getBindVariableService().setTimestamp("to", baseRefreshRangeTo);
+    private boolean findCommitTimestampRanges(MatViewRefreshExecutionContext executionContext, TableReader baseTableReader, long fromParentTxn, MaterializedViewDefinition viewDefinition) throws SqlException {
+        long readToTxn = baseTableReader.getSeqTxn();
+
+        txnRangeLoader.load(engine, Path.PATH.get(), baseTableReader.getTableToken(), fromParentTxn, readToTxn);
+        long minTs = txnRangeLoader.getMinTimestamp();
+        long maxTs = txnRangeLoader.getMaxTimestamp();
+
+        if (minTs <= maxTs && minTs >= viewDefinition.getSampleByFromEpochMicros()) {
+            // Handle sample by with timezones
+            long sampleByPeriod = viewDefinition.getSampleByPeriodMicros();
+            long sampleByFromEpoch = viewDefinition.getSampleByFromEpochMicros();
+            minTs = sampleByFromEpoch + (minTs - sampleByFromEpoch) / sampleByPeriod * sampleByPeriod;
+            maxTs = sampleByFromEpoch + ((maxTs - sampleByFromEpoch + sampleByPeriod - 1) / sampleByPeriod) * sampleByPeriod;
+
+            executionContext.getBindVariableService().setTimestamp("from", minTs);
+            executionContext.getBindVariableService().setTimestamp("to", maxTs);
+            return txnRangeLoader.getMinTimestamp() <= txnRangeLoader.getMaxTimestamp();
+        }
+
+        return false;
     }
 
-    private void refreshView(TableToken baseToken, SeqTxnTracker viewTxnTracker, TableToken viewToken, MaterializedViewDefinition viewDef, long fromBaseTxn, long toParentTxn) {
+    private void refreshView(TableToken baseToken, SeqTxnTracker viewTxnTracker, TableToken viewToken, MaterializedViewDefinition viewDef, long fromBaseTxn, long toBaseTxn) {
         // Steps:
-        // - find the commit ranges fromBaseTxn to latest parent transaction
         // - compile view and execute with timestamp ranges from the unprocessed commits
         // - write the result set to WAL (or directly to table writer O3 area)
         // - apply resulting commit
@@ -69,10 +84,10 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
             assert viewTableWriter.getMetadata().getTableId() == viewToken.getTableId();
 
             if (fromBaseTxn < 0) {
-                fromBaseTxn = viewTableWriter.getMatViewBaseTxn();
-                if (fromBaseTxn >= toParentTxn) {
+                fromBaseTxn = engine.getTableSequencerAPI().getLastRefreshBaseTxn(viewToken);
+                if (fromBaseTxn >= toBaseTxn) {
                     // Already refreshed
-                    viewTxnTracker.setAppliedToParentTxn(fromBaseTxn);
+                    viewTxnTracker.setLastRefreshBaseTxn(fromBaseTxn);
                     return;
                 }
             }
@@ -84,9 +99,22 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
 
             try (TableReader baseTableReader = engine.getReader(baseToken)) {
                 matViewRefreshExecutionContext.of(baseTableReader, viewTableWriter);
-                findCommitTimestampRanges(matViewRefreshExecutionContext, baseTableReader, fromBaseTxn);
-                try (var compiler = engine.getSqlCompiler()) {
-                    CompiledQuery compiledQuery = compiler.compile(viewDef.getViewSql(), matViewRefreshExecutionContext);
+                try {
+                    if (findCommitTimestampRanges(matViewRefreshExecutionContext, baseTableReader, fromBaseTxn, viewDef)) {
+                        toBaseTxn = baseTableReader.getSeqTxn();
+                        LOG.info().$("refreshing materialized view [view=").$(viewToken)
+                                .$(", base=").$(baseToken)
+                                .$(", fromSeqTxn=").$(fromBaseTxn)
+                                .$(", toSeqTxn=").$(toBaseTxn).I$();
+
+                        try (var compiler = engine.getSqlCompiler()) {
+                            CompiledQuery compiledQuery = compiler.compile(viewDef.getViewSql(), matViewRefreshExecutionContext);
+                        }
+                        engine.getTableSequencerAPI().setLastRefreshBaseTxn(viewToken, toBaseTxn);
+                        viewTxnTracker.setLastRefreshBaseTxn(toBaseTxn);
+                    }
+                } finally {
+                    matViewRefreshExecutionContext.clean();
                 }
             } catch (SqlException sqlException) {
                 LOG.error().$("error refreshing materialized view [view=").$(viewToken).$(", error=")
@@ -124,15 +152,15 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
                 }
 
                 SeqTxnTracker parentSeqTracker = engine.getTableSequencerAPI().getTxnTracker(parentToken);
-                long lastParentApplied = parentSeqTracker.getWriterTxn();
+                long lastBaseQueryableTxn = parentSeqTracker.getWriterTxn();
 
                 for (int v = 0, vsize = childViewSink.viewsList.size(); v < vsize; v++) {
                     MaterializedViewDefinition viewDef = childViewSink.viewsList.get(v);
                     TableToken viewToken = viewDef.getTableToken();
                     SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
-                    long appliedToParentTxn = viewSeqTracker.getAppliedToParentTxn();
-                    if (appliedToParentTxn < 0 || appliedToParentTxn < lastParentApplied) {
-                        refreshView(parentToken, viewSeqTracker, viewToken, viewDef, lastParentApplied, appliedToParentTxn);
+                    long appliedToParentTxn = viewSeqTracker.getLastRefreshBaseTxn();
+                    if (appliedToParentTxn < 0 || appliedToParentTxn < lastBaseQueryableTxn) {
+                        refreshView(parentToken, viewSeqTracker, viewToken, viewDef, appliedToParentTxn, lastBaseQueryableTxn);
                         refreshed = true;
                     }
                 }

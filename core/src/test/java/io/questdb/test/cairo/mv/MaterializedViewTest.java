@@ -53,7 +53,7 @@ public class MaterializedViewTest extends AbstractCairoTest {
                     "select sym, last(price), ts from base_price " +
                     "where ts >= :from and ts <= :to " +
                     "sample by 1h");
-            viewDefinition.setSampleByPeriodMicros(Timestamps.toMicros(0, 1, 1, 1, 0));
+            viewDefinition.setSampleByPeriodMicros(Timestamps.HOUR_MICROS);
             viewDefinition.setTableToken(engine.verifyTableName("price_1h"));
 
             engine.getMaterializedViewGraph().upsertView(baseToken, viewDefinition);
@@ -66,6 +66,7 @@ public class MaterializedViewTest extends AbstractCairoTest {
 
             MaterializedViewRefreshJob refreshJob = new MaterializedViewRefreshJob(engine);
             refreshJob.run(0);
+            drainWalQueue();
 
             assertSql("sym\tprice\tts\n" +
                             "gbpusd\t1.323\t2024-09-10T12:00:00.000000Z\n" +
@@ -80,6 +81,8 @@ public class MaterializedViewTest extends AbstractCairoTest {
             drainWalQueue();
 
             refreshJob.run(0);
+            drainWalQueue();
+
             String expected = "sym\tprice\tts\n" +
                     "gbpusd\t1.319\t2024-09-10T12:00:00.000000Z\n" +
                     "jpyusd\t103.21\t2024-09-10T12:00:00.000000Z\n" +

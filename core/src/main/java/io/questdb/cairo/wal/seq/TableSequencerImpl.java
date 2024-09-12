@@ -180,6 +180,10 @@ public class TableSequencerImpl implements TableSequencer {
         engine.getWalListener().tableDropped(tableToken, txn, timestamp);
     }
 
+    public long getLastRefreshBaseTxn() {
+        return tableTransactionLog.getLastRefreshBaseTxn();
+    }
+
     @Override
     public TableMetadataChangeLog getMetadataChangeLog(long structureVersionLo) {
         checkDropped();
@@ -423,6 +427,10 @@ public class TableSequencerImpl implements TableSequencer {
     @TestOnly
     public void setDistressed() {
         this.distressed = true;
+    }
+
+    public void setLastRefreshBaseTxn(long baseTxn) {
+        tableTransactionLog.setLastRefreshBaseTxn(baseTxn);
     }
 
     @Override

@@ -59,6 +59,10 @@ public class IntList implements Mutable, Sinkable {
         System.arraycopy(that.data, 0, this.data, p, s);
     }
 
+    public void allocate(int size) {
+        checkCapacity(size);
+    }
+
     public void arrayCopy(int srcPos, int dstPos, int length) {
         System.arraycopy(data, srcPos, data, dstPos, length);
     }
@@ -239,6 +243,14 @@ public class IntList implements Mutable, Sinkable {
 
     public int size() {
         return pos;
+    }
+
+    public void sortGroups(int groupSize) {
+        if (groupSize == 3 && pos % 3 == 0) {
+            Int3Sort.quickSort(data, 0, pos / 3);
+            return;
+        }
+        throw new IllegalStateException("sorting not supported");
     }
 
     @Override

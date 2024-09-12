@@ -372,6 +372,16 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public void attachReader(TableReader reader) {
+        // Ignore the object close() call until attached back
+        readerPool.attach(reader);
+    }
+
+    public void detachReader(TableReader reader) {
+        // Ignore the object close() call until attached back
+        readerPool.detach(reader);
+    }
+
     public void drop(Path path, TableToken tableToken) {
         verifyTableToken(tableToken);
         if (tableToken.isWal()) {

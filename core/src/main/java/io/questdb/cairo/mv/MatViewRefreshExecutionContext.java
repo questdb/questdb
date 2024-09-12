@@ -30,6 +30,8 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 
 public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
+    private final CairoEngine engine;
+    private TableReader baseTableReader;
     private TableToken viewTableToken;
     private TableWriter viewTableWriter;
 
@@ -44,17 +46,28 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
                  }
              }, new BindVariableServiceImpl(engine.getConfiguration())
         );
+        this.engine = engine;
     }
 
-    public TableWriterAPI getTableWriterAPI(TableToken tableToken, String reason) {
-        if (tableToken.equals(viewTableToken)) {
-            return viewTableWriter;
+    public void clean() {
+        this.engine.attachReader(baseTableReader);
+    }
+
+    @Override
+    public TableReader getReader(TableToken tableToken) {
+        if (tableToken.equals(baseTableReader.getTableToken())) {
+            // Fix the reader to not read transactions we don't want to read yet
+            return baseTableReader;
         }
-        throw CairoException.nonCritical().put("unexpected write attempt in materialized view ").put(viewTableToken);
+        return getCairoEngine().getReader(tableToken);
     }
 
     public void of(TableReader baseTableReader, TableWriter viewTableWriter) {
         this.viewTableToken = viewTableWriter.getTableToken();
+        this.baseTableReader = baseTableReader;
+
+        // Operate sql on a fixed reader that has known max transactions visible
+        this.engine.detachReader(baseTableReader);
         this.viewTableWriter = viewTableWriter;
     }
 }
