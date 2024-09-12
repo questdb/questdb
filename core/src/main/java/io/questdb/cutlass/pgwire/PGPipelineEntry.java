@@ -429,7 +429,7 @@ public class PGPipelineEntry implements QuietCloseable {
         cacheHit = false;
 
         // todo: this is a hack it does not belong here
-        if (cq.getType() == CompiledQuery.SELECT) {
+        if (cq.getType() == CompiledQuery.SELECT || cq.getType() == CompiledQuery.EXPLAIN) {
             setStateDesc(2); // 2 = portal
         }
         if (!empty) {

@@ -3339,7 +3339,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testExplainPlanWithWhitespaces() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
