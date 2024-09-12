@@ -1334,7 +1334,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testBasicFetchIPv4() throws Exception {
         skipOnWalRun(); // Non-partitioned
         assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
@@ -1472,7 +1471,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testBasicFetchIPv4MultiCol() throws Exception {
         skipOnWalRun(); // Non-partitioned
         assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
@@ -1637,7 +1635,6 @@ if __name__ == "__main__":
 //    }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testBasicFetchIPv4Null() throws Exception {
         skipOnWalRun(); // Non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -1775,7 +1772,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testBatchInsertWithTransaction() throws Exception {
         skipOnWalRun(); // Non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -1952,7 +1948,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testBindVariableInFilter() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~(CONN_AWARE_SIMPLE_TEXT), (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
@@ -2152,13 +2147,11 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testBindVariablesWithIndexedSymbolInFilterBinaryTransfer() throws Exception {
         testBindVariablesWithIndexedSymbolInFilter(true, true);
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testBindVariablesWithIndexedSymbolInFilterStringTransfer() throws Exception {
         testBindVariablesWithIndexedSymbolInFilter(false, true);
     }
@@ -3297,7 +3290,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testExplainPlanWithBindVariables() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
             try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
@@ -3474,7 +3466,6 @@ if __name__ == "__main__":
         .catch(console.error)
     */
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testFetch1RowAtaTimeWithFlushInBetween() throws Exception {
         assertHexScript(">0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000\n" +
                 "<520000000800000003\n" +
@@ -4175,33 +4166,28 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testInsertBinaryBindVariable1() throws Exception {
         testInsertBinaryBindVariable(true);
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testInsertBinaryBindVariable2() throws Exception {
         testInsertBinaryBindVariable(false);
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testInsertBinaryOver200KbBinaryProtocol() throws Exception {
         final int maxLength = 200 * 1024;
         testBinaryInsert(maxLength, true, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testInsertBinaryOver200KbNonBinaryProtocol() throws Exception {
         final int maxLength = 200 * 1024;
         testBinaryInsert(maxLength, false, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testInsertBinaryOverHalfMb() throws Exception {
         final int maxLength = 524287;
         testBinaryInsert(maxLength, false, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
@@ -4232,7 +4218,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testInsertBooleans() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -4659,7 +4644,6 @@ nodejs code:
     }
 
     @Test
-    @Ignore
     public void testInsertSimpleText() throws Exception {
         testInsert0(true, false);
     }
