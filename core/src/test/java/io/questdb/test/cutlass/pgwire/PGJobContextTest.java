@@ -2779,8 +2779,7 @@ if __name__ == "__main__":
         // This test doesn't use partitioned tables.
         Assume.assumeFalse(walEnabled);
 
-        // pgwire 2.0 todo: remove ~CONN_AWARE_EXTENDED_BINARY when working
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q & CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 10000;
             int fetchSize = 993;
