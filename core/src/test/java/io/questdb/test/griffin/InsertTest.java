@@ -115,13 +115,17 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testCannotInsertIntoMatView() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table x as (select * from long_sequence(10))");
-            ddl("create materialized view x_mv as (select count() from x)");
+            ddl("create table currencies(ccy symbol, id long, ts timestamp) timestamp(ts)");
+            insert("insert into currencies values ('USD', 1, '2019-03-10T00:00:00.000000Z')");
+            insert("insert into currencies select 'EUR', max(id) + 1, '2019-03-10T01:00:00.000000Z' from currencies");
+            insert("insert into currencies select 'GBP', max(id) + 1, '2019-03-10T02:00:00.000000Z' from currencies");
+
+            ddl("create materialized view curr_view as select ts, max(id) as id from currencies sample by 1h");
             try {
-                insert("insert into x_mv values (1)");
-                Assert.fail();
+                insert("insert into curr_view values ('SEK', 3, '2019-03-10T03:00:00.000000Z')");
+                Assert.fail("INSERT should fail");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "cannot insert into materialized view [view=x_mv]");
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot insert into materialized view [view=curr_view]");
                 Assert.assertEquals(12, e.getPosition());
             }
         });
@@ -1259,7 +1263,7 @@ public class InsertTest extends AbstractCairoTest {
                     }
                     assertSql(expected, "tab");
                 } catch (Throwable e) {
-                    e.printStackTrace();
+                    e.printStackTrace(System.out);
                     if (exceptionType == null) throw e;
                     Assert.assertSame(exceptionType, e.getClass());
                     TestUtils.assertContains(e.getMessage(), expected);
