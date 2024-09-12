@@ -24,7 +24,10 @@
 
 package io.questdb.griffin.engine;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.async.PageFrameSequence;
@@ -101,15 +104,15 @@ public class QueryProgress extends AbstractRecordCursorFactory {
             SqlExecutionContext executionContext,
             boolean jit
     ) {
-        final CairoConfiguration config = executionContext.getCairoEngine().getConfiguration();
-        LOG.infoW()
-                .$("exe")
-                .$(" [id=").$(sqlId)
-                .$(", sql=`").utf8(sqlText).$('`')
-                .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
-                .$(", cache=").$(executionContext.isCacheHit())
-                .$(", jit=").$(jit)
-                .I$();
+        if (executionContext.getCairoEngine().getConfiguration().getLogSqlQueryProgressExe())
+            LOG.infoW()
+                    .$("exe")
+                    .$(" [id=").$(sqlId)
+                    .$(", sql=`").utf8(sqlText).$('`')
+                    .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
+                    .$(", cache=").$(executionContext.isCacheHit())
+                    .$(", jit=").$(jit)
+                    .I$();
     }
 
     @Override
