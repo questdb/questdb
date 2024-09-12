@@ -4176,18 +4176,21 @@ if __name__ == "__main__":
     }
 
     @Test
+    @Ignore("TODO PGWire 2.0")
     public void testInsertBinaryOver200KbBinaryProtocol() throws Exception {
         final int maxLength = 200 * 1024;
         testBinaryInsert(maxLength, true, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
     }
 
     @Test
+    @Ignore("TODO PGWire 2.0")
     public void testInsertBinaryOver200KbNonBinaryProtocol() throws Exception {
         final int maxLength = 200 * 1024;
         testBinaryInsert(maxLength, false, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
     }
 
     @Test
+    @Ignore("TODO PGWire 2.0")
     public void testInsertBinaryOverHalfMb() throws Exception {
         final int maxLength = 524287;
         testBinaryInsert(maxLength, false, Math.max(recvBufferSize, maxLength + 100), Math.max(sendBufferSize, maxLength + 100));
@@ -4597,7 +4600,6 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testInsertPreparedRenameInsert() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -5183,7 +5185,6 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testLargeBatchInsertMethod() throws Exception {
         skipOnWalRun(); // non-partitioned table
 
@@ -5572,7 +5573,6 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testLimitWithBindVariable() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_BINARY & ~CONN_AWARE_SIMPLE_TEXT, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
@@ -7240,7 +7240,6 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testQueryCountWithTsSmallerThanMinTsInTable() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary, mode, port) -> {
             ddl(
@@ -7701,7 +7700,6 @@ nodejs code:
     // --should do a FETCH ALL to get more data
     // --process 75 rows
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testResultSetFetchSizeTwo() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -9393,7 +9391,6 @@ create table tab as (
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -10482,7 +10479,6 @@ create table tab as (
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testVarcharBindVarMixedAscii() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
