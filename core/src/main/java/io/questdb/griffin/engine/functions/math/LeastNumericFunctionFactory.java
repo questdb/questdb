@@ -40,8 +40,17 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.Arrays;
 
 public class LeastNumericFunctionFactory implements FunctionFactory {
+    private final ThreadLocal<int[]> tlCounters = new ThreadLocal<int[]>() {
+        @Override
+        public int[] initialValue() {
+            return new int[ColumnType.NULL];
+        }
+    };
 
     @Override
     public String getSignature() {
@@ -56,7 +65,7 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final int[] counters = new int[11];
+        final int[] counters = tlCounters.get();
 
         for (int i = 0; i < args.size(); i++) {
             final Function arg = args.getQuick(i);
@@ -73,6 +82,7 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
                     counters[type]++;
                     continue;
                 default:
+                    clearCounters(counters);
                     if (arg.isNullConstant()) {
                         return NullConstant.NULL;
                     }
@@ -80,48 +90,13 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
             }
         }
 
-        if (counters[ColumnType.DOUBLE] > 0) {
-            return new LeastDoubleRecordFunction(new ObjList<>(args), argPositions);
-        }
+        final Function retVal = getLeastFunction(args, argPositions, counters);
 
-        if (counters[ColumnType.FLOAT] > 0) {
-            return new CastDoubleToFloatFunctionFactory()
-                    .newInstance(position,
-                            new ObjList<>(new LeastDoubleRecordFunction(new ObjList<>(args), argPositions)),
-                            null, configuration, sqlExecutionContext);
-        }
+        // clear array so we don't need to reconstruct it
+        clearCounters(counters);
 
-
-        if (counters[ColumnType.LONG] > 0) {
-            return new LeastLongRecordFunction(new ObjList<>(args), argPositions);
-        }
-
-        if (counters[ColumnType.TIMESTAMP] > 0) {
-            return new CastLongToTimestampFunctionFactory()
-                    .newInstance(position,
-                            new ObjList<>(new LeastLongRecordFunction(new ObjList<>(args), argPositions)),
-                            null, configuration, sqlExecutionContext);
-        }
-
-        if (counters[ColumnType.INT] > 0) {
-            return new CastLongToIntFunctionFactory()
-                    .newInstance(position,
-                            new ObjList<>(new LeastLongRecordFunction(new ObjList<>(args), argPositions)),
-                            null, configuration, sqlExecutionContext);
-        }
-
-        if (counters[ColumnType.SHORT] > 0) {
-            return new CastLongToShortFunctionFactory()
-                    .newInstance(position,
-                            new ObjList<>(new LeastLongRecordFunction(new ObjList<>(args), argPositions)),
-                            null, configuration, sqlExecutionContext);
-        }
-
-        if (counters[ColumnType.BYTE] > 0) {
-            return new CastLongToByteFunctionFactory()
-                    .newInstance(position,
-                            new ObjList<>(new LeastLongRecordFunction(new ObjList<>(args), argPositions)),
-                            null, configuration, sqlExecutionContext);
+        if (retVal != null) {
+            return retVal;
         }
 
         assert false;
@@ -130,6 +105,42 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         return null;
     }
 
+    private static void clearCounters(int[] counters) {
+        Arrays.fill(counters, 0);
+    }
+
+    private static @Nullable Function getLeastFunction(ObjList<Function> args, IntList argPositions, int[] counters) {
+        Function retVal = null;
+
+        if (counters[ColumnType.DOUBLE] > 0) {
+            retVal = new LeastDoubleRecordFunction(args, argPositions);
+        }
+
+        if (counters[ColumnType.FLOAT] > 0 && retVal == null) {
+            retVal = new CastDoubleToFloatFunctionFactory.CastDoubleToFloatFunction(new LeastDoubleRecordFunction(args, argPositions));
+        }
+
+        if (counters[ColumnType.LONG] > 0 && retVal == null) {
+            retVal = new LeastLongRecordFunction(args, argPositions);
+        }
+
+        if (counters[ColumnType.TIMESTAMP] > 0 && retVal == null) {
+            retVal = new CastLongToTimestampFunctionFactory.CastLongToTimestampFunction(new LeastLongRecordFunction(args, argPositions));
+        }
+
+        if (counters[ColumnType.INT] > 0 && retVal == null) {
+            retVal = new CastLongToIntFunctionFactory.CastLongToIntFunction(new LeastLongRecordFunction(args, argPositions));
+        }
+
+        if (counters[ColumnType.SHORT] > 0 && retVal == null) {
+            retVal = new CastLongToShortFunctionFactory.CastLongToShortFunction(new LeastLongRecordFunction(args, argPositions));
+        }
+
+        if (counters[ColumnType.BYTE] > 0 && retVal == null) {
+            retVal = new CastLongToByteFunctionFactory.CastLongToByteFunction(new LeastLongRecordFunction(args, argPositions));
+        }
+        return retVal;
+    }
 
     private static class LeastDoubleRecordFunction extends DoubleFunction implements MultiArgFunction {
         final IntList argPositions;

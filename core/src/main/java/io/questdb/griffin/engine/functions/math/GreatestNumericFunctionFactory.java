@@ -40,8 +40,17 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.Arrays;
 
 public class GreatestNumericFunctionFactory implements FunctionFactory {
+    private final ThreadLocal<int[]> tlCounters = new ThreadLocal<int[]>() {
+        @Override
+        public int[] initialValue() {
+            return new int[ColumnType.NULL];
+        }
+    };
 
     @Override
     public String getSignature() {
@@ -56,7 +65,7 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final int[] counters = new int[11];
+        final int[] counters = tlCounters.get();
 
         for (int i = 0; i < args.size(); i++) {
             final Function arg = args.getQuick(i);
@@ -76,58 +85,61 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
                     if (arg.isNullConstant()) {
                         return NullConstant.NULL;
                     }
+                    tlCounters.remove();
                     throw SqlException.position(argPositions.getQuick(i)).put("unsupported type");
             }
         }
 
-        if (counters[ColumnType.DOUBLE] > 0) {
-            return new GreatestDoubleRecordFunction(new ObjList<>(args), argPositions);
-        }
+        final Function retVal = getGreatestFunction(args, argPositions, counters);
 
-        if (counters[ColumnType.FLOAT] > 0) {
-            return new CastDoubleToFloatFunctionFactory()
-                    .newInstance(position,
-                            new ObjList<>(new GreatestDoubleRecordFunction(new ObjList<>(args), argPositions)),
-                            null, configuration, sqlExecutionContext);
-        }
+        // clear array so we don't need to reconstruct it
+        clearCounters(counters);
 
-
-        if (counters[ColumnType.LONG] > 0) {
-            return new GreatestLongRecordFunction(new ObjList<>(args), argPositions);
-        }
-
-        if (counters[ColumnType.TIMESTAMP] > 0) {
-            return new CastLongToTimestampFunctionFactory()
-                    .newInstance(position,
-                            new ObjList<>(new GreatestLongRecordFunction(new ObjList<>(args), argPositions)),
-                            null, configuration, sqlExecutionContext);
-        }
-
-        if (counters[ColumnType.INT] > 0) {
-            return new CastLongToIntFunctionFactory()
-                    .newInstance(position,
-                            new ObjList<>(new GreatestLongRecordFunction(new ObjList<>(args), argPositions)),
-                            null, configuration, sqlExecutionContext);
-        }
-
-        if (counters[ColumnType.SHORT] > 0) {
-            return new CastLongToShortFunctionFactory()
-                    .newInstance(position,
-                            new ObjList<>(new GreatestLongRecordFunction(new ObjList<>(args), argPositions)),
-                            null, configuration, sqlExecutionContext);
-        }
-
-        if (counters[ColumnType.BYTE] > 0) {
-            return new CastLongToByteFunctionFactory()
-                    .newInstance(position,
-                            new ObjList<>(new GreatestLongRecordFunction(new ObjList<>(args), argPositions)),
-                            null, configuration, sqlExecutionContext);
+        if (retVal != null) {
+            return retVal;
         }
 
         assert false;
 
         // unreachable
         return null;
+    }
+
+    private static void clearCounters(int[] counters) {
+        Arrays.fill(counters, 0);
+    }
+
+    private static @Nullable Function getGreatestFunction(ObjList<Function> args, IntList argPositions, int[] counters) {
+        Function retVal = null;
+
+        if (counters[ColumnType.DOUBLE] > 0) {
+            retVal = new GreatestDoubleRecordFunction(args, argPositions);
+        }
+
+        if (counters[ColumnType.FLOAT] > 0 && retVal == null) {
+            retVal = new CastDoubleToFloatFunctionFactory.CastDoubleToFloatFunction(new GreatestDoubleRecordFunction(args, argPositions));
+        }
+
+        if (counters[ColumnType.LONG] > 0 && retVal == null) {
+            retVal = new GreatestLongRecordFunction(args, argPositions);
+        }
+
+        if (counters[ColumnType.TIMESTAMP] > 0 && retVal == null) {
+            retVal = new CastLongToTimestampFunctionFactory.CastLongToTimestampFunction(new GreatestLongRecordFunction(args, argPositions));
+        }
+
+        if (counters[ColumnType.INT] > 0 && retVal == null) {
+            retVal = new CastLongToIntFunctionFactory.CastLongToIntFunction(new GreatestLongRecordFunction(args, argPositions));
+        }
+
+        if (counters[ColumnType.SHORT] > 0 && retVal == null) {
+            retVal = new CastLongToShortFunctionFactory.CastLongToShortFunction(new GreatestLongRecordFunction(args, argPositions));
+        }
+
+        if (counters[ColumnType.BYTE] > 0 && retVal == null) {
+            retVal = new CastLongToByteFunctionFactory.CastLongToByteFunction(new GreatestLongRecordFunction(args, argPositions));
+        }
+        return retVal;
     }
 
 
