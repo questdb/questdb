@@ -35,22 +35,24 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-public class SpreadFunctionFactory implements FunctionFactory {
+public class SpreadBpsFunctionFactory implements FunctionFactory {
+
+    // (bid, ask)
     @Override
     public String getSignature() {
-        return "spread(DD)";
+        return "spread_bps(DD)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        return new SpreadFunction(args.getQuick(0), args.getQuick(1));
+        return new SpreadBpsFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class SpreadFunction extends DoubleFunction implements BinaryFunction {
+    private static class SpreadBpsFunction extends DoubleFunction implements BinaryFunction {
         private final Function ask;
         private final Function bid;
 
-        public SpreadFunction(Function bid, Function ask) {
+        public SpreadBpsFunction(Function bid, Function ask) {
             this.bid = bid;
             this.ask = ask;
         }
@@ -59,7 +61,8 @@ public class SpreadFunctionFactory implements FunctionFactory {
         public double getDouble(Record rec) {
             final double b = bid.getDouble(rec);
             final double a = ask.getDouble(rec);
-            return FinanceUtils.spread(b, a);
+
+            return FinanceUtils.spread(b, a) / FinanceUtils.mid(b, a) * 10_000;
         }
 
         @Override
@@ -69,14 +72,12 @@ public class SpreadFunctionFactory implements FunctionFactory {
 
         @Override
         public String getName() {
-            return "spread";
+            return "spread_bps";
         }
 
         @Override
         public Function getRight() {
             return ask;
         }
-
-
     }
 }
