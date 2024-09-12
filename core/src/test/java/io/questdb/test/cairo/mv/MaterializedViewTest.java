@@ -24,44 +24,34 @@
 
 package io.questdb.test.cairo.mv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MaterializedViewDefinition;
 import io.questdb.cairo.mv.MaterializedViewRefreshJob;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class MaterializedViewTest extends AbstractCairoTest {
     @Test
-    public void testViewManualRefresh() throws Exception {
+    public void testIncrementalRefresh() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table base_price (" +
                     "sym varchar, price double, ts timestamp" +
                     ") timestamp(ts) partition by DAY WAL"
             );
 
-            ddl("create table price_1h (" +
-                    "sym varchar, price double, ts timestamp" +
-                    ") timestamp(ts) partition by DAY WAL dedup upsert keys(ts, sym)"
-            );
-
             TableToken baseToken = engine.verifyTableName("base_price");
-            MaterializedViewDefinition viewDefinition = new MaterializedViewDefinition();
+            createMatView(baseToken);
 
-            viewDefinition.setParentTableName(baseToken.getTableName());
-            viewDefinition.setViewSql("insert into price_1h " +
-                    "select sym, last(price), ts from base_price " +
-                    "where ts >= :from and ts <= :to " +
-                    "sample by 1h");
-            viewDefinition.setSampleByPeriodMicros(Timestamps.HOUR_MICROS);
-            viewDefinition.setTableToken(engine.verifyTableName("price_1h"));
 
-            engine.getMaterializedViewGraph().upsertView(baseToken, viewDefinition);
             insert("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
                     ",('gbpusd', 1.323, '2024-09-10T12:02')" +
                     ",('jpyusd', 103.21, '2024-09-10T12:02')" +
                     ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
+
             drainWalQueue();
 
             MaterializedViewRefreshJob refreshJob = new MaterializedViewRefreshJob(engine);
@@ -91,5 +81,65 @@ public class MaterializedViewTest extends AbstractCairoTest {
             assertSql(expected, "select sym, last(price) as price, ts from base_price sample by 1h order by ts, sym");
             assertSql(expected, "price_1h order by ts, sym");
         });
+    }
+
+    @Test
+    public void testViewManualRefresh() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+
+        assertMemoryLeak(() -> {
+            ddl("create table base_price (" +
+                    "sym varchar, price double, ts timestamp" +
+                    ") timestamp(ts) partition by DAY WAL"
+            );
+
+            TableToken baseToken = engine.verifyTableName("base_price");
+            createMatView(baseToken);
+            insert("insert into base_price " +
+                    "select 'gbpusd', 1.320 + x / 1000.0, timestamp_sequence('2024-09-10T12:02', 1000000*60*5) " +
+                    "from long_sequence(24 * 20 * 5)"
+            );
+            drainWalQueue();
+
+            MaterializedViewRefreshJob refreshJob = new MaterializedViewRefreshJob(engine);
+            refreshJob.run(0);
+
+            assertSql("sequencerTxn\tminTimestamp\tmaxTimestamp\n" +
+                            "1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z\n",
+                    "select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')"
+            );
+
+            insert("insert into base_price values('gbpusd', 1.319, '2024-09-10T12:05')" +
+                    ",('gbpusd', 1.325, '2024-09-10T13:03')"
+            );
+            drainWalQueue();
+
+            refreshJob.run(0);
+            drainWalQueue();
+
+            assertSql("sequencerTxn\tminTimestamp\tmaxTimestamp\n" +
+                            "1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z\n" +
+                            "2\t2024-09-10T12:00:00.000000Z\t2024-09-10T13:00:00.000000Z\n",
+                    "select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')"
+            );
+        });
+    }
+
+    private static void createMatView(TableToken baseToken) throws SqlException {
+        ddl("create table price_1h (" +
+                "sym varchar, price double, ts timestamp" +
+                ") timestamp(ts) partition by DAY WAL dedup upsert keys(ts, sym)"
+        );
+
+        MaterializedViewDefinition viewDefinition = new MaterializedViewDefinition();
+
+        viewDefinition.setParentTableName(baseToken.getTableName());
+        viewDefinition.setViewSql("insert into price_1h " +
+                "select sym, last(price), ts from base_price " +
+                "where ts >= :from and ts <= :to " +
+                "sample by 1h");
+        viewDefinition.setSampleByPeriodMicros(Timestamps.HOUR_MICROS);
+        viewDefinition.setTableToken(engine.verifyTableName("price_1h"));
+        engine.getMaterializedViewGraph().upsertView(baseToken, viewDefinition);
     }
 }

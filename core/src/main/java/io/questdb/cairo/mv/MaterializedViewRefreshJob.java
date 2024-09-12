@@ -52,23 +52,29 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
         this.txnRangeLoader = new WalTxnRangeLoader(engine.getConfiguration().getFilesFacade());
     }
 
-    private boolean findCommitTimestampRanges(MatViewRefreshExecutionContext executionContext, TableReader baseTableReader, long fromParentTxn, MaterializedViewDefinition viewDefinition) throws SqlException {
-        long readToTxn = baseTableReader.getSeqTxn();
+    private boolean findCommitTimestampRanges(MatViewRefreshExecutionContext executionContext, TableReader baseTableReader, long lastRefreshTxn, MaterializedViewDefinition viewDefinition) throws SqlException {
+        long lastTxn = baseTableReader.getSeqTxn();
 
-        txnRangeLoader.load(engine, Path.PATH.get(), baseTableReader.getTableToken(), fromParentTxn, readToTxn);
-        long minTs = txnRangeLoader.getMinTimestamp();
-        long maxTs = txnRangeLoader.getMaxTimestamp();
+        if (lastRefreshTxn > 0) {
+            txnRangeLoader.load(engine, Path.PATH.get(), baseTableReader.getTableToken(), lastRefreshTxn, lastTxn);
+            long minTs = txnRangeLoader.getMinTimestamp();
+            long maxTs = txnRangeLoader.getMaxTimestamp();
 
-        if (minTs <= maxTs && minTs >= viewDefinition.getSampleByFromEpochMicros()) {
-            // Handle sample by with timezones
-            long sampleByPeriod = viewDefinition.getSampleByPeriodMicros();
-            long sampleByFromEpoch = viewDefinition.getSampleByFromEpochMicros();
-            minTs = sampleByFromEpoch + (minTs - sampleByFromEpoch) / sampleByPeriod * sampleByPeriod;
-            maxTs = sampleByFromEpoch + ((maxTs - sampleByFromEpoch + sampleByPeriod - 1) / sampleByPeriod) * sampleByPeriod;
+            if (minTs <= maxTs && minTs >= viewDefinition.getSampleByFromEpochMicros()) {
+                // Handle sample by with timezones
+                long sampleByPeriod = viewDefinition.getSampleByPeriodMicros();
+                long sampleByFromEpoch = viewDefinition.getSampleByFromEpochMicros();
+                minTs = sampleByFromEpoch + (minTs - sampleByFromEpoch) / sampleByPeriod * sampleByPeriod;
+                maxTs = sampleByFromEpoch + ((maxTs - sampleByFromEpoch + sampleByPeriod - 1) / sampleByPeriod) * sampleByPeriod;
 
-            executionContext.getBindVariableService().setTimestamp("from", minTs);
-            executionContext.getBindVariableService().setTimestamp("to", maxTs);
-            return txnRangeLoader.getMinTimestamp() <= txnRangeLoader.getMaxTimestamp();
+                executionContext.getBindVariableService().setTimestamp("from", minTs);
+                executionContext.getBindVariableService().setTimestamp("to", maxTs);
+                return txnRangeLoader.getMinTimestamp() <= txnRangeLoader.getMaxTimestamp();
+            }
+        } else {
+            executionContext.getBindVariableService().setTimestamp("from", Long.MIN_VALUE + 1);
+            executionContext.getBindVariableService().setTimestamp("to", Long.MAX_VALUE - 1);
+            return true;
         }
 
         return false;

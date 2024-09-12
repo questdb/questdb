@@ -450,26 +450,30 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
         @Override
         public void toMinTxn() {
-            int rootLen = rootPath.size();
-            rootPath.concat(TXNLOG_PARTS_DIR).slash();
-            long partId = txnLo / partTransactionCount;
-            long minTxn = partId * partTransactionCount;
+            if (txnLo > 0) {
+                int rootLen = rootPath.size();
+                rootPath.concat(TXNLOG_PARTS_DIR).slash();
+                long partId = txnLo / partTransactionCount;
+                long minTxn = partId * partTransactionCount;
 
-            int rootPathLen = rootPath.size();
-            try {
-                for (long part = partId - 1; part > -1L; part--) {
-                    rootPath.trimTo(rootPathLen).put(part);
-                    if (ff.exists(rootPath.$())) {
-                        minTxn = part * partTransactionCount;
-                    } else {
-                        break;
+                int rootPathLen = rootPath.size();
+                try {
+                    for (long part = partId - 1; part > -1L; part--) {
+                        rootPath.trimTo(rootPathLen).put(part);
+                        if (ff.exists(rootPath.$())) {
+                            minTxn = part * partTransactionCount;
+                        } else {
+                            break;
+                        }
                     }
+                } finally {
+                    rootPath.trimTo(rootLen);
                 }
-            } finally {
-                rootPath.trimTo(rootLen);
+                openPart(minTxn);
+                txn = txnLo = minTxn;
+            } else {
+                this.txn = txnLo;
             }
-            openPart(minTxn);
-            txn = txnLo = minTxn;
         }
 
         @Override
