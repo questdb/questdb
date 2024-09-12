@@ -251,7 +251,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 // ignore exception and leave the directory
                 partitionCleanPath.trimTo(pathTableLen);
                 partitionCleanPath.concat(pUtf8NameZ).$();
-                LOG.error().$("invalid partition directory inside table folder: ").$(path).$();
+                LOG.error().$("invalid partition directory inside table folder: ").$(partitionCleanPath).$();
             } finally {
                 partitionCleanPath.trimTo(pathTableLen);
             }
