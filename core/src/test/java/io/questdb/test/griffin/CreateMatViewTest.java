@@ -67,14 +67,14 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 ddl("create materialized view test as select ts, avg(v) from " + TABLE1 + " sample by 3M");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Materialized view query with invalid sampling interval");
+                TestUtils.assertContains(e.getFlyweightMessage(), "Materialized view query with invalid sampling interval, 'M' and 'y' intervals are not supported");
             }
 
             try {
                 ddl("create materialized view test as select ts, avg(v) from " + TABLE1 + " sample by 1y");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Materialized view query with invalid sampling interval");
+                TestUtils.assertContains(e.getFlyweightMessage(), "Materialized view query with invalid sampling interval, 'M' and 'y' intervals are not supported");
             }
         });
     }
@@ -125,6 +125,28 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewNonOptimizedSampleByTest() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            ddl("create materialized view test as select ts, avg(v) from (select ts, k, v+10 as v from " + TABLE1 + ") sample by 30s");
+
+            final String expected = "ts\tavg\n" +
+                    "1970-01-01T00:00:00.000000Z\t11.0\n" +
+                    "1970-01-01T00:00:30.000000Z\t14.0\n" +
+                    "1970-01-01T00:01:00.000000Z\t17.0\n";
+
+            assertQuery(
+                    expected,
+                    "test",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testCreateMatViewRewrittenSampleByTest() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -170,9 +192,9 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     private void createTable(String tableName) throws SqlException {
-        ddl("create table " + tableName + " (ts timestamp, v long) timestamp(ts) partition by day");
+        ddl("create table " + tableName + " (ts timestamp, k symbol, v long) timestamp(ts) partition by day");
         for (int i = 0; i < 9; i++) {
-            insert("insert into " + tableName + " values (" + (i * 10000000) + ", " + i + ")");
+            insert("insert into " + tableName + " values (" + (i * 10000000) + ", 'k" + i + "', " + i + ")");
         }
     }
 }

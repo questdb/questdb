@@ -66,6 +66,7 @@ public class SqlParser {
     private final ExpressionParser expressionParser;
     private final ExpressionTreeBuilder expressionTreeBuilder;
     private final ObjectPool<InsertModel> insertModelPool;
+    private final CharSequenceHashSet matViewTables = new CharSequenceHashSet();
     private final SqlOptimiser optimiser;
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
@@ -74,7 +75,6 @@ public class SqlParser {
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCount0Ref = this::rewriteCount0;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteJsonExtractCast0Ref = this::rewriteJsonExtractCast0;
     private final PostOrderTreeTraversalAlgo.Visitor rewritePgCast0Ref = this::rewritePgCast0;
-    private final CharSequenceHashSet tableNames = new CharSequenceHashSet();
     private final ObjList<ExpressionNode> tempExprNodes = new ObjList<>();
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCase0Ref = this::rewriteCase0;
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> topLevelWithModel = new LowerCaseCharSequenceObjHashMap<>();
@@ -610,13 +610,20 @@ public class SqlParser {
         }
 
         if (SqlKeywords.isAsKeyword(tok)) {
-            QueryModel queryModel = optimiser.optimise(
+            // find mat view query
+            final String matViewSql = Chars.toString(lexer.getContent(), lexer.getPosition(), lexer.getLength());
+            model.setQuery(matViewSql);
+
+            // parse and optimize mat view query
+            final QueryModel queryModel = optimiser.optimise(
                     parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback),
                     executionContext,
                     sqlParserCallback
             );
+            model.setQueryModel(queryModel);
 
-            ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
+            // create view columns based on query
+            final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
             assert columns.size() > 0;
 
             // we do not know types of columns at this stage
@@ -625,48 +632,54 @@ public class SqlParser {
                 model.addColumn(columns.getQuick(i).getName(), -1, configuration.getDefaultSymbolCapacity());
             }
 
-            model.setQueryModel(queryModel);
-
-            // find base table if not set
+            // find base table if not set explicitly
             if (baseTableName == null) {
-                tableNames.clear();
-                collectTables(queryModel, tableNames);
-                if (tableNames.size() < 1) {
+                matViewTables.clear();
+                collectTables(queryModel, matViewTables);
+                if (matViewTables.size() < 1) {
                     throw SqlException.$(lexer.lastTokenPosition(), "Missing base table, materialized views have to be based on a table");
                 }
-                if (tableNames.size() > 1) {
+                if (matViewTables.size() > 1) {
                     throw SqlException.$(lexer.lastTokenPosition(), "More than one table used in query, base table has to be set using 'WITH BASE'");
                 }
-                baseTableName = tableNames.get(0);
+                baseTableName = matViewTables.get(0);
             }
             model.setBaseTableName(baseTableName.toString());
 
             // find sampling interval
-            long interval = -1;
-            // GROUP BY timestamp_floor(ts) (rewritten SAMPLE BY)
-            final ObjList<QueryColumn> queryColumns = queryModel.getBottomUpColumns();
-            for (int i = 0, n = queryColumns.size(); i < n; i++) {
-                final QueryColumn queryColumn = queryColumns.getQuick(i);
-                final ExpressionNode ast = queryColumn.getAst();
-                if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase("timestamp_floor", ast.token)) {
-                    final CharSequence cs = ast.paramCount == 3 ? ast.args.getQuick(2).token : ast.lhs.token;
-                    final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(GenericLexer.unquote(cs), ast.position);
-                    if (timestampSampler instanceof MicroTimestampSampler) {
-                        interval = timestampSampler.getBucketSize();
+            // TODO: make this recursive to find sampling interval in inner queries too
+            CharSequence intervalConst = null;
+            final ExpressionNode sampleBy = queryModel.getSampleBy();
+            if (sampleBy != null && sampleBy.type == ExpressionNode.CONSTANT) {
+                intervalConst = sampleBy.token;
+            }
+            // GROUP BY timestamp_floor(ts) (optimized SAMPLE BY)
+            if (intervalConst == null) {
+                final ObjList<QueryColumn> queryColumns = queryModel.getBottomUpColumns();
+                for (int i = 0, n = queryColumns.size(); i < n; i++) {
+                    final QueryColumn queryColumn = queryColumns.getQuick(i);
+                    final ExpressionNode ast = queryColumn.getAst();
+                    if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase("timestamp_floor", ast.token)) {
+                        intervalConst = ast.paramCount == 3 ? ast.args.getQuick(2).token : ast.lhs.token;
                         break;
-                    } else {
-                        throw SqlException.$(lexer.lastTokenPosition(), "Materialized view query with invalid sampling interval");
                     }
                 }
             }
-            if (interval < 0) {
+            if (intervalConst == null) {
                 throw SqlException.$(lexer.lastTokenPosition(), "Materialized view query without a sampling interval");
             }
+
+            // parse sampling interval const expression
+            final long interval;
+            // TODO: refactor TimestampSamplerFactory to do this without creating an actual TimestampSampler object
+            final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(GenericLexer.unquote(intervalConst), lexer.lastTokenPosition());
+            if (timestampSampler instanceof MicroTimestampSampler) {
+                interval = timestampSampler.getBucketSize();
+            } else {
+                // TODO: check what could be done for M and y intervals, this also depends on how the view refresh job works
+                throw SqlException.$(lexer.lastTokenPosition(), "Materialized view query with invalid sampling interval, 'M' and 'y' intervals are not supported");
+            }
             model.setIntervalMicros(interval);
-
-            // TODO: set sampling interval for non-rewritten SAMPLE BY
-
-            // TODO: set query on model
 
             // TODO: find dedup keys and set them on the model
 
