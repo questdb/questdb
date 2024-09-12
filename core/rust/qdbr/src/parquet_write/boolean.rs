@@ -1,3 +1,7 @@
+use crate::parquet_write::error::ParquetWriteResult;
+use crate::parquet_write::file::WriteOptions;
+use crate::parquet_write::util;
+use crate::parquet_write::util::MaxMin;
 use parquet2::encoding::hybrid_rle::bitpacked_encode;
 use parquet2::encoding::Encoding;
 use parquet2::page::Page;
@@ -6,16 +10,12 @@ use parquet2::statistics::{
     serialize_statistics, BooleanStatistics, ParquetStatistics, Statistics,
 };
 
-use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::MaxMin;
-use crate::parquet_write::{util, ParquetResult};
-
 pub fn slice_to_page(
     slice: &[u8],
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
-) -> ParquetResult<Page> {
+) -> ParquetWriteResult<Page> {
     let num_rows = column_top + slice.len();
     let mut buffer = vec![];
     let mut stats = MaxMin::new();

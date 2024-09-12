@@ -1,6 +1,8 @@
+use crate::parquet_read::error::{
+    fmt_read_layout_err, fmt_read_unsupported_err, ParquetReadError, ParquetReadResult,
+};
 use crate::parquet_read::slicer::dict_decoder::DictDecoder;
 use crate::parquet_read::slicer::DataPageSlicer;
-use crate::parquet_write::ParquetResult;
 use parquet2::encoding::bitpacked;
 use parquet2::encoding::hybrid_rle::{Decoder, HybridEncoded};
 
@@ -26,7 +28,7 @@ pub struct RleDictionarySlicer<'a, 'b, T: DictDecoder> {
     data: RleIterator<'a>,
     row_count: usize,
     dict: T,
-    error: Option<parquet2::error::Error>,
+    error: Option<ParquetReadError>,
 
     // TODO(amunra): Clean this up -- non-idiomatic Rust code.
     //               Use the type system instead of magic values.
@@ -35,8 +37,7 @@ pub struct RleDictionarySlicer<'a, 'b, T: DictDecoder> {
 
 impl<T: DictDecoder> DataPageSlicer for RleDictionarySlicer<'_, '_, T> {
     // TODO(amunra): Clean this up -- non-idiomatic Rust code -- Should this just be a
-    //               fn next(&mut self) -> Option<Result<&[u8], parquet2::error::Error>> ?
-    //               The error should also not be `parquet2::error::Error` but something wider.
+    //               fn next(&mut self) -> Option<Result<&[u8], ParquetReadError>> ?
     fn next(&mut self) -> &[u8] {
         if self.error.is_some() {
             return self.error_value;
@@ -46,11 +47,11 @@ impl<T: DictDecoder> DataPageSlicer for RleDictionarySlicer<'_, '_, T> {
             if idx < self.dict.len() {
                 self.dict.get_dict_value(idx)
             } else {
-                self.error = Some(parquet2::error::Error::OutOfSpec(format!(
+                self.error = Some(fmt_read_layout_err!(
                     "index {} is out of dict bounds {}",
                     idx,
                     self.dict.len()
-                )));
+                ));
                 self.error_value
             }
         } else {
@@ -83,7 +84,7 @@ impl<T: DictDecoder> DataPageSlicer for RleDictionarySlicer<'_, '_, T> {
         (self.row_count as f32 * self.dict.avg_key_len()) as usize
     }
 
-    fn result(&self) -> ParquetResult<()> {
+    fn result(&self) -> ParquetReadResult<()> {
         match &self.error {
             Some(err) => Err(err.clone()),
             None => Ok(()),
@@ -97,7 +98,7 @@ impl<'a, 'b, T: DictDecoder> RleDictionarySlicer<'a, 'b, T> {
         dict: T,
         row_count: usize,
         error_value: &'b [u8],
-    ) -> ParquetResult<Self> {
+    ) -> ParquetReadResult<Self> {
         let num_bits = buffer[0];
         if num_bits > 0 {
             buffer = &buffer[1..];
@@ -124,7 +125,7 @@ impl<'a, 'b, T: DictDecoder> RleDictionarySlicer<'a, 'b, T> {
         }
     }
 
-    fn decode(&mut self) -> ParquetResult<()> {
+    fn decode(&mut self) -> ParquetReadResult<()> {
         if let Some(ref mut decoder) = self.decoder {
             if let Some(run) = decoder.next() {
                 let encoded = run?;
@@ -144,16 +145,14 @@ impl<'a, 'b, T: DictDecoder> RleDictionarySlicer<'a, 'b, T> {
                     self.data = RleIterator::Rle(iterator);
                     return Ok(());
                 } else {
-                    return Err(parquet2::error::Error::FeatureNotSupported(format!(
-                        "encoding not supported: {:?}",
-                        encoded
-                    )));
+                    return Err(fmt_read_unsupported_err!(
+                        "encoding not supported: {encoded:?}"
+                    ));
                 }
             }
         }
-        Err(parquet2::error::Error::OutOfSpec(
-            "Unexpected end of rle iterator".to_string(),
-        ))
+        // TODO(amunra): Not a layout error. This is just an iterator pattern gone wrong, needs cleaning up.
+        Err(fmt_read_layout_err!("Unexpected end of rle iterator"))
     }
 }
 
@@ -167,7 +166,7 @@ pub struct RleLocalIsGlobalSymbolDecoder<'a, 'b> {
     data: RleIterator<'a>,
     next_value: [u8; 4],
     row_count: usize,
-    error: Option<parquet2::error::Error>,
+    error: Option<ParquetReadError>,
 
     // TODO(amunra): Clean this up -- non-idiomatic Rust code.
     //               Use the type system instead of magic values.
@@ -214,7 +213,7 @@ impl DataPageSlicer for RleLocalIsGlobalSymbolDecoder<'_, '_> {
         self.row_count * size_of::<u32>()
     }
 
-    fn result(&self) -> ParquetResult<()> {
+    fn result(&self) -> ParquetReadResult<()> {
         match &self.error {
             Some(err) => Err(err.clone()),
             None => Ok(()),
@@ -227,7 +226,7 @@ impl<'a, 'b> RleLocalIsGlobalSymbolDecoder<'a, 'b> {
         mut buffer: &'a [u8],
         row_count: usize,
         error_value: &'b [u8],
-    ) -> ParquetResult<Self> {
+    ) -> ParquetReadResult<Self> {
         // TODO(amunra): Deduplicate this code.
         let num_bits = buffer[0];
         if num_bits > 0 {
@@ -255,13 +254,9 @@ impl<'a, 'b> RleLocalIsGlobalSymbolDecoder<'a, 'b> {
         }
     }
 
-    fn decode(&mut self) -> ParquetResult<()> {
+    fn decode(&mut self) -> ParquetReadResult<()> {
         // TODO(amunra): Deduplicate this code.
-        let iter_err = || {
-            Err(parquet2::error::Error::OutOfSpec(
-                "Unexpected end of rle iterator".to_string(),
-            ))
-        };
+        let iter_err = || Err(fmt_read_layout_err!("Unexpected end of rle iterator"));
 
         let Some(ref mut decoder) = self.decoder else {
             return iter_err();

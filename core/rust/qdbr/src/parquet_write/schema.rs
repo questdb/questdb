@@ -1,6 +1,7 @@
 use std::slice;
 
-use crate::parquet_write::{ParquetError, ParquetResult, QDB_TYPE_META_PREFIX};
+use crate::parquet_write::error::{ParquetWriteError, ParquetWriteResult};
+use crate::parquet_write::QDB_TYPE_META_PREFIX;
 use parquet2::encoding::Encoding;
 use parquet2::metadata::KeyValue;
 use parquet2::metadata::SchemaDescriptor;
@@ -75,7 +76,7 @@ pub fn column_type_to_parquet_type(
     column_id: i32,
     column_name: &str,
     column_type: ColumnType,
-) -> ParquetResult<ParquetType> {
+) -> ParquetWriteResult<ParquetType> {
     let name = column_name.to_string();
 
     match column_type {
@@ -277,7 +278,7 @@ impl Column {
         secondary_data_size: usize,
         symbol_offsets_ptr: *const u64,
         symbol_offsets_size: usize,
-    ) -> ParquetResult<Self> {
+    ) -> ParquetWriteResult<Self> {
         assert!(row_count > 0, "row_count == 0");
         assert!(
             !primary_data_ptr.is_null() || primary_data_size == 0,
@@ -294,7 +295,7 @@ impl Column {
 
         let column_type_tag: ColumnType = column_type
             .try_into()
-            .map_err(ParquetError::InvalidParameter)?;
+            .map_err(|_| ParquetWriteError::InvalidQuestDBColumnType { column_type })?;
 
         let primary_data = if primary_data_ptr.is_null() {
             &[]
@@ -333,12 +334,12 @@ pub struct Partition {
 
 pub fn to_parquet_schema(
     partition: &Partition,
-) -> ParquetResult<(SchemaDescriptor, Vec<KeyValue>)> {
+) -> ParquetWriteResult<(SchemaDescriptor, Vec<KeyValue>)> {
     let parquet_types = partition
         .columns
         .iter()
         .map(|c| column_type_to_parquet_type(c.id, c.name, c.data_type))
-        .collect::<ParquetResult<Vec<_>>>()?;
+        .collect::<ParquetWriteResult<Vec<_>>>()?;
 
     let additinal_keyvals = partition
         .columns

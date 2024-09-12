@@ -1,5 +1,11 @@
 use std::fmt::Debug;
 
+use crate::parquet_write::error::{
+    fmt_write_unsupported_err, ParquetWriteError, ParquetWriteResult,
+};
+use crate::parquet_write::file::WriteOptions;
+use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter, MaxMin};
+use crate::parquet_write::Nullable;
 use parquet2::encoding::delta_bitpacked::encode;
 use parquet2::encoding::Encoding;
 use parquet2::page::{DataPage, Page};
@@ -8,16 +14,12 @@ use parquet2::schema::Repetition;
 use parquet2::statistics::{serialize_statistics, ParquetStatistics, PrimitiveStatistics};
 use parquet2::types::NativeType;
 
-use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter, MaxMin};
-use crate::parquet_write::{Nullable, ParquetError, ParquetResult};
-
 pub fn float_slice_to_page_plain<T, P>(
     slice: &[T],
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
-) -> ParquetResult<Page>
+) -> ParquetWriteResult<Page>
 where
     P: NativeType,
     T: Nullable + num_traits::AsPrimitive<P> + num_traits::Float + From<i8> + Debug,
@@ -39,7 +41,7 @@ pub fn int_slice_to_page_nullable<T, P>(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
-) -> ParquetResult<Page>
+) -> ParquetWriteResult<Page>
 where
     P: NativeType + num_traits::AsPrimitive<i64>,
     T: Nullable + num_traits::AsPrimitive<P> + Debug,
@@ -61,10 +63,11 @@ where
             encoding,
             encode_delta_nullable,
         ),
-        other => Err(ParquetError::OutOfSpec(format!(
-            "Encoding integer as {:?}",
-            other
-        )))?,
+        other => {
+            return Err(fmt_write_unsupported_err!(
+                "unsupported encoding {other:?} while writing an int column"
+            ))
+        }
     }
     .map(Page::Data)
 }
@@ -75,7 +78,7 @@ pub fn int_slice_to_page_notnull<T, P>(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
-) -> ParquetResult<Page>
+) -> ParquetWriteResult<Page>
 where
     P: NativeType + num_traits::AsPrimitive<i64>,
     T: Default + num_traits::AsPrimitive<P> + Debug,
@@ -97,10 +100,11 @@ where
             encoding,
             encode_delta_notnull,
         ),
-        other => Err(ParquetError::OutOfSpec(format!(
-            "Encoding integer as {:?}",
-            other
-        )))?,
+        other => {
+            return Err(fmt_write_unsupported_err!(
+                "unsupported encoding {other:?} while writing an int column"
+            ))
+        }
     }
     .map(Page::Data)
 }
@@ -112,7 +116,7 @@ fn slice_to_page_notnull<T, P, F: Fn(&[T], usize) -> Vec<u8>>(
     primitive_type: PrimitiveType,
     encoding: Encoding,
     encode_fn: F,
-) -> ParquetResult<DataPage>
+) -> ParquetWriteResult<DataPage>
 where
     P: NativeType,
     T: Default + num_traits::AsPrimitive<P> + Debug,
@@ -151,7 +155,7 @@ fn slice_to_page_nullable<T, P, F>(
     primitive_type: PrimitiveType,
     encoding: Encoding,
     encode_fn: F,
-) -> ParquetResult<DataPage>
+) -> ParquetWriteResult<DataPage>
 where
     P: NativeType,
     T: Nullable + num_traits::AsPrimitive<P> + Debug,

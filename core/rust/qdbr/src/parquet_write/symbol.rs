@@ -1,7 +1,8 @@
+use super::util::BinaryMaxMin;
+use crate::parquet_write::error::{fmt_write_layout_err, ParquetWriteError, ParquetWriteResult};
 use crate::parquet_write::file::WriteOptions;
+use crate::parquet_write::util;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
-use crate::parquet_write::{util, ParquetResult};
-use anyhow::anyhow;
 use parquet2::encoding::hybrid_rle::encode_u32;
 use parquet2::encoding::Encoding;
 use parquet2::page::{DictPage, Page};
@@ -9,8 +10,6 @@ use parquet2::schema::types::PrimitiveType;
 use parquet2::write::DynIter;
 use std::char::DecodeUtf16Error;
 use std::collections::BTreeSet;
-
-use super::util::BinaryMaxMin;
 
 /// Encode the QuestDB symbols to Parquet.
 ///
@@ -26,7 +25,7 @@ fn encode_symbols_dict(
     offsets: &[u64],     // Memory-mapped offsets into the QuestDB global symbol table.
     chars: &[u8], // Memory-mapped global symbol table. Sequence of 4-code-unit-len-prefixed utf16 strings.
     stats: &mut BinaryMaxMin,
-) -> anyhow::Result<(Vec<u8>, Vec<u32>, u32)> {
+) -> ParquetWriteResult<(Vec<u8>, Vec<u32>, u32)> {
     let mut local_keys = Vec::with_capacity(column_vals.len());
     let mut max_key = 0;
     for &v in column_vals {
@@ -88,7 +87,7 @@ fn encode_dict_buffer(
     offsets: &[u64],
     chars: &&[u8],
     stats: &mut BinaryMaxMin,
-) -> anyhow::Result<Vec<u8>> {
+) -> ParquetWriteResult<Vec<u8>> {
     // Collect the set of unique values in the column.
     // TODO(amunra): Reuse (cache allocation of) the `values_set` across multiple calls.
     let values_set: BTreeSet<u32> = local_keys.iter().cloned().collect();
@@ -112,31 +111,31 @@ fn encode_dict_buffer(
         dict_buffer.extend_from_slice(&(0u32).to_le_bytes());
 
         if values_set.contains(&key) {
-            let qdb_global_offset = *offsets
-                .get(key as usize)
-                // TODO(amunra): Add table/column name to error message!
-                .ok_or_else(|| anyhow!("key {} not found in offsets", key))?
-                as usize;
+            let qdb_global_offset = *offsets.get(key as usize).ok_or_else(|| {
+                fmt_write_layout_err!("could not find symbol with key {key} in global map")
+            })? as usize;
             const UTF16_LEN_SIZE: usize = 4;
             if (qdb_global_offset + UTF16_LEN_SIZE) > chars.len() {
-                return Err(anyhow!("offset {} out of bounds", qdb_global_offset));
+                return Err(fmt_write_layout_err!("global symbol map character data too small, begin offset {qdb_global_offset} out of bounds"));
             }
             let qdb_utf16_len_buf = &chars[qdb_global_offset..];
             let (qdb_utf16_len, qdb_utf16_buf) = qdb_utf16_len_buf.split_at(UTF16_LEN_SIZE);
 
-            let qdb_utf16_len = i32::from_le_bytes(qdb_utf16_len.try_into()?) as usize;
+            let qdb_utf16_len =
+                i32::from_le_bytes(qdb_utf16_len.try_into().expect("4 bytes sliced")) as usize;
 
             // In the `.c` (chars) file, the length is stored as a little-endian 32-bit integer of
             // code unit counts. We multiply by 2 to get the byte length of the UTF-16 string.
             if qdb_utf16_buf.len() < (qdb_utf16_len * 2) {
-                return Err(anyhow!(
-                    "utf16 string length {} out of bounds",
-                    qdb_utf16_len
+                return Err(fmt_write_layout_err!(
+                    "global symbol map character data too small, end offset {} out of bounds",
+                    qdb_global_offset + qdb_utf16_len * 2
                 ));
             }
             let qdb_utf16_buf: &[u16] = unsafe { std::mem::transmute(qdb_utf16_buf) };
             let qdb_utf16_buf = &qdb_utf16_buf[..qdb_utf16_len];
-            let utf8_len = write_utf8_from_utf16(&mut dict_buffer, qdb_utf16_buf)?;
+            let utf8_len = write_utf8_from_utf16(&mut dict_buffer, qdb_utf16_buf)
+                .map_err(|e| ParquetWriteError::Utf16DecodeError { source: e })?;
             let utf8_buf = &dict_buffer[(key_index + 4)..(key_index + 4 + utf8_len)];
 
             // Update the page's min/max statistics for the referenced UTF-8 strings.
@@ -169,7 +168,7 @@ pub fn symbol_to_pages(
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
-) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
+) -> ParquetWriteResult<DynIter<'static, ParquetWriteResult<Page>>> {
     let num_rows = column_top + column_values.len();
     let mut null_count = 0;
 

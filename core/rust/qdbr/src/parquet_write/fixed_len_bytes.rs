@@ -1,10 +1,9 @@
+use crate::parquet_write::error::ParquetWriteResult;
+use crate::parquet_write::file::WriteOptions;
+use crate::parquet_write::util::{build_plain_page, encode_bool_iter};
 use parquet2::encoding::Encoding;
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
-
-use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_bool_iter};
-use crate::parquet_write::ParquetResult;
 
 use super::util::BinaryMaxMin;
 
@@ -32,7 +31,7 @@ pub fn bytes_to_page<const N: usize>(
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
-) -> ParquetResult<Page> {
+) -> ParquetWriteResult<Page> {
     let num_rows = column_top + data.len();
     let null_value = {
         let mut null_value = [0u8; N];

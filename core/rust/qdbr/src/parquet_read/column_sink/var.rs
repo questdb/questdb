@@ -1,8 +1,8 @@
 use crate::parquet_read::column_sink::Pushable;
+use crate::parquet_read::error::{ParquetReadError, ParquetReadResult};
 use crate::parquet_read::slicer::DataPageSlicer;
 use crate::parquet_read::ColumnChunkBuffers;
 use crate::parquet_write::varchar::{append_varchar, append_varchar_null, append_varchar_nulls};
-use crate::parquet_write::{ParquetError, ParquetResult};
 use std::mem::size_of;
 
 const VARCHAR_AUX_SIZE: usize = 2 * size_of::<u64>();
@@ -55,7 +55,7 @@ impl<T: DataPageSlicer> Pushable for VarcharColumnSink<'_, T> {
         self.slicer.skip(count);
     }
 
-    fn result(&self) -> ParquetResult<()> {
+    fn result(&self) -> ParquetReadResult<()> {
         self.slicer.result()
     }
 }
@@ -69,7 +69,7 @@ impl<'a, T: DataPageSlicer> VarcharColumnSink<'a, T> {
 pub struct StringColumnSink<'a, T: DataPageSlicer> {
     slicer: &'a mut T,
     buffers: &'a mut ColumnChunkBuffers,
-    error: ParquetResult<()>,
+    error: ParquetReadResult<()>,
 }
 
 impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
@@ -113,7 +113,7 @@ impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
                     .extend_from_slice(self.buffers.data_vec.len().to_le_bytes().as_ref());
             }
             Err(utf8_str_err) => {
-                self.error = Err(ParquetError::OutOfSpec(utf8_str_err.to_string()));
+                self.error = Err(ParquetReadError::Utf8Error { source: utf8_str_err });
                 self.push_null();
             }
         }
@@ -150,7 +150,7 @@ impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
         self.slicer.skip(count);
     }
 
-    fn result(&self) -> ParquetResult<()> {
+    fn result(&self) -> ParquetReadResult<()> {
         self.error.clone().or(self.slicer.result().clone())
     }
 }
@@ -226,7 +226,7 @@ impl<T: DataPageSlicer> Pushable for BinaryColumnSink<'_, T> {
         self.slicer.skip(count);
     }
 
-    fn result(&self) -> ParquetResult<()> {
+    fn result(&self) -> ParquetReadResult<()> {
         self.slicer.result().clone()
     }
 }

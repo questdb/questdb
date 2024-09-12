@@ -1,14 +1,14 @@
 use std::mem;
 
+use super::util::ExactSizedIter;
+use crate::parquet_write::error::{
+    fmt_write_unsupported_err, ParquetWriteError, ParquetWriteResult,
+};
+use crate::parquet_write::file::WriteOptions;
+use crate::parquet_write::util::{build_plain_page, encode_bool_iter, BinaryMaxMin};
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
-
-use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_bool_iter, BinaryMaxMin};
-use crate::parquet_write::{ParquetError, ParquetResult};
-
-use super::util::ExactSizedIter;
 
 const HEADER_FLAG_INLINED: u8 = 1 << 0;
 const HEADER_FLAG_ASCII: u8 = 1 << 1;
@@ -54,7 +54,7 @@ pub fn varchar_to_page(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
-) -> ParquetResult<Page> {
+) -> ParquetWriteResult<Page> {
     assert!(
         mem::size_of::<AuxEntryInlined>() == 16 && mem::size_of::<AuxEntrySplit>() == 16,
         "size_of(AuxEntryInlined) or size_of(AuxEntrySplit) is not 16"
@@ -100,17 +100,16 @@ pub fn varchar_to_page(
     match encoding {
         Encoding::Plain => {
             encode_plain(&utf8_slices, &mut buffer, &mut stats);
-            Ok(())
         }
         Encoding::DeltaLengthByteArray => {
             encode_delta(&utf8_slices, null_count, &mut buffer, &mut stats);
-            Ok(())
         }
-        other => Err(ParquetError::OutOfSpec(format!(
-            "Encoding string as {:?}",
-            other
-        ))),
-    }?;
+        _ => {
+            return Err(fmt_write_unsupported_err!(
+                "unsupported encoding {encoding:?} while writing a string column"
+            ))
+        }
+    };
 
     let null_count = column_top + null_count;
     build_plain_page(

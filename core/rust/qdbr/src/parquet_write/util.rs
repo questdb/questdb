@@ -1,5 +1,7 @@
 use std::{cmp, io, mem, slice};
 
+use crate::parquet_write::error::ParquetWriteResult;
+use crate::parquet_write::file::WriteOptions;
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::hybrid_rle::encode_bool;
 use parquet2::encoding::Encoding;
@@ -9,9 +11,6 @@ use parquet2::schema::types::{PhysicalType, PrimitiveType};
 use parquet2::statistics::{serialize_statistics, BinaryStatistics, ParquetStatistics, Statistics};
 use parquet2::types::NativeType;
 use parquet2::write::Version;
-
-use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::ParquetResult;
 
 #[derive(Debug)]
 pub struct MaxMin<T> {
@@ -199,7 +198,7 @@ pub fn build_plain_page(
     primitive_type: PrimitiveType,
     options: WriteOptions,
     encoding: Encoding,
-) -> ParquetResult<DataPage> {
+) -> ParquetWriteResult<DataPage> {
     let header = match options.version {
         Version::V1 => DataPageHeader::V1(DataPageHeaderV1 {
             num_values: num_rows as i32,

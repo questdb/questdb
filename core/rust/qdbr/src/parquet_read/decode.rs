@@ -7,6 +7,10 @@ use crate::parquet_read::column_sink::var::{
     BinaryColumnSink, StringColumnSink, VarcharColumnSink,
 };
 use crate::parquet_read::column_sink::Pushable;
+use crate::parquet_read::error::{
+    fmt_read_layout_err, fmt_read_unsupported_err, ParquetReadError, ParquetReadErrorExt,
+    ParquetReadResult,
+};
 use crate::parquet_read::slicer::dict_decoder::{FixedDictDecoder, VarDictDecoder};
 use crate::parquet_read::slicer::rle::{RleDictionarySlicer, RleLocalIsGlobalSymbolDecoder};
 use crate::parquet_read::slicer::{
@@ -15,13 +19,11 @@ use crate::parquet_read::slicer::{
 };
 use crate::parquet_read::{ColumnChunkBuffers, ParquetDecoder, RowGroupBuffers};
 use crate::parquet_write::schema::ColumnType;
-use crate::parquet_write::ParquetResult;
-use anyhow::{anyhow, Context};
 use parquet2::deserialize::{
     FilteredHybridEncoded, FilteredHybridRleDecoderIter, HybridDecoderBitmapIter,
 };
-use parquet2::encoding::hybrid_rle::{BitmapIter, HybridEncoded};
-use parquet2::encoding::{bitpacked, hybrid_rle, Encoding};
+use parquet2::encoding::hybrid_rle::BitmapIter;
+use parquet2::encoding::{hybrid_rle, Encoding};
 use parquet2::indexes::Interval;
 use parquet2::page::{split_buffer, DataPage, DictPage, Page};
 use parquet2::read::{decompress, get_page_iterator};
@@ -85,11 +87,15 @@ impl ParquetDecoder {
         row_group_index: usize,
         file_column_index: usize,
         column_type: ColumnType,
-    ) -> anyhow::Result<usize> {
+    ) -> ParquetReadResult<usize> {
         let columns = self.metadata.row_groups[row_group_index].columns();
         let column_metadata = &columns[file_column_index];
 
-        let chunk_size = column_metadata.compressed_size().try_into()?;
+        let chunk_size = column_metadata.compressed_size();
+        let chunk_size = chunk_size
+            .try_into()
+            .map_err(|_| fmt_read_layout_err!("column chunk size overflow, size: {chunk_size}"))?;
+
         let page_reader = get_page_iterator(
             column_metadata,
             self.file.deref_mut(),
@@ -101,10 +107,9 @@ impl ParquetDecoder {
         let version = match self.metadata.version {
             1 => Ok(Version::V1),
             2 => Ok(Version::V2),
-            ver => Err(anyhow!(format!(
-                "unsupported parquet file version: {}",
-                ver
-            ))),
+            ver => Err(fmt_read_unsupported_err!(
+                "unsupported parquet version: {ver}"
+            )),
         }?;
 
         let mut dict = None;
@@ -127,17 +132,17 @@ impl ParquetDecoder {
                         column_chunk_bufs,
                         column_type,
                     )
-                    .with_context(|| {
+                    .with_context(|_| {
                         format!(
-                            "failed to decode row group [column={}, group={}]",
+                            "could not decode page for column {} in row group {}",
                             self.metadata.schema_descr.columns()[file_column_index]
                                 .descriptor
                                 .primitive_type
                                 .field_info
                                 .name,
-                            row_group_index
+                            row_group_index,
                         )
-                    })?
+                    })?;
                 }
             };
         }
@@ -154,7 +159,7 @@ pub fn decoder_page(
     dict: Option<&DictPage>,
     bufs: &mut ColumnChunkBuffers,
     column_type: ColumnType,
-) -> anyhow::Result<usize> {
+) -> ParquetReadResult<usize> {
     let (_rep_levels, _, values_buffer) = split_buffer(page)?;
     let row_count = page.header().num_values();
 
@@ -820,16 +825,18 @@ pub fn decoder_page(
 
     match decoding_result {
         Ok(row_count) => Ok(row_count),
-        Err(_) => {
-            Err(anyhow!(
-            "encoding not supported, physical type: {:?}, encoding {:?}, logical type {:?}, converted type: {:?}, column type {:?}",
+        Err(_) => Err(fmt_read_unsupported_err!(
+            "encoding not supported, physical type: {:?}, \
+                encoding {:?}, \
+                logical type {:?}, \
+                converted type: {:?}, \
+                column type {:?}",
             page.descriptor.primitive_type.physical_type,
             page.encoding(),
             page.descriptor.primitive_type.logical_type,
             page.descriptor.primitive_type.converted_type,
-            column_type
-            ))
-        }
+            column_type,
+        )),
     }
 }
 
@@ -838,7 +845,7 @@ fn decode_page<T: Pushable>(
     page: &DataPage,
     row_count: usize,
     sink: &mut T,
-) -> ParquetResult<()> {
+) -> ParquetReadResult<()> {
     sink.reserve();
     let iter = decode_null_bitmap(version, page, row_count)?;
     if let Some(iter) = iter {
@@ -878,7 +885,7 @@ pub fn decode_null_bitmap(
     _version: Version,
     page: &DataPage,
     count: usize,
-) -> ParquetResult<Option<FilteredHybridRleDecoderIter>> {
+) -> ParquetReadResult<Option<FilteredHybridRleDecoderIter>> {
     let def_levels = split_buffer(page)?.1;
     if def_levels.is_empty() {
         return Ok(None);
@@ -897,21 +904,6 @@ pub fn get_selected_rows(page: &DataPage) -> VecDeque<Interval> {
         .iter()
         .copied()
         .collect()
-}
-
-fn _decode_bitmap_v1(buffer: &[u8], count: usize) -> anyhow::Result<bitpacked::Decoder<u8>> {
-    if buffer.len() < 4 {
-        return Err(anyhow::anyhow!("definition level buffer is too short"));
-    }
-
-    let decoder = hybrid_rle::Decoder::new(&buffer[4..], 1usize);
-    for run in decoder {
-        if let HybridEncoded::Bitpacked(values) = run? {
-            let inner_decoder = bitpacked::Decoder::<u8>::try_new(values, 1usize, count)?;
-            return Ok(inner_decoder);
-        }
-    }
-    Err(anyhow::anyhow!("No data found"))
 }
 
 #[cfg(test)]

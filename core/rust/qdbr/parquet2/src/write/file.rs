@@ -158,10 +158,9 @@ impl<W: Write> FileWriter<W> {
     /// Writes a row group to the file.
     ///
     /// This call is IO-bounded
-    pub fn write<E>(&mut self, row_group: RowGroupIter<'_, E>) -> Result<()>
+    pub fn write<E>(&mut self, row_group: RowGroupIter<'_, E>) -> std::result::Result<(), E>
     where
-        Error: From<E>,
-        E: std::error::Error,
+        E: std::error::Error + From<Error>,
     {
         if self.offset == 0 {
             self.start()?;
@@ -379,7 +378,7 @@ impl<W: Write> ParquetFile<W> {
     pub fn write<E>(&mut self, row_group: RowGroupIter<'_, E>) -> Result<()>
         where
             Error: From<E>,
-            E: std::error::Error,
+            E: std::error::Error + From<Error>,
     {
         if self.offset == 0 {
             self.start()?;
@@ -391,7 +390,7 @@ impl<W: Write> ParquetFile<W> {
     fn add_row_group<E>(&mut self, row_group: RowGroupIter<E>, ordinal: usize) -> Result<()>
         where
             Error: From<E>,
-            E: std::error::Error,
+            E: std::error::Error + From<Error>,
     {
         let (group, specs, size) = write_row_group(
             &mut self.writer,
@@ -410,7 +409,7 @@ impl<W: Write> ParquetFile<W> {
     pub fn replace<E>(&mut self, row_group: RowGroupIter<'_, E>, ordinal: Option<i16>) -> Result<()>
         where
             Error: From<E>,
-            E: std::error::Error,
+            E: std::error::Error + From<Error>,
     {
         match &self.mode {
             Mode::Update(metadata) => {
@@ -435,7 +434,7 @@ impl<W: Write> ParquetFile<W> {
     pub fn append<E>(&mut self, row_group: RowGroupIter<'_, E>) -> Result<()>
         where
             Error: From<E>,
-            E: std::error::Error,
+            E: std::error::Error + From<Error>,
     {
         self.replace(row_group, None)
     }

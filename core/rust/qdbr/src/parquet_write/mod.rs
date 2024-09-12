@@ -2,6 +2,7 @@ use num_traits::AsPrimitive;
 
 mod binary;
 mod boolean;
+pub mod error;
 pub(crate) mod file;
 mod fixed_len_bytes;
 mod jni;
@@ -14,9 +15,6 @@ mod util;
 pub mod varchar;
 
 pub const QDB_TYPE_META_PREFIX: &str = "__qdb_type__";
-
-pub(crate) type ParquetResult<T> = parquet2::error::Result<T>;
-pub(crate) type ParquetError = parquet2::error::Error;
 
 pub trait Nullable {
     fn is_null(&self) -> bool;

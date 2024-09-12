@@ -29,11 +29,12 @@ use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
 use parquet2::types;
 
+use super::util::BinaryMaxMin;
+use crate::parquet_write::error::{
+    fmt_write_unsupported_err, ParquetWriteError, ParquetWriteResult,
+};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
-use crate::parquet_write::{ParquetError, ParquetResult};
-
-use super::util::BinaryMaxMin;
 
 pub fn binary_to_page(
     offsets: &[i64],
@@ -42,7 +43,7 @@ pub fn binary_to_page(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
-) -> ParquetResult<Page> {
+) -> ParquetWriteResult<Page> {
     let num_rows = column_top + offsets.len();
     let mut buffer = vec![];
     let mut null_count = 0;
@@ -75,10 +76,9 @@ pub fn binary_to_page(
             encode_delta(offsets, data, null_count, &mut buffer, &mut stats);
             Ok(())
         }
-        other => Err(ParquetError::OutOfSpec(format!(
-            "Encoding binary as {:?}",
-            other
-        ))),
+        _ => Err(fmt_write_unsupported_err!(
+            "unsupported encoding {encoding:?} while writing a binary column"
+        )),
     }?;
 
     build_plain_page(

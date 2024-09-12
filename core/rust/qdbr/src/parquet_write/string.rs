@@ -22,18 +22,18 @@
  *
  ******************************************************************************/
 
-use parquet2::encoding::{delta_bitpacked, Encoding};
-use parquet2::page::Page;
-use parquet2::schema::types::PrimitiveType;
-use parquet2::types;
-
+use super::util::BinaryMaxMin;
+use crate::parquet_write::error::{
+    fmt_write_unsupported_err, ParquetWriteError, ParquetWriteResult,
+};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
     build_plain_page, encode_bool_iter, transmute_slice, ExactSizedIter,
 };
-use crate::parquet_write::{ParquetError, ParquetResult};
-
-use super::util::BinaryMaxMin;
+use parquet2::encoding::{delta_bitpacked, Encoding};
+use parquet2::page::Page;
+use parquet2::schema::types::PrimitiveType;
+use parquet2::types;
 
 const SIZE_OF_HEADER: usize = std::mem::size_of::<i32>();
 
@@ -44,7 +44,7 @@ pub fn string_to_page(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
-) -> ParquetResult<Page> {
+) -> ParquetWriteResult<Page> {
     let num_rows = column_top + offsets.len();
     let mut buffer = vec![];
     let mut null_count = 0;
@@ -74,17 +74,16 @@ pub fn string_to_page(
     match encoding {
         Encoding::Plain => {
             encode_plain(&utf16_slices, &mut buffer, &mut stats);
-            Ok(())
         }
         Encoding::DeltaLengthByteArray => {
             encode_delta(&utf16_slices, null_count, &mut buffer, &mut stats);
-            Ok(())
         }
-        other => Err(ParquetError::OutOfSpec(format!(
-            "Encoding string as {:?}",
-            other
-        ))),
-    }?;
+        _ => {
+            return Err(fmt_write_unsupported_err!(
+                "unsupported encoding {encoding:?} while writing a string column"
+            ))
+        }
+    };
 
     let null_count = column_top + null_count;
     build_plain_page(
