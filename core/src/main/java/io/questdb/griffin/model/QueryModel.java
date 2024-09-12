@@ -77,6 +77,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SET_OPERATION_INTERSECT = 4;
     public static final int SET_OPERATION_INTERSECT_ALL = 5;
     public static final int SET_OPERATION_UNION = 1;
+    // BETWEEN intervals
+    public static final int BETWEEN_INCLUSIVE = 1;
+    public static final int BETWEEN_EXCLUSIVE = 2;
+    public static final int BETWEEN_RIGHT_OPEN = 3;
+    public static final int BETWEEN_LEFT_OPEN = 4;
     // types of set operations between this and union model
     public static final int SET_OPERATION_UNION_ALL = 0;
     public static final int SHOW_COLUMNS = 2;
@@ -194,6 +199,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private QueryModel updateTableModel;
     private TableToken updateTableToken;
     private ExpressionNode whereClause;
+    private int betweenType = 0;
 
     private QueryModel() {
         joinModels.add(this);
@@ -449,6 +455,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         fillTo = null;
         fillStride = null;
         fillValues = null;
+        betweenType = 0;
     }
 
     public void clearColumnMapStructs() {
@@ -587,6 +594,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && isUpdateModel == that.isUpdateModel
                 && modelType == that.modelType
                 && artificialStar == that.artificialStar
+                && betweenType == that.betweenType
                 && Objects.equals(bottomUpColumns, that.bottomUpColumns)
                 && Objects.equals(topDownNameSet, that.topDownNameSet)
                 && Objects.equals(topDownColumns, that.topDownColumns)
@@ -955,6 +963,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return withClauseModel;
     }
 
+    public int getBetweenType() {
+        return betweenType;
+    }
+
     public boolean hasExplicitTimestamp() {
         return timestamp != null && explicitTimestamp;
     }
@@ -994,7 +1006,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 distinct, unionModel, setOperationType,
                 modelPosition, orderByAdviceMnemonic, tableId,
                 isUpdateModel, modelType, updateTableModel,
-                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues
+                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues, betweenType
         );
     }
 
@@ -1390,6 +1402,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.whereClause = whereClause;
     }
 
+    public void setBetweenType(int betweenType) {
+        this.betweenType = betweenType;
+    }
+
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         if (modelType == ExecutionModel.QUERY) {
@@ -1577,6 +1593,21 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                                     sink.put("current row");
                                     break;
                             }
+                        }
+
+                        switch(getBetweenType()) {
+                            case BETWEEN_INCLUSIVE:
+                                sink.putAscii("inclusive");
+                                break;
+                            case BETWEEN_EXCLUSIVE:
+                                sink.putAscii("exclusive");
+                                break;
+                            case BETWEEN_RIGHT_OPEN:
+                                sink.putAscii("right open");
+                                break;
+                            case BETWEEN_LEFT_OPEN:
+                                sink.put("left open");
+                                break;
                         }
 
                         switch (ac.getExclusionKind()) {
