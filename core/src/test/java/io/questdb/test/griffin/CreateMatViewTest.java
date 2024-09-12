@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import static org.junit.Assert.fail;
@@ -36,6 +35,49 @@ public class CreateMatViewTest extends AbstractCairoTest {
     private static final String TABLE1 = "table1";
     private static final String TABLE2 = "table2";
     private static final String TABLE3 = "table3";
+
+    @Test
+    public void testCreateMatViewGroupByTimestampTest() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            ddl("create materialized view test as select timestamp_floor('30s', ts) as ts, avg(v) from " + TABLE1 + " order by ts");
+
+            final String expected = "ts\tavg\n" +
+                    "1970-01-01T00:00:00.000000Z\t1.0\n" +
+                    "1970-01-01T00:00:30.000000Z\t4.0\n" +
+                    "1970-01-01T00:01:00.000000Z\t7.0\n";
+
+            assertQuery(
+                    expected,
+                    "test",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCreateMatViewInvalidSampleByTest() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            try {
+                ddl("create materialized view test as select ts, avg(v) from " + TABLE1 + " sample by 3M");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Materialized view query with invalid sampling interval");
+            }
+
+            try {
+                ddl("create materialized view test as select ts, avg(v) from " + TABLE1 + " sample by 1y");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Materialized view query with invalid sampling interval");
+            }
+        });
+    }
 
     @Test
     public void testCreateMatViewMultipleTablesTest() throws Exception {
@@ -68,7 +110,6 @@ public class CreateMatViewTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore
     @Test
     public void testCreateMatViewNoSampleByTest() throws Exception {
         assertMemoryLeak(() -> {
@@ -78,13 +119,13 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 ddl("create materialized view test as select * from " + TABLE1 + " where v % 2 = 0");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Materialized view query has no aggregation interval, should contain SAMPLE BY");
+                TestUtils.assertContains(e.getFlyweightMessage(), "Materialized view query without a sampling interval");
             }
         });
     }
 
     @Test
-    public void testCreateMatViewTest() throws Exception {
+    public void testCreateMatViewRewrittenSampleByTest() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
@@ -112,11 +153,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE2);
 
             ddl("create materialized view test with base " + TABLE1
-                    + " as select t1.ts, avg(t1.v) from " + TABLE1 + " as t1 join " + TABLE2 + " as t2 on v sample by 30s");
+                    + " as select t1.ts, avg(t1.v) from " + TABLE1 + " as t1 join " + TABLE2 + " as t2 on v sample by 60s");
 
             final String expected = "ts\tavg\n" +
-                    "1970-01-01T00:00:00.000000Z\t1.0\n" +
-                    "1970-01-01T00:00:30.000000Z\t4.0\n" +
+                    "1970-01-01T00:00:00.000000Z\t2.5\n" +
                     "1970-01-01T00:01:00.000000Z\t7.0\n";
 
             assertQuery(

@@ -30,6 +30,9 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
+import io.questdb.griffin.engine.groupby.MicroTimestampSampler;
+import io.questdb.griffin.engine.groupby.TimestampSampler;
+import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -638,9 +641,30 @@ public class SqlParser {
             }
             model.setBaseTableName(baseTableName.toString());
 
-            // TODO: check that query is SAMPLE BY (or GROUP BY timestamp), reject if not
+            // find sampling interval
+            long interval = -1;
+            // GROUP BY timestamp_floor(ts) (rewritten SAMPLE BY)
+            final ObjList<QueryColumn> queryColumns = queryModel.getBottomUpColumns();
+            for (int i = 0, n = queryColumns.size(); i < n; i++) {
+                final QueryColumn queryColumn = queryColumns.getQuick(i);
+                final ExpressionNode ast = queryColumn.getAst();
+                if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase("timestamp_floor", ast.token)) {
+                    final CharSequence cs = ast.paramCount == 3 ? ast.args.getQuick(2).token : ast.lhs.token;
+                    final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(GenericLexer.unquote(cs), ast.position);
+                    if (timestampSampler instanceof MicroTimestampSampler) {
+                        interval = timestampSampler.getBucketSize();
+                        break;
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "Materialized view query with invalid sampling interval");
+                    }
+                }
+            }
+            if (interval < 0) {
+                throw SqlException.$(lexer.lastTokenPosition(), "Materialized view query without a sampling interval");
+            }
+            model.setIntervalMicros(interval);
 
-            // TODO: set SAMPLE BY interval on model
+            // TODO: set sampling interval for non-rewritten SAMPLE BY
 
             // TODO: set query on model
 
