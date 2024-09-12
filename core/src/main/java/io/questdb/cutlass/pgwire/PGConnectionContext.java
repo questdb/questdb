@@ -762,12 +762,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // parameter format count
         lo = hi + 1;
         final short parameterFormatCodeCount = pipelineCurrentEntry.getShort(lo, msgLimit, "could not read parameter format code count");
+        lo += Short.BYTES;
         pipelineCurrentEntry.msgBindCopyParameterFormatCodes(
                 lo,
                 msgLimit,
                 parameterFormatCodeCount
         );
-        lo += Short.BYTES;
 
         // parameter value count
         lo += parameterFormatCodeCount * Short.BYTES;
