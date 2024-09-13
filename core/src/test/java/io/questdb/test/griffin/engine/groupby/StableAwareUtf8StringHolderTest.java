@@ -124,7 +124,7 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
                     DirectUtf8Sink directSink = new DirectUtf8Sink(16)
             ) {
                 Utf8StringSink sink = new Utf8StringSink();
-                StableAwareUtf8StringHolder holder = new StableAwareUtf8StringHolder();
+                final StableAwareUtf8StringHolder holder = new StableAwareUtf8StringHolder();
                 holder.setAllocator(allocator);
                 Rnd rnd = TestUtils.generateRandom(null);
                 TestDirectUtf8String stableDirectString = new TestDirectUtf8String(true);
@@ -206,6 +206,16 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
     }
 
     private static void assertPointerColorIsNotLeaking(StableAwareUtf8StringHolder holder) {
-        Assert.assertTrue(holder.ptr() > 0); // highest bit is not set - color is not leaking
+        long ptr = holder.ptr();
+        if (ptr > 0) {
+            return;
+        }
+
+        int size = holder.size();
+        if (ptr == 0) {
+            Assert.assertEquals("null pointer, but non-zero size [size=" + size + "]", 0, size);
+            return;
+        }
+        Assert.fail("Invalid pointer received [ptr=" + ptr + ", size=" + size + "]");
     }
 }
