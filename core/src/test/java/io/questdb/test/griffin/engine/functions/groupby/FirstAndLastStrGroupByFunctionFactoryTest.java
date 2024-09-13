@@ -24,7 +24,15 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest {
@@ -243,6 +251,50 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
 
             assertSql(expected, query + " order by ts, device");
             assertSql(expected, query + " sample by 1h fill(prev) order by ts, device");
+        });
+    }
+
+    @Test
+    public void testVarcharColoredPointerDoesNotLeak() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test (ts timestamp, vch varchar) timestamp(ts) partition by day");
+            insert("insert into test (ts, vch) VALUES ('2023-12-17T18:00:00', 'first')");
+            insert("insert into test (ts, vch) VALUES ('2023-12-18T18:00:00', 'last')");
+
+            String query = "select first(vch) first_str, " +
+                    "last(vch) last_str, " +
+                    "from test";
+
+            try (RecordCursorFactory cursorFactory = engine.select(query, sqlExecutionContext);
+                 RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)) {
+                RecordMetadata metadata = cursorFactory.getMetadata();
+                int firstStrColIdx = metadata.getColumnIndex("first_str");
+                int lastStrColIdx = metadata.getColumnIndex("last_str");
+
+                Record record = cursor.getRecord();
+                Assert.assertTrue(cursor.hasNext());
+
+                Utf8Sequence first = record.getVarcharA(firstStrColIdx);
+                Utf8Sequence last = record.getVarcharA(lastStrColIdx);
+                Assert.assertNotNull(first);
+                Assert.assertNotNull(last);
+
+                TestUtils.assertEquals("first", first);
+                TestUtils.assertEquals("last", last);
+
+                long firstPtr = first.ptr();
+                long lastPtr = last.ptr();
+
+                Assert.assertTrue(firstPtr > 0); // the highest bit is not set = the pointer is not colored -> the color is not leaking
+                Assert.assertTrue(lastPtr > 0);
+
+                DirectUtf8String flyweight = new DirectUtf8String();
+                flyweight.of(firstPtr, firstPtr + first.size(), first.isAscii());
+                TestUtils.equals("first", flyweight.asAsciiCharSequence());
+
+                flyweight.of(lastPtr, lastPtr + last.size(), last.isAscii());
+                TestUtils.equals("last", flyweight.asAsciiCharSequence());
+            }
         });
     }
 }
