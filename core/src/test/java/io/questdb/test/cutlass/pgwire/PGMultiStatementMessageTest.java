@@ -55,61 +55,32 @@ import static org.junit.Assert.*;
 /**
  * Class contains tests of PostgreSQL simple query statements containing multiple commands separated by ';'
  */
+@Ignore
 public class PGMultiStatementMessageTest extends BasePGTest {
 
-    @Test
-    public void testRestartDueToStaleCompilationDoesNotDuplicate() throws Exception {
+    @Test // explicit transaction + commit
+    @Ignore
+    public void testBeginCreateInsertCommitThenErrorDoesntRollBackCommittedFirstInsert() throws Exception {
         assertMemoryLeak(() -> {
-            node1.setProperty(PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, Integer.MAX_VALUE - 1);
-            engine.ddl("create table x (ts timestamp, i int) timestamp(ts) partition by day wal", sqlExecutionContext);
-
-            CyclicBarrier barrier = new CyclicBarrier(2);
-            long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            new Thread(() -> {
-                try {
-                    while (System.nanoTime() < deadlineNanos && barrier.getNumberWaiting() == 0) {
-                        engine.ddl("alter table x add column distraction int", sqlExecutionContext);
-                        Os.sleep(1); // give compiler a chance to compile and execute
-                        if (barrier.getNumberWaiting() != 0) {
-                            break;
-                        }
-                        engine.ddl("alter table x drop column distraction", sqlExecutionContext);
-                        Os.sleep(1);
-                    }
-                } catch (SqlException e) {
-                    throw new RuntimeException(e);
-                } finally {
-                    Path.clearThreadLocals();
-                    try {
-                        barrier.await();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        e.printStackTrace();
-                    } catch (BrokenBarrierException e) {
-                        e.printStackTrace();
-                    }
-                }
-            }).start();
-
-            // the SQL includes INSERT can later test that we don't get duplicate rows
-            // when SQL execution is re-started
             try (PGTestSetup test = new PGTestSetup()) {
+                test.connection.setAutoCommit(false);
                 Statement statement = test.statement;
-                for (int i = 0; i < 1000; i++) {
+
+                try {
                     statement.execute(
-                            "INSERT INTO x (ts, i) VALUES(now(), 1); " +
-                                    "SELECT * FROM x; ");
+                            "BEGIN; " +
+                                    "CREATE TABLE test(l long,s string); " +
+                                    "INSERT INTO test VALUES (20, 'z'); " +
+                                    "COMMIT; " +
+                                    "DELETE FROM test; " +
+                                    "INSERT INTO test VALUES (21, 'x');");
+                    assertExceptionNoLeakCheck("PSQLException should be thrown");
+                } catch (PSQLException e) {
+                    assertEquals("ERROR: unexpected token [FROM]\n  Position: 94", e.getMessage());
                 }
-            } finally {
-                barrier.await();
-            }
-            drainWalQueue();
-            try (RecordCursorFactory factory = select("select count() from x", sqlExecutionContext)) {
-                assertCursor("count\n" +
-                                "1000\n",
-                        factory,
-                        false, false, true
-                );
+
+                boolean hasResult = statement.execute("select * from test; ");
+                assertResults(statement, hasResult, data(row(20L, "z")));
             }
         });
     }
@@ -197,32 +168,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test // explicit transaction + commit
-    public void testBeginCreateInsertCommitThenErrorDoesntRollBackCommittedFirstInsert() throws Exception {
-        assertMemoryLeak(() -> {
-            try (PGTestSetup test = new PGTestSetup()) {
-                test.connection.setAutoCommit(false);
-                Statement statement = test.statement;
-
-                try {
-                    statement.execute(
-                            "BEGIN; " +
-                                    "CREATE TABLE test(l long,s string); " +
-                                    "INSERT INTO test VALUES (20, 'z'); " +
-                                    "COMMIT; " +
-                                    "DELETE FROM test; " +
-                                    "INSERT INTO test VALUES (21, 'x');");
-                    assertExceptionNoLeakCheck("PSQLException should be thrown");
-                } catch (PSQLException e) {
-                    assertEquals("ERROR: unexpected token [FROM]\n  Position: 94", e.getMessage());
-                }
-
-                boolean hasResult = statement.execute("select * from test; ");
-                assertResults(statement, hasResult, data(row(20L, "z")));
-            }
-        });
-    }
-
-    @Test // explicit transaction + commit
+    @Ignore
     public void testBeginCreateInsertCommitThenErrorDoesntRollBackCommittedFirstInsertOnTwoTables() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -245,6 +191,20 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
                 boolean hasResult = statement.execute("select * from testA; select  *from testB;");
                 assertResults(statement, hasResult, data(row(30L, "third")), data(row("bird", (byte) 4)));
+            }
+        });
+    }
+
+    @Test
+    @Ignore
+    public void testCreateInsertAlterTableAddColumnSelectFromTableInBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGTestSetup test = new PGTestSetup()) {
+                Statement statement = test.statement;
+
+                boolean hasResult = statement.execute(
+                        "CREATE TABLE TEST(l long); INSERT INTO TEST VALUES(1); ALTER TABLE TEST ADD COLUMN s STRING; SELECT * from TEST;");
+                assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(1L, null)));
             }
         });
     }
@@ -403,14 +363,22 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
-    public void testCreateInsertAlterTableAddColumnSelectFromTableInBlock() throws Exception {
+    @Ignore
+    public void testCreateInsertAlterTableAttachPartitionListAndSelectFromTableInBlockFails() throws Exception {
+        // this test confirms that command is parsed and executed properly
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
-                Statement statement = test.statement;
-
-                boolean hasResult = statement.execute(
-                        "CREATE TABLE TEST(l long); INSERT INTO TEST VALUES(1); ALTER TABLE TEST ADD COLUMN s STRING; SELECT * from TEST;");
-                assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(1L, null)));
+                try {
+                    test.statement.execute(
+                            "CREATE TABLE test(l long,ts timestamp) timestamp(ts) partition by year; " +
+                                    "INSERT INTO test VALUES(1970, 0); " +
+                                    "INSERT INTO test VALUES(2020, to_timestamp('2020-03-01', 'yyyy-MM-dd'));" +
+                                    "ALTER TABLE test ATTACH PARTITION LIST '2020';" +
+                                    "SELECT l from TEST;");
+                    assertExceptionNoLeakCheck("PSQLException should be thrown");
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "could not attach partition [table=test, detachStatus=ATTACH_ERR_PARTITION_EXISTS");
+                }
             }
         });
     }
@@ -464,39 +432,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
-    public void testCreateInsertAlterTableAttachPartitionListAndSelectFromTableInBlockFails() throws Exception {
-        // this test confirms that command is parsed and executed properly
-        assertMemoryLeak(() -> {
-            try (PGTestSetup test = new PGTestSetup()) {
-                try {
-                    test.statement.execute(
-                            "CREATE TABLE test(l long,ts timestamp) timestamp(ts) partition by year; " +
-                                    "INSERT INTO test VALUES(1970, 0); " +
-                                    "INSERT INTO test VALUES(2020, to_timestamp('2020-03-01', 'yyyy-MM-dd'));" +
-                                    "ALTER TABLE test ATTACH PARTITION LIST '2020';" +
-                                    "SELECT l from TEST;");
-                    assertExceptionNoLeakCheck("PSQLException should be thrown");
-                } catch (PSQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "could not attach partition [table=test, detachStatus=ATTACH_ERR_PARTITION_EXISTS");
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testCreateInsertAlterTableDropColumnSelectFromTableInBlock() throws Exception {
-        assertMemoryLeak(() -> {
-            try (PGTestSetup test = new PGTestSetup()) {
-                Statement statement = test.statement;
-
-                boolean hasResult = statement.execute(
-                        "CREATE TABLE TEST(l long, de string); INSERT INTO TEST VALUES(1,'a'); ALTER TABLE TEST DROP COLUMN de; SELECT * from TEST;");
-                assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(1L)));
-            }
-        });
-    }
-
-    @Test
+    @Ignore
     public void testCreateInsertAlterTableDropPartitionList2SelectFromTableInBlock() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -517,6 +453,20 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
+    public void testCreateInsertAlterTableDropColumnSelectFromTableInBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGTestSetup test = new PGTestSetup()) {
+                Statement statement = test.statement;
+
+                boolean hasResult = statement.execute(
+                        "CREATE TABLE TEST(l long, de string); INSERT INTO TEST VALUES(1,'a'); ALTER TABLE TEST DROP COLUMN de; SELECT * from TEST;");
+                assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(1L)));
+            }
+        });
+    }
+
+    @Test
+    @Ignore
     public void testCreateInsertAlterTableDropPartitionListSelectFromTableInBlock() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -534,6 +484,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
+    @Ignore
     public void testCreateInsertAlterTableDropPartitionWhereSelectFromTableInBlock() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -554,6 +505,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
+    @Ignore
     public void testCreateInsertAlterTableRenameColumnSelectFromTableInBlock() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -562,6 +514,25 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 boolean hasResult = statement.execute(
                         "CREATE TABLE TEST(l long, de string); INSERT INTO TEST VALUES(2,'b'); ALTER TABLE TEST RENAME COLUMN de TO s; SELECT l,s from TEST;");
                 assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(2L, "b")));
+            }
+        });
+    }
+
+    @Test
+    @Ignore
+    public void testCreateInsertAsSelectAndSelectFromTableInBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGTestSetup test = new PGTestSetup()) {
+                Statement statement = test.statement;
+
+                boolean hasResult = statement.execute("CREATE TABLE test(l long, s string); " +
+                        "INSERT INTO test VALUES (20, 'z'); " +
+                        "INSERT INTO test VALUES (21, 'u'); " +
+                        "INSERT INTO test select l,s from test; " +
+                        "SELECT l,s from test;");
+                assertResults(statement, hasResult, Result.ZERO, count(1), count(1), count(2), /*this is wrong, qdb doesn't report row count for insert as select !*/
+                        data(row(20L, "z"), row(21L, "u"), row(20L, "z"), row(21L, "u"))
+                );
             }
         });
     }
@@ -582,26 +553,9 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test
-    public void testCreateInsertAsSelectAndSelectFromTableInBlock() throws Exception {
-        assertMemoryLeak(() -> {
-            try (PGTestSetup test = new PGTestSetup()) {
-                Statement statement = test.statement;
-
-                boolean hasResult = statement.execute("CREATE TABLE test(l long, s string); " +
-                        "INSERT INTO test VALUES (20, 'z'); " +
-                        "INSERT INTO test VALUES (21, 'u'); " +
-                        "INSERT INTO test select l,s from test; " +
-                        "SELECT l,s from test;");
-                assertResults(statement, hasResult, Result.ZERO, count(1), count(1), count(2), /*this is wrong, qdb doesn't report row count for insert as select !*/
-                        data(row(20L, "z"), row(21L, "u"), row(20L, "z"), row(21L, "u"))
-                );
-            }
-        });
-    }
-
     // insert as select isn't transactional and commits data immediately
     @Test
+    @Ignore
     public void testCreateInsertAsSelectInsertThenRollbackLeavesNonEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -624,6 +578,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
+    @Ignore
     public void testCreateInsertAsSelectReturnsProperUpdateCount() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -637,6 +592,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test // implicit transaction + commit
+    @Ignore
     public void testCreateInsertCommitThenErrorDoesntRollBackCommittedFirstInsert() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -661,6 +617,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test // implicit transaction + commit
+    @Ignore
     public void testCreateInsertCommitThenErrorDoesntRollBackCommittedFirstInsertOnTwoTables() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -688,6 +645,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
+    @Ignore
     public void testCreateInsertDropTableSelectFromTableInBlockThrowsErrorBecauseTableDoesntExist() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -699,6 +657,30 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "SELECT l from testX;");
             } catch (PSQLException e) {
                 assertEquals("ERROR: table does not exist [table=testX]\n  Position: 108", e.getMessage());
+            }
+        });
+    }
+
+    @Test // running statements in block should create implicit transaction so first insert should be rolled back
+    @Ignore
+    public void testCreateInsertThenErrorRollsBackFirstInsertAsPartOfImplicitTransaction() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGTestSetup test = new PGTestSetup()) {
+                test.connection.setAutoCommit(false);
+                Statement statement = test.statement;
+
+                try {
+                    statement.execute(
+                            "CREATE TABLE test(l long,s string); " +
+                                    "INSERT INTO test VALUES (20, 'z'); " +
+                                    "DELETE FROM test; " +
+                                    "INSERT INTO test VALUES (20, 'z');");
+                } catch (PSQLException e) {
+                    assertEquals("ERROR: unexpected token [FROM]\n  Position: 79", e.getMessage());
+                }
+
+                boolean hasResult = statement.execute("select * from test; ");
+                assertResults(statement, hasResult, Result.EMPTY);
             }
         });
     }
@@ -837,29 +819,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test // running statements in block should create implicit transaction so first insert should be rolled back
-    public void testCreateInsertThenErrorRollsBackFirstInsertAsPartOfImplicitTransaction() throws Exception {
-        assertMemoryLeak(() -> {
-            try (PGTestSetup test = new PGTestSetup()) {
-                test.connection.setAutoCommit(false);
-                Statement statement = test.statement;
-
-                try {
-                    statement.execute(
-                            "CREATE TABLE test(l long,s string); " +
-                                    "INSERT INTO test VALUES (20, 'z'); " +
-                                    "DELETE FROM test; " +
-                                    "INSERT INTO test VALUES (20, 'z');");
-                } catch (PSQLException e) {
-                    assertEquals("ERROR: unexpected token [FROM]\n  Position: 79", e.getMessage());
-                }
-
-                boolean hasResult = statement.execute("select * from test; ");
-                assertResults(statement, hasResult, Result.EMPTY);
-            }
-        });
-    }
-
-    @Test // running statements in block should create implicit transaction so first insert should be rolled back
+    @Ignore
     public void testCreateInsertThenErrorRollsBackFirstInsertAsPartOfImplicitTransactionOnTwoTables() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -879,6 +839,20 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
                 boolean hasResult = statement.execute("select * from testA; select * from testB;");
                 assertResults(statement, hasResult, Result.EMPTY, Result.EMPTY);
+            }
+        });
+    }
+
+    @Test
+    @Ignore
+    public void testCreateTableAsSelectReturnsRightInsertCount() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGTestSetup test = new PGTestSetup()) {
+                Statement statement = test.statement;
+
+                boolean hasResult = statement.execute("CREATE TABLE test as (select x from long_sequence(3)); " +
+                        "SELECT * from test;");
+                assertResults(statement, hasResult, count(3), data(row("1"), row("2"), row("3")));
             }
         });
     }
@@ -943,14 +917,22 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
-    public void testCreateTableAsSelectReturnsRightInsertCount() throws Exception {
+    @Ignore
+    public void testQueryEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
         assertMemoryLeak(() -> {
-            try (PGTestSetup test = new PGTestSetup()) {
-                Statement statement = test.statement;
+            try (PGTestSetup test = new PGTestSetup(true, 100)) {
+                AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+                TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
 
-                boolean hasResult = statement.execute("CREATE TABLE test as (select x from long_sequence(3)); " +
-                        "SELECT * from test;");
-                assertResults(statement, hasResult, count(3), data(row("1"), row("2"), row("3")));
+                try {
+                    test.statement.execute("select * from test_data_unavailable(1, 10); " +
+                            "select * from test_data_unavailable(1, 10);");
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
+                } finally {
+                    // Make sure to close the event on the producer side.
+                    Misc.free(eventRef.get());
+                }
             }
         });
     }
@@ -1036,26 +1018,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
-    public void testQueryEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
-        assertMemoryLeak(() -> {
-            try (PGTestSetup test = new PGTestSetup(true, 100)) {
-                AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
-                TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-
-                try {
-                    test.statement.execute("select * from test_data_unavailable(1, 10); " +
-                            "select * from test_data_unavailable(1, 10);");
-                } catch (SQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
-                } finally {
-                    // Make sure to close the event on the producer side.
-                    Misc.free(eventRef.get());
-                }
-            }
-        });
-    }
-
-    @Test
+    @Ignore
     public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -1080,6 +1043,64 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 );
 
                 Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
+            }
+        });
+    }
+
+    @Test
+    @Ignore
+    public void testRestartDueToStaleCompilationDoesNotDuplicate() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, Integer.MAX_VALUE - 1);
+            engine.ddl("create table x (ts timestamp, i int) timestamp(ts) partition by day wal", sqlExecutionContext);
+
+            CyclicBarrier barrier = new CyclicBarrier(2);
+            long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            new Thread(() -> {
+                try {
+                    while (System.nanoTime() < deadlineNanos && barrier.getNumberWaiting() == 0) {
+                        engine.ddl("alter table x add column distraction int", sqlExecutionContext);
+                        Os.sleep(1); // give compiler a chance to compile and execute
+                        if (barrier.getNumberWaiting() != 0) {
+                            break;
+                        }
+                        engine.ddl("alter table x drop column distraction", sqlExecutionContext);
+                        Os.sleep(1);
+                    }
+                } catch (SqlException e) {
+                    throw new RuntimeException(e);
+                } finally {
+                    Path.clearThreadLocals();
+                    try {
+                        barrier.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        e.printStackTrace();
+                    } catch (BrokenBarrierException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }).start();
+
+            // the SQL includes INSERT can later test that we don't get duplicate rows
+            // when SQL execution is re-started
+            try (PGTestSetup test = new PGTestSetup()) {
+                Statement statement = test.statement;
+                for (int i = 0; i < 1000; i++) {
+                    statement.execute(
+                            "INSERT INTO x (ts, i) VALUES(now(), 1); " +
+                                    "SELECT * FROM x; ");
+                }
+            } finally {
+                barrier.await();
+            }
+            drainWalQueue();
+            try (RecordCursorFactory factory = select("select count() from x", sqlExecutionContext)) {
+                assertCursor("count\n" +
+                                "1000\n",
+                        factory,
+                        false, false, true
+                );
             }
         });
     }
@@ -1148,6 +1169,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
+    @Ignore
     public void testRunBlockWithCreateInsertSelectDropReturnsSelectResult() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {

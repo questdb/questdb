@@ -140,7 +140,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     // insert 'statements' are cached only for the duration of user session
     private SimpleAssociativeCache<TypesAndInsert> taiCache;
     private AssociativeCache<TypesAndSelect> tasCache;
-    private SimpleAssociativeCache<TypesAndUpdate> tauCache;
     private boolean tlsSessionStarting = false;
     private long totalReceived = 0;
     private int transactionState = NO_TRANSACTION;
@@ -180,9 +179,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             this.metrics = engine.getMetrics();
             this.tasCache = tasCache;
             final boolean enabledUpdateCache = configuration.isUpdateCacheEnabled();
-            final int updateBlockCount = enabledUpdateCache ? configuration.getUpdateCacheBlockCount() : 1;
-            final int updateRowCount = enabledUpdateCache ? configuration.getUpdateCacheRowCount() : 1;
-            this.tauCache = new SimpleAssociativeCache<>(updateBlockCount, updateRowCount, metrics.pgWire().cachedUpdatesGauge());
             final boolean enableInsertCache = configuration.isInsertCacheEnabled();
             final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1;
             final int insertRowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1;
@@ -291,7 +287,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         path = Misc.free(path);
         authenticator = Misc.free(authenticator);
         tasCache = Misc.free(tasCache);
-        tauCache = Misc.free(tauCache);
         taiCache = Misc.free(taiCache);
     }
 
@@ -637,13 +632,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 throw BadProtocolException.INSTANCE;
             }
 
-            // Alright, the client wants to use the named statement. What if they just
-            // send "parse" message and want to abandon it?
-            freeIfAbandoned(pipelineCurrentEntry);
-
-            // it is safe to overwrite the pipeline entry,
-            // named entries will be held in the hash map
-            pipelineCurrentEntry = pe;
+            replaceCurrentPipelineEntry(pe);
             return false;
         }
         return true;
@@ -660,13 +649,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 pipelineCurrentEntry.getErrorMessageSink().put("statement or portal does not exist [name=").put(statementName).put(']');
                 throw BadProtocolException.INSTANCE;
             }
-            // Alright, the client wants to use the named statement. What if they just
-            // send "parse" message and want to abandon it?
-            freeIfAbandoned(pipelineCurrentEntry);
 
-            // it is safe to overwrite the pipeline entry,
-            // named entries will be held in the "namedEntries" cache
-            pipelineCurrentEntry = pe;
+            replaceCurrentPipelineEntry(pe);
             return false;
         }
         return true;
@@ -723,24 +707,21 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         // the pipeline is named, and we must not attempt to reuse it
                         // as the portal, so we are making a new entry
                         PGPipelineEntry pe = new PGPipelineEntry(engine);
-                        pe.of(
+                        pe.parseNewSql(
                                 pipelineCurrentEntry.getSqlText(),
                                 engine,
                                 sqlExecutionContext,
-                                taiCache,
-                                tasCache,
                                 taiPool
                         );
-                        boolean stateParse = pipelineCurrentEntry.isStateParse();
-                        pipelineCurrentEntry.setStateParse(false);
                         pe.setParentPreparedStatement(pipelineCurrentEntry);
+                        pe.copyStateFrom(pipelineCurrentEntry);
                         // Keep the reference to the portal name on the prepared statement before we overwrite the
                         // reference. Keeping list of portal names is required in case the client closes the prepared
                         // statement. We will also be required to close all the portals.
                         pipelineCurrentEntry.bindPortalName(portalName);
+                        pipelineCurrentEntry.clearState();
                         pipelineCurrentEntry = pe;
                         pipelineCurrentEntry.setStateBind(true);
-                        pipelineCurrentEntry.setStateParse(stateParse);
                     }
                     // else:
                     // portal is being created from "parse" message (i am not 100% the client will be
@@ -935,8 +916,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         pipelineCurrentEntry = new PGPipelineEntry(engine);
 
+        // when processing the "parse" message we use BindVariableService to exchange bind variable types
+        // between SQL compiler and the PG "parse" message processing logic. BindVariableService must not
+        // be used to pass state from one message to the next. Assume that thread may be interrupted between
+        // messages or processing could switch to another thread entirely.
+        bindVariableService.clear();
+
+        // mark the pipeline entry as received "parse" message
+        pipelineCurrentEntry.setStateParse(true);
+
         // 'Parse'
-        //message length
+        // "statement name" length
         long hi = getUtf8StrSize(lo, msgLimit, "bad prepared statement name length (parse)", pipelineCurrentEntry);
 
         // when statement name is present in "parse" message
@@ -944,20 +934,21 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // parsed SQL as short and sweet statement name.
         final CharSequence targetStatementName = getUtf16Str(lo, hi, "invalid UTF8 bytes in statement name (parse)");
 
-        //query text
+        // read query text from the message
         lo = hi + 1;
         hi = getUtf8StrSize(lo, msgLimit, "bad query text length", pipelineCurrentEntry);
+        final CharacterStoreEntry e = characterStore.newEntry();
+        if (!Utf8s.utf8ToUtf16(lo, hi, e)) {
+            pipelineCurrentEntry.getErrorMessageSink().put("invalid UTF8 bytes in parse query");
+            throw BadProtocolException.INSTANCE;
+        }
 
-
-        // it is safe to overwrite the entry without having memory leak
-        parseSql(pipelineCurrentEntry, lo, hi);
-        pipelineCurrentEntry.setStateParse(true);
-
+        final CharSequence utf16SqlText = e.toImmutable();
         lo = hi + 1;
 
-        msgParseCreateTargetStatement(targetStatementName);
-
-        // parameter type count
+        // read parameter types before we are able to compile SQL text
+        // parameter values are not provided here, but we do not need them to be able to
+        // parse/compile the SQL
         short parameterTypeCount = pipelineCurrentEntry.getShort(lo, msgLimit, "could not read parameter type count");
 
         // process parameter types
@@ -980,11 +971,54 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     .put("invalid parameter count [parameterCount=").put(parameterTypeCount)
                     .put(", offset=").put(lo - address);
             throw BadProtocolException.INSTANCE;
-        } else {
-            // parameter types were not provided by the client
-            // copy parameter types from our SQL type resolution engine
-            pipelineCurrentEntry.msgParseCopyParameterTypesFromService(bindVariableService);
         }
+
+        // At this point parameters may or may not be defined.
+        // If they are defined, the pipeline entry
+        // will have the supplied parameter types.
+
+        // Let's try to see if we have this SQL cached
+        // possible cache hits or misses:
+        // 0 - did not hit any cache
+        // 1 - hit "insert" cache but decided not to use it
+        // 2 - hit "insert" cache and using it
+
+        int cachedHit = 0;
+        final TypesAndInsert tai = taiCache.peek(utf16SqlText);
+        if (tai != null) {
+            if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tai)) {
+                pipelineCurrentEntry.ofInsert(utf16SqlText, tai.getInsert(), tai.getSqlType(), tai.getSqlTag());
+                cachedHit = 2;
+            } else {
+                //todo: find more efficient way to remove from cache what we have already looked up
+                // remove cached item, we will create it again, may be
+                TypesAndInsert tai2 = taiCache.poll(utf16SqlText);
+                assert tai2 == tai;
+                tai.close();
+                cachedHit = 1;
+            }
+        }
+
+        if (cachedHit == 0) {
+            final TypesAndSelect tas = tasCache.poll(utf16SqlText);
+            if (tas != null) {
+                if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tas)) {
+                    pipelineCurrentEntry.ofSelect(utf16SqlText, tas);
+                    cachedHit = 4;
+                } else {
+                    tas.close();
+                    cachedHit = 3;
+                }
+            }
+        }
+
+        if (cachedHit != 2 && cachedHit != 4) {
+            // When parameter types are not supplied we will assume that the types are STRING
+            // this is done by default, when CairoEngine compiles the SQL text. Assuming we're
+            // compiling the SQL from scratch.
+            pipelineCurrentEntry.parseNewSql(utf16SqlText, engine, sqlExecutionContext, taiPool);
+        }
+        msgParseCreateTargetStatement(targetStatementName);
     }
 
     private void msgParseCreateTargetStatement(CharSequence targetStatementName) throws BadProtocolException {
@@ -1153,23 +1187,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void parseSql(PGPipelineEntry pe, long lo, long hi) throws BadProtocolException {
-        CharacterStoreEntry e = characterStore.newEntry();
-        if (Utf8s.utf8ToUtf16(lo, hi, e)) {
-            pe.of(
-                    e.toImmutable(),
-                    engine,
-                    sqlExecutionContext,
-                    taiCache,
-                    tasCache,
-                    taiPool
-            );
-            return;
-        }
-        pe.getErrorMessageSink().put("invalid UTF8 bytes in parse query");
-        throw BadProtocolException.INSTANCE;
-    }
-
     private void prepareBindCompleteResponse() {
         responseUtf8Sink.put(MESSAGE_TYPE_BIND_COMPLETE);
         responseUtf8Sink.putIntDirect(INT_BYTES_X);
@@ -1228,6 +1245,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void prepareNonCriticalError(int position, CharSequence message) {
         prepareErrorResponse(position, message);
         LOG.error().$("error [pos=").$(position).$(", msg=`").utf8(message).$('`').I$();
+    }
+
+    private void replaceCurrentPipelineEntry(PGPipelineEntry newEntry) {
+        if (newEntry != pipelineCurrentEntry) {
+            // Alright, the client wants to use the named statement. What if they just
+            // send "parse" message and want to abandon it?
+            freeIfAbandoned(pipelineCurrentEntry);
+            // it is safe to overwrite the pipeline entry,
+            // named entries will be held in the hash map
+            pipelineCurrentEntry = newEntry;
+        }
     }
 
     private void sendBufferAndResetBlocking() throws PeerDisconnectedException {
@@ -1302,7 +1330,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     throw BadProtocolException.INSTANCE;
                 }
             }
-            pipelineCurrentEntry = Misc.free(pipelineCurrentEntry);
+            pipelineCurrentEntry.cacheIfPossible(tasCache, taiCache);
+            freeIfAbandoned(pipelineCurrentEntry);
+            pipelineCurrentEntry = null;
         }
     }
 
@@ -1362,8 +1392,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     static void freeIfAbandoned(PGPipelineEntry pe) {
-        if (pe != null && !pe.isPreparedStatement() && !pe.isPortal()) {
-            Misc.free(pe);
+        if (pe != null) {
+            if (!pe.isPreparedStatement() && !pe.isPortal()) {
+                Misc.free(pe);
+            } else {
+                pe.clearState();
+            }
         }
     }
 
@@ -1435,8 +1469,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     Chars.toString(text), // todo: we just need an immutable copy of the text, not a new string
                     sqlExecutionContext,
                     cq,
-                    taiPool,
-                    tasCache
+                    taiPool
             );
             transactionState = pipelineCurrentEntry.execute(
                     sqlExecutionContext,

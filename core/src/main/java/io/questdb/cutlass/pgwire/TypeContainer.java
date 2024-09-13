@@ -25,39 +25,11 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.InsertOperation;
-import io.questdb.std.WeakSelfReturningObjectPool;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.IntList;
 
-public class TypesAndInsert extends AbstractTypeContainer<TypesAndInsert> {
-    private boolean hasBindVariables;
-    private InsertOperation insert;
-    private String sqlTag;
-    private short sqlType;
+public interface TypeContainer {
+    void defineBindVariables(BindVariableService bindVariableService) throws SqlException;
 
-    public TypesAndInsert(WeakSelfReturningObjectPool<TypesAndInsert> parentPool) {
-        super(parentPool);
-    }
-
-    public InsertOperation getInsert() {
-        return insert;
-    }
-
-    public String getSqlTag() {
-        return sqlTag;
-    }
-
-    public short getSqlType() {
-        return sqlType;
-    }
-
-    public boolean hasBindVariables() {
-        return hasBindVariables;
-    }
-
-    public void of(InsertOperation insert, BindVariableService bindVariableService, short sqlType, String sqlTag) {
-        this.insert = insert;
-        copyTypesFrom(bindVariableService);
-        this.hasBindVariables = bindVariableService.getIndexedVariableCount() > 0;
-        this.sqlType = sqlType;
-    }
+    IntList getPgParameterTypes();
 }

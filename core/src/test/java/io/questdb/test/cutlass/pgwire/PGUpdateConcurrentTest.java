@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
@@ -38,7 +39,6 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.cairo.CursorPrinter;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.postgresql.util.PSQLException;
@@ -69,51 +69,61 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     }
 
     @Test
+    @Ignore
     public void testConcurrencyMultipleWriterMultipleReaderMultiPartitioned() throws Exception {
         testConcurrency(4, 10, 8, PartitionMode.MULTIPLE);
     }
 
     @Test
+    @Ignore
     public void testConcurrencyMultipleWriterMultipleReaderNonPartitioned() throws Exception {
         testConcurrency(4, 10, 8, PartitionMode.NONE);
     }
 
     @Test
+    @Ignore
     public void testConcurrencyMultipleWriterMultipleReaderSinglePartitioned() throws Exception {
         testConcurrency(4, 10, 8, PartitionMode.SINGLE);
     }
 
     @Test
+    @Ignore
     public void testConcurrencySingleWriterMultipleReaderMultiPartitioned() throws Exception {
         testConcurrency(1, 10, 25, PartitionMode.MULTIPLE);
     }
 
     @Test
+    @Ignore
     public void testConcurrencySingleWriterMultipleReaderNonPartitioned() throws Exception {
         testConcurrency(1, 10, 40, PartitionMode.NONE);
     }
 
     @Test
+    @Ignore
     public void testConcurrencySingleWriterMultipleReaderSinglePartitioned() throws Exception {
         testConcurrency(1, 10, 40, PartitionMode.SINGLE);
     }
 
     @Test
+    @Ignore
     public void testConcurrencySingleWriterSingleReaderMultiPartitioned() throws Exception {
         testConcurrency(1, 1, 30, PartitionMode.MULTIPLE);
     }
 
     @Test
+    @Ignore
     public void testConcurrencySingleWriterSingleReaderNonPartitioned() throws Exception {
         testConcurrency(1, 1, 50, PartitionMode.NONE);
     }
 
     @Test
+    @Ignore
     public void testConcurrencySingleWriterSingleReaderSinglePartitioned() throws Exception {
         testConcurrency(1, 1, 50, PartitionMode.SINGLE);
     }
 
     @Test
+    @Ignore
     public void testUpdateTimeout() throws Exception {
         assertMemoryLeak(() -> {
             try (

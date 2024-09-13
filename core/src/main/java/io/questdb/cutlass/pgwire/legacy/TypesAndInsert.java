@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.cutlass.pgwire.legacy;
 
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.InsertOperation;
@@ -31,8 +31,6 @@ import io.questdb.std.WeakSelfReturningObjectPool;
 public class TypesAndInsert extends AbstractTypeContainer<TypesAndInsert> {
     private boolean hasBindVariables;
     private InsertOperation insert;
-    private String sqlTag;
-    private short sqlType;
 
     public TypesAndInsert(WeakSelfReturningObjectPool<TypesAndInsert> parentPool) {
         super(parentPool);
@@ -42,22 +40,13 @@ public class TypesAndInsert extends AbstractTypeContainer<TypesAndInsert> {
         return insert;
     }
 
-    public String getSqlTag() {
-        return sqlTag;
-    }
-
-    public short getSqlType() {
-        return sqlType;
-    }
-
     public boolean hasBindVariables() {
         return hasBindVariables;
     }
 
-    public void of(InsertOperation insert, BindVariableService bindVariableService, short sqlType, String sqlTag) {
+    public void of(InsertOperation insert, BindVariableService bindVariableService) {
         this.insert = insert;
         copyTypesFrom(bindVariableService);
         this.hasBindVariables = bindVariableService.getIndexedVariableCount() > 0;
-        this.sqlType = sqlType;
     }
 }

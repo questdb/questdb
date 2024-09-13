@@ -2877,11 +2877,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public double getWalLagRowsMultiplier() {
-            return walSquashUncommittedRowsMultiplier;
-        }
-
-        @Override
         public long getWalMaxLagSize() {
             return walMaxLagSize;
         }
@@ -2919,6 +2914,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalSegmentRolloverSize() {
             return walSegmentRolloverSize;
+        }
+
+        @Override
+        public double getWalLagRowsMultiplier() {
+            return walSquashUncommittedRowsMultiplier;
         }
 
         @Override

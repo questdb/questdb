@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.cutlass.pgwire.legacy;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.BindVariableService;
@@ -32,7 +32,7 @@ import io.questdb.std.AbstractSelfReturningObject;
 import io.questdb.std.IntList;
 import io.questdb.std.WeakSelfReturningObjectPool;
 
-public abstract class AbstractTypeContainer<T extends AbstractTypeContainer<?>> extends AbstractSelfReturningObject<T> implements TypeContainer {
+public abstract class AbstractTypeContainer<T extends AbstractTypeContainer<?>> extends AbstractSelfReturningObject<T> {
     private final IntList types = new IntList();
     private boolean closing;
 
@@ -50,14 +50,8 @@ public abstract class AbstractTypeContainer<T extends AbstractTypeContainer<?>> 
         }
     }
 
-    @Override
     public void defineBindVariables(BindVariableService bindVariableService) throws SqlException {
         defineBindVariables(types, bindVariableService);
-    }
-
-    @Override
-    public IntList getPgParameterTypes() {
-        return types;
     }
 
     static void copyTypes(BindVariableService fromBindVariableService, IntList toTypes) {

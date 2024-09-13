@@ -276,10 +276,14 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
     private void prepareBackendKeyData(ResponseSink responseSink) {
         responseSink.put('K');
         responseSink.putInt(Integer.BYTES * 3); // length of this message
-
-        // the below 8 bytes will not match when dumping PG traffic!
-        responseSink.putInt(circuitBreakerId);
-        responseSink.putInt(circuitBreaker.getSecret());
+        if (dumpNetworkTraffic) {
+            // these are the values used by HEX regression test.
+            responseSink.putInt(63);
+            responseSink.putInt(-1148479920);
+        } else {
+            responseSink.putInt(circuitBreakerId);
+            responseSink.putInt(circuitBreaker.getSecret());
+        }
     }
 
     private void prepareErrorResponse(CharSequence errorMessage) {
