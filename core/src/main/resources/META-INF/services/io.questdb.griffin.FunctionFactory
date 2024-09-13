@@ -211,6 +211,10 @@ io.questdb.griffin.engine.functions.str.LengthVarcharFunctionFactory
 io.questdb.griffin.engine.functions.str.LengthSymbolFunctionFactory
 io.questdb.griffin.engine.functions.str.LengthBinFunctionFactory
 
+# comparison
+io.questdb.griffin.engine.functions.math.GreatestNumericFunctionFactory
+io.questdb.griffin.engine.functions.math.LeastNumericFunctionFactory
+
 # random generator functions
 
 io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory

@@ -278,6 +278,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory,
             io.questdb.griffin.engine.functions.regex.MatchVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.regex.MatchSymbolFunctionFactory,
+//                    comparison
+            io.questdb.griffin.engine.functions.math.GreatestNumericFunctionFactory,
+            io.questdb.griffin.engine.functions.math.LeastNumericFunctionFactory,
 //                    like
             io.questdb.griffin.engine.functions.regex.LikeStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.LikeVarcharFunctionFactory,
