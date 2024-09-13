@@ -219,6 +219,8 @@ public interface CairoConfiguration {
     @NotNull
     CharSequence getLegacyCheckpointRoot(); // same as root/../snapshot
 
+    boolean getLogLevelVerbose();
+
     int getMaxCrashFiles();
 
     int getMaxFileNameLength();
