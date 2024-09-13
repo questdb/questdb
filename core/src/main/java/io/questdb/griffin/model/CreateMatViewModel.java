@@ -27,6 +27,8 @@ package io.questdb.griffin.model;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mv.MaterializedViewDefinition;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
@@ -46,14 +48,15 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable, Ta
     private long batchO3MaxLag = -1;
     private long batchSize = -1;
     private boolean ignoreIfExists = false;
-    private long intervalMicros;
+    private long intervalMicros = -1;
     private int maxUncommittedRows;
     private ExpressionNode name;
     private long o3MaxLag;
     private ExpressionNode partitionBy;
     private CharSequence query;
     private QueryModel queryModel;
-    private long startEpochMicros;
+    private long startEpochMicros = -1;
+    private TableToken matViewToken;
     private ExpressionNode timestamp;
     private CharSequence volumeAlias;
     private boolean walEnabled;
@@ -111,10 +114,11 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable, Ta
         query = null;
         intervalMicros = -1;
         startEpochMicros = -1;
+        matViewToken = null;
     }
 
     public MaterializedViewDefinition generateDefinition() {
-        return new MaterializedViewDefinition(baseTableName, startEpochMicros, intervalMicros, query);
+        return new MaterializedViewDefinition(baseTableName, startEpochMicros, intervalMicros, query, matViewToken);
     }
 
     public long getBatchO3MaxLag() {
@@ -305,6 +309,10 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable, Ta
 
     public void setStartEpochMicros(long startEpochMicros) {
         this.startEpochMicros = startEpochMicros;
+    }
+
+    public void setTableToken(TableToken matViewToken) {
+        this.matViewToken = matViewToken;
     }
 
     public void setTimestamp(ExpressionNode timestamp) {

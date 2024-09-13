@@ -29,6 +29,7 @@ import io.questdb.PropServerConfiguration;
 import io.questdb.TelemetryOrigin;
 import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.*;
+import io.questdb.cairo.mv.MaterializedViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
@@ -2066,21 +2067,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } else if (status == TableUtils.TABLE_EXISTS) {
             throw SqlException.$(name.position, "A view or a table already exists with this name");
         } else {
-            final TableToken tableToken;
+            final TableToken matViewToken;
             this.insertCount = -1;
             if (createMatViewModel.getQueryModel() != null) {
-                tableToken = createMatViewFromCursorExecutor(createMatViewModel, executionContext, name.position);
+                matViewToken = createMatViewFromCursorExecutor(createMatViewModel, executionContext, name.position);
+                createMatViewModel.setTableToken(matViewToken);
             } else {
                 throw SqlException.position(0).put("cannot create materialized view without a query");
             }
 
             final MaterializedViewDefinition matViewDefinition = createMatViewModel.generateDefinition();
 
-            // TODO: persist view definition, i.e. save mat view metadata 
+            // TODO: persist view definition, i.e. save mat view metadata
+            //  load them back on startup
 
-            // TODO: register mat view definition with refresh job
+            final TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
+            engine.getMaterializedViewGraph().upsertView(baseTableToken, matViewDefinition);
 
-            compiledQuery.ofCreateMatView(tableToken);
+            compiledQuery.ofCreateMatView(matViewToken);
         }
     }
 

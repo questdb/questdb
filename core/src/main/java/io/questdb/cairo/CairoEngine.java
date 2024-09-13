@@ -29,6 +29,7 @@ import io.questdb.MessageBusImpl;
 import io.questdb.Metrics;
 import io.questdb.Telemetry;
 import io.questdb.cairo.mig.EngineMigration;
+import io.questdb.cairo.mv.MatViewGraph;
 import io.questdb.cairo.pool.*;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.*;
@@ -77,6 +78,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final EngineMaintenanceJob engineMaintenanceJob;
     private final FunctionFactoryCache ffCache;
+    private final MatViewGraph matViewGraph = new MatViewGraph();
     private final MessageBusImpl messageBus;
     private final Metrics metrics;
     private final QueryRegistry queryRegistry;
@@ -500,6 +502,10 @@ public class CairoEngine implements Closeable, WriterSource {
             return getTableMetadata(tableToken, desiredVersion);
         }
         return getSequencerMetadata(tableToken, desiredVersion);
+    }
+
+    public MatViewGraph getMaterializedViewGraph() {
+        return matViewGraph;
     }
 
     public MessageBus getMessageBus() {
