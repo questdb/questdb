@@ -142,7 +142,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         Files.touch(triggerFilePath.$());
     }
 
-    private void checkpointCreate(boolean legacy) throws SqlException {
+    private void checkpointCreate(boolean legacy, boolean hardLinkCopy) throws SqlException {
         LOG.info().$("creating checkpoint").$();
 
         if (legacy) {
@@ -158,8 +158,13 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
 
         ff.mkdirs(snapshotPath, conf.getMkDirMode());
 
-        LOG.info().$("copying data to the checkpoint [from=").$(rootPath).$(", to=").$(snapshotPath).$();
-        copyRecursiveIgnoreErrors(ff, rootPath, snapshotPath, conf.getMkDirMode());
+        if (hardLinkCopy) {
+            LOG.info().$("hard linking data to the checkpoint [from=").$(rootPath).$(", to=").$(snapshotPath).$();
+            hardLinkCopyRecursiveIgnoreErrors(ff, rootPath, snapshotPath, conf.getMkDirMode());
+        } else {
+            LOG.info().$("copying data to the checkpoint [from=").$(rootPath).$(", to=").$(snapshotPath).$();
+            copyRecursiveIgnoreErrors(ff, rootPath, snapshotPath, conf.getMkDirMode());
+        }
 
         if (legacy) {
             ddl("snapshot complete");
@@ -258,13 +263,60 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
         );
     }
 
+    private void hardLinkCopyRecursiveIgnoreErrors(FilesFacade ff, Path src, Path dst, int dirMode) {
+        int dstLen = dst.size();
+        int srcLen = src.size();
+        int len = src.size();
+        long p = ff.findFirst(src.$());
+
+        if (!ff.exists(dst.$()) && -1 == ff.mkdir(dst.$(), dirMode)) {
+            LOG.info().$("failed to copy, cannot create dst dir ").$(src).$(" to ").$(dst)
+                    .$(", errno: ").$(ff.errno()).$();
+        }
+
+        if (p > 0) {
+            try {
+                int res;
+                do {
+                    long name = ff.findName(p);
+                    if (Files.notDots(name)) {
+                        int type = ff.findType(p);
+                        src.trimTo(len);
+                        src.concat(name);
+                        dst.concat(name);
+                        if (type == Files.DT_FILE) {
+                            res = Files.hardLink(src.$(), dst.$());
+                            if (res != 0) {
+                                LOG.info().$("failed to copy ").$(src).$(" to ").$(dst)
+                                        .$(", errno: ").$(ff.errno()).$();
+                            }
+                        } else {
+                            ff.mkdir(dst.$(), dirMode);
+                            hardLinkCopyRecursiveIgnoreErrors(ff, src, dst, dirMode);
+                        }
+                        src.trimTo(srcLen);
+                        dst.trimTo(dstLen);
+                    }
+                } while (ff.findNext(p) > 0);
+            } finally {
+                ff.findClose(p);
+                src.trimTo(srcLen);
+                dst.trimTo(dstLen);
+            }
+        }
+    }
+
     protected void runFuzzWithCheckpoint(Rnd rnd) throws Exception {
         // Snapshot is not supported on Windows.
         Assume.assumeFalse(Os.isWindows());
+        boolean testHardLinkCheckpoint = rnd.nextBoolean();
 
         assertMemoryLeak(() -> {
             int size = rnd.nextInt(16 * 1024 * 1024);
             node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
+            if (testHardLinkCheckpoint) {
+                node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "100G");
+            }
 
             String tableNameNonWal = testName.getMethodName() + "_non_wal";
             fuzzer.createInitialTable(tableNameNonWal, false, fuzzer.initialRowCount);
@@ -298,7 +350,7 @@ public class CheckpointFuzzTest extends AbstractFuzzTest {
 
             Os.sleep(rnd.nextLong(snapshotIndex * 50L));
             // Make snapshot here
-            checkpointCreate((rnd.nextInt() >> 30) == 1);
+            checkpointCreate((rnd.nextInt() >> 30) == 1, testHardLinkCheckpoint);
 
             asyncWalApply.join();
 
