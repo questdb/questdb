@@ -48,7 +48,7 @@ public class TableReferenceOutOfDateException extends RuntimeException implement
         // This is to have correct stack trace in local debugging with -ea option
         assert (ex = new TableReferenceOutOfDateException()) != null;
         ex.message.clear(prefix.length());
-        ex.message.put(tableToken).put("']");
+        ex.message.put(tableToken.getTableName()).put("']");
         return ex;
     }
 
@@ -63,7 +63,7 @@ public class TableReferenceOutOfDateException extends RuntimeException implement
         // This is to have correct stack trace in local debugging with -ea option
         assert (ex = new TableReferenceOutOfDateException()) != null;
         ex.message.clear(prefix.length());
-        ex.message.put(tableToken)
+        ex.message.put(tableToken.getTableName())
                 .put("', expectedTableId=").put(expectedTableId)
                 .put(", actualTableId=").put(actualTableId)
                 .put(", expectedMetadataVersion=").put(expectedMetadataVersion)

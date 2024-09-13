@@ -371,7 +371,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     throw new TableReferenceOutOfDateException();
                 }
             } finally {
-                engine.unLockTableCreate(tableToken);
+                engine.unlockTableCreate(tableToken);
             }
         } else {
             // table is dropped and recreated since we started processing it.

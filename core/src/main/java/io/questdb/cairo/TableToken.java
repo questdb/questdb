@@ -143,7 +143,11 @@ public class TableToken implements Sinkable {
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        sink.put(tableName);
+        sink.put("TableToken{tableName=").put(tableName)
+                .put(", dirName=").put(dirName)
+                .put(", tableId=").put(tableId)
+                .put(", isWal=").put(isWal)
+                .put(", isSystem=").put(isSystem).put('}');
     }
 
     @Override
