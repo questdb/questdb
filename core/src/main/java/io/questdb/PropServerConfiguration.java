@@ -583,7 +583,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
         this.logSqlQueryProgressExe = getBoolean(properties, env, PropertyKey.LOG_SQL_QUERY_PROGRESS_EXE, true);
-        this.logLevelVerbose = getBoolean(properties, env, PropertyKey.LOG_LEVEL_VERBOSE, true);
+        this.logLevelVerbose = getBoolean(properties, env, PropertyKey.LOG_LEVEL_VERBOSE, false);
 
         this.filesFacade = filesFacade;
         this.fpf = fpf;
