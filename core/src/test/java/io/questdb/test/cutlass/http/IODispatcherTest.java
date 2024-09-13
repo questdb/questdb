@@ -8328,7 +8328,7 @@ public class IODispatcherTest extends AbstractTest {
         model.col("j", ColumnType.SYMBOL);
         TestUtils.create(model, engine);
 
-        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("y"))) {
+        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("y"), engine)) {
             for (int i = 0; i < 20; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putSym(0, "ok\0ok");
@@ -9076,6 +9076,7 @@ public class IODispatcherTest extends AbstractTest {
         return testJsonQuery0(2, engine -> {
             // create table with all column types
             createTableX(engine, recordCount);
+            engine.metadataCacheHydrateAllTables();
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
                     request,

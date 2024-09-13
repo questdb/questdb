@@ -22,45 +22,28 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.table;
+package io.questdb.test.griffin.engine.functions.date;
 
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.jit.CompiledFilter;
-import io.questdb.std.ObjList;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.std.Os;
+import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.test.AbstractCairoTest;
+import org.junit.Test;
 
-public interface StealableFilterRecordCursorFactory {
+public class TodayTomorrowYesterdayTest extends AbstractCairoTest {
 
-    // to be used in combination with compiled filter
-    @Nullable
-    default ObjList<Function> getBindVarFunctions() {
-        return null;
+    @Test
+    public void testToday() throws Exception {
+        assertSql("cast\n" + Timestamps.floorDD(Os.currentTimeMicros()) + "\n", "select today()::long");
     }
 
-    // to be used in combination with compiled filter
-    @Nullable
-    default MemoryCARW getBindVarMemory() {
-        return null;
+    @Test
+    public void testTomorrow() throws Exception {
+        assertSql("cast\n" + Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), 1)) + "\n", "select tomorrow()::long");
     }
 
-    @Nullable
-    default CompiledFilter getCompiledFilter() {
-        return null;
+    @Test
+    public void testYesterday() throws Exception {
+        assertSql("cast\n" + Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), -1)) + "\n", "select yesterday()::long");
     }
 
-    @NotNull
-    Function getFilter();
-
-    /**
-     * Closes everything but base factory and filter.
-     */
-    void halfClose();
-
-    /**
-     * Returns true if the factory stands for nothing more but a filter, so that
-     * the above factory (e.g. a parallel GROUP BY one) can steal the filter.
-     */
-    boolean supportsFilterStealing();
 }

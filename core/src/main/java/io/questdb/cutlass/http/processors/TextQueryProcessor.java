@@ -282,7 +282,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private static void readyForNextRequest(HttpConnectionContext context) {
-        LOG.info().$("all sent [fd=").$(context.getFd())
+        LOG.debug().$("all sent [fd=").$(context.getFd())
                 .$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent())
                 .$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).I$();

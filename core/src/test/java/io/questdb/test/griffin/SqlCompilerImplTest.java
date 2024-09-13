@@ -2851,7 +2851,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             @Override
             public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                if (mapCount++ == 6) {
+                if (mapCount++ == 7) {
                     return -1;
                 }
                 return super.mmap(fd, len, offset, flags, memoryTag);
@@ -4640,7 +4640,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             @Override
             public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                if (inError.get() && pageCount++ == 14) {
+                if (inError.get() && pageCount++ == 15) {
                     return -1;
                 }
                 return super.mmap(fd, len, offset, flags, memoryTag);

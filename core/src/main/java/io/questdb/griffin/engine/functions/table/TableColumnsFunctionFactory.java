@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
@@ -42,9 +43,12 @@ public class TableColumnsFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
         final CharSequence tableName = args.getQuick(0).getStrA(null);
-        final TableToken token = sqlExecutionContext.getTableToken(tableName);
+        final TableToken token = sqlExecutionContext.getCairoEngine().getTableTokenIfExists(tableName);
+        if (token == null) {
+            throw SqlException.$(position, "table does not exist [table=").put(tableName);
+        }
         return new CursorFunction(new ShowColumnsRecordCursorFactory(token, argPositions.get(0)));
     }
 }

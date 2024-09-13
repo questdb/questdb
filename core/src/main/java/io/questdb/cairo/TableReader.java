@@ -869,7 +869,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             if (ff.exists(path.$())) {
                 final long partitionSize = txFile.getPartitionSize(partitionIndex);
                 if (partitionSize > -1L) {
-                    LOG.info()
+                    LOG.debug()
                             .$("open partition [path=").$substr(dbRootSize, path)
                             .$(", rowCount=").$(partitionSize)
                             .$(", partitionIndex=").$(partitionIndex)
