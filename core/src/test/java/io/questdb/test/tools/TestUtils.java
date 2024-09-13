@@ -1218,19 +1218,20 @@ public final class TestUtils {
         }
     }
 
-    public static TableWriter newOffPoolWriter(CairoConfiguration configuration, TableToken tableToken) {
-        return newOffPoolWriter(configuration, tableToken, Metrics.disabled());
+    public static TableWriter newOffPoolWriter(CairoConfiguration configuration, TableToken tableToken, CairoEngine engine) {
+        return newOffPoolWriter(configuration, tableToken, Metrics.disabled(), engine);
     }
 
-    public static TableWriter newOffPoolWriter(CairoConfiguration configuration, TableToken tableToken, Metrics metrics) {
-        return newOffPoolWriter(configuration, tableToken, metrics, new MessageBusImpl(configuration));
+    public static TableWriter newOffPoolWriter(CairoConfiguration configuration, TableToken tableToken, Metrics metrics, CairoEngine engine) {
+        return newOffPoolWriter(configuration, tableToken, metrics, new MessageBusImpl(configuration), engine);
     }
 
     public static TableWriter newOffPoolWriter(
             CairoConfiguration configuration,
             TableToken tableToken,
             Metrics metrics,
-            MessageBus messageBus
+            MessageBus messageBus,
+            CairoEngine engine
     ) {
         return new TableWriter(
                 configuration,
@@ -1242,7 +1243,8 @@ public final class TestUtils {
                 configuration.getRoot(),
                 DefaultDdlListener.INSTANCE,
                 () -> Numbers.LONG_NULL,
-                metrics
+                metrics,
+                engine
         );
     }
 

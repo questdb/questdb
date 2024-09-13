@@ -79,7 +79,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
 
     @Override
     public boolean getSymbolCacheFlag(int columnIndex) {
-        return getColumnMetadata(columnIndex).isSymbolTableStatic();
+        return ((WriterTableColumnMetadata) getColumnMetadata(columnIndex)).symbolCached;
     }
 
     @Override
@@ -164,7 +164,9 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                             i,
                             TableUtils.isSequential(metaMem, i),
                             TableUtils.getSymbolCapacity(metaMem, i),
-                            TableUtils.isColumnDedupKey(metaMem, i)
+                            TableUtils.isColumnDedupKey(metaMem, i),
+                            TableUtils.getReplacingColumnIndex(metaMem, i),
+                            TableUtils.isSymbolCached(metaMem, i)
                     )
             );
             if (type > -1) {
@@ -193,7 +195,8 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.tableToken = tableToken;
     }
 
-    void addColumn(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity, int columnIndex, boolean sequential, int symbolCapacity, boolean isDedupKey) {
+    void addColumn(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity, int columnIndex,
+                   boolean sequential, int symbolCapacity, boolean isDedupKey, boolean isSymbolCached) {
         String str = name.toString();
         columnNameIndexMap.put(str, columnMetadata.size());
         columnMetadata.add(
@@ -207,7 +210,35 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                         columnIndex,
                         sequential,
                         symbolCapacity,
-                        isDedupKey
+                        isDedupKey,
+                        0,
+                        isSymbolCached
+                )
+        );
+        columnCount++;
+        if (ColumnType.isSymbol(type)) {
+            symbolMapCount++;
+        }
+    }
+
+    void addColumn(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity, int columnIndex,
+                   boolean sequential, int symbolCapacity, boolean isDedupKey, int replacingIndex, boolean isSymbolCached) {
+        String str = name.toString();
+        columnNameIndexMap.put(str, columnMetadata.size());
+        columnMetadata.add(
+                new WriterTableColumnMetadata(
+                        str,
+                        type,
+                        indexFlag,
+                        indexValueBlockCapacity,
+                        true,
+                        null,
+                        columnIndex,
+                        sequential,
+                        symbolCapacity,
+                        isDedupKey,
+                        replacingIndex,
+                        isSymbolCached
                 )
         );
         columnCount++;
@@ -238,14 +269,26 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         oldColumnMetadata.setName(newNameStr);
     }
 
-    private static class WriterTableColumnMetadata extends TableColumnMetadata {
+    public static class WriterTableColumnMetadata extends TableColumnMetadata {
         private final boolean sequential;
         private final int symbolCapacity;
+        private boolean symbolCached;
 
-        public WriterTableColumnMetadata(String nameStr, int type, boolean columnIndexed, int indexBlockCapacity, boolean symbolTableStatic, RecordMetadata parent, int i, boolean sequential, int symbolCapacity, boolean isDedupKey) {
-            super(nameStr, type, columnIndexed, indexBlockCapacity, symbolTableStatic, parent, i, isDedupKey);
+        public WriterTableColumnMetadata(String nameStr, int type, boolean columnIndexed, int indexBlockCapacity, boolean symbolTableStatic, RecordMetadata parent, int i, boolean sequential, int symbolCapacity, boolean isDedupKey, int replacingIndex, boolean symbolCached) {
+            super(nameStr, type, columnIndexed, indexBlockCapacity, symbolTableStatic, parent, i, isDedupKey, replacingIndex);
             this.sequential = sequential;
             this.symbolCapacity = symbolCapacity;
+            this.symbolCached = symbolCached;
         }
+
+        public boolean isSymbolCached() {
+            return symbolCached;
+        }
+
+        public void setSymbolCached(boolean symbolCached) {
+            this.symbolCached = symbolCached;
+        }
+
+
     }
 }

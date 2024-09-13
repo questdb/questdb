@@ -92,6 +92,7 @@ public class TableStructMetadataAdapter implements TableStructure {
 
     @Override
     public boolean getSymbolCacheFlag(int columnIndex) {
+        // todo: we cache by default by this might not be true for every fuzz test
         return ColumnType.isSymbol(metadata.getColumnType(columnIndex));
     }
 

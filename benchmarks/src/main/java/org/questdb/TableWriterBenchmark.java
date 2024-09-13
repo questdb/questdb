@@ -49,7 +49,8 @@ public class TableWriterBenchmark {
 
     // Should be set close enough to the cairo.max.uncommitted.rows default value.
     private static final int ROWS_PER_ITERATION = 1;
-
+    private static final CairoConfiguration configuration = new DefaultCairoConfiguration(System.getProperty("java.io.tmpdir"));
+    private static CairoEngine cairoEngine;
     private static TableWriter writer;
     private static TableWriter writer2;
     private static TableWriter writer3;
@@ -59,6 +60,8 @@ public class TableWriterBenchmark {
     private long ts;
 
     public static void main(String[] args) throws RunnerException {
+        cairoEngine = new CairoEngine(configuration);
+
         Options opt = new OptionsBuilder()
                 .include(TableWriterBenchmark.class.getSimpleName())
                 .warmupIterations(1)
@@ -93,7 +96,8 @@ public class TableWriterBenchmark {
                 configuration.getRoot(),
                 DefaultDdlListener.INSTANCE,
                 () -> Numbers.LONG_NULL,
-                Metrics.disabled()
+                Metrics.disabled(),
+                cairoEngine
         );
         writer2 = new TableWriter(
                 configuration,
@@ -105,7 +109,8 @@ public class TableWriterBenchmark {
                 configuration.getRoot(),
                 DefaultDdlListener.INSTANCE,
                 () -> Numbers.LONG_NULL,
-                Metrics.disabled()
+                Metrics.disabled(),
+                cairoEngine
         );
         writer3 = new TableWriter(
                 configuration,
@@ -117,7 +122,8 @@ public class TableWriterBenchmark {
                 configuration.getRoot(),
                 DefaultDdlListener.INSTANCE,
                 () -> Numbers.LONG_NULL,
-                Metrics.disabled()
+                Metrics.disabled(),
+                cairoEngine
         );
         rnd.reset();
     }

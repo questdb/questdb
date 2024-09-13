@@ -74,7 +74,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("show_partitions").meta("of").val(tableToken);
+        sink.type("show_partitions").meta("of").val(tableToken.getTableName());
     }
 
     @Override
@@ -132,13 +132,13 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private boolean isActive;
         private boolean isAttachable;
         private boolean isDetached;
-        private boolean isReadOnly;
         private boolean isParquet;
-        private long parquetFileSize;
+        private boolean isReadOnly;
         private int limit; // partitionCount + detached + attachable
         private long maxTimestamp = Long.MIN_VALUE;
         private long minTimestamp = Numbers.LONG_NULL; // so that in absence of metadata is NaN
         private long numRows = -1L;
+        private long parquetFileSize;
         private int partitionBy = -1;
         private int partitionIndex = -1;
         private long partitionSize = -1L;

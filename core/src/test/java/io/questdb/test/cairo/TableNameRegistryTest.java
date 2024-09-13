@@ -800,7 +800,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
         engine.reloadTableNames(null);
 
         final ObjList<TableToken> convertedTables = TableConverter.convertTables(
-                configuration,
+                engine,
                 engine.getTableSequencerAPI(),
                 engine.getTableFlagResolver()
         );
@@ -831,7 +831,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                 engine.releaseInactive();
             }
 
-            final ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
+            final ObjList<TableToken> convertedTables = TableConverter.convertTables(engine, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
 
             if (!releaseInactiveBeforeConversion) {
                 engine.releaseInactive();

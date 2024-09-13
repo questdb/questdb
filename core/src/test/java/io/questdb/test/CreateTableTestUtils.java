@@ -84,7 +84,7 @@ public class CreateTableTestUtils {
 
         } catch (RuntimeException e) {
             if ("table already exists: x".equals(e.getMessage())) {
-                try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("x"))) {
+                try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("x"), engine)) {
                     writer.truncate();
                 }
             } else {
@@ -93,7 +93,7 @@ public class CreateTableTestUtils {
         }
 
         Utf8StringSink utf8Sink = new Utf8StringSink();
-        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("x"))) {
+        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("x"), engine)) {
             for (int i = 0; i < n; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putByte(0, rnd.nextByte());
