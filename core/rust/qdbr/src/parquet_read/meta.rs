@@ -263,7 +263,7 @@ mod tests {
             let offset = i * value_size;
             buff[offset..offset + 1].copy_from_slice(&value.to_le_bytes());
         }
-        let col_type_i32 = col_type as i32;
+        let col_type_i32 = col_type.code();
         assert_eq!(
             col_type,
             ColumnType::try_from(col_type_i32).expect("invalid colum type")
@@ -276,7 +276,7 @@ mod tests {
             Column::from_raw_data(
                 id,
                 name,
-                col_type as i32,
+                col_type.code(),
                 0,
                 row_count,
                 ptr,

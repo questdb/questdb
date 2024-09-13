@@ -74,11 +74,15 @@ where
 
     bytes_written += match &compressed_page {
         CompressedPage::Data(compressed_page) => {
-            writer.write_all(&compressed_page.buffer).map_err(|e| e.into())?;
+            writer
+                .write_all(&compressed_page.buffer)
+                .map_err(|e| e.into())?;
             compressed_page.buffer.len() as u64
         }
         CompressedPage::Dict(compressed_page) => {
-            writer.write_all(&compressed_page.buffer).map_err(|e| e.into())?;
+            writer
+                .write_all(&compressed_page.buffer)
+                .map_err(|e| e.into())?;
             compressed_page.buffer.len() as u64
         }
     };

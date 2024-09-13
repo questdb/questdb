@@ -56,7 +56,8 @@ where
         .meta_data
         .as_ref()
         .unwrap()
-        .write_to_out_protocol(&mut protocol).map_err(|e| e.into());
+        .write_to_out_protocol(&mut protocol)
+        .map_err(|e| e.into());
     bytes_written += column_chunk_bytes? as u64;
 
     Ok((column_chunk, specs, bytes_written))

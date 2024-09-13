@@ -157,7 +157,7 @@ mod tests {
                 Column::from_raw_data(
                     i as i32,
                     name,
-                    ColumnType::Int as i32,
+                    ColumnType::Int.code(),
                     0,
                     row_count as usize,
                     buffer.as_ptr() as *const u8,

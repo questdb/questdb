@@ -32,6 +32,12 @@ pub enum ParquetError {
     #[snafu(display("{source}"))]
     Parquet2 { source: parquet2::error::Error },
 
+    #[snafu(display("error processing questdb-specific metadata: {source}"))]
+    QdbMetadata {
+        #[snafu(source(from(serde_json::Error, Arc::new)))]
+        source: Arc<serde_json::Error>,
+    },
+
     #[snafu(display("{msg}"))]
     Layout { msg: String },
 

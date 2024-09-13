@@ -43,7 +43,6 @@ pub fn read_metadata_with_size<R: Read + Seek>(
     reader: &mut R,
     file_size: u64,
 ) -> Result<FileMetaData> {
-
     // Ensure provided file_size is valid by comparing it with the actual file size
     let actual_file_size = reader.seek(SeekFrom::End(0))?;
     if file_size > actual_file_size {

@@ -56,7 +56,7 @@ mod tests {
         Column::from_raw_data(
             0,
             name,
-            col_type as i32,
+            col_type.code(),
             0,
             values.len(),
             values.as_ptr() as *const u8,

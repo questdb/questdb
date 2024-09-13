@@ -17,7 +17,10 @@ pub fn encode_u32<W: Write, I: Iterator<Item = u32>>(
     Ok(())
 }
 
-fn encode_header<W: Write, T, I: Iterator<Item=T>>(writer: &mut W, iterator: &I) -> std::io::Result<()> {
+fn encode_header<W: Write, T, I: Iterator<Item = T>>(
+    writer: &mut W,
+    iterator: &I,
+) -> std::io::Result<()> {
     // the length of the iterator.
     let length = iterator.size_hint().1.unwrap();
 

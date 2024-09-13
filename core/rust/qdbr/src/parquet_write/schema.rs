@@ -37,6 +37,13 @@ pub enum ColumnType {
     Varchar = 26,
 }
 
+impl ColumnType {
+    #[cfg(test)]
+    pub fn code(&self) -> i32 {
+        *self as i32
+    }
+}
+
 impl TryFrom<i32> for ColumnType {
     type Error = ParquetError;
 

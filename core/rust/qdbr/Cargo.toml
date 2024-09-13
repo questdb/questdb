@@ -19,6 +19,8 @@ clap = "4.5.9"
 tokio = "1.38.0"
 log = "0.4.22"
 snafu = { version = "0.8.4", features = ["backtrace"] }
+serde_json = "1.0.128"
+serde = { version = "1.0.210", features = ["derive"] }
 
 [dev-dependencies]
 parquet = "51.0.0"

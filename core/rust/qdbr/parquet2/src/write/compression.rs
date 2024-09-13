@@ -99,14 +99,19 @@ pub fn compress(
 
 /// A [`FallibleStreamingIterator`] that consumes [`Page`] and yields [`CompressedPage`]
 /// holding a reusable buffer ([`Vec<u8>`]) for compression.
-pub struct Compressor<E: std::error::Error + From<Error>, I: Iterator<Item = std::result::Result<Page, E>>> {
+pub struct Compressor<
+    E: std::error::Error + From<Error>,
+    I: Iterator<Item = std::result::Result<Page, E>>,
+> {
     iter: I,
     compression: CompressionOptions,
     buffer: Vec<u8>,
     current: Option<CompressedPage>,
 }
 
-impl<E: std::error::Error + From<Error>, I: Iterator<Item = std::result::Result<Page, E>>> Compressor<E, I> {
+impl<E: std::error::Error + From<Error>, I: Iterator<Item = std::result::Result<Page, E>>>
+    Compressor<E, I>
+{
     /// Creates a new [`Compressor`]
     pub fn new(iter: I, compression: CompressionOptions, buffer: Vec<u8>) -> Self {
         Self {
@@ -134,7 +139,9 @@ impl<E: std::error::Error + From<Error>, I: Iterator<Item = std::result::Result<
     }
 }
 
-impl<E: std::error::Error + From<Error>, I: Iterator<Item = std::result::Result<Page, E>>> FallibleStreamingIterator for Compressor<E, I> {
+impl<E: std::error::Error + From<Error>, I: Iterator<Item = std::result::Result<Page, E>>>
+    FallibleStreamingIterator for Compressor<E, I>
+{
     type Item = CompressedPage;
     type Error = E;
 
