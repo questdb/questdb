@@ -22,8 +22,6 @@
  *
  ******************************************************************************/
 
-import io.questdb.griffin.FunctionFactory;
-
 open module io.questdb {
     requires transitive jdk.unsupported;
     requires static org.jetbrains.annotations;
@@ -121,8 +119,9 @@ open module io.questdb {
     exports io.questdb.griffin.engine.functions.json;
     exports io.questdb.std.filewatch;
     exports io.questdb.griffin.engine.table.parquet;
+    exports io.questdb.cutlass.pgwire.legacy;
 
-    provides FunctionFactory with
+    provides io.questdb.griffin.FunctionFactory with
 
             // finance
             io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory,
