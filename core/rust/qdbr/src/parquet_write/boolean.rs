@@ -1,4 +1,4 @@
-use crate::parquet_write::error::ParquetWriteResult;
+use crate::parquet::error::ParquetResult;
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util;
 use crate::parquet_write::util::MaxMin;
@@ -15,7 +15,7 @@ pub fn slice_to_page(
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
-) -> ParquetWriteResult<Page> {
+) -> ParquetResult<Page> {
     let num_rows = column_top + slice.len();
     let mut buffer = vec![];
     let mut stats = MaxMin::new();

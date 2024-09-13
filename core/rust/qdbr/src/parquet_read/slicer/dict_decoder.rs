@@ -1,4 +1,4 @@
-use crate::parquet_read::error::{fmt_read_layout_err, ParquetReadError, ParquetReadResult};
+use crate::parquet::error::{fmt_layout_err, ParquetError, ParquetResult};
 use parquet2::page::DictPage;
 use std::mem::size_of;
 use std::ptr;
@@ -32,7 +32,7 @@ impl<'a> DictDecoder for VarDictDecoder<'a> {
 }
 
 impl<'a> VarDictDecoder<'a> {
-    pub fn try_new(dict_page: &'a DictPage, is_utf8: bool) -> ParquetReadResult<Self> {
+    pub fn try_new(dict_page: &'a DictPage, is_utf8: bool) -> ParquetResult<Self> {
         let mut dict_values: Vec<&[u8]> = Vec::with_capacity(dict_page.num_values);
         let mut offset = 0usize;
         let dict_data = &dict_page.buffer;
@@ -40,7 +40,7 @@ impl<'a> VarDictDecoder<'a> {
         let mut total_key_len = 0;
         for i in 0..dict_page.num_values {
             if offset + size_of::<u32>() > dict_data.len() {
-                return Err(fmt_read_layout_err!(
+                return Err(fmt_layout_err!(
                     "dictionary data page is too short to read value length {i}"
                 ));
             }
@@ -51,14 +51,14 @@ impl<'a> VarDictDecoder<'a> {
             offset += size_of::<u32>();
 
             if offset + str_len > dict_data.len() {
-                return Err(fmt_read_layout_err!(
+                return Err(fmt_layout_err!(
                     "dictionary data page is too short to read value {i}"
                 ));
             }
 
             let str_slice = &dict_data[offset..offset + str_len];
             if is_utf8 && std::str::from_utf8(str_slice).is_err() {
-                return Err(fmt_read_layout_err!(
+                return Err(fmt_layout_err!(
                     "dictionary value {i} ({str_slice:?}) is not valid utf8"
                 ));
             }
@@ -97,9 +97,9 @@ impl<'a, const N: usize> DictDecoder for FixedDictDecoder<'a, N> {
 }
 
 impl<'a, const N: usize> FixedDictDecoder<'a, N> {
-    pub fn try_new(dict_page: &'a DictPage) -> ParquetReadResult<Self> {
+    pub fn try_new(dict_page: &'a DictPage) -> ParquetResult<Self> {
         if N * dict_page.num_values != dict_page.buffer.len() {
-            return Err(fmt_read_layout_err!(
+            return Err(fmt_layout_err!(
                 "dictionary data page size is not multiple of {N}"
             ));
         }

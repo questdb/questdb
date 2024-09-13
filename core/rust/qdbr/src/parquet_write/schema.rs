@@ -1,6 +1,6 @@
 use std::slice;
 
-use crate::parquet_write::error::{ParquetWriteError, ParquetWriteResult};
+use crate::parquet::error::{fmt_invalid_err, ParquetError, ParquetResult};
 use crate::parquet_write::QDB_TYPE_META_PREFIX;
 use parquet2::encoding::Encoding;
 use parquet2::metadata::KeyValue;
@@ -38,7 +38,7 @@ pub enum ColumnType {
 }
 
 impl TryFrom<i32> for ColumnType {
-    type Error = String;
+    type Error = ParquetError;
 
     fn try_from(v: i32) -> Result<Self, Self::Error> {
         // Start with removing geohash size bits. See ColumnType#tagOf().
@@ -67,7 +67,7 @@ impl TryFrom<i32> for ColumnType {
             24 => Ok(ColumnType::Long128),
             25 => Ok(ColumnType::IPv4),
             26 => Ok(ColumnType::Varchar),
-            _ => Err(format!("unknown column type: {}", v)),
+            _ => Err(fmt_invalid_err!("unknown QuestDB column type code: {}", v)),
         }
     }
 }
@@ -76,7 +76,7 @@ pub fn column_type_to_parquet_type(
     column_id: i32,
     column_name: &str,
     column_type: ColumnType,
-) -> ParquetWriteResult<ParquetType> {
+) -> ParquetResult<ParquetType> {
     let name = column_name.to_string();
 
     match column_type {
@@ -278,7 +278,7 @@ impl Column {
         secondary_data_size: usize,
         symbol_offsets_ptr: *const u64,
         symbol_offsets_size: usize,
-    ) -> ParquetWriteResult<Self> {
+    ) -> ParquetResult<Self> {
         assert!(row_count > 0, "row_count == 0");
         assert!(
             !primary_data_ptr.is_null() || primary_data_size == 0,
@@ -293,9 +293,7 @@ impl Column {
             "symbol_offsets_ptr inconsistent with symbol_offsets_size"
         );
 
-        let column_type_tag: ColumnType = column_type
-            .try_into()
-            .map_err(|_| ParquetWriteError::InvalidQuestDBColumnType { column_type })?;
+        let column_type_tag: ColumnType = column_type.try_into()?;
 
         let primary_data = if primary_data_ptr.is_null() {
             &[]
@@ -334,12 +332,12 @@ pub struct Partition {
 
 pub fn to_parquet_schema(
     partition: &Partition,
-) -> ParquetWriteResult<(SchemaDescriptor, Vec<KeyValue>)> {
+) -> ParquetResult<(SchemaDescriptor, Vec<KeyValue>)> {
     let parquet_types = partition
         .columns
         .iter()
         .map(|c| column_type_to_parquet_type(c.id, c.name, c.data_type))
-        .collect::<ParquetWriteResult<Vec<_>>>()?;
+        .collect::<ParquetResult<Vec<_>>>()?;
 
     let additinal_keyvals = partition
         .columns

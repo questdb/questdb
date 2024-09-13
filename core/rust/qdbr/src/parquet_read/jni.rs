@@ -97,7 +97,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
             continue; // skip this column
         }
         let column_type = decoder.columns[column_idx].typ;
-        if Ok(column_type) != ColumnType::try_from(to_column_type) {
+        if !matches!(ColumnType::try_from(to_column_type), Ok(v) if v == column_type) {
             return throw_java_ex(
                 &mut env,
                 "decodeRowGroup",

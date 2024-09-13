@@ -1,4 +1,4 @@
-use crate::parquet_read::error::ParquetReadResult;
+use crate::parquet::error::ParquetResult;
 use crate::parquet_read::{ColumnMeta, ParquetDecoder};
 use crate::parquet_write::schema::ColumnType;
 use crate::parquet_write::QDB_TYPE_META_PREFIX;
@@ -13,7 +13,7 @@ use std::fs::File;
 use std::mem::ManuallyDrop;
 
 impl ParquetDecoder {
-    pub fn read(mut file: File) -> ParquetReadResult<Self> {
+    pub fn read(mut file: File) -> ParquetResult<Self> {
         let metadata = read_metadata(&mut file)?;
         let col_len = metadata.schema_descr.columns().len();
         let additional_meta: Option<HashMap<String, Option<String>>> =

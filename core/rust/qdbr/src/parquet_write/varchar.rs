@@ -1,9 +1,7 @@
 use std::mem;
 
 use super::util::ExactSizedIter;
-use crate::parquet_write::error::{
-    fmt_write_unsupported_err, ParquetWriteError, ParquetWriteResult,
-};
+use crate::parquet::error::{fmt_unsupported_err, ParquetError, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, BinaryMaxMin};
 use parquet2::encoding::{delta_bitpacked, Encoding};
@@ -54,7 +52,7 @@ pub fn varchar_to_page(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
-) -> ParquetWriteResult<Page> {
+) -> ParquetResult<Page> {
     assert!(
         mem::size_of::<AuxEntryInlined>() == 16 && mem::size_of::<AuxEntrySplit>() == 16,
         "size_of(AuxEntryInlined) or size_of(AuxEntrySplit) is not 16"
@@ -105,7 +103,7 @@ pub fn varchar_to_page(
             encode_delta(&utf8_slices, null_count, &mut buffer, &mut stats);
         }
         _ => {
-            return Err(fmt_write_unsupported_err!(
+            return Err(fmt_unsupported_err!(
                 "unsupported encoding {encoding:?} while writing a string column"
             ))
         }

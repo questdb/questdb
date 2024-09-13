@@ -1,6 +1,6 @@
 use std::{cmp, io, mem, slice};
 
-use crate::parquet_write::error::ParquetWriteResult;
+use crate::parquet::error::ParquetResult;
 use crate::parquet_write::file::WriteOptions;
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::hybrid_rle::encode_bool;
@@ -198,7 +198,7 @@ pub fn build_plain_page(
     primitive_type: PrimitiveType,
     options: WriteOptions,
     encoding: Encoding,
-) -> ParquetWriteResult<DataPage> {
+) -> ParquetResult<DataPage> {
     let header = match options.version {
         Version::V1 => DataPageHeader::V1(DataPageHeaderV1 {
             num_values: num_rows as i32,

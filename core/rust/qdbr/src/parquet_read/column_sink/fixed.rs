@@ -1,5 +1,5 @@
+use crate::parquet::error::ParquetResult;
 use crate::parquet_read::column_sink::Pushable;
-use crate::parquet_read::error::ParquetReadResult;
 use crate::parquet_read::slicer::DataPageSlicer;
 use crate::parquet_read::ColumnChunkBuffers;
 use std::ptr;
@@ -70,7 +70,7 @@ impl<const N: usize, const R: usize, T: DataPageSlicer> Pushable for FixedColumn
         self.slicer.skip(count);
     }
 
-    fn result(&self) -> ParquetReadResult<()> {
+    fn result(&self) -> ParquetResult<()> {
         self.slicer.result()
     }
 }
@@ -128,7 +128,7 @@ impl<const N: usize, T: DataPageSlicer> Pushable for ReverseFixedColumnSink<'_, 
         self.slicer.skip(count);
     }
 
-    fn result(&self) -> ParquetReadResult<()> {
+    fn result(&self) -> ParquetResult<()> {
         self.slicer.result().clone()
     }
 }
@@ -184,7 +184,7 @@ impl<T: DataPageSlicer> Pushable for NanoTimestampColumnSink<'_, T> {
         self.slicer.skip(count);
     }
 
-    fn result(&self) -> ParquetReadResult<()> {
+    fn result(&self) -> ParquetResult<()> {
         self.slicer.result()
     }
 }
@@ -268,7 +268,7 @@ impl<T: DataPageSlicer> Pushable for IntDecimalColumnSink<'_, T> {
         self.slicer.skip(count);
     }
 
-    fn result(&self) -> ParquetReadResult<()> {
+    fn result(&self) -> ParquetResult<()> {
         self.slicer.result()
     }
 }

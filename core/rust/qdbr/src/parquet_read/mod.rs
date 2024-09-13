@@ -5,7 +5,6 @@ use std::mem::ManuallyDrop;
 
 mod column_sink;
 mod decode;
-pub mod error;
 mod jni;
 mod meta;
 mod slicer;

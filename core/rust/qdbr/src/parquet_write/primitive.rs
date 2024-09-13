@@ -1,8 +1,6 @@
 use std::fmt::Debug;
 
-use crate::parquet_write::error::{
-    fmt_write_unsupported_err, ParquetWriteError, ParquetWriteResult,
-};
+use crate::parquet::error::{fmt_unsupported_err, ParquetError, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter, MaxMin};
 use crate::parquet_write::Nullable;
@@ -19,7 +17,7 @@ pub fn float_slice_to_page_plain<T, P>(
     column_top: usize,
     options: WriteOptions,
     primitive_type: PrimitiveType,
-) -> ParquetWriteResult<Page>
+) -> ParquetResult<Page>
 where
     P: NativeType,
     T: Nullable + num_traits::AsPrimitive<P> + num_traits::Float + From<i8> + Debug,
@@ -41,7 +39,7 @@ pub fn int_slice_to_page_nullable<T, P>(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
-) -> ParquetWriteResult<Page>
+) -> ParquetResult<Page>
 where
     P: NativeType + num_traits::AsPrimitive<i64>,
     T: Nullable + num_traits::AsPrimitive<P> + Debug,
@@ -64,7 +62,7 @@ where
             encode_delta_nullable,
         ),
         other => {
-            return Err(fmt_write_unsupported_err!(
+            return Err(fmt_unsupported_err!(
                 "unsupported encoding {other:?} while writing an int column"
             ))
         }
@@ -78,7 +76,7 @@ pub fn int_slice_to_page_notnull<T, P>(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
-) -> ParquetWriteResult<Page>
+) -> ParquetResult<Page>
 where
     P: NativeType + num_traits::AsPrimitive<i64>,
     T: Default + num_traits::AsPrimitive<P> + Debug,
@@ -101,7 +99,7 @@ where
             encode_delta_notnull,
         ),
         other => {
-            return Err(fmt_write_unsupported_err!(
+            return Err(fmt_unsupported_err!(
                 "unsupported encoding {other:?} while writing an int column"
             ))
         }
@@ -116,7 +114,7 @@ fn slice_to_page_notnull<T, P, F: Fn(&[T], usize) -> Vec<u8>>(
     primitive_type: PrimitiveType,
     encoding: Encoding,
     encode_fn: F,
-) -> ParquetWriteResult<DataPage>
+) -> ParquetResult<DataPage>
 where
     P: NativeType,
     T: Default + num_traits::AsPrimitive<P> + Debug,
@@ -155,7 +153,7 @@ fn slice_to_page_nullable<T, P, F>(
     primitive_type: PrimitiveType,
     encoding: Encoding,
     encode_fn: F,
-) -> ParquetWriteResult<DataPage>
+) -> ParquetResult<DataPage>
 where
     P: NativeType,
     T: Nullable + num_traits::AsPrimitive<P> + Debug,

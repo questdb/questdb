@@ -2,9 +2,7 @@ use std::fs::File;
 use std::path::Path;
 use std::slice;
 
-use crate::parquet_write::error::{
-    fmt_write_unsupported_err, ParquetWriteError, ParquetWriteErrorExt, ParquetWriteResult,
-};
+use crate::parquet::error::{fmt_unsupported_err, ParquetError, ParquetErrorExt, ParquetResult};
 use crate::parquet_write::file::ParquetWriter;
 use crate::parquet_write::schema::{Column, Partition};
 use jni::objects::JClass;
@@ -63,7 +61,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     data_page_size: jlong,
     version: jint,
 ) {
-    let encode = || -> ParquetWriteResult<()> {
+    let encode = || -> ParquetResult<()> {
         let col_count = col_count as usize;
         let col_names = read_utf8_encoded_string_list(
             col_count,
@@ -155,7 +153,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
 
         let version = version_from_i32(version)?;
 
-        let file: ParquetWriteResult<_> = File::create(dest_path).map_err(|e| e.into());
+        let file: ParquetResult<_> = File::create(dest_path).map_err(|e| e.into());
         let mut file = file.with_context(|_| {
             format!(
                 "Could not send create parquet file for {}",
@@ -191,13 +189,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     }
 }
 
-fn version_from_i32(value: i32) -> Result<Version, ParquetWriteError> {
+fn version_from_i32(value: i32) -> Result<Version, ParquetError> {
     match value {
         1 => Ok(Version::V1),
         2 => Ok(Version::V2),
-        _ => Err(fmt_write_unsupported_err!(
-            "unsupported parquet version {value}"
-        )),
+        _ => Err(fmt_unsupported_err!("unsupported parquet version {value}")),
     }
 }
 
@@ -205,7 +201,7 @@ fn version_from_i32(value: i32) -> Result<Version, ParquetWriteError> {
 /// - The higher 32 bits represent the `level_id`.
 /// - The lower 32 bits represent the optional `codec_id`.
 ///   `let value: i64 = (3 << 32) | 2;` Gzip with level 3.
-fn compression_from_i64(value: i64) -> Result<CompressionOptions, ParquetWriteError> {
+fn compression_from_i64(value: i64) -> Result<CompressionOptions, ParquetError> {
     let codec_id = value as i32;
     let level_id = (value >> 32) as i32;
     match codec_id {
@@ -223,7 +219,7 @@ fn compression_from_i64(value: i64) -> Result<CompressionOptions, ParquetWriteEr
             level_id,
         )?))),
         7 => Ok(CompressionOptions::Lz4Raw),
-        _ => Err(fmt_write_unsupported_err!(
+        _ => Err(fmt_unsupported_err!(
             "unsupported compression codec id: {codec_id}"
         )),
     }

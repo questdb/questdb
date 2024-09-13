@@ -2,7 +2,7 @@ pub mod dict_decoder;
 pub mod dict_slicer;
 pub mod rle;
 
-use crate::parquet_read::error::{fmt_read_layout_err, ParquetReadError, ParquetReadResult};
+use crate::parquet::error::{fmt_layout_err, ParquetError, ParquetResult};
 use parquet2::encoding::delta_bitpacked;
 use parquet2::encoding::hybrid_rle::BitmapIter;
 use std::mem::size_of;
@@ -14,7 +14,7 @@ pub trait DataPageSlicer {
     fn skip(&mut self, count: usize);
     fn count(&self) -> usize;
     fn data_size(&self) -> usize;
-    fn result(&self) -> ParquetReadResult<()>;
+    fn result(&self) -> ParquetResult<()>;
 }
 
 pub struct DataPageFixedSlicer<'a, const N: usize> {
@@ -48,7 +48,7 @@ impl<const N: usize> DataPageSlicer for DataPageFixedSlicer<'_, N> {
         self.row_count * N
     }
 
-    fn result(&self) -> ParquetReadResult<()> {
+    fn result(&self) -> ParquetResult<()> {
         Ok(())
     }
 }
@@ -62,7 +62,7 @@ impl<'a, const N: usize> DataPageFixedSlicer<'a, N> {
 pub struct DeltaBinaryPackedSlicer<'a, const N: usize> {
     decoder: delta_bitpacked::Decoder<'a>,
     row_count: usize,
-    error: ParquetReadResult<()>,
+    error: ParquetResult<()>,
     error_value: [u8; N],
     buffer: [u8; N],
 }
@@ -79,13 +79,13 @@ impl<const N: usize> DataPageSlicer for DeltaBinaryPackedSlicer<'_, N> {
                 }
                 Err(_) => {
                     // TODO(amunra): Clean-up, this is _not_ a layout error!
-                    self.error = Err(fmt_read_layout_err!("not enough values to iterate"));
+                    self.error = Err(fmt_layout_err!("not enough values to iterate"));
                     &self.error_value
                 }
             },
             None => {
                 // TODO(amunra): Clean-up, this is _not_ a layout error!
-                self.error = Err(fmt_read_layout_err!("not enough values to iterate"));
+                self.error = Err(fmt_layout_err!("not enough values to iterate"));
                 &self.error_value
             }
         }
@@ -109,13 +109,13 @@ impl<const N: usize> DataPageSlicer for DeltaBinaryPackedSlicer<'_, N> {
         self.row_count * N
     }
 
-    fn result(&self) -> ParquetReadResult<()> {
+    fn result(&self) -> ParquetResult<()> {
         self.error.clone()
     }
 }
 
 impl<'a, const N: usize> DeltaBinaryPackedSlicer<'a, N> {
-    pub fn try_new(data: &'a [u8], row_count: usize) -> ParquetReadResult<Self> {
+    pub fn try_new(data: &'a [u8], row_count: usize) -> ParquetResult<Self> {
         let decoder = delta_bitpacked::Decoder::try_new(data)?;
         Ok(Self {
             decoder,
@@ -163,13 +163,13 @@ impl DataPageSlicer for DeltaLengthArraySlicer<'_> {
         self.data.len()
     }
 
-    fn result(&self) -> ParquetReadResult<()> {
+    fn result(&self) -> ParquetResult<()> {
         Ok(())
     }
 }
 
 impl<'a> DeltaLengthArraySlicer<'a> {
-    pub fn try_new(data: &'a [u8], row_count: usize) -> ParquetReadResult<Self> {
+    pub fn try_new(data: &'a [u8], row_count: usize) -> ParquetResult<Self> {
         let mut decoder = delta_bitpacked::Decoder::try_new(data)?;
         let lengths: Vec<_> = decoder
             .by_ref()
@@ -194,7 +194,7 @@ pub struct DeltaBytesArraySlicer<'a> {
     data: &'a [u8],
     data_offset: usize,
     last_value: Vec<u8>,
-    error: ParquetReadResult<()>,
+    error: ParquetResult<()>,
 }
 
 impl<'a> DataPageSlicer for DeltaBytesArraySlicer<'a> {
@@ -222,13 +222,13 @@ impl<'a> DataPageSlicer for DeltaBytesArraySlicer<'a> {
                         }
                         None => {
                             self.error =
-                                Err(fmt_read_layout_err!("not enough suffix values to iterate"));
+                                Err(fmt_layout_err!("not enough suffix values to iterate"));
                             &[]
                         }
                     }
                 }
                 None => {
-                    self.error = Err(fmt_read_layout_err!("not enough prefix values to iterate"));
+                    self.error = Err(fmt_layout_err!("not enough prefix values to iterate"));
                     &[]
                 }
             },
@@ -254,13 +254,13 @@ impl<'a> DataPageSlicer for DeltaBytesArraySlicer<'a> {
         self.data.len()
     }
 
-    fn result(&self) -> ParquetReadResult<()> {
+    fn result(&self) -> ParquetResult<()> {
         self.error.clone()
     }
 }
 
 impl<'a> DeltaBytesArraySlicer<'a> {
-    pub fn try_new(data: &'a [u8], row_count: usize) -> ParquetReadResult<Self> {
+    pub fn try_new(data: &'a [u8], row_count: usize) -> ParquetResult<Self> {
         let values = data;
         let mut decoder = delta_bitpacked::Decoder::try_new(values)?;
         let prefix = (&mut decoder)
@@ -327,7 +327,7 @@ impl DataPageSlicer for PlainVarSlicer<'_> {
         self.data.len()
     }
 
-    fn result(&self) -> ParquetReadResult<()> {
+    fn result(&self) -> ParquetResult<()> {
         Ok(())
     }
 }
@@ -341,7 +341,7 @@ impl<'a> PlainVarSlicer<'a> {
 pub struct BooleanBitmapSlicer<'a> {
     bitmap_iter: BitmapIter<'a>,
     row_count: usize,
-    error: ParquetReadResult<()>,
+    error: ParquetResult<()>,
 }
 
 const BOOL_TRUE: [u8; 1] = [1];
@@ -355,7 +355,7 @@ impl<'a> DataPageSlicer for BooleanBitmapSlicer<'a> {
             }
             return &BOOL_FALSE;
         }
-        self.error = Err(fmt_read_layout_err!("not enough bitmap values to iterate"));
+        self.error = Err(fmt_layout_err!("not enough bitmap values to iterate"));
         &BOOL_FALSE
     }
 
@@ -377,7 +377,7 @@ impl<'a> DataPageSlicer for BooleanBitmapSlicer<'a> {
         self.row_count
     }
 
-    fn result(&self) -> ParquetReadResult<()> {
+    fn result(&self) -> ParquetResult<()> {
         self.error.clone()
     }
 }
@@ -392,7 +392,7 @@ impl<'a> BooleanBitmapSlicer<'a> {
 pub struct ValueConvertSlicer<const N: usize, T: DataPageSlicer, F: Fn(&[u8], &mut [u8; N])> {
     inner_slicer: T,
     converter: F,
-    error: ParquetReadResult<()>,
+    error: ParquetResult<()>,
     buffer: [u8; N],
 }
 
@@ -421,7 +421,7 @@ impl<const N: usize, T: DataPageSlicer, F: Fn(&[u8], &mut [u8; N])> DataPageSlic
         self.inner_slicer.count() * N
     }
 
-    fn result(&self) -> ParquetReadResult<()> {
+    fn result(&self) -> ParquetResult<()> {
         self.error.clone().or(self.inner_slicer.result())
     }
 }

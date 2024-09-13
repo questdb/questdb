@@ -1,4 +1,4 @@
-use crate::parquet_read::error::ParquetReadResult;
+use crate::parquet::error::ParquetResult;
 
 pub mod fixed;
 pub mod var;
@@ -10,5 +10,5 @@ pub trait Pushable {
     fn push_null(&mut self);
     fn push_nulls(&mut self, count: usize);
     fn skip(&mut self, count: usize);
-    fn result(&self) -> ParquetReadResult<()>;
+    fn result(&self) -> ParquetResult<()>;
 }

@@ -1,3 +1,6 @@
+use crate::parquet::error::{
+    fmt_layout_err, fmt_unsupported_err, ParquetError, ParquetErrorExt, ParquetResult,
+};
 use crate::parquet_read::column_sink::fixed::{
     FixedBooleanColumnSink, FixedDoubleColumnSink, FixedFloatColumnSink, FixedInt2ByteColumnSink,
     FixedInt2ShortColumnSink, FixedIntColumnSink, FixedLong256ColumnSink, FixedLongColumnSink,
@@ -7,10 +10,6 @@ use crate::parquet_read::column_sink::var::{
     BinaryColumnSink, StringColumnSink, VarcharColumnSink,
 };
 use crate::parquet_read::column_sink::Pushable;
-use crate::parquet_read::error::{
-    fmt_read_layout_err, fmt_read_unsupported_err, ParquetReadError, ParquetReadErrorExt,
-    ParquetReadResult,
-};
 use crate::parquet_read::slicer::dict_decoder::{FixedDictDecoder, VarDictDecoder};
 use crate::parquet_read::slicer::rle::{RleDictionarySlicer, RleLocalIsGlobalSymbolDecoder};
 use crate::parquet_read::slicer::{
@@ -87,14 +86,14 @@ impl ParquetDecoder {
         row_group_index: usize,
         file_column_index: usize,
         column_type: ColumnType,
-    ) -> ParquetReadResult<usize> {
+    ) -> ParquetResult<usize> {
         let columns = self.metadata.row_groups[row_group_index].columns();
         let column_metadata = &columns[file_column_index];
 
         let chunk_size = column_metadata.compressed_size();
         let chunk_size = chunk_size
             .try_into()
-            .map_err(|_| fmt_read_layout_err!("column chunk size overflow, size: {chunk_size}"))?;
+            .map_err(|_| fmt_layout_err!("column chunk size overflow, size: {chunk_size}"))?;
 
         let page_reader = get_page_iterator(
             column_metadata,
@@ -107,9 +106,7 @@ impl ParquetDecoder {
         let version = match self.metadata.version {
             1 => Ok(Version::V1),
             2 => Ok(Version::V2),
-            ver => Err(fmt_read_unsupported_err!(
-                "unsupported parquet version: {ver}"
-            )),
+            ver => Err(fmt_unsupported_err!("unsupported parquet version: {ver}")),
         }?;
 
         let mut dict = None;
@@ -159,7 +156,7 @@ pub fn decoder_page(
     dict: Option<&DictPage>,
     bufs: &mut ColumnChunkBuffers,
     column_type: ColumnType,
-) -> ParquetReadResult<usize> {
+) -> ParquetResult<usize> {
     let (_rep_levels, _, values_buffer) = split_buffer(page)?;
     let row_count = page.header().num_values();
 
@@ -825,7 +822,7 @@ pub fn decoder_page(
 
     match decoding_result {
         Ok(row_count) => Ok(row_count),
-        Err(_) => Err(fmt_read_unsupported_err!(
+        Err(_) => Err(fmt_unsupported_err!(
             "encoding not supported, physical type: {:?}, \
                 encoding {:?}, \
                 logical type {:?}, \
@@ -845,7 +842,7 @@ fn decode_page<T: Pushable>(
     page: &DataPage,
     row_count: usize,
     sink: &mut T,
-) -> ParquetReadResult<()> {
+) -> ParquetResult<()> {
     sink.reserve();
     let iter = decode_null_bitmap(version, page, row_count)?;
     if let Some(iter) = iter {
@@ -885,7 +882,7 @@ pub fn decode_null_bitmap(
     _version: Version,
     page: &DataPage,
     count: usize,
-) -> ParquetReadResult<Option<FilteredHybridRleDecoderIter>> {
+) -> ParquetResult<Option<FilteredHybridRleDecoderIter>> {
     let def_levels = split_buffer(page)?.1;
     if def_levels.is_empty() {
         return Ok(None);

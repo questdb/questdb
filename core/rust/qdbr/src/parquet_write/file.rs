@@ -18,7 +18,7 @@ use crate::parquet_write::schema::{
 use crate::parquet_write::{binary, boolean, fixed_len_bytes, primitive, string, symbol, varchar};
 
 use super::{util, GeoByte, GeoInt, GeoLong, GeoShort, IPv4};
-use crate::parquet_write::error::{ParquetWriteError, ParquetWriteResult};
+use crate::parquet::error::{ParquetError, ParquetResult};
 use crate::POOL;
 use rayon::prelude::*;
 
@@ -137,7 +137,7 @@ impl<W: Write> ParquetWriter<W> {
         self,
         parquet_schema: SchemaDescriptor,
         encodings: Vec<Encoding>,
-    ) -> ParquetWriteResult<ChunkedWriter<W>> {
+    ) -> ParquetResult<ChunkedWriter<W>> {
         let options = self.write_options();
         let parallel = self.parallel;
         let file_write_options = FileWriteOptions {
@@ -163,7 +163,7 @@ impl<W: Write> ParquetWriter<W> {
     }
 
     /// Write the given `Partition` with the writer `W`. Returns the total size of the file.
-    pub fn finish(self, partition: Partition) -> ParquetWriteResult<u64> {
+    pub fn finish(self, partition: Partition) -> ParquetResult<u64> {
         let (schema, additional_meta) = to_parquet_schema(&partition)?;
         let encodings = to_encodings(&partition);
         let mut chunked = self.chunked(schema, encodings)?;
@@ -182,7 +182,7 @@ pub struct ChunkedWriter<W: Write> {
 
 impl<W: Write> ChunkedWriter<W> {
     /// Write a chunk to the parquet writer.
-    pub fn write_chunk(&mut self, partition: Partition) -> ParquetWriteResult<()> {
+    pub fn write_chunk(&mut self, partition: Partition) -> ParquetResult<()> {
         let row_group_size = self
             .options
             .row_group_size
@@ -215,26 +215,26 @@ impl<W: Write> ChunkedWriter<W> {
     }
 
     /// Write the footer of the parquet file. Returns the total size of the file.
-    pub fn finish(&mut self, additional_meta: Vec<KeyValue>) -> ParquetWriteResult<u64> {
+    pub fn finish(&mut self, additional_meta: Vec<KeyValue>) -> ParquetResult<u64> {
         let size = self.writer.end(additional_meta)?;
         Ok(size)
     }
 }
 
 struct CompressedPages {
-    pages: VecDeque<ParquetWriteResult<CompressedPage>>,
+    pages: VecDeque<ParquetResult<CompressedPage>>,
     current: Option<CompressedPage>,
 }
 
 impl CompressedPages {
-    fn new(pages: VecDeque<ParquetWriteResult<CompressedPage>>) -> Self {
+    fn new(pages: VecDeque<ParquetResult<CompressedPage>>) -> Self {
         Self { pages, current: None }
     }
 }
 
 impl FallibleStreamingIterator for CompressedPages {
     type Item = CompressedPage;
-    type Error = ParquetWriteError;
+    type Error = ParquetError;
 
     fn advance(&mut self) -> Result<(), Self::Error> {
         self.current = self.pages.pop_front().transpose()?;
@@ -254,14 +254,14 @@ pub fn create_row_group(
     encoding: &[Encoding],
     options: WriteOptions,
     parallel: bool,
-) -> ParquetWriteResult<RowGroupIter<'static, ParquetWriteError>> {
+) -> ParquetResult<RowGroupIter<'static, ParquetError>> {
     let columns = if parallel {
         let col_to_iter = move |((column, column_type), encoding): (
             (&Column, &ParquetType),
             &Encoding,
         )|
-              -> ParquetWriteResult<
-            DynStreamingIterator<CompressedPage, ParquetWriteError>,
+              -> ParquetResult<
+            DynStreamingIterator<CompressedPage, ParquetError>,
         > {
             let encoded_column = column_chunk_to_pages(
                 *column,
@@ -279,7 +279,7 @@ pub fn create_row_group(
                     let page = compress(page, vec![], options.compression)?;
                     Ok(Ok(page))
                 })
-                .collect::<ParquetWriteResult<VecDeque<_>>>()?;
+                .collect::<ParquetResult<VecDeque<_>>>()?;
 
             Ok(DynStreamingIterator::new(CompressedPages::new(
                 compressed_pages,
@@ -300,8 +300,8 @@ pub fn create_row_group(
             (&Column, &ParquetType),
             &Encoding,
         )|
-              -> ParquetWriteResult<
-            DynStreamingIterator<CompressedPage, ParquetWriteError>,
+              -> ParquetResult<
+            DynStreamingIterator<CompressedPage, ParquetError>,
         > {
             let encoded_column = column_chunk_to_pages(
                 *column,
@@ -335,7 +335,7 @@ fn column_chunk_to_pages(
     chunk_length: usize,
     options: WriteOptions,
     encoding: Encoding,
-) -> ParquetWriteResult<DynIter<'static, ParquetWriteResult<Page>>> {
+) -> ParquetResult<DynIter<'static, ParquetResult<Page>>> {
     let primitive_type = match parquet_type {
         ParquetType::PrimitiveType(primitive) => primitive,
         _ => unreachable!("GroupType is not supported"),
@@ -407,7 +407,7 @@ fn chunk_to_page(
     primitive_type: PrimitiveType,
     options: WriteOptions,
     encoding: Encoding,
-) -> ParquetWriteResult<Page> {
+) -> ParquetResult<Page> {
     let orig_column_top = column.column_top;
 
     let mut adjusted_column_top = 0;

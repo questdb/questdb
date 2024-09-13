@@ -1,5 +1,5 @@
+use crate::parquet::error::{ParquetError, ParquetResult};
 use crate::parquet_read::column_sink::Pushable;
-use crate::parquet_read::error::{ParquetReadError, ParquetReadResult};
 use crate::parquet_read::slicer::DataPageSlicer;
 use crate::parquet_read::ColumnChunkBuffers;
 use crate::parquet_write::varchar::{append_varchar, append_varchar_null, append_varchar_nulls};
@@ -55,7 +55,7 @@ impl<T: DataPageSlicer> Pushable for VarcharColumnSink<'_, T> {
         self.slicer.skip(count);
     }
 
-    fn result(&self) -> ParquetReadResult<()> {
+    fn result(&self) -> ParquetResult<()> {
         self.slicer.result()
     }
 }
@@ -69,7 +69,7 @@ impl<'a, T: DataPageSlicer> VarcharColumnSink<'a, T> {
 pub struct StringColumnSink<'a, T: DataPageSlicer> {
     slicer: &'a mut T,
     buffers: &'a mut ColumnChunkBuffers,
-    error: ParquetReadResult<()>,
+    error: ParquetResult<()>,
 }
 
 impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
@@ -113,7 +113,7 @@ impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
                     .extend_from_slice(self.buffers.data_vec.len().to_le_bytes().as_ref());
             }
             Err(utf8_str_err) => {
-                self.error = Err(ParquetReadError::Utf8Error { source: utf8_str_err });
+                self.error = Err(ParquetError::Utf8Decode { source: utf8_str_err });
                 self.push_null();
             }
         }
@@ -150,7 +150,7 @@ impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
         self.slicer.skip(count);
     }
 
-    fn result(&self) -> ParquetReadResult<()> {
+    fn result(&self) -> ParquetResult<()> {
         self.error.clone().or(self.slicer.result().clone())
     }
 }
@@ -226,7 +226,7 @@ impl<T: DataPageSlicer> Pushable for BinaryColumnSink<'_, T> {
         self.slicer.skip(count);
     }
 
-    fn result(&self) -> ParquetReadResult<()> {
+    fn result(&self) -> ParquetResult<()> {
         self.slicer.result().clone()
     }
 }

@@ -23,9 +23,7 @@
  ******************************************************************************/
 
 use super::util::BinaryMaxMin;
-use crate::parquet_write::error::{
-    fmt_write_unsupported_err, ParquetWriteError, ParquetWriteResult,
-};
+use crate::parquet::error::{fmt_unsupported_err, ParquetError, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
     build_plain_page, encode_bool_iter, transmute_slice, ExactSizedIter,
@@ -44,7 +42,7 @@ pub fn string_to_page(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
-) -> ParquetWriteResult<Page> {
+) -> ParquetResult<Page> {
     let num_rows = column_top + offsets.len();
     let mut buffer = vec![];
     let mut null_count = 0;
@@ -79,7 +77,7 @@ pub fn string_to_page(
             encode_delta(&utf16_slices, null_count, &mut buffer, &mut stats);
         }
         _ => {
-            return Err(fmt_write_unsupported_err!(
+            return Err(fmt_unsupported_err!(
                 "unsupported encoding {encoding:?} while writing a string column"
             ))
         }

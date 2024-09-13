@@ -2,7 +2,6 @@ use num_traits::AsPrimitive;
 
 mod binary;
 mod boolean;
-pub mod error;
 pub(crate) mod file;
 mod fixed_len_bytes;
 mod jni;
