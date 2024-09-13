@@ -23,8 +23,6 @@
  ******************************************************************************/
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.engine.functions.math.GreatestNumericFunctionFactory;
-import io.questdb.griffin.engine.functions.math.LeastNumericFunctionFactory;
 
 open module io.questdb {
     requires transitive jdk.unsupported;
@@ -130,8 +128,8 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.finance.SpreadFunctionFactory,
             io.questdb.griffin.engine.functions.finance.MidPriceFunctionFactory,
             io.questdb.griffin.engine.functions.finance.WeightedMidPriceFunctionFactory,
-            GreatestNumericFunctionFactory,
-            LeastNumericFunctionFactory,
+            io.questdb.griffin.engine.functions.finance.SpreadBpsFunctionFactory,
+
 
             // query activity functions
             io.questdb.griffin.engine.functions.activity.CancelQueryFunctionFactory,
@@ -280,6 +278,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory,
             io.questdb.griffin.engine.functions.regex.MatchVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.regex.MatchSymbolFunctionFactory,
+//                    comparison
+            io.questdb.griffin.engine.functions.math.GreatestNumericFunctionFactory,
+            io.questdb.griffin.engine.functions.math.LeastNumericFunctionFactory,
 //                    like
             io.questdb.griffin.engine.functions.regex.LikeStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.LikeVarcharFunctionFactory,
