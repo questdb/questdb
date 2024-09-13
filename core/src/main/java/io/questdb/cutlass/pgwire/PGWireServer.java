@@ -24,12 +24,29 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cutlass.pgwire.legacy.PGWireServerLegacy;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
 public interface PGWireServer extends Closeable {
+
+    static PGWireServer newInstance(
+            PGWireConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool,
+            CircuitBreakerRegistry registry,
+            ObjectFactory<SqlExecutionContextImpl> executionContextFactory
+    ) {
+        return configuration.isLegacyModeEnabled()
+                ? new PGWireServerLegacy(configuration, cairoEngine, workerPool, registry, executionContextFactory)
+                : new PGWireServerImpl(configuration, cairoEngine, workerPool, registry, executionContextFactory);
+    }
+
     void clearSelectCache();
 
     @Override

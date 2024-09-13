@@ -52,7 +52,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.OperationFuture.QUERY_COMPLETE;
-import static io.questdb.cutlass.pgwire.legacy.PGOids.*;
+import static io.questdb.cutlass.pgwire.PGOids.*;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
 /**
@@ -693,6 +693,20 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         for (int i = 0; i < count; i++) {
             bindVariableTypes.setQuick(i, Unsafe.getUnsafe().getInt(lo + i * 4L));
         }
+    }
+
+    private static int toColumnType(int type) {
+        // clear format flag
+        return type & (~(1 << 31));
+    }
+
+    private static int toParamBinaryType(short code, int type) {
+        return code | type;
+    }
+
+    private static int toParamType(int type) {
+        // clear format flag
+        return type & (~1);
     }
 
     private void appendBinColumn(Record record, int i) throws SqlException {

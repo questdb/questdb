@@ -29,7 +29,10 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cutlass.line.tcp.DefaultLineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiver;
-import io.questdb.cutlass.pgwire.*;
+import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
+import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -137,7 +140,7 @@ public class Table2IlpTest {
         CircuitBreakerRegistry registry = new CircuitBreakerRegistry(conf, engine.getConfiguration());
 
         workerPool = new WorkerPool(conf);
-        pgServer = new PGWireServerImpl(
+        pgServer = PGWireServer.newInstance(
                 conf,
                 engine,
                 workerPool,

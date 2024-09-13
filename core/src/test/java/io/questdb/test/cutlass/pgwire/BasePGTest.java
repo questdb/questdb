@@ -28,7 +28,10 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.cutlass.pgwire.*;
+import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
+import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
@@ -107,7 +110,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
         if (!configuration.isEnabled()) {
             return null;
         }
-        return new PGWireServerImpl(configuration, cairoEngine, workerPool, registry, executionContextObjectFactory);
+        return PGWireServer.newInstance(configuration, cairoEngine, workerPool, registry, executionContextObjectFactory);
     }
 
     public static PGWireServer createPGWireServer(
@@ -121,7 +124,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
 
         CircuitBreakerRegistry registry = new CircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
 
-        return new PGWireServerImpl(
+        return PGWireServer.newInstance(
                 configuration,
                 cairoEngine,
                 workerPool,
