@@ -483,7 +483,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_DEFAULT_SEQ_PART_TXN_COUNT("cairo.default.sequencer.part.txn.count"),
     POSTHOG_API_KEY("posthog.api.key"),
     POSTHOG_ENABLED("posthog.enabled"),
-    LOG_LEVEL_VERBOSE("log.level.verbose");
+    LOG_LEVEL_VERBOSE("log.level.verbose"),
+    LOG_SQL_QUERY_PROGRESS_EXE("log.sql.query.progress.exe");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

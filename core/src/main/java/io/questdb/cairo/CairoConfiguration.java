@@ -221,6 +221,8 @@ public interface CairoConfiguration {
 
     boolean getLogLevelVerbose();
 
+    boolean getLogSqlQueryProgressExe();
+
     int getMaxCrashFiles();
 
     int getMaxFileNameLength();

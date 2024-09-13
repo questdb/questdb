@@ -396,6 +396,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getLogSqlQueryProgressExe() {
+        return true;
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return 1;
     }
