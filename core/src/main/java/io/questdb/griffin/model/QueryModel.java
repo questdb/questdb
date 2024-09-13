@@ -186,6 +186,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int selectModelType = SELECT_MODEL_NONE;
     private int setOperationType;
     private int showKind = -1;
+    private boolean skipped;
     private int tableId = -1;
     private ExpressionNode tableNameExpr;
     private RecordCursorFactory tableNameFunction;
@@ -449,6 +450,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         fillTo = null;
         fillStride = null;
         fillValues = null;
+        skipped = false;
     }
 
     public void clearColumnMapStructs() {
@@ -643,7 +645,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(limitAdviceHi, that.limitAdviceHi)
                 && Objects.equals(unionModel, that.unionModel)
                 && Objects.equals(updateTableModel, that.updateTableModel)
-                && Objects.equals(updateTableToken, that.updateTableToken);
+                && Objects.equals(updateTableToken, that.updateTableToken)
+                && skipped == that.skipped;
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -1038,6 +1041,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return isSelectTranslation;
     }
 
+    public boolean isSkipped() {
+        return skipped;
+    }
+
     @SuppressWarnings("unused")
     public boolean isTemporalJoin() {
         return joinType >= JOIN_ASOF && joinType <= JOIN_LT;
@@ -1360,6 +1367,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setShowKind(int showKind) {
         this.showKind = showKind;
+    }
+
+    public void setSkipped(boolean skipped) {
+        this.skipped = skipped;
     }
 
     public void setTableId(int id) {
