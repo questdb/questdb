@@ -52,8 +52,8 @@ public class PGWireServerLegacy implements PGWireServer {
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final Metrics metrics;
     private final CircuitBreakerRegistry registry;
+    private final AssociativeCache<TypesAndSelect> typesAndSelectCache;
     private final WorkerPool workerPool;
-    private AssociativeCache<TypesAndSelect> typesAndSelectCache;
 
     public PGWireServerLegacy(
             PGWireConfiguration configuration,
@@ -135,6 +135,7 @@ public class PGWireServerLegacy implements PGWireServer {
         }
     }
 
+    @Override
     public void clearSelectCache() {
         typesAndSelectCache.clear();
     }
@@ -144,22 +145,18 @@ public class PGWireServerLegacy implements PGWireServer {
         Misc.free(dispatcher);
         Misc.free(registry);
         Misc.free(contextFactory);
-        typesAndSelectCache = Misc.free(typesAndSelectCache);
+        Misc.free(typesAndSelectCache);
     }
 
+    @Override
     public int getPort() {
         return dispatcher.getPort();
     }
 
     @TestOnly
+    @Override
     public WorkerPool getWorkerPool() {
         return workerPool;
-    }
-
-    public void resetQueryCache() {
-        if (typesAndSelectCache != null) {
-            typesAndSelectCache.clear();
-        }
     }
 
     private static class PGConnectionContextFactory extends IOContextFactoryImpl<PGConnectionContext> {
