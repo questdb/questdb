@@ -58,7 +58,7 @@ public class StableAwareStringHolderTest extends AbstractCairoTest {
     public void testClearAndSetDirect() throws Exception {
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB);
-                 DirectUtf16Sink directCharSequence = new DirectUtf16Sink(16);
+                 DirectUtf16Sink directCharSequence = new DirectUtf16Sink(16)
             ) {
                 directCharSequence.put("barbaz");
                 DirectString stableDirectString = new DirectString(() -> true);
@@ -69,12 +69,12 @@ public class StableAwareStringHolderTest extends AbstractCairoTest {
                 // store a non-stable char sequence
                 holder.of(0).clearAndSet("foobar");
                 TestUtils.assertEquals("foobar", holder);
-                long foobarPtr = holder.ptr();
+                long foobarPtr = holder.colouredPtr();
 
                 // store a direct char sequence into a new location
                 holder.of(0).clearAndSet(stableDirectString);
                 TestUtils.assertEquals("barbaz", holder);
-                long barbazPtr = holder.ptr();
+                long barbazPtr = holder.colouredPtr();
 
                 // store a direct char sequence into the original location of the non-direct string
                 holder.of(foobarPtr).clearAndSet(stableDirectString);
