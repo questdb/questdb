@@ -8,7 +8,7 @@ steps:
     condition: eq(variables['os'], 'Linux')
 
   - task: Cache@2
-    displayName: "Cache Maven"
+    displayName: "Cache non-default Maven"
     inputs:
       key: '"maven_version" | "$(MAVEN_VERSION)"'
       path: $(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)
@@ -37,6 +37,7 @@ steps:
     condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'), ne(variables['os'], 'Windows'))
   - script: "powershell -Command \"(new-object System.Net.WebClient).DownloadFile('https://www.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip','$(build.sourcesdirectory)\\apache-maven-$(MAVEN_VERSION)-bin.zip')\""
     condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'), eq(variables['os'], 'Windows'))
+    displayName: "Ensure .m2/repository exists"
   - task: ExtractFiles@1
     inputs:
       archiveFilePatterns: 'apache-maven-$(MAVEN_VERSION)-bin.zip'
