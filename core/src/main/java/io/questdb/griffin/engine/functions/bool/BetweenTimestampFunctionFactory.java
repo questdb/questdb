@@ -55,6 +55,8 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         Function arg = args.getQuick(0);
         Function fromFn = args.getQuick(1);
         Function toFn = args.getQuick(2);
+        Function type1 = args.getQuick(3);
+        Function type2 = args.getQuick(4);
 
         if (fromFn.isConstant() && toFn.isConstant()) {
             long fromFnTimestamp = fromFn.getTimestamp(null);
@@ -62,6 +64,22 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
 
             if (fromFnTimestamp == Numbers.LONG_NULL || toFnTimestamp == Numbers.LONG_NULL) {
                 return BooleanConstant.FALSE;
+            }
+            if(type1 != null) {
+                switch (type1.toString()) {
+                    case "inclusive":
+                        return new ConstFuncInclusive(arg, fromFnTimestamp, toFnTimestamp);
+                    case "exclusive":
+                        return new ConstFuncExclusive(arg, fromFnTimestamp, toFnTimestamp);
+                    case "right":
+                        if(type2 != null && type2.toString().equals("open")) {
+                            return new ConstFuncRightOpen(arg, fromFnTimestamp, toFnTimestamp);
+                        }
+                    case "left":
+                        if(type2 != null && type2.toString().equals("open")) {
+                            return new ConstFuncLeftOpen(arg, fromFnTimestamp, toFnTimestamp);
+                        }
+                }
             }
             return new ConstFunc(arg, fromFnTimestamp, toFnTimestamp);
         }
@@ -95,6 +113,126 @@ public class BetweenTimestampFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(left).val(" between ").val(from).val(" and ").val(to);
+        }
+    }
+
+    private static class ConstFuncInclusive extends BooleanFunction implements UnaryFunction {
+        private final long from;
+        private final Function left;
+        private final long to;
+
+        public ConstFuncInclusive(Function left, long from, long to) {
+            this.left = left;
+            this.from = Math.min(from, to);
+            this.to = Math.max(from, to);
+        }
+
+        @Override
+        public Function getArg() {
+            return left;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            long timestamp = left.getTimestamp(rec);
+            if (timestamp == Numbers.LONG_NULL) return false;
+
+            return from <= timestamp && timestamp <= to;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(left).val(" between ").val(from).val(" and ").val(to).val("inclusive");
+        }
+    }
+
+    private static class ConstFuncExclusive extends BooleanFunction implements UnaryFunction {
+        private final long from;
+        private final Function left;
+        private final long to;
+
+        public ConstFuncExclusive(Function left, long from, long to) {
+            this.left = left;
+            this.from = Math.min(from, to);
+            this.to = Math.max(from, to);
+        }
+
+        @Override
+        public Function getArg() {
+            return left;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            long timestamp = left.getTimestamp(rec);
+            if (timestamp == Numbers.LONG_NULL) return false;
+
+            return from < timestamp && timestamp < to;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(left).val(" between ").val(from).val(" and ").val(to).val("exclusive");
+        }
+    }
+
+    private static class ConstFuncRightOpen extends BooleanFunction implements UnaryFunction {
+        private final long from;
+        private final Function left;
+        private final long to;
+
+        public ConstFuncRightOpen(Function left, long from, long to) {
+            this.left = left;
+            this.from = Math.min(from, to);
+            this.to = Math.max(from, to);
+        }
+
+        @Override
+        public Function getArg() {
+            return left;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            long timestamp = left.getTimestamp(rec);
+            if (timestamp == Numbers.LONG_NULL) return false;
+
+            return from < timestamp && timestamp <= to;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(left).val(" between ").val(from).val(" and ").val(to).val("right open");
+        }
+    }
+
+    private static class ConstFuncLeftOpen extends BooleanFunction implements UnaryFunction {
+        private final long from;
+        private final Function left;
+        private final long to;
+
+        public ConstFuncLeftOpen(Function left, long from, long to) {
+            this.left = left;
+            this.from = Math.min(from, to);
+            this.to = Math.max(from, to);
+        }
+
+        @Override
+        public Function getArg() {
+            return left;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            long timestamp = left.getTimestamp(rec);
+            if (timestamp == Numbers.LONG_NULL) return false;
+
+            return from <= timestamp && timestamp < to;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(left).val(" between ").val(from).val(" and ").val(to).val("left open");
         }
     }
 

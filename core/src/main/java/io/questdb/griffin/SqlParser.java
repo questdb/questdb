@@ -2206,20 +2206,20 @@ public class SqlParser {
 
                             tok = tok(lexer, "'inclusive' 'exclusive' 'right' 'left'");
                             if(isInclusiveKeyword(tok)) {
-                                model.setBetweenType(1);
+                                model.setBetweenType(QueryModel.BETWEEN_INCLUSIVE);
                             } else if(isExclusiveKeyword(tok)) {
-                                model.setBetweenType(2);
+                                model.setBetweenType(QueryModel.BETWEEN_EXCLUSIVE);
                             } else if(isRightKeyword(tok)) {
                                 tok = tok(lexer, "'open'");
                                 if(isOpenKeyword(tok)) {
-                                    model.setBetweenType(3);
+                                    model.setBetweenType(QueryModel.BETWEEN_RIGHT_OPEN);
                                 } else {
                                     throw SqlException.$(lexer.lastTokenPosition(), "'open' expected");
                                 }
                             } else if(isLeftKeyword(tok)) {
                                 tok = tok(lexer, "'open'");
                                 if(isOpenKeyword(tok)) {
-                                    model.setBetweenType(4);
+                                    model.setBetweenType(QueryModel.BETWEEN_LEFT_OPEN);
                                 } else {
                                     throw SqlException.$(lexer.lastTokenPosition(), "'open' expected");
                                 }

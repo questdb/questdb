@@ -70,6 +70,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testBetweenInclusiveClause() throws Exception {
+        assertWindowQuery(
+                "select t from (select [t] from x where t between('2021-02-08', '2023-02-08'))",
+                "select t from x where t between '2021-02-08' and '2023-02-08' inclusive",
+                modelOf("x").col("t", ColumnType.TIMESTAMP)
+        );
+    }
+
+    @Test
     public void testACBetweenOrClause() throws Exception {
         assertWindowSyntaxError(
                 "select a,b, f(c) over (partition by b order by ts #FRAME between 12 preceding or 23 following) from xyz",
