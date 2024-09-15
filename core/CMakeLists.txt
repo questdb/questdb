@@ -7,23 +7,19 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-set(CMAKE_CXX_VISIBILITY_PRESET hidden)
-set(CMAKE_C_VISIBILITY_PRESET hidden)
-
-# use this is for debug purposes
-#set(CMAKE_VERBOSE_MAKEFILE ON)
-
-# deal with windows slashes in JAVA_HOME
+# Handling JAVA_HOME environment variable
 if ($ENV{JAVA_HOME})
     FILE(TO_CMAKE_PATH $ENV{JAVA_HOME} JAVA_HOME)
-endif ($ENV{JAVA_HOME})
+endif()
 
+# Detect architecture
 if (CMAKE_SYSTEM_PROCESSOR MATCHES "^arm64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "^aarch64")
     set(ARCH_AARCH64 1)
-else ()
+else()
     set(ARCH_AMD64 1)
-endif ()
+endif()
 
+# Detect OS
 if (APPLE)
     set(OS_DARWIN 1)
 elseif (UNIX)
@@ -31,56 +27,41 @@ elseif (UNIX)
         set(OS_FREEBSD 1)
     elseif (CMAKE_SYSTEM_NAME MATCHES "Linux")
         set(OS_LINUX 1)
-    endif ()
+    endif()
 elseif (WIN32)
     set(OS_WINDOWS 1)
-endif (APPLE)
+endif()
 
-set(
-        VCL_FILES
-        src/main/c/share/vec_agg.cpp
-        src/main/c/share/vec_ts_agg.cpp
-        src/main/c/share/ooo_dispatch.cpp
-        src/main/c/share/geohash_dispatch.cpp
+# Define source files
+set(SOURCE_FILES
+    src/main/c/share/simd.h
+    src/main/c/share/files.h
+    src/main/c/share/zip.h
+    src/main/c/share/net.h
+    src/main/c/share/zip.c
+    src/main/c/share/os.h
+    src/main/c/share/vec_agg_vanilla.h
+    src/main/c/share/util.cpp
+    src/main/c/share/ooo.cpp
+    src/main/c/share/txn_board.cpp
+    src/main/c/share/bitmap_index_utils.h
+    src/main/c/share/bitmap_index_utils.cpp
+    src/main/c/share/geohash.cpp
+    src/main/c/share/jit/compiler.h
+    src/main/c/share/jit/compiler.cpp
+    src/main/c/share/cpprt_overrides.h
+    src/main/c/share/cpprt_overrides.cpp
+    src/main/c/share/dedup.cpp
+    src/main/c/share/byte_sink.cpp
+    src/main/c/share/byte_sink.h
+    src/main/c/share/converters.cpp
+    src/main/c/share/converters.h
+    src/main/c/share/json.cpp
 )
 
-set(
-        VCL_FILES_SSE2
-        src/main/c/share/vcl/instrset_detect.cpp
-        src/main/c/share/rosti.cpp
-        src/main/c/share/vec_agg_vanilla.cpp
-        src/main/c/share/vec_agg.cpp
-        src/main/c/share/vec_int_key_agg.cpp
-        src/main/c/share/vec_ts_agg.cpp
-        src/main/c/share/ooo_dispatch.cpp
-        src/main/c/share/geohash_dispatch.cpp
-)
+# Add executable or library target
+add_executable(questdb ${SOURCE_FILES})
 
-set(
-        SOURCE_FILES
-        src/main/c/share/simd.h
-        src/main/c/share/files.h
-        src/main/c/share/zip.h
-        src/main/c/share/net.h
-        src/main/c/share/zip.c
-        src/main/c/share/os.h
-        src/main/c/share/vec_agg_vanilla.h
-        src/main/c/share/util.cpp
-        src/main/c/share/ooo.cpp
-        src/main/c/share/txn_board.cpp
-        src/main/c/share/bitmap_index_utils.h
-        src/main/c/share/bitmap_index_utils.cpp
-        src/main/c/share/geohash.cpp
-        src/main/c/share/jit/compiler.h
-        src/main/c/share/jit/compiler.cpp
-        src/main/c/share/cpprt_overrides.h
-        src/main/c/share/cpprt_overrides.cpp
-        src/main/c/share/dedup.cpp
-        src/main/c/share/byte_sink.cpp
-        src/main/c/share/byte_sink.h
-        src/main/c/share/converters.cpp
-        src/main/c/share/converters.h
-        src/main/c/share/json.cpp
 )
 
 # JNI includes
