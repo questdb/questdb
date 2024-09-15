@@ -46,10 +46,14 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     private long sizeMsb;
 
     public MemoryCARWImpl(long pageSize, int maxPages, int memoryTag) {
-        super(false);
         this.memoryTag = memoryTag;
         this.maxPages = maxPages;
         setPageSize(pageSize);
+    }
+
+    @Override
+    public long addressHi() {
+        return lim;
     }
 
     @Override
@@ -101,7 +105,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     }
 
     @Override
-    public int getFd() {
+    public long getFd() {
         return -1;
     }
 
@@ -164,7 +168,6 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     }
 
     private void extend0(long size) {
-
         if (size == 0 && pageAddress == 0) {
             return;
         }

@@ -1,0 +1,2 @@
+export JAVA_HOME=$(file /etc/alternatives/java | sed -e "s/.* \(.*\)\/bin\/java/\1/")
+export PATH=$JAVA_HOME/bin:$PATH

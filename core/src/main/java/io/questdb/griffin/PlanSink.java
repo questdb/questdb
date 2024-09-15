@@ -67,6 +67,8 @@ public interface PlanSink {
 
     void of(RecordCursorFactory factory, SqlExecutionContext executionContext);
 
+    PlanSink optAttr(CharSequence name, CharSequence value);
+
     PlanSink optAttr(CharSequence name, Sinkable value);
 
     PlanSink optAttr(CharSequence name, Plannable value);
@@ -78,8 +80,6 @@ public interface PlanSink {
     PlanSink optAttr(CharSequence name, ObjList<? extends Plannable> value);
 
     PlanSink putBaseColumnName(int columnIdx);
-
-    PlanSink putBaseColumnNameNoRemap(int columnIdx);
 
     PlanSink putColumnName(int columnIdx);
 

@@ -25,12 +25,13 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.griffin.engine.table.LongTreeSet;
 import io.questdb.std.LongList;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -44,7 +45,6 @@ public class IDGeneratorTest extends AbstractCairoTest {
                     CairoEngine engineA = new CairoEngine(configuration);
                     CairoEngine engineB = new CairoEngine(configuration)
             ) {
-
                 final LongList listA = new LongList();
                 final LongList listB = new LongList();
                 final CyclicBarrier startBarrier = new CyclicBarrier(2);
@@ -74,16 +74,15 @@ public class IDGeneratorTest extends AbstractCairoTest {
                     errors.incrementAndGet();
                 }
 
-                try (LongTreeSet set = new LongTreeSet(4 * 2048, Integer.MAX_VALUE)) {
-                    // add both arrays to the set and assert that there are no duplicates
-                    for (int i = 0, n = listA.size(); i < n; i++) {
-                        Assert.assertTrue(set.put(listA.getQuick(i)));
-                    }
-                    for (int i = 0, n = listB.size(); i < n; i++) {
-                        Assert.assertTrue(set.put(listB.getQuick(i)));
-                    }
-                    Assert.assertEquals(10000, set.size());
+                Set<Long> set = new HashSet<>();
+                // add both arrays to the set and assert that there are no duplicates
+                for (int i = 0, n = listA.size(); i < n; i++) {
+                    Assert.assertTrue(set.add(listA.getQuick(i)));
                 }
+                for (int i = 0, n = listB.size(); i < n; i++) {
+                    Assert.assertTrue(set.add(listB.getQuick(i)));
+                }
+                Assert.assertEquals(10000, set.size());
             }
         });
     }

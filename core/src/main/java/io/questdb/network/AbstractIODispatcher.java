@@ -53,7 +53,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     protected static final int OPM_ID = 4;
     protected static final int OPM_COLUMN_COUNT = OPM_ID + 1;
     protected static final int OPM_OPERATION = 2;
-    private final static String[] DISCONNECT_SOURCES;
+    private static final String[] DISCONNECT_SOURCES;
     protected final Log LOG;
     protected final int activeConnectionLimit;
     protected final MillisecondClock clock;
@@ -81,7 +81,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     private final int testConnectionBufSize;
     protected boolean closed = false;
     protected long heartbeatIntervalMs;
-    protected int serverFd;
+    protected long serverFd;
     private long closeListenFdEpochMs;
     private volatile boolean listening;
     private int port;
@@ -157,7 +157,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     @Override
     public void disconnect(C context, int reason) {
-        LOG.info()
+        LOG.debug()
                 .$("scheduling disconnect [fd=").$(context.getFd())
                 .$(", reason=").$(reason)
                 .I$();
@@ -219,7 +219,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         }
     }
 
-    private void addPending(int fd, long timestamp) {
+    private void addPending(long fd, long timestamp) {
         // append pending connection
         // all rows below watermark will be registered with epoll (or similar)
         final C context = ioContextFactory.newInstance(fd, this);
@@ -305,7 +305,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             // fire accept requests at us one at a time we will be actively accepting
             // until nothing left.
 
-            int fd = nf.accept(serverFd);
+            long fd = nf.accept(serverFd);
 
             if (fd < 0) {
                 if (nf.errno() != Net.EWOULDBLOCK) {
@@ -359,7 +359,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
             return;
         }
 
-        final int fd = context.getFd();
+        final long fd = context.getFd();
         LOG.info()
                 .$("disconnected [ip=").$ip(nf.getPeerIP(fd))
                 .$(", fd=").$(fd)
@@ -407,7 +407,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     protected abstract void registerListenerFd();
 
-    protected boolean testConnection(int fd) {
+    protected boolean testConnection(long fd) {
         return nf.testConnection(fd, testConnectionBuf, testConnectionBufSize);
     }
 

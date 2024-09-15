@@ -41,11 +41,11 @@ public class CastLongToIntFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
+        return new CastLongToIntFunction(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToIntFunction {
-        public Func(Function arg) {
+    public static class CastLongToIntFunction extends AbstractCastToIntFunction {
+        public CastLongToIntFunction(Function arg) {
             super(arg);
         }
 

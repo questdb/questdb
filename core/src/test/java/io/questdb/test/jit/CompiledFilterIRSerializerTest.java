@@ -48,7 +48,7 @@ import org.junit.*;
 import java.util.HashMap;
 import java.util.Map;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.jit.CompiledFilterIRSerializer.*;
 
 public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
@@ -220,7 +220,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         Map<String, String[]> typeToColumn = new HashMap<>();
         typeToColumn.put("i8", new String[]{"aboolean", "abyte", "ageobyte"});
         typeToColumn.put("i16", new String[]{"ashort", "ageoshort", "achar"});
-        typeToColumn.put("i32", new String[]{"anint", "ageoint"/*, "asymbol"*/});
+        typeToColumn.put("i32", new String[]{"anint", "ageoint", "asymbol"});
         typeToColumn.put("i64", new String[]{"along", "ageolong", "adate", "atimestamp"});
         typeToColumn.put("i128", new String[]{"auuid", "along128"});
         typeToColumn.put("f32", new String[]{"afloat"});
@@ -228,8 +228,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
         for (String type : typeToColumn.keySet()) {
             for (String col : typeToColumn.get(type)) {
-                serialize(col + " < " + col);
-                assertIR("different results for " + type, "(" + type + " " + col + ")(" + type + " " + col + ")(<)(ret)");
+                serialize(col + " = " + col);
+                assertIR("different results for " + type, "(" + type + " " + col + ")(" + type + " " + col + ")(=)(ret)");
             }
         }
     }
@@ -275,6 +275,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         }
     }
 
+    @Test(expected = SqlException.class)
+    public void testEmptyIn() throws Exception {
+        serialize("anint IN ()");
+    }
+
     @Test
     public void testGeoHashConstant() throws Exception {
         String[][] columns = new String[][]{
@@ -296,6 +301,78 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             serialize(name + " = " + constant);
             assertIR("different results for " + name, "(" + type + " " + value + ")(" + type + " " + name + ")(=)(ret)");
         }
+    }
+
+    @Test
+    public void testIn() throws Exception {
+        serialize("anint IN (1, 2, 3)");
+        assertIR("(i32 3L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(i32 1L)(i32 anint)(=)(||)(||)(ret)");
+        serialize("anint IN (1)");
+        assertIR("(i32 1L)(i32 anint)(=)(ret)");
+        serialize("anint IN (-1, 0, 1)");
+        assertIR("(i32 1L)(i32 anint)(=)(i32 0L)(i32 anint)(=)(i32 -1L)(i32 anint)(=)(||)(||)(ret)");
+        serialize("anint <> NULL AND anint IN (4, 5)");
+        assertIR("(i32 5L)(i32 anint)(=)(i32 4L)(i32 anint)(=)(||)(i32 -2147483648L)(i32 anint)(<>)(&&)(ret)");
+        serialize("-anint IN (-1)");
+        assertIR("(i32 -1L)(i32 anint)(neg)(=)(ret)");
+        serialize("anint NOT IN (1, 2, 3)");
+        assertIR("(i32 3L)(i32 anint)(=)(i32 2L)(i32 anint)(=)(i32 1L)(i32 anint)(=)(||)(||)(!)(ret)");
+        serialize("atimestamp IN ('2020-01-01')");
+        assertIR("(i64 1577836800000000L)(i64 atimestamp)(=)(ret)");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testInSubSelect() throws Exception {
+        serialize("asymbol in (select asymbol from tab limit 1)");
+    }
+
+    @Test
+    public void testInVariableBinding() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setInt("anint", 1);
+        bindVariableService.setLong(0, 2);
+
+        serialize("anint IN (:anint, $1)");
+        assertIR("(i64 :0)(i32 anint)(=)(i32 :1)(i32 anint)(=)(||)(ret)");
+
+        Assert.assertEquals(2, bindVarFunctions.size());
+        Assert.assertEquals(ColumnType.LONG, bindVarFunctions.get(0).getType());
+        Assert.assertEquals(ColumnType.INT, bindVarFunctions.get(1).getType());
+    }
+
+    @Test
+    public void testTimestampInLiteral() throws Exception {
+        serialize("atimestamp in '2020-01-01'");
+        assertIR("(i64 1577836800000000L)(i64 atimestamp)(>=)(i64 1577923199999999L)(i64 atimestamp)(<=)(&&)(ret)");
+        serialize("atimestamp in '2020-01-01;15s'");
+        assertIR("(i64 1577836800000000L)(i64 atimestamp)(>=)(i64 1577923214999999L)(i64 atimestamp)(<=)(&&)(ret)");
+        serialize("atimestamp in '2020-01-01T23:59:58;4s;-1d;3'");
+        assertIR("(i64 1577750398000000L)(i64 atimestamp)(>=)(i64 1577750402999999L)(i64 atimestamp)(<=)(&&)" +
+                "(i64 1577836798000000L)(i64 atimestamp)(>=)(i64 1577836802999999L)(i64 atimestamp)(<=)(&&)" +
+                "(i64 1577923198000000L)(i64 atimestamp)(>=)(i64 1577923202999999L)(i64 atimestamp)(<=)(&&)(||)(||)(ret)");
+        serialize("along = 42 and atimestamp in '2020-01-01T23:59:58;4s;-1d;3'");
+        assertIR("(i64 1577750398000000L)(i64 atimestamp)(>=)(i64 1577750402999999L)(i64 atimestamp)(<=)(&&)" +
+                "(i64 1577836798000000L)(i64 atimestamp)(>=)(i64 1577836802999999L)(i64 atimestamp)(<=)(&&)" +
+                "(i64 1577923198000000L)(i64 atimestamp)(>=)(i64 1577923202999999L)(i64 atimestamp)(<=)(&&)" +
+                "(||)(||)(i64 42L)(i64 along)(=)(&&)(ret)");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testTimestampInLiteralBindVariables() throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setStr("str", "2020");
+        serialize("atimestamp in :str");
+    }
+
+    @Test
+    public void testTimestampInLiteralNull() throws Exception {
+        serialize("atimestamp in null");
+        assertIR("(i64 -9223372036854775808L)(i64 atimestamp)(>=)(i64 -9223372036854775808L)(i64 atimestamp)(<=)(&&)(ret)");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testInvalidTimestampLiteral() throws Exception {
+        serialize("atimestamp > ''");
     }
 
     @Test(expected = SqlException.class)
@@ -516,6 +593,22 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(string_header astring)(i32 -1L)(<>)(ret)");
         serialize("null = astring");
         assertIR("(string_header astring)(i32 -1L)(=)(ret)");
+    }
+
+    @Test
+    public void testTimestampLiteral() throws Exception {
+        serialize("atimestamp = '2023-02-11T11:12:22.116234Z'");
+        assertIR("(i64 1676113942116234L)(i64 atimestamp)(=)(ret)");
+        serialize("atimestamp >= '2023-02-11T11:12:22'");
+        assertIR("(i64 1676113942000000L)(i64 atimestamp)(>=)(ret)");
+        serialize("atimestamp <= '2023-02-11T11'");
+        assertIR("(i64 1676113200000000L)(i64 atimestamp)(<=)(ret)");
+        serialize("atimestamp > '2023-02-11'");
+        assertIR("(i64 1676073600000000L)(i64 atimestamp)(>)(ret)");
+        serialize("atimestamp < '2023-02'");
+        assertIR("(i64 1675209600000000L)(i64 atimestamp)(<)(ret)");
+        serialize("atimestamp != '2023'");
+        assertIR("(i64 1672531200000000L)(i64 atimestamp)(<>)(ret)");
     }
 
     @Test

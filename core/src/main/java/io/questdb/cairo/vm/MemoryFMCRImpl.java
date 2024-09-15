@@ -31,7 +31,13 @@ import io.questdb.std.str.LPSZ;
 public class MemoryFMCRImpl extends MemoryFCRImpl implements MemoryMR {
 
     @Override
-    public int getFd() {
+    public long detachFdClose() {
+        close();
+        return -1;
+    }
+
+    @Override
+    public long getFd() {
         return -1;
     }
 

@@ -88,7 +88,7 @@ public class IOURingImplTest extends AbstractTest {
             TestUtils.writeStringToFile(file, txt);
 
             try (Path path = new Path()) {
-                int fd = Files.openRO(path.of(file.getAbsolutePath()).$());
+                long fd = Files.openRO(path.of(file.getAbsolutePath()).$());
                 Assert.assertTrue(fd > -1);
                 long[] bufs = new long[inFlight];
                 for (int i = 0; i < inFlight; i++) {
@@ -176,7 +176,7 @@ public class IOURingImplTest extends AbstractTest {
             TestUtils.writeStringToFile(file, txt);
 
             try (Path path = new Path()) {
-                int fd = Files.openRO(path.of(file.getAbsolutePath()).$());
+                long fd = Files.openRO(path.of(file.getAbsolutePath()).$());
                 Assert.assertTrue(fd > -1);
                 long buf = Unsafe.malloc(txtLen, MemoryTag.NATIVE_DEFAULT);
 

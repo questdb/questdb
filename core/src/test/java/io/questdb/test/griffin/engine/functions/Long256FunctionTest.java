@@ -138,11 +138,6 @@ public class Long256FunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetStr2() {
-        function.getStr(null, null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testGetStrB() {
         function.getStrB(null);
     }
@@ -175,11 +170,6 @@ public class Long256FunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong128Lo() {
         function.getLong128Lo(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetVarcharUtf8Sink() {
-        function.getVarchar(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

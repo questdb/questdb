@@ -85,7 +85,7 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
     @AfterClass
     public static void tearDownStatic() {
-        Assert.assertTrue(Files.rmdir(auxPath.of(otherVolume).$(), true));
+        Assert.assertTrue(Files.rmdir(auxPath.of(otherVolume), true));
         AbstractBootstrapTest.tearDownStatic();
     }
 
@@ -199,28 +199,28 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
 
             // copy the table to a foreign location, remove it, then symlink it
             try (
-                    Path filePath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-                    Path fakeTablePath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).concat("coconut").$();
-                    Path foreignPath = new Path().of(root).concat("banana").concat(tableName).slash$()
+                    Path filePath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).concat(TableUtils.TAB_INDEX_FILE_NAME);
+                    Path fakeTablePath = new Path().of(root).concat(PropServerConfiguration.DB_DIRECTORY).concat("coconut");
+                    Path foreignPath = new Path().of(root).concat("banana").concat(tableName).slash()
             ) {
-                if (!Files.exists(foreignPath)) {
+                if (!Files.exists(foreignPath.$())) {
                     Assert.assertEquals(0, Files.mkdirs(foreignPath, 509));
                 }
-                Assert.assertTrue(Files.exists(foreignPath));
+                Assert.assertTrue(Files.exists(foreignPath.$()));
                 dbPath.trimTo(dbPathLen).concat(tableName).$();
                 TestUtils.copyDirectory(dbPath, foreignPath, 509);
 
                 String tablePathStr = dbPath.toString();
                 String foreignPathStr = foreignPath.toString();
-                Assert.assertTrue(Files.rmdir(auxPath.of(tablePathStr).$(), true));
-                Assert.assertFalse(Files.exists(dbPath));
+                Assert.assertTrue(Files.rmdir(auxPath.of(tablePathStr), true));
+                Assert.assertFalse(Files.exists(dbPath.$()));
                 createSoftLink(foreignPathStr, tablePathStr);
-                Assert.assertTrue(Files.exists(dbPath));
+                Assert.assertTrue(Files.exists(dbPath.$()));
 
-                if (!Files.exists(fakeTablePath)) {
+                if (!Files.exists(fakeTablePath.$())) {
                     createSoftLink(filePath.toString(), fakeTablePath.toString());
                 }
-                Assert.assertTrue(Files.exists(fakeTablePath));
+                Assert.assertTrue(Files.exists(fakeTablePath.$()));
             }
 
             // check content of table after sym-linking it
@@ -344,23 +344,14 @@ public class ServerMainForeignTableTest extends AbstractBootstrapTest {
                 CairoEngine engine = qdb.getEngine();
                 TableToken tableToken = createPopulateTable(engine, compiler, context, tableName, true, true, false);
                 assertTableExists(tableToken, true, true);
-                long t = System.currentTimeMillis();
-                while (true) {
-                    try {
-                        assertSql(
-                                compiler,
-                                context,
-                                "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
-                                new StringSink(),
-                                TABLE_START_CONTENT
-                        );
-                        break;
-                    } catch (AssertionError e) {
-                        if (System.currentTimeMillis() - t > 5000) {
-                            throw e;
-                        }
-                    }
-                }
+                qdb.awaitTxn(tableName, 1);
+                assertSql(
+                        compiler,
+                        context,
+                        "SELECT min(ts), max(ts), count() FROM " + tableName + " SAMPLE BY 1d ALIGN TO CALENDAR",
+                        new StringSink(),
+                        TABLE_START_CONTENT
+                );
                 dropTable(compiler, context, tableToken);
             }
         });

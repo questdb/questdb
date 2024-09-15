@@ -1999,7 +1999,6 @@ Java_io_questdb_std_Rosti_keyedIntMinLongWrapUp(JNIEnv *env, jclass cl, jlong pR
                                                 jlong valueAtNull) {
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto value_offset = map->value_offsets_[valueOffset];
-    const auto slots = map->slots_;
 
     // populate null value
     if (valueAtNull > L_MIN) {
@@ -2030,7 +2029,6 @@ Java_io_questdb_std_Rosti_keyedIntMinShortWrapUp(JNIEnv *env, jclass cl, jlong p
                                                  jint accumulatedValue) {
     auto map = reinterpret_cast<rosti_t *>(pRosti);
     const auto value_offset = map->value_offsets_[valueOffset];
-    const auto slots = map->slots_;
 
     // populate null value
     if (accumulatedValue > I_MIN) {

@@ -32,9 +32,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import org.junit.Test;
 
 public class GroupByFunctionTest {
@@ -167,14 +165,6 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
-        }
-
-        @Override
         public CharSequence getStrA(Record rec) {
             return null;
         }
@@ -227,10 +217,6 @@ public class GroupByFunctionTest {
         @Override
         public int getValueIndex() {
             return 0;
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
         }
 
         @Override

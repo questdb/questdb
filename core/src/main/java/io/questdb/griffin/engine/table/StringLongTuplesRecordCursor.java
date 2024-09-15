@@ -90,7 +90,8 @@ final class StringLongTuplesRecordCursor implements RecordCursor {
         }
 
         @Override
-        @NotNull public CharSequence getStrA(int col) {
+        @NotNull
+        public CharSequence getStrA(int col) {
             if (col != 0) {
                 throw CairoException.nonCritical().put("unsupported string column number [column=").put(col).put("]");
             }

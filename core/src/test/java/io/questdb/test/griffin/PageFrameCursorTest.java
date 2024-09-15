@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.InlinedVarchar;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8SplitString;
 import io.questdb.test.AbstractCairoTest;
@@ -38,7 +37,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 public class PageFrameCursorTest extends AbstractCairoTest {
 
@@ -84,7 +83,7 @@ public class PageFrameCursorTest extends AbstractCairoTest {
                             while ((frame = pageFrameCursor.next()) != null) {
                                 long size = frame.getPageSize(1);
                                 long topOfVarAddress = frame.getPageAddress(1);
-                                long fixAddress = frame.getIndexPageAddress(1);
+                                long fixAddress = frame.getAuxPageAddress(1);
                                 long count = frame.getPartitionHi() - frame.getPartitionLo();
                                 while (count > 0) {
                                     //validate that index column has correct offsets
@@ -140,11 +139,10 @@ public class PageFrameCursorTest extends AbstractCairoTest {
                             PageFrame frame;
                             while ((frame = pageFrameCursor.next()) != null) {
                                 long varAddress = frame.getPageAddress(1);
-                                long fixAddress = frame.getIndexPageAddress(1);
+                                long fixAddress = frame.getAuxPageAddress(1);
                                 long topOfVarAddress = varAddress;
                                 long count = frame.getPartitionHi() - frame.getPartitionLo();
                                 while (count > 0) {
-
                                     // validate that index column has correct offsets
                                     Assert.assertEquals(varAddress - topOfVarAddress, Unsafe.getUnsafe().getLong(fixAddress));
                                     fixAddress += 8;
@@ -197,9 +195,7 @@ public class PageFrameCursorTest extends AbstractCairoTest {
                 sink
         );
 
-        final Utf8SplitString utf8SplitView = new Utf8SplitString(false);
-        final InlinedVarchar utf8view = new InlinedVarchar();
-
+        final Utf8SplitString utf8SplitView = new Utf8SplitString();
         final StringSink actualSink = new StringSink();
         // header
         actualSink.put("b\n");
@@ -209,10 +205,21 @@ public class PageFrameCursorTest extends AbstractCairoTest {
                 PageFrame frame;
                 while ((frame = pageFrameCursor.next()) != null) {
                     final long dataTopAddress = frame.getPageAddress(1);
-                    final long auxTopAddress = frame.getIndexPageAddress(1);
+                    final long dataTopLim = dataTopAddress + frame.getPageSize(1);
+                    final long auxTopAddress = frame.getAuxPageAddress(1);
                     final long count = frame.getPartitionHi() - frame.getPartitionLo();
+                    final long auxTopLim = auxTopAddress + count * VarcharTypeDriver.INSTANCE.getAuxVectorSize(count);
                     for (int row = 0; row < count; row++) {
-                        actualSink.put(VarcharTypeDriver.getValue(auxTopAddress, dataTopAddress, row, utf8view, utf8SplitView));
+                        actualSink.put(
+                                VarcharTypeDriver.getSplitValue(
+                                        auxTopAddress,
+                                        auxTopLim,
+                                        dataTopAddress,
+                                        dataTopLim,
+                                        row,
+                                        utf8SplitView
+                                )
+                        );
                         actualSink.put('\n');
                     }
                 }

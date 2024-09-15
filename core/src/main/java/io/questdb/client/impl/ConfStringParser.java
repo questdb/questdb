@@ -183,9 +183,7 @@ public final class ConfStringParser {
                 output.put(c);
             }
         }
-        output.clear();
-        output.put("missing trailing semicolon at position ").put(pos);
-        return -1;
+        return pos;
     }
 
     private static boolean invalidIdentifierChar(char c) {

@@ -29,12 +29,9 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.vm.NullMemoryMR;
+import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.std.IntList;
-import io.questdb.std.LongList;
-import io.questdb.std.Misc;
-import io.questdb.std.Rows;
+import io.questdb.std.*;
 import org.jetbrains.annotations.Nullable;
 
 public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
@@ -42,7 +39,9 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
     private final IntList columnIndexes;
     private final LongList columnPageAddress = new LongList();
     private final LongList columnPageNextAddress = new LongList();
-    private final IntList columnSizes;
+    private final IntList columnSizeShifts;
+    // Holds PageFrame#*_FORMAT per each partition.
+    private final ByteList formats = new ByteList();
     private final TableReaderPageFrame frame = new TableReaderPageFrame();
     private final int pageFrameMaxRows;
     private final int pageFrameMinRows;
@@ -52,22 +51,22 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
     private final LongList topsRemaining = new LongList();
     private final int workerCount;
     private long currentPageFrameRowLimit;
-    private DataFrameCursor dataFrameCursor;
+    private PartitionFrameCursor partitionFrameCursor;
     private TableReader reader;
-    private boolean reenterDataFrame = false;
+    private boolean reenterPartitionFrame = false;
     private long reenterPartitionHi;
     private int reenterPartitionIndex;
     private long reenterPartitionLo;
 
     public BwdTableReaderPageFrameCursor(
             IntList columnIndexes,
-            IntList columnSizes,
+            IntList columnSizeShifts,
             int workerCount,
             int pageFrameMinRows,
             int pageFrameMaxRows
     ) {
         this.columnIndexes = columnIndexes;
-        this.columnSizes = columnSizes;
+        this.columnSizeShifts = columnSizeShifts;
         this.columnCount = columnIndexes.size();
         this.workerCount = workerCount;
         this.pageFrameMinRows = pageFrameMinRows;
@@ -75,13 +74,23 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
+    public void calculateSize(RecordCursor.Counter counter) {
+        partitionFrameCursor.calculateSize(counter);
+    }
+
+    @Override
     public void close() {
-        dataFrameCursor = Misc.free(dataFrameCursor);
+        partitionFrameCursor = Misc.free(partitionFrameCursor);
     }
 
     @Override
     public StaticSymbolTable getSymbolTable(int columnIndex) {
         return reader.getSymbolTable(columnIndexes.getQuick(columnIndex));
+    }
+
+    @Override
+    public TableReader getTableReader() {
+        return reader;
     }
 
     @Override
@@ -96,14 +105,14 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
 
     @Override
     public @Nullable PageFrame next() {
-        if (reenterDataFrame) {
+        if (reenterPartitionFrame) {
             return computeFrame(reenterPartitionLo, reenterPartitionHi);
         }
-        DataFrame dataFrame = dataFrameCursor.next();
-        if (dataFrame != null) {
-            reenterPartitionIndex = dataFrame.getPartitionIndex();
-            final long lo = dataFrame.getRowLo();
-            final long hi = dataFrame.getRowHi();
+        PartitionFrame partitionFrame = partitionFrameCursor.next();
+        if (partitionFrame != null) {
+            reenterPartitionIndex = partitionFrame.getPartitionIndex();
+            final long lo = partitionFrame.getRowLo();
+            final long hi = partitionFrame.getRowHi();
             currentPageFrameRowLimit = Math.min(
                     pageFrameMaxRows,
                     Math.max(pageFrameMinRows, (hi - lo) / workerCount)
@@ -113,34 +122,42 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
         return null;
     }
 
-    public BwdTableReaderPageFrameCursor of(DataFrameCursor dataFrameCursor) {
-        this.dataFrameCursor = dataFrameCursor;
-        reader = dataFrameCursor.getTableReader();
+    @Override
+    public PageFrameCursor of(PartitionFrameCursor partitionFrameCursor) {
+        this.partitionFrameCursor = partitionFrameCursor;
+        reader = partitionFrameCursor.getTableReader();
         toTop();
         return this;
     }
 
     @Override
     public long size() {
-        return reader.size();
+        return partitionFrameCursor.size();
+    }
+
+    @Override
+    public boolean supportsSizeCalculation() {
+        return partitionFrameCursor.supportsSizeCalculation();
     }
 
     @Override
     public void toTop() {
-        dataFrameCursor.toTop();
+        partitionFrameCursor.toTop();
         pages.setAll(columnCount, 0);
         topsRemaining.setAll(columnCount, 0);
-        columnPageAddress.setAll(columnCount * 2, 0);
-        columnPageNextAddress.setAll(columnCount * 2, 0);
+        columnPageAddress.setAll(2 * columnCount, 0);
+        columnPageNextAddress.setAll(2 * columnCount, 0);
         pageRowsRemaining.setAll(columnCount, -1L);
-        pageSizes.setAll(columnCount * 2, -1L);
-        reenterDataFrame = false;
+        pageSizes.setAll(2 * columnCount, -1L);
+        formats.setAll(formats.size(), (byte) -1);
+        formats.clear();
+        reenterPartitionFrame = false;
     }
 
     private TableReaderPageFrame computeFrame(final long partitionLo, final long partitionHi) {
         final int base = reader.getColumnBase(reenterPartitionIndex);
 
-        // we may need to split this data frame either along "top" lines, or along
+        // we may need to split this partition frame either along "top" lines, or along
         // max page frame sizes; to do this, we calculate min top value from given position
         long adjustedLo = Math.max(partitionLo, partitionHi - currentPageFrameRowLimit);
         for (int i = 0; i < columnCount; i++) {
@@ -155,54 +172,61 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
             final int columnIndex = columnIndexes.getQuick(i);
             final int readerColIndex = TableReader.getPrimaryColumnIndex(base, columnIndex);
             final MemoryR colMem = reader.getColumn(readerColIndex);
-            // when the entire column is NULL we make it skip the whole of the data frame
-            final long top = colMem instanceof NullMemoryMR ? partitionHi : reader.getColumnTop(base, columnIndex);
+            // when the entire column is NULL we make it skip the whole of the partition frame
+            final long top = colMem instanceof NullMemoryCMR ? partitionHi : reader.getColumnTop(base, columnIndex);
             final long partitionLoAdjusted = adjustedLo - top;
             final long partitionHiAdjusted = partitionHi - top;
-            final int sh = columnSizes.getQuick(i);
+            final int sh = columnSizeShifts.getQuick(i);
 
             if (partitionHiAdjusted > 0) {
                 if (sh > -1) {
                     // this assumes reader uses single page to map the whole column
                     // non-negative sh means fixed length column
-                    long address = colMem.getPageAddress(0);
-                    long addressSize = partitionHiAdjusted << sh;
-                    long offset = partitionLoAdjusted << sh;
-                    columnPageAddress.setQuick(i * 2, address + offset);
-                    pageSizes.setQuick(i * 2, addressSize - offset);
+                    final long address = colMem.getPageAddress(0);
+                    final long addressSize = partitionHiAdjusted << sh;
+                    final long offset = partitionLoAdjusted << sh;
+                    columnPageAddress.setQuick(2 * i, address + offset);
+                    pageSizes.setQuick(2 * i, addressSize - offset);
                 } else {
                     final int columnType = reader.getMetadata().getColumnType(columnIndex);
                     final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
                     final MemoryR auxCol = reader.getColumn(readerColIndex + 1);
-                    long auxAddress = auxCol.getPageAddress(0);
-                    long auxOffsetLo = columnTypeDriver.getAuxVectorOffset(partitionLoAdjusted);
-                    long auxOffsetHi = columnTypeDriver.getAuxVectorOffset(partitionHiAdjusted);
+                    final long auxAddress = auxCol.getPageAddress(0);
+                    final long auxOffsetLo = columnTypeDriver.getAuxVectorOffset(partitionLoAdjusted);
+                    final long auxOffsetHi = columnTypeDriver.getAuxVectorOffset(partitionHiAdjusted);
 
-                    long dataSize = columnTypeDriver.getDataVectorSizeAt(auxAddress, partitionHiAdjusted - 1);
-                    // some varsize columns may not have data memory (fully inlined)
-                    long dataAddress = dataSize > 0 ? colMem.getPageAddress(0) : 0;
+                    final long dataSize = columnTypeDriver.getDataVectorSizeAt(auxAddress, partitionHiAdjusted - 1);
+                    // some var-size columns may not have data memory (fully inlined)
+                    final long dataAddress = dataSize > 0 ? colMem.getPageAddress(0) : 0;
 
-                    columnPageAddress.setQuick(i * 2, dataAddress);
-                    columnPageAddress.setQuick(i * 2 + 1, auxAddress + auxOffsetLo);
-                    pageSizes.setQuick(i * 2, dataSize);
-                    pageSizes.setQuick(i * 2 + 1, auxOffsetHi - auxOffsetLo);
+                    columnPageAddress.setQuick(2 * i, dataAddress);
+                    columnPageAddress.setQuick(2 * i + 1, auxAddress + auxOffsetLo);
+                    pageSizes.setQuick(2 * i, dataSize);
+                    pageSizes.setQuick(2 * i + 1, auxOffsetHi - auxOffsetLo);
                 }
-            } else {
-                columnPageAddress.setQuick(i * 2, 0);
-                columnPageAddress.setQuick(i * 2 + 1, 0);
-                pageSizes.setQuick(i * 2, (partitionHiAdjusted - partitionLoAdjusted) << (sh > -1 ? sh : 3));
-                pageSizes.setQuick(i * 2 + 1, 0);
+            } else { // column top
+                columnPageAddress.setQuick(2 * i, 0);
+                columnPageAddress.setQuick(2 * i + 1, 0);
+                // data page size is used by VectorAggregateFunction as the size hint
+                // in the following way:
+                //   size = page_size >>> column_size_hint
+                // (for var-sized types column_size_hint is 0)
+                pageSizes.setQuick(2 * i, (partitionHiAdjusted - partitionLoAdjusted) << (sh > -1 ? sh : 0));
+                pageSizes.setQuick(2 * i + 1, 0);
             }
         }
 
-        // it is possible that all columns in data frame are empty, but it doesn't mean
-        // the data frame size is 0; sometimes we may want to imply nulls
+        // TODO(puzpuzpuz): we should get the format from table reader
+        formats.extendAndSet(reenterPartitionIndex, PageFrame.NATIVE_FORMAT);
+
+        // it is possible that all columns in partition frame are empty, but it doesn't mean
+        // the partition frame size is 0; sometimes we may want to imply nulls
         if (partitionLo < adjustedLo) {
             this.reenterPartitionLo = partitionLo;
             this.reenterPartitionHi = adjustedLo;
-            this.reenterDataFrame = true;
+            this.reenterPartitionFrame = true;
         } else {
-            this.reenterDataFrame = false;
+            this.reenterPartitionFrame = false;
         }
 
         frame.partitionLo = adjustedLo;
@@ -217,28 +241,38 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
         private long partitionLo;
 
         @Override
+        public long getAuxPageAddress(int columnIndex) {
+            return columnPageAddress.getQuick(2 * columnIndex + 1);
+        }
+
+        @Override
+        public long getAuxPageSize(int columnIndex) {
+            return pageSizes.getQuick(2 * columnIndex + 1);
+        }
+
+        @Override
         public BitmapIndexReader getBitmapIndexReader(int columnIndex, int direction) {
             return reader.getBitmapIndexReader(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
         }
 
         @Override
-        public int getColumnShiftBits(int columnIndex) {
-            return columnSizes.getQuick(columnIndex);
+        public int getColumnCount() {
+            return columnCount;
         }
 
         @Override
-        public long getIndexPageAddress(int columnIndex) {
-            return columnPageAddress.getQuick(columnIndex * 2 + 1);
+        public byte getFormat() {
+            return formats.getQuick(partitionIndex);
         }
 
         @Override
         public long getPageAddress(int columnIndex) {
-            return columnPageAddress.getQuick(columnIndex * 2);
+            return columnPageAddress.getQuick(2 * columnIndex);
         }
 
         @Override
         public long getPageSize(int columnIndex) {
-            return pageSizes.getQuick(columnIndex * 2);
+            return pageSizes.getQuick(2 * columnIndex);
         }
 
         @Override

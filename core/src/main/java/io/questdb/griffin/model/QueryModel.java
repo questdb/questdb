@@ -86,6 +86,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SHOW_PARTITIONS = 3;
     public static final int SHOW_SEARCH_PATH = 8;
     public static final int SHOW_SERVER_VERSION = 12;
+    public static final int SHOW_SERVER_VERSION_NUM = 13;
     public static final int SHOW_STANDARD_CONFORMING_STRINGS = 7;
     public static final int SHOW_TABLES = 1;
     public static final int SHOW_TIME_ZONE = 10;
@@ -128,17 +129,24 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private final ObjList<CharSequence> updateTableColumnNames = new ObjList<>();
     private final IntList updateTableColumnTypes = new IntList();
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauseModel = new LowerCaseCharSequenceObjHashMap<>();
+    // used for the parallel sample by rewrite. In future, if we deprecate original SAMPLE BY, then these will
+    // be the only fields for these values.
+    public ExpressionNode fillTimestampAlias;
     private ExpressionNode alias;
     private boolean artificialStar;
     // Used to store a deep copy of the whereClause field
     // since whereClause can be changed during optimization/generation stage.
     private ExpressionNode backupWhereClause;
-
     // where clause expressions that do not reference any tables, not necessarily constants
     private ExpressionNode constWhereClause;
     private JoinContext context;
     private boolean distinct = false;
     private boolean explicitTimestamp;
+    private ExpressionNode fillFrom;
+    private ExpressionNode fillStride;
+    private ExpressionNode fillTo;
+    private ObjList<ExpressionNode> fillValues;
+
     //simple flag to mark when limit x,y in current model (part of query) is already taken care of by existing factories e.g. LimitedSizeSortedLightRecordCursorFactory
     //and doesn't need to be enforced by LimitRecordCursor. We need it to detect whether current factory implements limit from this or inner query .
     private boolean isLimitImplemented;
@@ -170,12 +178,15 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private ExpressionNode outerJoinExpressionClause;
     private ExpressionNode postJoinWhereClause;
     private ExpressionNode sampleBy;
+    private ExpressionNode sampleByFrom;
     private ExpressionNode sampleByOffset = ZERO_OFFSET;
     private ExpressionNode sampleByTimezoneName = null;
+    private ExpressionNode sampleByTo;
     private ExpressionNode sampleByUnit;
     private int selectModelType = SELECT_MODEL_NONE;
     private int setOperationType;
     private int showKind = -1;
+    private boolean skipped;
     private int tableId = -1;
     private ExpressionNode tableNameExpr;
     private RecordCursorFactory tableNameFunction;
@@ -433,6 +444,13 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         explicitTimestamp = false;
         showKind = -1;
         sampleByOffset = ZERO_OFFSET;
+        sampleByTo = null;
+        sampleByFrom = null;
+        fillFrom = null;
+        fillTo = null;
+        fillStride = null;
+        fillValues = null;
+        skipped = false;
     }
 
     public void clearColumnMapStructs() {
@@ -453,58 +471,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         sampleByFill.clear();
         sampleByTimezoneName = null;
         sampleByOffset = null;
-    }
-
-    /**
-     * The goal of this method is to dismiss the nested model as
-     * the layer between this and the model the nested is referencing. We do that by copying ASTs from
-     * the nested model onto the current model and also maintaining all the maps in sync.
-     * <p>
-     * The caller is responsible for checking if nested model is suitable for the removal. E.g. it does not
-     * contain arithmetic expressions. Although this method does not validate if nested has arithmetic.
-     *
-     * @param nested model containing columns mapped into the referenced model.
-     */
-    public void mergePartially(QueryModel nested, ObjectPool<QueryColumn> queryColumnPool) {
-        for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
-            QueryColumn thisColumn = bottomUpColumns.getQuick(i);
-            if (thisColumn.getAst().type == ExpressionNode.LITERAL) {
-                QueryColumn thatColumn = nested.getAliasToColumnMap().get(thisColumn.getAst().token);
-
-                // We cannot mutate the column on this model, because columns might be shared between
-                // models. The bottomUpColumns are also referenced by `aliasToColumnMap`. Typically,
-                // `thisColumn` alias should let us lookup, the column's reference
-                QueryColumn col = queryColumnPool.next();
-                col.of(thisColumn.getAlias(), thatColumn.getAst());
-                bottomUpColumns.setQuick(i, col);
-
-                int index = aliasToColumnMap.keyIndex(thisColumn.getAlias());
-                assert index < 0;
-                final CharSequence immutableAlias = aliasToColumnMap.keyAt(index);
-                aliasToColumnMap.putAt(index, immutableAlias, col);
-                // maintain sync between alias and column name
-                aliasToColumnNameMap.put(immutableAlias, thatColumn.getAst().token);
-            }
-        }
-
-        if (nested.getOrderBy().size() > 0) {
-            assert getOrderBy().size() == 0;
-            for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
-                addOrderBy(nested.getOrderBy().getQuick(i), nested.getOrderByDirection().getQuick(i));
-            }
-            nested.getOrderBy().clear();
-            nested.getOrderByDirection().clear();
-        }
-
-        // If nested model has limits, the outer model must not have different limits.
-        // We are merging models affecting "select" clause and not the row count.
-        if (nested.limitLo != null || nested.limitHi != null) {
-            limitLo = nested.limitLo;
-            limitHi = nested.limitHi;
-            limitPosition = nested.limitPosition;
-            limitAdviceLo = nested.limitAdviceLo;
-            limitAdviceHi = nested.limitAdviceHi;
-        }
+        sampleByTo = null;
+        sampleByFrom = null;
     }
 
     public boolean containsJoin() {
@@ -663,6 +631,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(timestamp, that.timestamp)
                 && Objects.equals(sampleBy, that.sampleBy)
                 && Objects.equals(sampleByUnit, that.sampleByUnit)
+                && Objects.equals(sampleByTo, that.sampleByTo)
+                && Objects.equals(sampleByFrom, that.sampleByFrom)
+                && Objects.equals(fillFrom, that.fillFrom)
+                && Objects.equals(fillTo, that.fillTo)
+                && Objects.equals(fillStride, that.fillStride)
                 && Objects.equals(context, that.context)
                 && Objects.equals(joinCriteria, that.joinCriteria)
                 && Objects.equals(orderedJoinModels, that.orderedJoinModels)
@@ -672,7 +645,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(limitAdviceHi, that.limitAdviceHi)
                 && Objects.equals(unionModel, that.unionModel)
                 && Objects.equals(updateTableModel, that.updateTableModel)
-                && Objects.equals(updateTableToken, that.updateTableToken);
+                && Objects.equals(updateTableToken, that.updateTableToken)
+                && skipped == that.skipped;
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -731,6 +705,22 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public ObjList<ExpressionNode> getExpressionModels() {
         return expressionModels;
+    }
+
+    public ExpressionNode getFillFrom() {
+        return fillFrom;
+    }
+
+    public ExpressionNode getFillStride() {
+        return fillStride;
+    }
+
+    public ExpressionNode getFillTo() {
+        return fillTo;
+    }
+
+    public ObjList<ExpressionNode> getFillValues() {
+        return fillValues;
     }
 
     public ObjList<ExpressionNode> getGroupBy() {
@@ -883,12 +873,20 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return sampleByFill;
     }
 
+    public ExpressionNode getSampleByFrom() {
+        return sampleByFrom;
+    }
+
     public ExpressionNode getSampleByOffset() {
         return sampleByOffset;
     }
 
     public ExpressionNode getSampleByTimezoneName() {
         return sampleByTimezoneName;
+    }
+
+    public ExpressionNode getSampleByTo() {
+        return sampleByTo;
     }
 
     public ExpressionNode getSampleByUnit() {
@@ -941,11 +939,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public ObjList<CharSequence> getUpdateTableColumnNames() {
-        return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnNames() : updateTableColumnNames;
+        return updateTableModel != null ? updateTableModel.getUpdateTableColumnNames() : updateTableColumnNames;
     }
 
     public IntList getUpdateTableColumnTypes() {
-        return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnTypes() : updateTableColumnTypes;
+        return updateTableModel != null ? updateTableModel.getUpdateTableColumnTypes() : updateTableColumnTypes;
     }
 
     public TableToken getUpdateTableToken() {
@@ -991,7 +989,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 postJoinWhereClause, outerJoinExpressionClause, constWhereClause, nestedModel,
                 tableNameExpr, metadataVersion, tableNameFunction,
                 alias, timestamp, sampleBy,
-                sampleByUnit, context, joinCriteria,
+                sampleByUnit, sampleByTo, sampleByFrom, context, joinCriteria,
                 joinType, joinKeywordPosition, orderedJoinModels,
                 limitLo, limitHi, limitPosition,
                 limitAdviceLo, limitAdviceHi, isLimitImplemented,
@@ -999,7 +997,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 distinct, unionModel, setOperationType,
                 modelPosition, orderByAdviceMnemonic, tableId,
                 isUpdateModel, modelType, updateTableModel,
-                updateTableToken, artificialStar
+                updateTableToken, artificialStar, fillFrom, fillStride, fillTo, fillValues
         );
     }
 
@@ -1043,6 +1041,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return isSelectTranslation;
     }
 
+    public boolean isSkipped() {
+        return skipped;
+    }
+
     @SuppressWarnings("unused")
     public boolean isTemporalJoin() {
         return joinType >= JOIN_ASOF && joinType <= JOIN_LT;
@@ -1054,6 +1056,58 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isUpdate() {
         return isUpdateModel;
+    }
+
+    /**
+     * The goal of this method is to dismiss the nested model as
+     * the layer between this and the model the nested is referencing. We do that by copying ASTs from
+     * the nested model onto the current model and also maintaining all the maps in sync.
+     * <p>
+     * The caller is responsible for checking if nested model is suitable for the removal. E.g. it does not
+     * contain arithmetic expressions. Although this method does not validate if nested has arithmetic.
+     *
+     * @param nested model containing columns mapped into the referenced model.
+     */
+    public void mergePartially(QueryModel nested, ObjectPool<QueryColumn> queryColumnPool) {
+        for (int i = 0, n = bottomUpColumns.size(); i < n; i++) {
+            QueryColumn thisColumn = bottomUpColumns.getQuick(i);
+            if (thisColumn.getAst().type == ExpressionNode.LITERAL) {
+                QueryColumn thatColumn = nested.getAliasToColumnMap().get(thisColumn.getAst().token);
+
+                // We cannot mutate the column on this model, because columns might be shared between
+                // models. The bottomUpColumns are also referenced by `aliasToColumnMap`. Typically,
+                // `thisColumn` alias should let us lookup, the column's reference
+                QueryColumn col = queryColumnPool.next();
+                col.of(thisColumn.getAlias(), thatColumn.getAst());
+                bottomUpColumns.setQuick(i, col);
+
+                int index = aliasToColumnMap.keyIndex(thisColumn.getAlias());
+                assert index < 0;
+                final CharSequence immutableAlias = aliasToColumnMap.keyAt(index);
+                aliasToColumnMap.putAt(index, immutableAlias, col);
+                // maintain sync between alias and column name
+                aliasToColumnNameMap.put(immutableAlias, thatColumn.getAst().token);
+            }
+        }
+
+        if (nested.getOrderBy().size() > 0) {
+            assert getOrderBy().size() == 0;
+            for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
+                addOrderBy(nested.getOrderBy().getQuick(i), nested.getOrderByDirection().getQuick(i));
+            }
+            nested.getOrderBy().clear();
+            nested.getOrderByDirection().clear();
+        }
+
+        // If nested model has limits, the outer model must not have different limits.
+        // We are merging models affecting "select" clause and not the row count.
+        if (nested.limitLo != null || nested.limitHi != null) {
+            limitLo = nested.limitLo;
+            limitHi = nested.limitHi;
+            limitPosition = nested.limitPosition;
+            limitAdviceLo = nested.limitAdviceLo;
+            limitAdviceHi = nested.limitAdviceHi;
+        }
     }
 
     public void moveGroupByFrom(QueryModel model) {
@@ -1083,6 +1137,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.sampleByFill.addAll(model.sampleByFill);
         this.sampleByTimezoneName = model.sampleByTimezoneName;
         this.sampleByOffset = model.sampleByOffset;
+        this.sampleByTo = model.sampleByTo;
+        this.sampleByFrom = model.sampleByFrom;
 
         // clear the source
         model.clearSampleBy();
@@ -1180,6 +1236,22 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.explicitTimestamp = explicitTimestamp;
     }
 
+    public void setFillFrom(ExpressionNode fillFrom) {
+        this.fillFrom = fillFrom;
+    }
+
+    public void setFillStride(ExpressionNode fillStride) {
+        this.fillStride = fillStride;
+    }
+
+    public void setFillTo(ExpressionNode fillTo) {
+        this.fillTo = fillTo;
+    }
+
+    public void setFillValues(ObjList<ExpressionNode> fillValues) {
+        this.fillValues = fillValues;
+    }
+
     public void setIsUpdate(boolean isUpdate) {
         this.isUpdateModel = isUpdate;
     }
@@ -1268,6 +1340,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.sampleByUnit = sampleByUnit;
     }
 
+    public void setSampleByFromTo(ExpressionNode from, ExpressionNode to) {
+        this.sampleByFrom = from;
+        this.sampleByTo = to;
+    }
+
     public void setSampleByOffset(ExpressionNode sampleByOffset) {
         this.sampleByOffset = sampleByOffset;
     }
@@ -1292,8 +1369,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         this.showKind = showKind;
     }
 
-    public void setTableFactory(RecordCursorFactory function) {
-        this.tableNameFunction = function;
+    public void setSkipped(boolean skipped) {
+        this.skipped = skipped;
     }
 
     public void setTableId(int id) {
@@ -1302,6 +1379,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setTableNameExpr(ExpressionNode tableNameExpr) {
         this.tableNameExpr = tableNameExpr;
+    }
+
+    public void setTableNameFunction(RecordCursorFactory function) {
+        this.tableNameFunction = function;
     }
 
     public void setTimestamp(ExpressionNode timestamp) {
@@ -1687,6 +1768,16 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
             sink.putAscii(" sample by ");
             sampleBy.toSink(sink);
 
+            if (sampleByFrom != null) {
+                sink.putAscii(" from ");
+                sampleByFrom.toSink(sink);
+            }
+
+            if (sampleByTo != null) {
+                sink.putAscii(" to ");
+                sampleByTo.toSink(sink);
+            }
+
             final int fillCount = sampleByFill.size();
             if (fillCount > 0) {
                 sink.putAscii(" fill(");
@@ -1713,6 +1804,43 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                     sink.put(sampleByOffset);
                 }
             }
+        }
+
+        if (groupBy.size() > 0 && selectModelType != SELECT_MODEL_GROUP_BY) {
+            sink.putAscii(" group by ");
+            for (int i = 0, n = groupBy.size(); i < n; i++) {
+                if (i > 0) {
+                    sink.putAscii(", ");
+                }
+                sink.put(groupBy.get(i));
+            }
+        }
+
+        if (fillValues != null && fillValues.size() > 0) {
+            sink.putAscii(" fill(");
+            for (int i = 0, n = fillValues.size(); i < n; i++) {
+                if (i > 0) {
+                    sink.put(',');
+                }
+                sink.put(fillValues.getQuick(i));
+            }
+            sink.put(')');
+        }
+
+        if (fillFrom != null || fillTo != null) {
+            if (fillFrom != null) {
+                sink.putAscii(" from ");
+                sink.put(fillFrom);
+            }
+            if (fillTo != null) {
+                sink.putAscii(" to ");
+                sink.put(fillTo);
+            }
+        }
+
+        if (fillStride != null) {
+            sink.putAscii(" stride ");
+            sink.put(fillStride);
         }
 
         if (showOrderBy && orderBy.size() > 0) {

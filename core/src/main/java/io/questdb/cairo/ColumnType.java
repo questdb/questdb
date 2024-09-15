@@ -126,7 +126,7 @@ public final class ColumnType {
             case VARCHAR:
                 return VarcharTypeDriver.INSTANCE;
             default:
-                throw CairoException.critical(0).put("there is no driver to type: ").put(columnType);
+                throw CairoException.critical(0).put("no driver for type: ").put(columnType);
         }
     }
 
@@ -167,7 +167,10 @@ public final class ColumnType {
         // This is usually case for widening conversions.
         return (fromType >= BYTE && toType >= BYTE && toType <= DOUBLE && fromType < toType) || fromType == NULL
                 // char can be short and short can be char for symmetry
-                || (fromType == CHAR && toType == SHORT) || (fromType == TIMESTAMP && toType == LONG);
+                || (fromType == CHAR && toType == SHORT)
+                // Same with bytes and bools
+                || (fromType == BYTE && toType == BOOLEAN)
+                || (fromType == TIMESTAMP && toType == LONG);
     }
 
     public static boolean isChar(int columnType) {
@@ -339,14 +342,6 @@ public final class ColumnType {
         return nameTypeMap.get(name);
     }
 
-    public static int variableColumnLengthBytes(int columnType) {
-        if (columnType == ColumnType.STRING) {
-            return Integer.BYTES;
-        }
-        assert columnType == ColumnType.BINARY;
-        return Long.BYTES;
-    }
-
     private static boolean isGeoHashWideningCast(int fromType, int toType) {
         final int toTag = tagOf(toType);
         final int fromTag = tagOf(fromType);
@@ -415,7 +410,12 @@ public final class ColumnType {
 
     static {
         assert MIGRATION_VERSION >= VERSION;
-        // For function overload the priority is taken from left to right
+        // Overload priority is used (indirectly) to route argument type to correct function signature.
+        // The argument type keys the array (see comments in the array initialized). This type has to match
+        // the numeric value of the type text. Values are then picked in left-to-right order. Signature types
+        // on the left are used only if none of signature types on the right exist.
+        //
+        // All types must be mentioned at all times.
         OVERLOAD_PRIORITY = new short[][]{
                 /* 0 UNDEFINED  */  {DOUBLE, FLOAT, STRING, VARCHAR, LONG, TIMESTAMP, DATE, INT, CHAR, SHORT, BYTE, BOOLEAN}
                 /* 1  BOOLEAN   */, {BOOLEAN}
@@ -428,8 +428,8 @@ public final class ColumnType {
                 /* 8  TIMESTAMP */, {TIMESTAMP, LONG, DATE}
                 /* 9  FLOAT     */, {FLOAT, DOUBLE}
                 /* 10 DOUBLE    */, {DOUBLE}
-                /* 11 STRING    */, {STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE}
-                /* 12 SYMBOL    */, {SYMBOL, STRING, VARCHAR}
+                /* 11 STRING    */, {STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
+                /* 12 SYMBOL    */, {SYMBOL, STRING, VARCHAR, TIMESTAMP}
                 /* 13 LONG256   */, {LONG256}
                 /* 14 GEOBYTE   */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
                 /* 15 GEOSHORT  */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
@@ -437,18 +437,27 @@ public final class ColumnType {
                 /* 17 GEOLONG   */, {GEOLONG, GEOHASH}
                 /* 18 BINARY    */, {BINARY}
                 /* 19 UUID      */, {UUID, STRING, VARCHAR}
-                /* 20 VARCHAR   */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE}
+                /* 20 CURSOR    */, {CURSOR}
+                /* 21 unused    */, {}
+                /* 22 unused    */, {}
+                /* 23 unused    */, {}
+                /* 24 LONG128   */, {LONG128}
+                /* 25 IPv4      */, {IPv4}
+                /* 26 VARCHAR   */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP}
+                /* 27 unused    */, {}
+                /* 28 unused    */, {}
+                /* 29 unused    */, {}
+                /* 30 unused    */, {}
+                /* 31 NULL      */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
         };
         for (short fromTag = UNDEFINED; fromTag < NULL; fromTag++) {
             for (short toTag = BOOLEAN; toTag <= NULL; toTag++) {
                 short value = OVERLOAD_NONE;
-                if (fromTag < OVERLOAD_PRIORITY.length) {
-                    short[] priority = OVERLOAD_PRIORITY[fromTag];
-                    for (short i = 0; i < priority.length; i++) {
-                        if (priority[i] == toTag) {
-                            value = i;
-                            break;
-                        }
+                short[] priority = OVERLOAD_PRIORITY[fromTag];
+                for (short i = 0; i < priority.length; i++) {
+                    if (priority[i] == toTag) {
+                        value = i;
+                        break;
                     }
                 }
                 OVERLOAD_PRIORITY_MATRIX[OVERLOAD_PRIORITY_N * fromTag + toTag] = value;

@@ -32,21 +32,6 @@ import org.junit.Test;
 public class OrderByAdviceTest extends AbstractCairoTest {
 
     @Test
-    public void testDistinctWithOrderBy() throws Exception {
-        assertQuery(
-                "b\n2\n1\n0\n",
-                "select distinct b from x order by b desc;",
-                "create table x as (" +
-                        "select" +
-                        " x a," +
-                        " x % 3 b" +
-                        " from long_sequence(9)" +
-                        ")",
-                null
-        );
-    }
-
-    @Test
     public void testCreateDesignatedTimestampFromMultipleOrderBy() throws Exception {
         assertQuery(
                 "a\tt\n" +
@@ -73,47 +58,38 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSkipDesignatedTimestampFromMultipleOrderBy() throws Exception {
+    public void testDistinctWithOrderBy() throws Exception {
         assertQuery(
-                "a\tt\n" +
-                        "-1148479920\t1970-01-01T00:00:00.000000Z\n" +
-                        "-948263339\t1970-01-01T00:00:00.005000Z\n" +
-                        "-727724771\t1970-01-01T00:00:00.003000Z\n" +
-                        "73575701\t1970-01-01T00:00:00.004000Z\n" +
-                        "315515118\t1970-01-01T00:00:00.001000Z\n" +
-                        "592859671\t1970-01-01T00:00:00.007000Z\n" +
-                        "1326447242\t1970-01-01T00:00:00.006000Z\n" +
-                        "1548800833\t1970-01-01T00:00:00.002000Z\n" +
-                        "1868723706\t1970-01-01T00:00:00.008000Z\n",
-                "select * from x order by a, t",
-                "create table x as (" +
-                        "select" +
-                        " rnd_int() a," +
-                        " timestamp_sequence(0, 1000) t" +
-                        " from long_sequence(9)" +
-                        ")",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testDistinctWithOrderByAnotherColumn() throws Exception {
-        ddl(
+                "b\n2\n1\n0\n",
+                "select distinct b from x order by b desc;",
                 "create table x as (" +
                         "select" +
                         " x a," +
                         " x % 3 b" +
                         " from long_sequence(9)" +
-                        ")"
+                        ")",
+                null
         );
+    }
 
-        assertException(
-                "select distinct b from x order by a desc;",
-                34,
-                "ORDER BY expressions must appear in select list."
-        );
+    @Test
+    public void testDistinctWithOrderByAnotherColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table x as (" +
+                            "select" +
+                            " x a," +
+                            " x % 3 b" +
+                            " from long_sequence(9)" +
+                            ")"
+            );
+
+            assertException(
+                    "select distinct b from x order by a desc;",
+                    34,
+                    "ORDER BY expressions must appear in select list."
+            );
+        });
     }
 
     @Test
@@ -147,7 +123,8 @@ public class OrderByAdviceTest extends AbstractCairoTest {
 
         assertQuery(
                 "sym\tspread\n",
-                "select sym, ask-bid spread from x where ts IN '1970-01-03' order by spread", "create table x (\n" +
+                "select sym, ask-bid spread from x where ts IN '1970-01-03' order by spread",
+                "create table x (\n" +
                         "    sym symbol index,\n" +
                         "    bid int,\n" +
                         "    ask int,\n" +
@@ -627,7 +604,6 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 "BB\t-1191262516\t-2041844972\t1970-01-03T00:18:00.000000Z\n" +
                 "AA\t315515118\t1548800833\t1970-01-03T00:00:00.000000Z\n";
 
-
         assertQuery(
                 "sym\tbid\task\tts\n",
                 "select * from x where sym in ('AA', 'BB' ) order by ts desc",
@@ -791,22 +767,48 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     @Test
     public void testSingleSymbolSearchOrderByAliasAndTimestampDescEmpty() throws Exception {
         TestMatchFunctionFactory.clear();
+        assertMemoryLeak(() -> {
+            assertQueryNoLeakCheck(
+                    "k\tprice\tts\n",
+                    "select sym k, price, ts from x where 1 = 2 and sym = 'HBC' and test_match() and ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc",
+                    "create table x (\n" +
+                            "    sym symbol index,\n" +
+                            "    price double,\n" +
+                            "    ts timestamp\n" +
+                            ") timestamp(ts) partition by DAY",
+                    null,
+                    true,
+                    true
 
+            );
+            Assert.assertTrue(TestMatchFunctionFactory.isClosed());
+        });
+    }
+
+    @Test
+    public void testSkipDesignatedTimestampFromMultipleOrderBy() throws Exception {
         assertQuery(
-                "k\tprice\tts\n",
-                "select sym k, price, ts from x where 1 = 2 and sym = 'HBC' and test_match() and ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc",
-                "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
+                "a\tt\n" +
+                        "-1148479920\t1970-01-01T00:00:00.000000Z\n" +
+                        "-948263339\t1970-01-01T00:00:00.005000Z\n" +
+                        "-727724771\t1970-01-01T00:00:00.003000Z\n" +
+                        "73575701\t1970-01-01T00:00:00.004000Z\n" +
+                        "315515118\t1970-01-01T00:00:00.001000Z\n" +
+                        "592859671\t1970-01-01T00:00:00.007000Z\n" +
+                        "1326447242\t1970-01-01T00:00:00.006000Z\n" +
+                        "1548800833\t1970-01-01T00:00:00.002000Z\n" +
+                        "1868723706\t1970-01-01T00:00:00.008000Z\n",
+                "select * from x order by a, t",
+                "create table x as (" +
+                        "select" +
+                        " rnd_int() a," +
+                        " timestamp_sequence(0, 1000) t" +
+                        " from long_sequence(9)" +
+                        ")",
                 null,
                 true,
                 true
-
         );
-
-        Assert.assertTrue(TestMatchFunctionFactory.isClosed());
     }
 
     @Test
@@ -1167,20 +1169,22 @@ public class OrderByAdviceTest extends AbstractCairoTest {
     @Test
     public void testSymbolSearchOrderByAliasAndTimestampDescEmpty() throws Exception {
         TestMatchFunctionFactory.clear();
-        assertQuery(
-                "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym in ('HBC', 'ABB') and 1 = 3 and test_match() and ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc",
-                "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                true,
-                true
+        assertMemoryLeak(() -> {
+            assertQueryNoLeakCheck(
+                    "k\tprice\tts\n",
+                    "select sym k, price, ts from x where sym in ('HBC', 'ABB') and 1 = 3 and test_match() and ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc",
+                    "create table x (\n" +
+                            "    sym symbol index,\n" +
+                            "    price double,\n" +
+                            "    ts timestamp\n" +
+                            ") timestamp(ts) partition by DAY",
+                    null,
+                    true,
+                    true
 
-        );
-        Assert.assertTrue(TestMatchFunctionFactory.isClosed());
+            );
+            Assert.assertTrue(TestMatchFunctionFactory.isClosed());
+        });
     }
 
     @Test

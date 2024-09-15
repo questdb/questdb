@@ -30,6 +30,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+
 public class BitwiseOrStrIPv4FunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {

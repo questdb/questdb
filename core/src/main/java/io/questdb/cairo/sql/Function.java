@@ -34,9 +34,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -69,12 +67,30 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         }
     }
 
+    static void initNcFunctions(
+            ObjList<? extends Function> args,
+            SymbolTableSource symbolTableSource,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (args != null) {
+            for (int i = 0, n = args.size(); i < n; i++) {
+                final Function arg = args.getQuiet(i);
+                if (arg != null) {
+                    arg.init(symbolTableSource, executionContext);
+                }
+            }
+        }
+    }
+
     default void assignType(int type, BindVariableService bindVariableService) throws SqlException {
         throw new UnsupportedOperationException();
     }
 
     @Override
     default void close() {
+    }
+
+    default void cursorClosed() {
     }
 
     int getArrayLength();
@@ -124,7 +140,8 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     }
 
     /**
-     * Returns function name or symbol, e.g. concat or + .
+     * @return function name or symbol, e.g. concat or + .
+     * r=
      */
     default String getName() {
         return getClass().getName();
@@ -138,10 +155,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     RecordCursorFactory getRecordCursorFactory();
 
     short getShort(Record rec);
-
-    void getStr(Record rec, Utf16Sink utf16Sink);
-
-    void getStr(Record rec, Utf16Sink sink, int arrayIndex);
 
     CharSequence getStrA(Record rec);
 
@@ -163,17 +176,24 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
 
     int getType();
 
-    void getVarchar(Record rec, Utf8Sink utf8Sink);
+    @Nullable
+    Utf8Sequence getVarcharA(Record rec);
 
-    @Nullable Utf8Sequence getVarcharA(Record rec);
-
-    @Nullable Utf8Sequence getVarcharB(Record rec);
+    @Nullable
+    Utf8Sequence getVarcharB(Record rec);
 
     /**
      * @return size of the varchar value or {@link TableUtils#NULL_LEN} in case of NULL
      */
     int getVarcharSize(Record rec);
 
+    /**
+     * Returns true if function is constant, i.e. its value does not require
+     * any input from the record.
+     *
+     * @return true if function is constant
+     * @see #isRuntimeConstant()
+     */
     default boolean isConstant() {
         return false;
     }
@@ -201,8 +221,18 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return false;
     }
 
-    // If function is constant for query, e.g. record independent
-    // For example now() and bind variables are Runtime Constants
+    /**
+     * Declares that the function will maintain its value for all the rows during
+     * {@link RecordCursor} traversal. However, between cursor traversals the function
+     * value is liable to change.
+     * <p>
+     * In practice this means that function arguments that are runtime constants can be
+     * evaluated in the functions {@link #init(ObjList, SymbolTableSource, SqlExecutionContext)} call.
+     * <p>
+     * It has be noted that the function cannot be both {@link #isConstant()} and runtime constant.
+     *
+     * @return true when function is runtime constant.
+     */
     default boolean isRuntimeConstant() {
         return false;
     }

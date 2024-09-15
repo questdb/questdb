@@ -82,8 +82,7 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     @Override
     public void close() {
         if (address != 0) {
-            Unsafe.free(address, capacity, memoryTag);
-            address = 0;
+            address = Unsafe.free(address, capacity, memoryTag);
             limit = 0;
             pos = 0;
             capacity = 0;
@@ -102,6 +101,13 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
     // capacity in INTs
     public long getCapacity() {
         return capacity >>> 2;
+    }
+
+    public void removeLast() {
+        if (pos == address) {
+            return;
+        }
+        pos -= Integer.BYTES;
     }
 
     @Override
@@ -172,12 +178,17 @@ public class DirectIntList implements Mutable, Closeable, Reopenable {
             }
             final long oldCapacity = this.capacity;
             final long oldSize = this.pos - this.address;
-            this.capacity = capacity;
-            long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
-            this.address = address;
-            this.limit = address + capacity;
-            this.pos = Math.min(this.limit, address + oldSize);
-            LOG.debug().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
+            try {
+                long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
+                this.capacity = capacity;
+                this.address = address;
+                this.limit = address + capacity;
+                this.pos = Math.min(this.limit, address + oldSize);
+                LOG.debug().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
+            } catch (Throwable t) {
+                close();
+                throw t;
+            }
         }
     }
 

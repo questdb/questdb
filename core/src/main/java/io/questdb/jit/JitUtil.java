@@ -32,7 +32,6 @@ public final class JitUtil {
     }
 
     public static boolean isJitSupported() {
-        // TODO what about FREEBSD_ARM64?
-        return Os.type != Os.LINUX_ARM64 && Os.type != Os.OSX_ARM64;
+        return Os.arch == Os.ARCH_X86_64;
     }
 }

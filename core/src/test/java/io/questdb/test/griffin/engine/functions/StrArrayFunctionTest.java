@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.StrArrayFunction;
-import io.questdb.std.str.Utf16Sink;
 import org.junit.Test;
 
 public class StrArrayFunctionTest {
@@ -46,16 +45,6 @@ public class StrArrayFunctionTest {
         @Override
         public CharSequence getStrA(Record rec, int arrayIndex) {
             return "hello";
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            utf16Sink.put(getStrA(rec));
-        }
-
-        @Override
-        public void getStr(Record rec, Utf16Sink sink, int arrayIndex) {
-            sink.put(getStrA(rec, arrayIndex));
         }
 
         @Override
@@ -83,26 +72,6 @@ public class StrArrayFunctionTest {
             return true;
         }
     };
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetGeoByte() {
-        function.getGeoByte(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetGeoInt() {
-        function.getGeoInt(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetGeoLong() {
-        function.getGeoLong(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetGeoShort() {
-        function.getGeoShort(null);
-    }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
@@ -135,18 +104,28 @@ public class StrArrayFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoByte() {
+        function.getGeoByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoInt() {
+        function.getGeoInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoLong() {
+        function.getGeoLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoShort() {
+        function.getGeoShort(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetIPv4() {
         function.getIPv4(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetRecordCursorFactory() {
-        function.getRecordCursorFactory();
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetTimestamp() {
-        function.getTimestamp(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -175,8 +154,13 @@ public class StrArrayFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetVarcharUtf8Sink() {
-        function.getVarchar(null, null);
+    public void testGetRecordCursorFactory() {
+        function.getRecordCursorFactory();
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetTimestamp() {
+        function.getTimestamp(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

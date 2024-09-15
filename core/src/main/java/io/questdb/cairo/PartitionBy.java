@@ -63,13 +63,13 @@ public final class PartitionBy {
     private static final PartitionAddMethod ADD_HH = Timestamps::addHours;
     private static final PartitionAddMethod ADD_MM = Timestamps::addMonths;
     private static final PartitionAddMethod ADD_WW = Timestamps::addWeeks;
-    private static final PartitionAddMethod ADD_YYYY = Timestamps::addYear;
+    private static final PartitionAddMethod ADD_YYYY = Timestamps::addYears;
     private static final PartitionCeilMethod CEIL_DD = Timestamps::ceilDD;
     private static final PartitionCeilMethod CEIL_HH = Timestamps::ceilHH;
     private static final PartitionCeilMethod CEIL_MM = Timestamps::ceilMM;
     private static final PartitionCeilMethod CEIL_WW = Timestamps::ceilWW;
     private static final PartitionCeilMethod CEIL_YYYY = Timestamps::ceilYYYY;
-    private final static DateFormat DEFAULT_FORMAT = new DateFormat() {
+    private static final DateFormat DEFAULT_FORMAT = new DateFormat() {
         @Override
         public void format(long datetime, @NotNull DateLocale locale, @Nullable CharSequence timeZoneName, @NotNull CharSink<?> sink) {
             sink.putAscii(DEFAULT_PARTITION_NAME);
@@ -95,8 +95,8 @@ public final class PartitionBy {
     private static final DateFormat PARTITION_MONTH_FORMAT = new IsoDatePartitionFormat(FLOOR_MM, MONTH_FORMAT);
     private static final DateFormat PARTITION_WEEK_FORMAT = new IsoWeekPartitionFormat();
     private static final DateFormat PARTITION_YEAR_FORMAT = new IsoDatePartitionFormat(FLOOR_YYYY, YEAR_FORMAT);
-    private final static LowerCaseCharSequenceIntHashMap nameToIndexMap = new LowerCaseCharSequenceIntHashMap();
-    private final static LowerCaseUtf8SequenceIntHashMap nameToIndexMapUtf8 = new LowerCaseUtf8SequenceIntHashMap();
+    private static final LowerCaseCharSequenceIntHashMap nameToIndexMap = new LowerCaseCharSequenceIntHashMap();
+    private static final LowerCaseUtf8SequenceIntHashMap nameToIndexMapUtf8 = new LowerCaseUtf8SequenceIntHashMap();
 
     private PartitionBy() {
     }

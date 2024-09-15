@@ -30,7 +30,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.Chars;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 
@@ -96,11 +95,6 @@ public class VarcharConstant extends VarcharFunction implements ConstantFunction
     @Override
     public int getStrLen(Record rec) {
         return length;
-    }
-
-    @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        utf8Sink.put(value);
     }
 
     @Override

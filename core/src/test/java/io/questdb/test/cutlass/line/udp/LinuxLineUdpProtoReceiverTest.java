@@ -40,6 +40,7 @@ import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
@@ -81,49 +82,37 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
 
     @Test
     public void testLinuxCannotBindSocket() throws Exception {
-        if (Os.type != Os.LINUX_AMD64) {
-            return;
-        }
+        Assume.assumeTrue(Os.isLinux());
         assertCannotBindSocket(LINUX_FACTORY);
     }
 
     @Test
     public void testLinuxCannotJoin() throws Exception {
-        if (Os.type != Os.LINUX_AMD64) {
-            return;
-        }
+        Assume.assumeTrue(Os.isLinux());
         assertCannotJoin(LINUX_FACTORY);
     }
 
     @Test
     public void testLinuxCannotOpenSocket() throws Exception {
-        if (Os.type != Os.LINUX_AMD64) {
-            return;
-        }
+        Assume.assumeTrue(Os.isLinux());
         assertCannotOpenSocket(LINUX_FACTORY);
     }
 
     @Test
     public void testLinuxCannotSetReceiveBuffer() throws Exception {
-        if (Os.type != Os.LINUX_AMD64) {
-            return;
-        }
+        Assume.assumeTrue(Os.isLinux());
         assertCannotSetReceiveBuffer(LINUX_FACTORY);
     }
 
     @Test
     public void testLinuxFrequentCommit() throws Exception {
-        if (Os.type != Os.LINUX_AMD64) {
-            return;
-        }
+        Assume.assumeTrue(Os.isLinux());
         assertFrequentCommit(LINUX_FACTORY);
     }
 
     @Test
     public void testLinuxSimpleReceive() throws Exception {
-        if (Os.type != Os.LINUX_AMD64) {
-            return;
-        }
+        Assume.assumeTrue(Os.isLinux());
         assertReceive(new DefaultLineUdpReceiverConfiguration(), LINUX_FACTORY);
     }
 
@@ -131,7 +120,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public boolean bindUdp(int fd, int ipv4Address, int port) {
+                public boolean bindUdp(long fd, int ipv4Address, int port) {
                     return false;
                 }
             };
@@ -149,7 +138,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public boolean join(int fd, int bindIPv4Address, int groupIPv4Address) {
+                public boolean join(long fd, int bindIPv4Address, int groupIPv4Address) {
                     return false;
                 }
             };
@@ -168,7 +157,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
         TestUtils.assertMemoryLeak(() -> {
             NetworkFacade nf = new NetworkFacadeImpl() {
                 @Override
-                public int socketUdp() {
+                public long socketUdp() {
                     return -1;
                 }
             };
@@ -185,7 +174,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
     private void assertCannotSetReceiveBuffer(ReceiverFactory factory) throws Exception {
         NetworkFacade nf = new NetworkFacadeImpl() {
             @Override
-            public int setRcvBuf(int fd, int size) {
+            public int setRcvBuf(long fd, int size) {
                 return -1;
             }
         };
@@ -293,7 +282,7 @@ public class LinuxLineUdpProtoReceiverTest extends AbstractCairoTest {
                 boolean isWorkerPoolLocal,
                 int sharedWorkerCount,
                 @Nullable FunctionFactoryCache functionFactoryCache,
-                @Nullable DatabaseSnapshotAgent snapshotAgent,
+                @Nullable DatabaseCheckpointStatus snapshotAgent,
                 Metrics metrics
         );
     }

@@ -37,6 +37,8 @@ import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.mp.TestWorkerPool;
@@ -117,6 +119,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(), 0.01,
+                rnd.nextDouble(),
                 rnd.nextDouble()
         );
 
@@ -155,8 +158,12 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             }
         }
 
+        Utf8StringSink sink = new Utf8StringSink();
         for (; symbolIndex < totalSymbols; symbolIndex++) {
-            symbols[symbolIndex] = strLen > 0 ? Chars.toString(rnd.nextChars(rnd.nextInt(strLen))) : "";
+            // Create strings with unicode chars
+            sink.clear();
+            rnd.nextUtf8Str(rnd.nextInt(strLen), sink);
+            symbols[symbolIndex] = strLen > 0 ? Utf8s.toString(sink) : "";
         }
         return symbols;
     }
@@ -175,10 +182,10 @@ public class AbstractFuzzTest extends AbstractCairoTest {
 
     protected void runFuzz(Rnd rnd) throws Exception {
         assertMemoryLeak(() -> {
-            WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
-            sharedWorkerPool.start(LOG);
-
             try {
+                WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+                sharedWorkerPool.start(LOG);
+
                 int size = rnd.nextInt(16 * 1024 * 1024);
                 node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
                 setZeroWalPurgeInterval();
@@ -191,10 +198,10 @@ public class AbstractFuzzTest extends AbstractCairoTest {
 
     protected void runFuzz(Rnd rnd, String tableNameBase, int tableCount) throws Exception {
         assertMemoryLeak(() -> {
-            WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
-            sharedWorkerPool.start(LOG);
-
             try {
+                WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+                sharedWorkerPool.start(LOG);
+
                 setZeroWalPurgeInterval();
                 fuzzer.runFuzz(rnd, tableNameBase, tableCount, false, false);
             } finally {
@@ -207,8 +214,8 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         fuzzer.setFuzzCounts(isO3, fuzzRowCount, transactionCount, strLen, symbolStrLenMax, symbolCountMax, initialRowCount, partitionCount);
     }
 
-    protected void setFuzzProbabilities(double cancelRowsProb, double notSetProb, double nullSetProb, double rollbackProb, double collAddProb, double collRemoveProb, double colRenameProb, double dataAddProb, double truncateProb, double equalTsRowsProb, double tableDropProb) {
-        fuzzer.setFuzzProbabilities(cancelRowsProb, notSetProb, nullSetProb, rollbackProb, collAddProb, collRemoveProb, colRenameProb, dataAddProb, truncateProb, equalTsRowsProb, tableDropProb);
+    protected void setFuzzProbabilities(double cancelRowsProb, double notSetProb, double nullSetProb, double rollbackProb, double collAddProb, double collRemoveProb, double colRenameProb, double dataAddProb, double truncateProb, double equalTsRowsProb, double tableDropProb, double colTypeChangeProb) {
+        fuzzer.setFuzzProbabilities(cancelRowsProb, notSetProb, nullSetProb, rollbackProb, collAddProb, collRemoveProb, colRenameProb, dataAddProb, truncateProb, equalTsRowsProb, tableDropProb, colTypeChangeProb);
     }
 
     protected void setFuzzProperties(long maxApplyTimePerTable, long splitPartitionThreshold, int o3PartitionSplitMaxCount) {

@@ -36,12 +36,12 @@ public class NotMatchVarcharFunctionFactoryTest extends AbstractCairoTest {
     public void testNullRegex() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_varchar() name from long_sequence(2000))");
-            try {
-                assertException("select * from x where name !~ null");
-            } catch (SqlException e) {
-                Assert.assertEquals(30, e.getPosition());
-                TestUtils.assertContains(e.getFlyweightMessage(), "NULL regex");
-            }
+            assertQuery(
+                    "name\n",
+                    "select * from x where name !~ null",
+                    false,
+                    true
+            );
         });
     }
 
@@ -50,7 +50,7 @@ public class NotMatchVarcharFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table x as (select rnd_varchar() name from long_sequence(2000))");
             try {
-                assertException("select * from x where name !~ 'XJ**'");
+                assertExceptionNoLeakCheck("select * from x where name !~ 'XJ**'");
             } catch (SqlException e) {
                 Assert.assertEquals(34, e.getPosition());
                 TestUtils.assertContains(e.getFlyweightMessage(), "Dangling meta");

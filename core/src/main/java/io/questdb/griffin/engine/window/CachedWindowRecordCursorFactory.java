@@ -69,79 +69,90 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             @NotNull GenericRecordMetadata chainMetadata
     ) {
         super(metadata);
-        this.base = base;
-        this.orderedGroupCount = comparators.size();
-        assert orderedGroupCount == orderedFunctions.size();
-        this.orderedFunctions = orderedFunctions;
-        this.comparators = comparators;
-        RecordChain recordChain = new RecordChain(
-                chainTypes,
-                recordSink,
-                configuration.getSqlWindowStorePageSize(),
-                configuration.getSqlWindowStoreMaxPages()
-        );
-        this.sortKeys = sortKeys;
-        this.chainMetadata = chainMetadata;
-
-        ObjList<LongTreeChain> orderedSources = new ObjList<>(orderedGroupCount);
-        // red&black trees, one for each comparator where comparator is not null
-        for (int i = 0; i < orderedGroupCount; i++) {
-            orderedSources.add(
-                    new LongTreeChain(
-                            configuration.getSqlWindowTreeKeyPageSize(),
-                            configuration.getSqlWindowTreeKeyMaxPages(),
-                            configuration.getSqlWindowRowIdPageSize(),
-                            configuration.getSqlWindowRowIdMaxPages()
-                    )
+        try {
+            this.base = base;
+            this.orderedGroupCount = comparators.size();
+            assert orderedGroupCount == orderedFunctions.size();
+            this.orderedFunctions = orderedFunctions;
+            this.comparators = comparators;
+            RecordChain recordChain = new RecordChain(
+                    chainTypes,
+                    recordSink,
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages()
             );
-        }
+            this.sortKeys = sortKeys;
+            this.chainMetadata = chainMetadata;
 
-        this.cursor = new CachedWindowRecordCursor(columnIndexes, recordChain, orderedSources);
-        this.allFunctions = new ObjList<>();
+            ObjList<LongTreeChain> orderedSources = new ObjList<>(orderedGroupCount);
+            // red&black trees, one for each comparator where comparator is not null
+            try {
+                for (int i = 0; i < orderedGroupCount; i++) {
+                    orderedSources.add(
+                            new LongTreeChain(
+                                    configuration.getSqlWindowTreeKeyPageSize(),
+                                    configuration.getSqlWindowTreeKeyMaxPages(),
+                                    configuration.getSqlWindowRowIdPageSize(),
+                                    configuration.getSqlWindowRowIdMaxPages()
+                            )
+                    );
+                }
+            } catch (Throwable t) {
+                Misc.freeObjList(orderedSources);
+                recordChain.close();
+                throw t;
+            }
 
-        ObjList<ObjList<WindowFunction>> orderedTmp = null;
-        for (int i = 0, n = orderedFunctions.size(); i < n; i++) {
-            ObjList<WindowFunction> functions = orderedFunctions.getQuick(i);
-            allFunctions.addAll(functions);
+            this.cursor = new CachedWindowRecordCursor(columnIndexes, recordChain, orderedSources);
+            this.allFunctions = new ObjList<>();
 
-            ObjList<WindowFunction> twoPassFunctions = null;
-            for (int j = 0, k = functions.size(); j < k; j++) {
-                WindowFunction function = functions.getQuick(j);
-                if (function.getPassCount() > WindowFunction.ONE_PASS) {
-                    if (twoPassFunctions == null) {
-                        twoPassFunctions = new ObjList<WindowFunction>();
+            ObjList<ObjList<WindowFunction>> orderedTmp = null;
+            for (int i = 0, n = orderedFunctions.size(); i < n; i++) {
+                ObjList<WindowFunction> functions = orderedFunctions.getQuick(i);
+                allFunctions.addAll(functions);
+
+                ObjList<WindowFunction> twoPassFunctions = null;
+                for (int j = 0, k = functions.size(); j < k; j++) {
+                    WindowFunction function = functions.getQuick(j);
+                    if (function.getPassCount() > WindowFunction.ONE_PASS) {
+                        if (twoPassFunctions == null) {
+                            twoPassFunctions = new ObjList<>();
+                        }
+                        twoPassFunctions.add(function);
                     }
-                    twoPassFunctions.add(function);
                 }
-            }
-            if (twoPassFunctions != null) {
-                if (orderedTmp == null) {
-                    orderedTmp = new ObjList<ObjList<WindowFunction>>();
-                }
-
-                orderedTmp.extendAndSet(i, twoPassFunctions);
-            }
-        }
-
-        ordered2PassFunctions = orderedTmp;
-
-        ObjList<WindowFunction> unorderedTmp = null;
-        if (unorderedFunctions != null) {
-            allFunctions.addAll(unorderedFunctions);
-
-            for (int i = 0, n = unorderedFunctions.size(); i < n; i++) {
-                WindowFunction function = unorderedFunctions.getQuick(i);
-                if (function.getPassCount() > WindowFunction.ONE_PASS) {
-                    if (unorderedTmp == null) {
-                        unorderedTmp = new ObjList<>();
+                if (twoPassFunctions != null) {
+                    if (orderedTmp == null) {
+                        orderedTmp = new ObjList<>();
                     }
-                    unorderedTmp.add(function);
+
+                    orderedTmp.extendAndSet(i, twoPassFunctions);
                 }
             }
-        }
-        this.unordered2PassFunctions = unorderedTmp;
 
-        this.unorderedFunctions = unorderedFunctions;
+            ordered2PassFunctions = orderedTmp;
+
+            ObjList<WindowFunction> unorderedTmp = null;
+            if (unorderedFunctions != null) {
+                allFunctions.addAll(unorderedFunctions);
+
+                for (int i = 0, n = unorderedFunctions.size(); i < n; i++) {
+                    WindowFunction function = unorderedFunctions.getQuick(i);
+                    if (function.getPassCount() > WindowFunction.ONE_PASS) {
+                        if (unorderedTmp == null) {
+                            unorderedTmp = new ObjList<>();
+                        }
+                        unorderedTmp.add(function);
+                    }
+                }
+            }
+            this.unordered2PassFunctions = unorderedTmp;
+
+            this.unorderedFunctions = unorderedFunctions;
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
@@ -253,14 +264,13 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         if (closed) {
             return;
         }
+        closed = true;
         Misc.free(base);
         Misc.free(cursor);
         Misc.freeObjList(allFunctions);
-        closed = true;
     }
 
     class CachedWindowRecordCursor implements RecordCursor {
-
         private final IntList columnIndexes; // Used for symbol table lookups.
         private final ObjList<LongTreeChain> orderedSources;
         private final RecordChain recordChain;
@@ -283,6 +293,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             if (!isRecordChainBuilt) {
                 buildRecordChain();
             }
+            isRecordChainBuilt = true;
             recordChain.calculateSize(circuitBreaker, counter);
         }
 
@@ -460,11 +471,11 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             recordChainOffset = -1;
             circuitBreaker = executionContext.getCircuitBreaker();
             if (!isOpen) {
+                isOpen = true;
                 recordChain.reopen();
                 recordChain.setSymbolTableResolver(this);
                 reopenTrees();
                 reopen(allFunctions);
-                isOpen = true;
             }
             Function.init(allFunctions, this, executionContext);
         }

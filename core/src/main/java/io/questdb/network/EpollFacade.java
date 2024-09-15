@@ -27,9 +27,9 @@ package io.questdb.network;
 public interface EpollFacade {
     int epollCreate();
 
-    int epollCtl(int epfd, int op, int fd, long eventPtr);
+    int epollCtl(long epfd, int op, long fd, long eventPtr);
 
-    int epollWait(int epfd, long eventPtr, int eventCount, int timeout);
+    int epollWait(long epfd, long eventPtr, int eventCount, int timeout);
 
     int errno();
 
@@ -37,7 +37,7 @@ public interface EpollFacade {
 
     NetworkFacade getNetworkFacade();
 
-    long readEventFd(int fd);
+    long readEventFd(long fd);
 
-    int writeEventFd(int fd);
+    int writeEventFd(long fd);
 }

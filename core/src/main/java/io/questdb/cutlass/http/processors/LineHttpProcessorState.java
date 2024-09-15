@@ -55,7 +55,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     private long buffer;
     private Status currentStatus = Status.OK;
     private long errorId;
-    private int fd = -1;
+    private long fd = -1;
     private int line = 0;
     private long recvBufEnd;
     private long recvBufPos;
@@ -72,7 +72,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         this.maxResponseErrorMessageLength = (int) ((maxResponseContentLength - 100) / 1.5);
         this.recvBufPos = this.buffer = Unsafe.malloc(recvBufSize, MemoryTag.NATIVE_HTTP_CONN);
         this.recvBufEnd = this.recvBufPos + recvBufSize;
-        this.parser = new LineTcpParser(configuration.isStringAsTagSupported(), configuration.isSymbolAsFieldSupported());
+        this.parser = new LineTcpParser();
         this.parser.of(buffer);
         this.appender = new LineWalAppender(
                 configuration.autoCreateNewColumns(),
@@ -151,7 +151,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         return currentStatus == Status.OK;
     }
 
-    public void of(int fd, byte timestampPrecision, SecurityContext securityContext) {
+    public void of(long fd, byte timestampPrecision, SecurityContext securityContext) {
         this.fd = fd;
         this.securityContext = securityContext;
         this.appender.setTimestampAdapter(timestampPrecision);
@@ -189,7 +189,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         }
     }
 
-    public void reject(Status status, String errorText, int fd) {
+    public void reject(Status status, String errorText, long fd) {
         currentStatus = status;
         error.put(errorText);
         this.fd = fd;

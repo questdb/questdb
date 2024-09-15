@@ -27,10 +27,7 @@ package io.questdb.test.griffin.engine.functions;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.CharFunction;
-import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
-import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -149,13 +146,6 @@ public class CharFunctionTest {
     }
 
     @Test
-    public void testGetStr2() {
-        StringSink sink = new StringSink();
-        function.getStr(null, sink);
-        TestUtils.assertEquals("4", sink);
-    }
-
-    @Test
     public void testGetStrB() {
         TestUtils.assertEquals("4", function.getStrB(null));
     }
@@ -168,13 +158,6 @@ public class CharFunctionTest {
     @Test
     public void testGetStrZ() {
         Assert.assertNull(zeroFunc.getStrA(null));
-    }
-
-    @Test
-    public void testGetStrZ2() {
-        StringSink sink = new StringSink();
-        zeroFunc.getStr(null, sink);
-        TestUtils.assertEquals("", sink);
     }
 
     @Test
@@ -238,22 +221,8 @@ public class CharFunctionTest {
     }
 
     @Test
-    public void testGetVarcharToSink() {
-        Utf8Sink sink = new Utf8StringSink();
-        function.getVarchar(null, sink);
-        TestUtils.assertEquals("4", sink.toString());
-    }
-
-    @Test
     public void testGetZeroVarchar() {
         Assert.assertNull(zeroFunc.getVarcharA(null));
         Assert.assertNull(zeroFunc.getVarcharB(null));
-    }
-
-    @Test
-    public void testGetZeroVarcharToSink() {
-        Utf8Sink sink = new Utf8StringSink();
-        zeroFunc.getVarchar(null, sink);
-        TestUtils.assertEquals("", sink.toString());
     }
 }

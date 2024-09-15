@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -71,7 +72,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         Misc.free(indexReader);
         Misc.free(charMem);
         this.cache.clear();
-        int fd = this.offsetMem.getFd();
+        long fd = this.offsetMem.getFd();
         Misc.free(offsetMem);
         Misc.free(path);
         LOG.debug().$("closed [fd=").$(fd).$(']').$();
@@ -95,6 +96,16 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     @Override
     public int getSymbolCount() {
         return symbolCount;
+    }
+
+    @Override
+    public MemoryR getSymbolOffsetsColumn() {
+        return offsetMem;
+    }
+
+    @Override
+    public MemoryR getSymbolValuesColumn() {
+        return charMem;
     }
 
     @Override
@@ -144,14 +155,13 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         try {
             // this constructor does not create index. Index must exist,
             // and we use "offset" file to store "header"
-            offsetFileName(path.trimTo(plen), columnName, columnNameTxn);
-            if (!ff.exists(path)) {
+            if (!ff.exists(offsetFileName(path.trimTo(plen), columnName, columnNameTxn))) {
                 LOG.error().$(path).$(" is not found").$();
                 throw CairoException.critical(0).put("SymbolMap does not exist: ").put(path);
             }
 
             // is there enough length in "offset" file for "header"?
-            long len = ff.length(path);
+            long len = ff.length(path.$());
             if (len < SymbolMapWriter.HEADER_SIZE) {
                 LOG.error().$(path).$(" is too short [len=").$(len).$(']').$();
                 throw CairoException.critical(0).put("SymbolMap is too short: ").put(path);
@@ -161,7 +171,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // we left off. Where we left off is stored externally to symbol map
             final long offsetMemSize = SymbolMapWriter.keyToOffset(symbolCount) + Long.BYTES;
             LOG.debug().$("offsetMem.of [columnName=").$(path).$(",offsetMemSize=").$(offsetMemSize).I$();
-            this.offsetMem.of(ff, path, offsetMemSize, offsetMemSize, MemoryTag.MMAP_INDEX_READER);
+            this.offsetMem.of(ff, path.$(), offsetMemSize, offsetMemSize, MemoryTag.MMAP_INDEX_READER);
             this.symbolCapacity = offsetMem.getInt(SymbolMapWriter.HEADER_CAPACITY);
             assert this.symbolCapacity > 0;
             this.cached = offsetMem.getBool(SymbolMapWriter.HEADER_CACHE_ENABLED);
@@ -274,6 +284,8 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         public int keyOf(CharSequence value) {
             if (value != null) {
                 int hash = Hash.boundedHash(value, maxHash);
+                // Here we need absolute row indexes within the partition while the cursor gives us relative ones.
+                // But since the minimum row index (minValue) is 0, they match.
                 rowCursor = indexReader.initCursor(rowCursor, hash, 0, maxOffset - Long.BYTES);
                 while (rowCursor.hasNext()) {
                     final long offsetOffset = rowCursor.next();

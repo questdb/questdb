@@ -147,11 +147,6 @@ public class DateFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetStr2() {
-        function.getStr(null, null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testGetStrB() {
         function.getStrB(null);
     }
@@ -199,11 +194,6 @@ public class DateFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong256B() {
         function.getLong256B(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetVarcharUtf8Sink() {
-        function.getVarchar(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

@@ -34,8 +34,12 @@ import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
-import io.questdb.std.str.*;
+import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TestDirectUtf8String;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -65,7 +69,7 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
                     DirectUtf8Sink directSink = new DirectUtf8Sink(16)
             ) {
                 directSink.put("barbaz");
-                DirectUtf8String stableDirectString = new DirectUtf8String(true);
+                TestDirectUtf8String stableDirectString = new TestDirectUtf8String(true);
                 stableDirectString.of(directSink.lo(), directSink.hi());
                 StableAwareUtf8StringHolder holder = new StableAwareUtf8StringHolder();
                 holder.setAllocator(allocator);
@@ -117,7 +121,7 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
                 StableAwareUtf8StringHolder holder = new StableAwareUtf8StringHolder();
                 holder.setAllocator(allocator);
                 Rnd rnd = TestUtils.generateRandom(null);
-                DirectUtf8String stableDirectString = new DirectUtf8String(true);
+                TestDirectUtf8String stableDirectString = new TestDirectUtf8String(true);
                 for (int i = 0; i < 1_000; i++) {
                     boolean useDirect = rnd.nextBoolean();
                     int size = rnd.nextPositiveInt() % 100;
@@ -156,8 +160,8 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
                 holder.setAllocator(allocator);
                 Assert.assertEquals(0, holder.size());
 
-                VarcharTypeDriver.appendValue(dataMem, auxMem, new Utf8String("foobarbaz"));
-                Utf8Sequence splitString = VarcharTypeDriver.getValue(0, dataMem, auxMem, 1);
+                VarcharTypeDriver.appendValue(auxMem, dataMem, new Utf8String("foobarbaz"));
+                Utf8Sequence splitString = VarcharTypeDriver.getSplitValue(auxMem, dataMem, 0, 1);
 
                 holder.clearAndSet(splitString);
                 Assert.assertEquals(holder.size(), 9);

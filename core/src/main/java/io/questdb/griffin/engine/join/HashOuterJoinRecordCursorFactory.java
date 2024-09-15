@@ -49,7 +49,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             @Transient ColumnTypes joinColumnTypes,
-            @Transient ColumnTypes valueTypes, // this expected to be just LONG, we store chain references in map
+            @Transient ColumnTypes valueTypes, // this expected to be just 3 INTs, we store chain references in map
             RecordSink masterSink,
             RecordSink slaveKeySink,
             RecordSink slaveChainSink,
@@ -57,17 +57,31 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
             JoinContext joinContext
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
-        RecordChain slaveChain = new RecordChain(slaveFactory.getMetadata(), slaveChainSink, configuration.getSqlHashJoinValuePageSize(), configuration.getSqlHashJoinValueMaxPages());
-        this.masterSink = masterSink;
-        this.slaveKeySink = slaveKeySink;
+        RecordChain slaveChain = null;
+        Map joinKeyMap = null;
+        try {
+            slaveChain = new RecordChain(slaveFactory.getMetadata(), slaveChainSink, configuration.getSqlHashJoinValuePageSize(), configuration.getSqlHashJoinValueMaxPages());
+            this.masterSink = masterSink;
+            this.slaveKeySink = slaveKeySink;
 
-        Map joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
-        cursor = new HashOuterJoinRecordCursor(
-                columnSplit,
-                joinKeyMap,
-                slaveChain,
-                NullRecordFactory.getInstance(slaveFactory.getMetadata())
-        );
+            joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
+            cursor = new HashOuterJoinRecordCursor(
+                    columnSplit,
+                    joinKeyMap,
+                    slaveChain,
+                    NullRecordFactory.getInstance(slaveFactory.getMetadata())
+            );
+        } catch (Throwable th) {
+            Misc.free(slaveChain);
+            Misc.free(joinKeyMap);
+            close();
+            throw th;
+        }
+    }
+
+    @Override
+    public boolean followedOrderByAdvice() {
+        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -83,11 +97,6 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
             Misc.free(masterCursor);
             throw e;
         }
-    }
-
-    @Override
-    public boolean followedOrderByAdvice() {
-        return masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -110,10 +119,10 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     protected void _close() {
-        ((JoinRecordMetadata) getMetadata()).close();
-        masterFactory.close();
-        slaveFactory.close();
-        cursor.close();
+        Misc.freeIfCloseable(getMetadata());
+        Misc.free(masterFactory);
+        Misc.free(slaveFactory);
+        Misc.free(cursor);
     }
 
     private class HashOuterJoinRecordCursor extends AbstractJoinCursor {
@@ -165,7 +174,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
                 key.put(masterRecord, masterSink);
                 MapValue value = key.findValue();
                 if (value != null) {
-                    slaveChain.of(value.getLong(0));
+                    slaveChain.of(value.getInt(0));
                     // we know cursor has values
                     // advance to get first value
                     slaveChain.hasNext();

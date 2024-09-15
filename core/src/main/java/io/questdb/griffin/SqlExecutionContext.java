@@ -126,7 +126,7 @@ public interface SqlExecutionContext extends Closeable {
         return getCairoEngine().getReader(tableName);
     }
 
-    int getRequestFd();
+    long getRequestFd();
 
     @NotNull
     SecurityContext getSecurityContext();
@@ -201,4 +201,8 @@ public interface SqlExecutionContext extends Closeable {
 
     default void storeTelemetry(short event, short origin) {
     }
+
+    void setCacheHit(boolean value);
+
+    boolean isCacheHit();
 }

@@ -232,9 +232,13 @@ public class LimitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table t1 (ts timestamp, id symbol)");
             insert("insert into t1 values (0, 'abc'), (2, 'a1'), (3, 'abc'), (4, 'abc'), (5, 'a2')");
-            assertQueryAndCache("ts\tid\n" +
+            assertQueryAndCache(
+                    "ts\tid\n" +
                             "1970-01-01T00:00:00.000004Z\tabc\n",
-                    "select ts, id as id from t1 where id = 'abc' limit -1", null, true, true
+                    "select ts, id as id from t1 where id = 'abc' limit -1",
+                    null,
+                    true,
+                    true
             );
         });
     }
@@ -255,7 +259,7 @@ public class LimitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table y (sym symbol, ts timestamp) timestamp(ts) partition by day");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "sym\tts\n",
                     "y where sym = 'googl' limit -3",
                     "ts",
@@ -273,32 +277,34 @@ public class LimitTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 64);
         final int N = 64 * 5;
 
-        ddl("create table y as (" +
-                "select" +
-                " cast(x as int) i," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
-                " from long_sequence(" + N + ")" +
-                ") timestamp(timestamp)");
+        assertMemoryLeak(() -> {
+            ddl("create table y as (" +
+                    "select" +
+                    " cast(x as int) i," +
+                    " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
+                    " from long_sequence(" + N + ")" +
+                    ") timestamp(timestamp)");
 
-        String query = "select * from y where i % 64 = 1 limit -1";
-        String expected = "i\ttimestamp\n" +
-                "257\t2018-01-01T08:34:00.000000Z\n";
-        assertQuery(expected, query, "timestamp", true, true);
+            String query = "select * from y where i % 64 = 1 limit -1";
+            String expected = "i\ttimestamp\n" +
+                    "257\t2018-01-01T08:34:00.000000Z\n";
+            assertQueryNoLeakCheck(expected, query, "timestamp", true, true);
 
-        query = "select * from y where i % 64 = 1 limit -2";
-        expected = "i\ttimestamp\n" +
-                "193\t2018-01-01T06:26:00.000000Z\n" +
-                "257\t2018-01-01T08:34:00.000000Z\n";
-        assertQuery(expected, query, "timestamp", true, true);
+            query = "select * from y where i % 64 = 1 limit -2";
+            expected = "i\ttimestamp\n" +
+                    "193\t2018-01-01T06:26:00.000000Z\n" +
+                    "257\t2018-01-01T08:34:00.000000Z\n";
+            assertQueryNoLeakCheck(expected, query, "timestamp", true, true);
 
-        query = "select * from y where i % 64 < 3 limit -5";
-        expected = "i\ttimestamp\n" +
-                "194\t2018-01-01T06:28:00.000000Z\n" +
-                "256\t2018-01-01T08:32:00.000000Z\n" +
-                "257\t2018-01-01T08:34:00.000000Z\n" +
-                "258\t2018-01-01T08:36:00.000000Z\n" +
-                "320\t2018-01-01T10:40:00.000000Z\n";
-        assertQuery(expected, query, "timestamp", true, true);
+            query = "select * from y where i % 64 < 3 limit -5";
+            expected = "i\ttimestamp\n" +
+                    "194\t2018-01-01T06:28:00.000000Z\n" +
+                    "256\t2018-01-01T08:32:00.000000Z\n" +
+                    "257\t2018-01-01T08:34:00.000000Z\n" +
+                    "258\t2018-01-01T08:36:00.000000Z\n" +
+                    "320\t2018-01-01T10:40:00.000000Z\n";
+            assertQueryNoLeakCheck(expected, query, "timestamp", true, true);
+        });
     }
 
     @Test
@@ -309,32 +315,34 @@ public class LimitTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 64);
         final int N = 64 * 5;
 
-        ddl("create table y as (" +
-                "select" +
-                " cast(x as int) i," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
-                " from long_sequence(" + N + ")" +
-                ") timestamp(timestamp) partition by hour");
+        assertMemoryLeak(() -> {
+            ddl("create table y as (" +
+                    "select" +
+                    " cast(x as int) i," +
+                    " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
+                    " from long_sequence(" + N + ")" +
+                    ") timestamp(timestamp) partition by hour");
 
-        String query = "select * from y where i % 64 = 1 limit -1";
-        String expected = "i\ttimestamp\n" +
-                "257\t2018-01-01T08:34:00.000000Z\n";
-        assertQuery(expected, query, "timestamp", true, true);
+            String query = "select * from y where i % 64 = 1 limit -1";
+            String expected = "i\ttimestamp\n" +
+                    "257\t2018-01-01T08:34:00.000000Z\n";
+            assertQueryNoLeakCheck(expected, query, "timestamp", true, true);
 
-        query = "select * from y where i % 64 = 1 limit -2";
-        expected = "i\ttimestamp\n" +
-                "193\t2018-01-01T06:26:00.000000Z\n" +
-                "257\t2018-01-01T08:34:00.000000Z\n";
-        assertQuery(expected, query, "timestamp", true, true);
+            query = "select * from y where i % 64 = 1 limit -2";
+            expected = "i\ttimestamp\n" +
+                    "193\t2018-01-01T06:26:00.000000Z\n" +
+                    "257\t2018-01-01T08:34:00.000000Z\n";
+            assertQueryNoLeakCheck(expected, query, "timestamp", true, true);
 
-        query = "select * from y where i % 64 < 3 limit -5";
-        expected = "i\ttimestamp\n" +
-                "194\t2018-01-01T06:28:00.000000Z\n" +
-                "256\t2018-01-01T08:32:00.000000Z\n" +
-                "257\t2018-01-01T08:34:00.000000Z\n" +
-                "258\t2018-01-01T08:36:00.000000Z\n" +
-                "320\t2018-01-01T10:40:00.000000Z\n";
-        assertQuery(expected, query, "timestamp", true, true);
+            query = "select * from y where i % 64 < 3 limit -5";
+            expected = "i\ttimestamp\n" +
+                    "194\t2018-01-01T06:28:00.000000Z\n" +
+                    "256\t2018-01-01T08:32:00.000000Z\n" +
+                    "257\t2018-01-01T08:34:00.000000Z\n" +
+                    "258\t2018-01-01T08:36:00.000000Z\n" +
+                    "320\t2018-01-01T10:40:00.000000Z\n";
+            assertQueryNoLeakCheck(expected, query, "timestamp", true, true);
+        });
     }
 
     @Test
@@ -355,7 +363,7 @@ public class LimitTest extends AbstractCairoTest {
             insert("insert into y values (-2, 'googl', 2, to_timestamp('2002-01-01', 'yyyy-MM-dd'))");
             insert("insert into y values (-1, 'googl', 3, to_timestamp('2003-01-01', 'yyyy-MM-dd'))");
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "i\tsym\tprice\ttimestamp\n" +
                             "-3\tgoogl\t1.0\t2001-01-01T00:00:00.000000Z\n" +
                             "-2\tgoogl\t2.0\t2002-01-01T00:00:00.000000Z\n" +
@@ -370,8 +378,8 @@ public class LimitTest extends AbstractCairoTest {
 
     @Test
     public void testRangeVariable() throws Exception {
-        String query = "select * from y limit :lo,:hi";
-        TestUtils.assertMemoryLeak(() -> {
+        final String query = "select * from y limit :lo,:hi";
+        assertMemoryLeak(() -> {
             try {
                 String expected1 = "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
                         "5\tgoogl\t0.868\t2018-01-01T00:10:00.000000Z\ttrue\tZ\t0.4274704286353759\t0.0212\t179\t\t\t5746626297238459939\t1970-01-01T01:06:40.000000Z\t35\t00000000 91 88 28 a5 18 93 bd 0b 61 f5 5d d0 eb\tRGIIH\n" +
@@ -438,10 +446,14 @@ public class LimitTest extends AbstractCairoTest {
                     "select x, ('2023-04-06T00:00:00.000000Z'::timestamp::long + (x*1000))::timestamp\n" +
                     "from long_sequence(600000)");
 
-            assertQuery("count\n1000\n",
+            assertQueryNoLeakCheck(
+                    "count\n1000\n",
                     "select count(*)\n" +
                             "from intervaltest\n" +
-                            "WHERE ts > '2023-04-06T00:09:59.000000Z'", null, false, true
+                            "WHERE ts > '2023-04-06T00:09:59.000000Z'",
+                    null,
+                    false,
+                    true
             );
 
             String query = "select *\n" +
@@ -450,13 +462,17 @@ public class LimitTest extends AbstractCairoTest {
                     "ORDER BY ts DESC " +
                     "LIMIT 10";
 
-            assertPlan(query, "Limit lo: 10\n" +
-                    "    DataFrame\n" +
-                    "        Row backward scan\n" +
-                    "        Interval backward scan on: intervaltest\n" +
-                    "          intervals: [(\"2023-04-06T00:09:59.000001Z\",\"MAX\")]\n");
+            assertPlanNoLeakCheck(
+                    query,
+                    "Limit lo: 10\n" +
+                            "    PageFrame\n" +
+                            "        Row backward scan\n" +
+                            "        Interval backward scan on: intervaltest\n" +
+                            "          intervals: [(\"2023-04-06T00:09:59.000001Z\",\"MAX\")]\n"
+            );
 
-            assertQuery("id\tts\n" +
+            assertQuery(
+                    "id\tts\n" +
                             "600000\t2023-04-06T00:10:00.000000Z\n" +
                             "599999\t2023-04-06T00:09:59.999000Z\n" +
                             "599998\t2023-04-06T00:09:59.998000Z\n" +
@@ -467,7 +483,10 @@ public class LimitTest extends AbstractCairoTest {
                             "599993\t2023-04-06T00:09:59.993000Z\n" +
                             "599992\t2023-04-06T00:09:59.992000Z\n" +
                             "599991\t2023-04-06T00:09:59.991000Z\n",
-                    query, "ts###DESC", true, false
+                    query,
+                    "ts###DESC",
+                    true,
+                    false
             );
         });
     }
@@ -602,8 +621,8 @@ public class LimitTest extends AbstractCairoTest {
 
     @Test
     public void testTopNIndexVariable() throws Exception {
-        String query = "select * from y limit $1";
-        TestUtils.assertMemoryLeak(() -> {
+        final String query = "select * from y limit $1";
+        assertMemoryLeak(() -> {
             try {
                 String expected1 = "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
                         "1\tmsft\t0.509\t2018-01-01T00:02:00.000000Z\tfalse\tU\t0.5243722859289777\t0.8072\t365\t2015-05-02T19:30:57.935Z\t\t-4485747798769957016\t1970-01-01T00:00:00.000000Z\t19\t00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e\tYSBEOUOJSHRUEDRQ\n" +
@@ -656,8 +675,8 @@ public class LimitTest extends AbstractCairoTest {
 
     @Test
     public void testTopNVariable() throws Exception {
-        String query = "select * from y limit :lim";
-        TestUtils.assertMemoryLeak(() -> {
+        final String query = "select * from y limit :lim";
+        assertMemoryLeak(() -> {
             try {
                 String expected1 = "i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn\n" +
                         "1\tmsft\t0.509\t2018-01-01T00:02:00.000000Z\tfalse\tU\t0.5243722859289777\t0.8072\t365\t2015-05-02T19:30:57.935Z\t\t-4485747798769957016\t1970-01-01T00:00:00.000000Z\t19\t00000000 19 c4 95 94 36 53 49 b4 59 7e 3b 08 a1 1e\tYSBEOUOJSHRUEDRQ\n" +
@@ -719,27 +738,29 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     private void testInvalidNegativeLimit() throws Exception {
-        int maxLimit = configuration.getSqlMaxNegativeLimit();
+        final int maxLimit = configuration.getSqlMaxNegativeLimit();
 
-        ddl("create table y as (" +
-                "select" +
-                " cast(x as int) i," +
-                " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
-                " from long_sequence(100)" +
-                ") timestamp(timestamp)");
+        assertMemoryLeak(() -> {
+            ddl("create table y as (" +
+                    "select" +
+                    " cast(x as int) i," +
+                    " to_timestamp('2018-01', 'yyyy-MM') + x * 120000000 timestamp" +
+                    " from long_sequence(100)" +
+                    ") timestamp(timestamp)");
 
-        String expectedMessage = "absolute LIMIT value is too large, maximum allowed value: " + maxLimit;
-        int expectedPosition = 34;
+            String expectedMessage = "absolute LIMIT value is too large, maximum allowed value: " + maxLimit;
+            int expectedPosition = 34;
 
-        String query = "select * from y where i > 0 limit -" + (maxLimit + 1);
-        try (final RecordCursorFactory factory = select(query)) {
-            try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
-                Assert.fail();
+            String query = "select * from y where i > 0 limit -" + (maxLimit + 1);
+            try (final RecordCursorFactory factory = select(query)) {
+                try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail();
+                }
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+                Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());
             }
-        } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
-            Assert.assertEquals(Chars.toString(query), expectedPosition, e.getPosition());
-        }
+        });
     }
 
     private void testLimit(String expected1, String expected2, String query) throws Exception {
@@ -801,19 +822,37 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     private void testLimitMinusOne() throws Exception {
-        ddl("create table t1 (ts timestamp, id symbol)");
+        assertMemoryLeak(() -> {
+            ddl("create table t1 (ts timestamp, id symbol)");
 
-        String inserts = "insert into t1 values (0L, 'abc')\n" +
-                "insert into t1 values (2L, 'a1')\n" +
-                "insert into t1 values (3L, 'abc')\n" +
-                "insert into t1 values (4L, 'abc')\n" +
-                "insert into t1 values (5L, 'a2')";
+            String inserts = "insert into t1 values (0L, 'abc')\n" +
+                    "insert into t1 values (2L, 'a1')\n" +
+                    "insert into t1 values (3L, 'abc')\n" +
+                    "insert into t1 values (4L, 'abc')\n" +
+                    "insert into t1 values (5L, 'a2')";
 
-        for (String sql : inserts.split("\\r?\\n")) {
-            insert(sql);
-        }
+            for (String sql : inserts.split("\\r?\\n")) {
+                insert(sql);
+            }
 
-        assertQueryAndCache("ts\tid\n" +
-                "1970-01-01T00:00:00.000004Z\tabc\n", "select * from t1 where id = 'abc' limit -1", null, true, true);
+            assertQueryAndCache(
+                    "ts\tid\n" +
+                            "1970-01-01T00:00:00.000004Z\tabc\n",
+                    "select * from t1 where id = 'abc' limit -1",
+                    null,
+                    true,
+                    true
+            );
+
+            // now with a virtual column
+            assertQueryAndCache(
+                    "the_answer\tts\tid\n" +
+                            "1764\t1970-01-01T00:00:00.000004Z\tabc\n",
+                    "select 42*42 as the_answer, ts, id from t1 where id = 'abc' limit -1",
+                    null,
+                    true,
+                    true
+            );
+        });
     }
 }

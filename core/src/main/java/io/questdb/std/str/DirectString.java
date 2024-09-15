@@ -31,9 +31,18 @@ import io.questdb.std.Unsafe;
  * An immutable flyweight for a UTF-16 string stored in native memory.
  */
 public class DirectString extends AbstractCharSequence implements DirectCharSequence, Mutable {
+    private final StableStringSource stableSource;
     private long hi;
     private int len;
     private long lo;
+
+    public DirectString() {
+        this.stableSource = StableStringSource.UNSTABLE_SOURCE;
+    }
+
+    public DirectString(StableStringSource stableSource) {
+        this.stableSource = stableSource;
+    }
 
     @Override
     public char charAt(int index) {
@@ -62,6 +71,16 @@ public class DirectString extends AbstractCharSequence implements DirectCharSequ
     @Override
     public long hi() {
         return hi;
+    }
+
+    /**
+     * Returns true if the pointer returned by {@link #ptr()} method is stable during a query execution.
+     * Stable is defined as:
+     * - the pointer remains valid for the duration of the query execution
+     * - the sequence of bytes pointed to by the pointer does not change during the query execution
+     */
+    public boolean isStable() {
+        return stableSource.isStable();
     }
 
     @Override
@@ -101,8 +120,9 @@ public class DirectString extends AbstractCharSequence implements DirectCharSequ
     @Override
     protected CharSequence _subSequence(int start, int end) {
         DirectString seq = new DirectString();
-        seq.lo = this.lo + start;
-        seq.hi = this.lo + end;
+        seq.lo = this.lo + ((long) start << 1);
+        seq.hi = this.lo + ((long) end << 1);
+        seq.len = end - start;
         return seq;
     }
 }

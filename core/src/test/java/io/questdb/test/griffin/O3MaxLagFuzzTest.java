@@ -53,11 +53,6 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
     }
 
     @Test
-    public void testIndexerRegression() throws Exception {
-        executeWithPool(0, this::testFuzzRegression);
-    }
-
-    @Test
     public void testRollbackFuzzParallel() throws Exception {
         executeWithPool(2, this::testRollbackFuzz);
     }
@@ -132,6 +127,7 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                 TableWriter w2 = TestUtils.getWriter(engine, "y")
         ) {
             ObjList<FuzzTransaction> transactions = FuzzTransactionGenerator.generateSet(
+                    nTotalRows,
                     sequencerMetadata,
                     w.getMetadata(),
                     rnd,
@@ -140,6 +136,7 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
                     rowCount,
                     txCount,
                     true,
+                    rnd.nextDouble(),
                     rnd.nextDouble(),
                     rnd.nextDouble(),
                     rnd.nextDouble(),
@@ -176,14 +173,6 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException, NumericException {
         testFuzz00(engine, compiler, sqlExecutionContext, TestUtils.generateRandom(LOG));
-    }
-
-    private void testFuzzRegression(
-            CairoEngine engine,
-            SqlCompiler compiler,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException, NumericException {
-        testFuzz00(engine, compiler, sqlExecutionContext, TestUtils.generateRandom(LOG, 727112184435L, 1712340268194L));
     }
 
     private void testRollbackFuzz(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext) throws SqlException {

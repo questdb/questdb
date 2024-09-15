@@ -52,10 +52,10 @@ public class LineTCPSenderMainVarLenStrings {
         long start = System.nanoTime();
         FilesFacade ff = new FilesFacadeImpl();
         try (Path path = new Path()) {
-            int logFd = -1;
+            long logFd = -1;
             if (args.length == 1) {
-                path.put(args[0]).$();
-                logFd = ff.openRW(path, CairoConfiguration.O_NONE);
+                path.put(args[0]);
+                logFd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
             }
             PlainTcpLineChannel tcpLineChannel = new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, Net.parseIPv4(hostIPv4), port, bufferCapacity * 2);
             try (LineTcpSender sender = new LineTcpSender(new LoggingLineChannel(tcpLineChannel, logFd, ff), bufferCapacity)) {
@@ -97,11 +97,11 @@ public class LineTCPSenderMainVarLenStrings {
 
     private static class LoggingLineChannel implements LineChannel {
         private final FilesFacade ff;
-        private final int outFileFd;
+        private final long outFileFd;
         private LineChannel delegate;
         private long fileOffset = 0;
 
-        private LoggingLineChannel(LineChannel delegate, int outFileFd, FilesFacade ff) {
+        private LoggingLineChannel(LineChannel delegate, long outFileFd, FilesFacade ff) {
             this.delegate = delegate;
             this.outFileFd = outFileFd;
             this.ff = ff;

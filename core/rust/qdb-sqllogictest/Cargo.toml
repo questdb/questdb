@@ -1,0 +1,18 @@
+[package]
+name = "qdbr-sqllogictest"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "qdbsqllogictest"
+crate-type = ["dylib"]
+
+[dependencies]
+jni = "0.21.1"
+anyhow = "1.0.86"
+once_cell = "1.19.0"
+sqllogictest = { path = "sqllogictest" }
+sqllogictest-engines = { path = "sqllogictest-engines" }
+async-trait = "0.1.81"
+tokio = "1.38.0"
+

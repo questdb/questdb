@@ -6,59 +6,67 @@ jobs:
     steps:
       - checkout: none
       - bash: |
-          echo $PRID
-          if [[ $PRID == ?(-)+([0-9]) ]]
-            then
-              CHANGED_CORE_FILES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PRID/files -s  | grep -oP 'filename": "(core|benchmarks|compat|utils)/*\/\K[^.]+')
-              if [ -z "$CHANGED_CORE_FILES" ]
-                then
-                  echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]false"
-                else
-                  echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
-              fi
-            else
-              echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
+          set -ux
+          echo "PR ID: $PRID"
+          if ! [[ $PRID =~ ^[0-9]+$ ]]; then
+            # The workflow wasn't triggered by a PR; test everything
+            echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]+:*"
+            echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]JaCoCo"
+            echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
+            echo "##vso[task.setvariable variable=RUST_SOURCE_CODE_CHANGED;isOutput=true]true"
+            exit
           fi
-        name: check_changes
-        env:
-          PRID: $(System.PullRequest.PullRequestNumber)
-        displayName: "Check changed files"
-      - bash: |
-          echo $PRID
-          if [[ $PRID == ?(-)+([0-9]) ]]
-            then
-              COV_CLASSES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PRID/files?per_page=100 -s \
-                  | grep -oP 'filename": "core/src/main/java/io/questdb.*\/\K[^.]+' \
-                  | tr '\n' ',' | sed -e 's/,/,+:*./g' | sed 's/,+:\*\.$//')
-
-              if [ -z "$COV_CLASSES" ]
-              then
-                  echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]-:*"
-                  echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]None"
+          
+          COV_CLASSES=""
+          CHANGED_CORE_FILES=""
+          CHANGED_RUST_FILES=""
+          
+          PAGE=0
+          while true; do
+            PAGE=$((PAGE+1))
+            echo PAGE $PAGE
+            set -e
+            FILES=$(curl "https://api.github.com/repos/questdb/questdb/pulls/$PRID/files?per_page=100&page=$PAGE" -s)
+            set +e
+            ANY=$(echo "$FILES" | grep '"filename":')
+            if [ -z "$ANY" ]; then
+              set +x
+              if [ -n "$COV_CLASSES" ]; then
+                COV_CLASSES=$(echo "$COV_CLASSES" | sed -e 's/,$//g')
+                COVERAGE_TOOL='JaCoCo'
               else
-                  ALL_CHANGES=$COV_CLASSES
-                  PAGE=1
-                  while true; do
-                    PAGE=$((PAGE+1))
-                    COV_CLASSES=$(curl https://api.github.com/repos/questdb/questdb/pulls/$PRID/files?per_page=100\&page=$PAGE -s \
-                      | grep -oP 'filename": "core/src/main/java/io/questdb.*\/\K[^.]+' \
-                      | tr '\n' ',' | sed -e 's/,/,+:*./g' | sed 's/,+:\*\.$//')
-                    if [ -z "$COV_CLASSES" ]
-                    then
-                      break
-                    else
-                      ALL_CHANGES="${ALL_CHANGES},+:*.${COV_CLASSES}"
-                    fi
-                  done
-
-                  echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]+:*.$ALL_CHANGES"
-                  echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]JaCoCo"
+                COV_CLASSES='-:*'
+                COVERAGE_TOOL='None'
               fi
-            else
-                echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]-:*"
-                echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]None"
-          fi
+              if [ -n "$CHANGED_CORE_FILES" ]; then
+                SOURCE_CODE_CHANGED='true'
+              else
+                SOURCE_CODE_CHANGED='false'
+              fi
+              if [ -n "$CHANGED_RUST_FILES" ]; then
+                RUST_SOURCE_CODE_CHANGED='true'
+              else
+                RUST_SOURCE_CODE_CHANGED='false'
+              fi
+
+              echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]$COV_CLASSES"
+              echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]$COVERAGE_TOOL"
+              echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]$SOURCE_CODE_CHANGED"
+              echo "##vso[task.setvariable variable=RUST_SOURCE_CODE_CHANGED;isOutput=true]$RUST_SOURCE_CODE_CHANGED"
+
+              break
+            fi
+          
+            COV_CLASSES_IN_PAGE=$(echo "$ANY" | grep -oP '"core/src/main/java/(.+/)?\K.+(?=\.java)' \
+              | sed -e 's/^/+:*./g' | tr '\n' ',' )
+          
+            if [ ! -z "$COV_CLASSES_IN_PAGE" ]; then
+              COV_CLASSES="${COV_CLASSES}${COV_CLASSES_IN_PAGE}"
+            fi
+            CHANGED_CORE_FILES="${CHANGED_CORE_FILES}$(echo "$ANY" | grep -oP '"(core|benchmarks|compat|utils)')"
+            CHANGED_RUST_FILES="${CHANGED_RUST_FILES}$(echo "$ANY" | grep -oP '"core/rust')"
+          done
         name: check_coverage
         env:
           PRID: $(System.PullRequest.PullRequestNumber)
-        displayName: "List of coverage classes PR build"
+        displayName: "Check which files changed, list classes for coverage"

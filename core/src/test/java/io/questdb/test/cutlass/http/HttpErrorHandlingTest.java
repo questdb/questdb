@@ -68,8 +68,8 @@ public class HttpErrorHandlingTest extends BootstrapTest {
                                 bootstrap.getBuildInformation(),
                                 new FilesFacadeImpl() {
                                     @Override
-                                    public int openRW(LPSZ name, long opts) {
-                                        if (counter.incrementAndGet() > 28) {
+                                    public long openRW(LPSZ name, long opts) {
+                                        if (counter.incrementAndGet() > 69) {
                                             throw new RuntimeException("Test error");
                                         }
                                         return super.openRW(name, opts);

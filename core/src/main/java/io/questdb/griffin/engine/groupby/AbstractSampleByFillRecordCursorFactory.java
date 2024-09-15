@@ -58,33 +58,38 @@ public abstract class AbstractSampleByFillRecordCursorFactory extends AbstractSa
             ObjList<Function> recordFunctions
     ) {
         super(base, groupByMetadata, recordFunctions);
-        this.groupByFunctions = groupByFunctions;
-        // sink will be storing record columns to map key
-        mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, false);
-        // this is the map itself, which we must not forget to free when factory closes
-        map = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
+        try {
+            this.groupByFunctions = groupByFunctions;
+            // sink will be storing record columns to map key
+            mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter);
+            // this is the map itself, which we must not forget to free when factory closes
+            map = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final RecordCursor baseCursor = base.getCursor(executionContext);
-        AbstractNoRecordSampleByCursor rawCursor = null;
+        AbstractNoRecordSampleByCursor cursor = null;
         try {
-            rawCursor = getRawCursor();
-            if (rawCursor instanceof Reopenable) {
-                ((Reopenable) rawCursor).reopen();
+            cursor = getRawCursor();
+            if (cursor instanceof Reopenable) {
+                ((Reopenable) cursor).reopen();
             }
-            return initFunctionsAndCursor(executionContext, baseCursor);
-        } catch (Throwable ex) {
-            baseCursor.close();
-            Misc.free(rawCursor);
-            throw ex;
+        } catch (Throwable th) {
+            Misc.free(cursor);
+            throw th;
         }
+
+        final RecordCursor baseCursor = base.getCursor(executionContext);
+        return initFunctionsAndCursor(executionContext, baseCursor);
     }
 
     @Override
     protected void _close() {
         super._close();
-        getRawCursor().close();
+        Misc.free(getRawCursor());
     }
 }

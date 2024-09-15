@@ -353,7 +353,7 @@ public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(20)" +
                         ") timestamp(k) partition by DAY",
                 24,
-                "supported column types are STRING and SYMBOL, found: INT"
+                "supported column types are VARCHAR, SYMBOL and STRING, found: INT"
         );
     }
 }

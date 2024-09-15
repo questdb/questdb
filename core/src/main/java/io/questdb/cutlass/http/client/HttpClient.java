@@ -452,6 +452,10 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        public void trimContentToLen(int contentLen) {
+            ptr = contentStart + contentLen;
+        }
+
         public Request url(CharSequence url) {
             assert state == STATE_URL;
             state = STATE_URL_DONE;
@@ -500,7 +504,7 @@ public abstract class HttpClient implements QuietCloseable {
         }
 
         private void connect(CharSequence host, int port) {
-            int fd = nf.socketTcp(true);
+            long fd = nf.socketTcp(true);
             if (fd < 0) {
                 throw new HttpClientException("could not allocate a file descriptor").errno(nf.errno());
             }

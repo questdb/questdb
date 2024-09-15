@@ -57,17 +57,17 @@ public interface CompiledQuery {
     short COMMIT = BEGIN + 1; // 19
     short ROLLBACK = COMMIT + 1; // 20
     short CREATE_TABLE_AS_SELECT = ROLLBACK + 1; // 21
-    short SNAPSHOT_DB_PREPARE = CREATE_TABLE_AS_SELECT + 1; // 22
-    short SNAPSHOT_DB_COMPLETE = SNAPSHOT_DB_PREPARE + 1; // 23
-    short DEALLOCATE = SNAPSHOT_DB_COMPLETE + 1; // 24
+    short CHECKPOINT_CREATE = CREATE_TABLE_AS_SELECT + 1; // 22
+    short CHECKPOINT_RELEASE = CHECKPOINT_CREATE + 1; // 23
+    short DEALLOCATE = CHECKPOINT_RELEASE + 1; // 24
     short EXPLAIN = DEALLOCATE + 1; // 25
     short TABLE_RESUME = EXPLAIN + 1; // 26
     short TABLE_SET_TYPE = TABLE_RESUME + 1; // 27
     short CREATE_USER = TABLE_SET_TYPE + 1; // 28
     short ALTER_USER = CREATE_USER + 1; // 29
-
     short CANCEL_QUERY = ALTER_USER + 1; // 30
-    short TYPES_COUNT = CANCEL_QUERY;
+    short TABLE_SUSPEND = CANCEL_QUERY + 1; // 31
+    short TYPES_COUNT = TABLE_SUSPEND;
 
     /**
      * Executes the query.

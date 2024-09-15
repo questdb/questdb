@@ -114,7 +114,7 @@ public abstract class LineUdpInsertTest extends AbstractCairoTest {
 
     protected static AbstractLineProtoUdpReceiver createLineProtoReceiver(CairoEngine engine) {
         AbstractLineProtoUdpReceiver lpr;
-        if (Os.type == Os.LINUX_AMD64) {
+        if (Os.isLinux()) {
             lpr = new LinuxMMLineUdpReceiver(RCVR_CONF, engine, null);
         } else {
             lpr = new LineUdpReceiver(RCVR_CONF, engine, null);

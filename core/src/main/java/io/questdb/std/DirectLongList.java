@@ -53,10 +53,10 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         this.initialCapacity = this.capacity;
     }
 
-    public void add(long x) {
+    public void add(long value) {
         checkCapacity();
         assert pos < limit;
-        Unsafe.getUnsafe().putLong(pos, x);
+        Unsafe.getUnsafe().putLong(pos, value);
         pos += Long.BYTES;
     }
 
@@ -82,16 +82,15 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
         pos = address;
     }
 
-    public void clear(long b) {
-        zero(b);
+    public void clear(long zeroValue) {
+        zero(zeroValue);
         pos = address;
     }
 
     @Override
     public void close() {
         if (address != 0) {
-            Unsafe.free(address, capacity, memoryTag);
-            address = 0;
+            address = Unsafe.free(address, capacity, memoryTag);
             limit = 0;
             pos = 0;
             capacity = 0;
@@ -197,12 +196,17 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
             }
             final long oldCapacity = this.capacity;
             final long oldSize = this.pos - this.address;
-            this.capacity = capacity;
-            long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
-            this.address = address;
-            this.limit = address + capacity;
-            this.pos = Math.min(this.limit, address + oldSize);
-            LOG.debug().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
+            try {
+                long address = Unsafe.realloc(this.address, oldCapacity, capacity, memoryTag);
+                this.capacity = capacity;
+                this.address = address;
+                this.limit = address + capacity;
+                this.pos = Math.min(this.limit, address + oldSize);
+                LOG.debug().$("resized [old=").$(oldCapacity).$(", new=").$(this.capacity).$(']').$();
+            } catch (Throwable t) {
+                close();
+                throw t;
+            }
         }
     }
 

@@ -125,8 +125,8 @@ class ExceptAllRecordCursor extends AbstractSetRecordCursor {
 
     void of(RecordCursor cursorA, RecordCursor cursorB, SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {
         if (!isOpen) {
-            map.reopen();
             isOpen = true;
+            map.reopen();
         }
 
         super.of(cursorA, cursorB, circuitBreaker);

@@ -51,9 +51,9 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
         LongTreeChain chain = new LongTreeChain(
                 configuration.getSqlSortKeyPageSize(),
                 configuration.getSqlSortKeyMaxPages(),
-                configuration
-                        .getSqlSortLightValuePageSize(),
-                configuration.getSqlSortLightValueMaxPages());
+                configuration.getSqlSortLightValuePageSize(),
+                configuration.getSqlSortLightValueMaxPages()
+        );
         this.base = base;
         this.cursor = new SortedLightRecordCursor(chain, comparator);
         this.sortColumnFilter = sortColumnFilter;
@@ -72,14 +72,13 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        RecordCursor baseCursor = base.getCursor(executionContext);
+        final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             cursor.of(baseCursor, executionContext);
             return cursor;
-        } catch (Throwable ex) {
-            baseCursor.close();
+        } catch (Throwable th) {
             cursor.close();
-            throw ex;
+            throw th;
         }
     }
 

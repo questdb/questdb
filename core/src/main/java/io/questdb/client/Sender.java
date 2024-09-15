@@ -82,28 +82,6 @@ import java.util.concurrent.TimeUnit;
 public interface Sender extends Closeable {
 
     /**
-     * Transport to use for communication with a QuestDB server.
-     */
-    enum Transport {
-        /**
-         * Use HTTP transport to communicate with a QuestDB server.
-         * <p>
-         * This transport is suitable for most use-cases. It provides stronger transactional guarantees and better
-         * feedback in case of errors.
-         */
-        HTTP,
-
-        /**
-         * Use TCP transport to communicate with a QuestDB server.
-         * <p>
-         * Most users should not need to use this transport. It's left for compatibility with older versions of QuestDB
-         * and for use-cases where HTTP transport is not suitable, when communicating with a QuestDB server over a high-latency
-         * network
-         */
-        TCP
-    }
-
-    /**
      * Create a Sender builder instance from a configuration string.
      * <br>
      * This allows to use the configuration string as a template for creating a Sender builder instance and then
@@ -238,6 +216,17 @@ public interface Sender extends Closeable {
     Sender boolColumn(CharSequence name, boolean value);
 
     /**
+     * Cancel the current row. This method is useful when you want to discard a row that you started, but
+     * you don't want to send it to a server.
+     * <br>
+     * After calling this method you can start a new row by calling {@link #table(CharSequence)} again.
+     * <br>
+     * This is only used when communicating over HTTP transport, and it's illegal to call this method when
+     * communicating over TCP transport.
+     */
+    void cancelRow();
+
+    /**
      * Close this Sender.
      * <br>
      * This must be called before dereferencing Sender, otherwise resources might leak.
@@ -305,6 +294,11 @@ public interface Sender extends Closeable {
     /**
      * Select the table for a new row. This is always the first method to start an error. It's an error to call other
      * methods without calling this method first.
+     * <br>
+     * After calling this method you can start adding columns to the row and then call {@link #atNow()} or {@link #at(Instant)}
+     * to finalize the row. You can then start a new row by calling this method again.
+     * <br>
+     * If you want to cancel the current row, you can call {@link #cancelRow()}.
      *
      * @param table name of the table
      * @return this instance for method chaining
@@ -348,6 +342,28 @@ public interface Sender extends Closeable {
          * Useful in test environments with self-signed certificates.
          */
         INSECURE
+    }
+
+    /**
+     * Transport to use for communication with a QuestDB server.
+     */
+    enum Transport {
+        /**
+         * Use HTTP transport to communicate with a QuestDB server.
+         * <p>
+         * This transport is suitable for most use-cases. It provides stronger transactional guarantees and better
+         * feedback in case of errors.
+         */
+        HTTP,
+
+        /**
+         * Use TCP transport to communicate with a QuestDB server.
+         * <p>
+         * Most users should not need to use this transport. It's left for compatibility with older versions of QuestDB
+         * and for use-cases where HTTP transport is not suitable, when communicating with a QuestDB server over a high-latency
+         * network
+         */
+        TCP
     }
 
     /**
@@ -752,6 +768,236 @@ public interface Sender extends Closeable {
         }
 
         /**
+         * Set timeout is milliseconds for HTTP requests.
+         * <br>
+         * This is only used when communicating over HTTP transport, and it's illegal to call this method when
+         * communicating over TCP transport.
+         *
+         * @param httpTimeoutMillis timeout is milliseconds for HTTP requests.
+         * @return this instance for method chaining
+         */
+        public LineSenderBuilder httpTimeoutMillis(int httpTimeoutMillis) {
+            if (this.httpTimeout != PARAMETER_NOT_SET_EXPLICITLY) {
+                throw new LineSenderException("HTTP timeout was already configured ")
+                        .put("[timeout=").put(this.httpTimeout).put("]");
+            }
+            if (httpTimeoutMillis < 1) {
+                throw new LineSenderException("HTTP timeout must be positive ")
+                        .put("[timeout=").put(httpTimeoutMillis).put("]");
+
+            }
+            this.httpTimeout = httpTimeoutMillis;
+            return this;
+        }
+
+        /**
+         * Use HTTP Authentication token.
+         * <br>
+         * This is only used when communicating over HTTP transport, and it's illegal to
+         * call this method when communicating over TCP transport.
+         *
+         * @param token HTTP authentication token
+         * @return this instance for method chaining
+         */
+        public LineSenderBuilder httpToken(String token) {
+            if (this.username != null) {
+                throw new LineSenderException("authentication username was already configured ")
+                        .put("[username=").put(this.username).put("]");
+            }
+            if (this.httpToken != null) {
+                throw new LineSenderException("token was already configured");
+            }
+            if (Chars.isBlank(token)) {
+                throw new LineSenderException("token cannot be empty nor null");
+            }
+            this.httpToken = token;
+            return this;
+        }
+
+        /**
+         * Use username and password for authentication when communicating over HTTP protocol.
+         * <br>
+         * This is only used when communicating over HTTP transport, and it's illegal to call this method when
+         * communicating over TCP transport.
+         *
+         * @param username username
+         * @param password password
+         * @return this instance for method chaining
+         * @see #httpToken(String)
+         */
+        public LineSenderBuilder httpUsernamePassword(String username, String password) {
+            if (this.username != null) {
+                throw new LineSenderException("authentication username was already configured ")
+                        .put("[username=").put(this.username).put("]");
+            }
+            if (Chars.isBlank(username)) {
+                throw new LineSenderException("username cannot be empty nor null");
+            }
+            if (Chars.isBlank(password)) {
+                throw new LineSenderException("password cannot be empty nor null");
+            }
+            if (httpToken != null) {
+                throw new LineSenderException("token authentication is already configured");
+            }
+            this.username = username;
+            this.password = password;
+            return this;
+        }
+
+        /**
+         * Set the maximum local buffer capacity in bytes.
+         * <br>
+         * This is a hard limit on the maximum buffer capacity. The buffer cannot grow beyond this limit and Sender
+         * will throw an exception if you try to accommodate more data in the buffer. To prevent this from happening
+         * you should call {@link #flush()} periodically or set {@link #autoFlushRows(int)} to make sure that
+         * Sender will flush the buffer automatically before it reaches the maximum capacity.
+         * <br>
+         * This is only used when communicating over HTTP transport since TCP transport uses a fixed buffer size.
+         * <br>
+         * Default value: 100 MB
+         *
+         * @param maximumBufferCapacity maximum buffer capacity in bytes.
+         * @return this instance for method chaining
+         */
+        public LineSenderBuilder maxBufferCapacity(int maximumBufferCapacity) {
+            if (maximumBufferCapacity < DEFAULT_BUFFER_CAPACITY) {
+                throw new LineSenderException("maximum buffer capacity cannot be less than initial buffer capacity ")
+                        .put("[maximumBufferCapacity=").put(maximumBufferCapacity)
+                        .put(", initialBufferCapacity=").put(DEFAULT_BUFFER_CAPACITY)
+                        .put("]");
+            }
+            this.maximumBufferCapacity = maximumBufferCapacity;
+            return this;
+        }
+
+        /**
+         * Minimum expected throughput in bytes per second for HTTP requests.
+         * <br>
+         * If the throughput is lower than this value, the connection will time out.
+         * The value is expressed as a number of bytes per second. This is used to calculate additional request timeout,
+         * on top of {@link #httpTimeoutMillis(int)}
+         * <br>
+         * This is useful when you are sending large batches of data, and you want to ensure that the connection
+         * does not time out while sending the batch. Setting this to 0 disables the throughput calculation and the
+         * connection will only time out based on the {@link #httpTimeoutMillis(int)} value.
+         * <p>
+         * The default is 100 KiB/s.
+         * This is only used when communicating over HTTP transport, and it's illegal to call this method when
+         * communicating over TCP transport.
+         *
+         * @param minRequestThroughput minimum expected throughput in bytes per second for HTTP requests.
+         * @return this instance for method chaining
+         */
+        public LineSenderBuilder minRequestThroughput(int minRequestThroughput) {
+            if (minRequestThroughput < 1) {
+                throw new LineSenderException("minimum request throughput must not be negative ")
+                        .put("[minRequestThroughput=").put(minRequestThroughput).put("]");
+            }
+            this.minRequestThroughput = minRequestThroughput;
+            return this;
+        }
+
+        /**
+         * Set port where a QuestDB server is listening on.
+         *
+         * @param port port where a QuestDB server is listening on.
+         * @return this instance for method chaining
+         */
+        public LineSenderBuilder port(int port) {
+            if (this.port != PARAMETER_NOT_SET_EXPLICITLY) {
+                throw new LineSenderException("post is already configured ")
+                        .put("[port=").put(port).put("]");
+            }
+            if (port < 1 || port > 65535) {
+                throw new LineSenderException("invalid port [port=").put(port).put("]");
+            }
+            this.port = port;
+            return this;
+        }
+
+        /**
+         * Configures the maximum time the Sender will spend retrying upon receiving a recoverable error from the server.
+         * <br>
+         * This setting is applicable only when communicating over the HTTP transport, and it is illegal to invoke this
+         * method when communicating over the TCP transport.
+         * <p>
+         * Recoverable errors are those not caused by the client sending invalid data to the server. For instance,
+         * connection issues or server outages are considered recoverable errors, whereas attempts to send a row
+         * with an incorrect data type are not.
+         * <p>
+         * Setting this value to zero disables retries entirely. In such cases, the Sender will throw an exception
+         * immediately. It's important to note that the Sender does not retry operations that fail
+         * during {@link #close()}. Therefore, it is recommended to explicitly call {@link #flush()} before closing
+         * the Sender.
+         * <p>
+         * <b>Warning:</b> Retrying may lead to data duplication. It is advisable to use
+         * <a href="https://questdb.io/docs/concept/deduplication/">QuestDB deduplication</a> to mitigate this risk.
+         * <p>
+         * Default value: 10,000 milliseconds.
+         *
+         * @param retryTimeoutMillis the maximum retry duration in milliseconds.
+         * @return this instance, enabling method chaining.
+         */
+        public LineSenderBuilder retryTimeoutMillis(int retryTimeoutMillis) {
+            if (this.retryTimeoutMillis != PARAMETER_NOT_SET_EXPLICITLY) {
+                throw new LineSenderException("retry timeout was already configured ")
+                        .put("[retryTimeoutMillis=").put(this.retryTimeoutMillis).put("]");
+            }
+            if (retryTimeoutMillis < 0) {
+                throw new LineSenderException("retry timeout cannot be negative ")
+                        .put("[retryTimeoutMillis=").put(retryTimeoutMillis).put("]");
+            }
+            if (protocol == PROTOCOL_TCP) {
+                throw new LineSenderException("retrying is not supported for TCP protocol");
+            }
+            this.retryTimeoutMillis = retryTimeoutMillis;
+            return this;
+        }
+
+        private static int getValue(CharSequence configurationString, int pos, StringSink sink, String name) {
+            if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
+                throw new LineSenderException("invalid ").put(name).put(" [error=").put(sink).put("]");
+            }
+            return pos;
+        }
+
+        private static int parseIntValue(@NotNull StringSink value, @NotNull String name) {
+            if (Chars.isBlank(value)) {
+                throw new LineSenderException(name).put(" cannot be empty");
+            }
+            try {
+                return Numbers.parseInt(value);
+            } catch (NumericException e) {
+                throw new LineSenderException("invalid ").put(name).put(" [value=").put(value).put("]");
+            }
+        }
+
+        private static RuntimeException rethrow(Throwable t) {
+            if (t instanceof LineSenderException) {
+                throw (LineSenderException) t;
+            }
+            throw new LineSenderException(t);
+        }
+
+        private void configureDefaults() {
+            if (protocol == PARAMETER_NOT_SET_EXPLICITLY) {
+                protocol = PROTOCOL_TCP;
+            }
+            if (bufferCapacity == PARAMETER_NOT_SET_EXPLICITLY) {
+                bufferCapacity = DEFAULT_BUFFER_CAPACITY;
+            }
+            if (maximumBufferCapacity == PARAMETER_NOT_SET_EXPLICITLY) {
+                maximumBufferCapacity = protocol == PROTOCOL_HTTP ? DEFAULT_MAXIMUM_BUFFER_CAPACITY : bufferCapacity;
+            }
+            if (port == PARAMETER_NOT_SET_EXPLICITLY) {
+                port = protocol == PROTOCOL_HTTP ? DEFAULT_HTTP_PORT : DEFAULT_TCP_PORT;
+            }
+            if (tlsValidationMode == null) {
+                tlsValidationMode = TlsValidationMode.DEFAULT;
+            }
+        }
+
+        /**
          * Configure SenderBuilder from a configuration string.
          * <br>
          * This allows to use a configuration string as a template and amend it with additional configuration options.
@@ -1008,242 +1254,12 @@ public interface Sender extends Closeable {
             return this;
         }
 
-        /**
-         * Set timeout is milliseconds for HTTP requests.
-         * <br>
-         * This is only used when communicating over HTTP transport, and it's illegal to call this method when
-         * communicating over TCP transport.
-         *
-         * @param httpTimeoutMillis timeout is milliseconds for HTTP requests.
-         * @return this instance for method chaining
-         */
-        public LineSenderBuilder httpTimeoutMillis(int httpTimeoutMillis) {
-            if (this.httpTimeout != PARAMETER_NOT_SET_EXPLICITLY) {
-                throw new LineSenderException("HTTP timeout was already configured ")
-                        .put("[timeout=").put(this.httpTimeout).put("]");
-            }
-            if (httpTimeoutMillis < 1) {
-                throw new LineSenderException("HTTP timeout must be positive ")
-                        .put("[timeout=").put(httpTimeoutMillis).put("]");
-
-            }
-            this.httpTimeout = httpTimeoutMillis;
-            return this;
-        }
-
-        /**
-         * Use HTTP Authentication token.
-         * <br>
-         * This is only used when communicating over HTTP transport, and it's illegal to
-         * call this method when communicating over TCP transport.
-         *
-         * @param token HTTP authentication token
-         * @return this instance for method chaining
-         */
-        public LineSenderBuilder httpToken(String token) {
-            if (this.username != null) {
-                throw new LineSenderException("authentication username was already configured ")
-                        .put("[username=").put(this.username).put("]");
-            }
-            if (this.httpToken != null) {
-                throw new LineSenderException("token was already configured");
-            }
-            if (Chars.isBlank(token)) {
-                throw new LineSenderException("token cannot be empty nor null");
-            }
-            this.httpToken = token;
-            return this;
-        }
-
-        /**
-         * Use username and password for authentication when communicating over HTTP protocol.
-         * <br>
-         * This is only used when communicating over HTTP transport, and it's illegal to call this method when
-         * communicating over TCP transport.
-         *
-         * @param username username
-         * @param password password
-         * @return this instance for method chaining
-         * @see #httpToken(String)
-         */
-        public LineSenderBuilder httpUsernamePassword(String username, String password) {
-            if (this.username != null) {
-                throw new LineSenderException("authentication username was already configured ")
-                        .put("[username=").put(this.username).put("]");
-            }
-            if (Chars.isBlank(username)) {
-                throw new LineSenderException("username cannot be empty nor null");
-            }
-            if (Chars.isBlank(password)) {
-                throw new LineSenderException("password cannot be empty nor null");
-            }
-            if (httpToken != null) {
-                throw new LineSenderException("token authentication is already configured");
-            }
-            this.username = username;
-            this.password = password;
-            return this;
-        }
-
-        /**
-         * Set the maximum local buffer capacity in bytes.
-         * <br>
-         * This is a hard limit on the maximum buffer capacity. The buffer cannot grow beyond this limit and Sender
-         * will throw an exception if you try to accommodate more data in the buffer. To prevent this from happening
-         * you should call {@link #flush()} periodically or set {@link #autoFlushRows(int)} to make sure that
-         * Sender will flush the buffer automatically before it reaches the maximum capacity.
-         * <br>
-         * This is only used when communicating over HTTP transport since TCP transport uses a fixed buffer size.
-         * <br>
-         * Default value: 100 MB
-         *
-         * @param maximumBufferCapacity maximum buffer capacity in bytes.
-         * @return this instance for method chaining
-         */
-        public LineSenderBuilder maxBufferCapacity(int maximumBufferCapacity) {
-            if (maximumBufferCapacity < DEFAULT_BUFFER_CAPACITY) {
-                throw new LineSenderException("maximum buffer capacity cannot be less than initial buffer capacity ")
-                        .put("[maximumBufferCapacity=").put(maximumBufferCapacity)
-                        .put(", initialBufferCapacity=").put(DEFAULT_BUFFER_CAPACITY)
-                        .put("]");
-            }
-            this.maximumBufferCapacity = maximumBufferCapacity;
-            return this;
-        }
-
-        /**
-         * Minimum expected throughput in bytes per second for HTTP requests.
-         * <br>
-         * If the throughput is lower than this value, the connection will time out.
-         * The value is expressed as a number of bytes per second. This is used to calculate additional request timeout,
-         * on top of {@link #httpTimeoutMillis(int)}
-         * <br>
-         * This is useful when you are sending large batches of data, and you want to ensure that the connection
-         * does not time out while sending the batch. Setting this to 0 disables the throughput calculation and the
-         * connection will only time out based on the {@link #httpTimeoutMillis(int)} value.
-         * <p>
-         * The default is 100 KiB/s.
-         * This is only used when communicating over HTTP transport, and it's illegal to call this method when
-         * communicating over TCP transport.
-         *
-         * @param minRequestThroughput minimum expected throughput in bytes per second for HTTP requests.
-         * @return this instance for method chaining
-         */
-        public LineSenderBuilder minRequestThroughput(int minRequestThroughput) {
-            if (minRequestThroughput < 1) {
-                throw new LineSenderException("minimum request throughput must not be negative ")
-                        .put("[minRequestThroughput=").put(minRequestThroughput).put("]");
-            }
-            this.minRequestThroughput = minRequestThroughput;
-            return this;
-        }
-
-        /**
-         * Set port where a QuestDB server is listening on.
-         *
-         * @param port port where a QuestDB server is listening on.
-         * @return this instance for method chaining
-         */
-        public LineSenderBuilder port(int port) {
-            if (this.port != PARAMETER_NOT_SET_EXPLICITLY) {
-                throw new LineSenderException("post is already configured ")
-                        .put("[port=").put(port).put("]");
-            }
-            if (port < 1 || port > 65535) {
-                throw new LineSenderException("invalid port [port=").put(port).put("]");
-            }
-            this.port = port;
-            return this;
-        }
-
-        /**
-         * Configures the maximum time the Sender will spend retrying upon receiving a recoverable error from the server.
-         * <br>
-         * This setting is applicable only when communicating over the HTTP transport, and it is illegal to invoke this
-         * method when communicating over the TCP transport.
-         * <p>
-         * Recoverable errors are those not caused by the client sending invalid data to the server. For instance,
-         * connection issues or server outages are considered recoverable errors, whereas attempts to send a row
-         * with an incorrect data type are not.
-         * <p>
-         * Setting this value to zero disables retries entirely. In such cases, the Sender will throw an exception
-         * immediately. It's important to note that the Sender does not retry operations that fail
-         * during {@link #close()}. Therefore, it is recommended to explicitly call {@link #flush()} before closing
-         * the Sender.
-         * <p>
-         * <b>Warning:</b> Retrying may lead to data duplication. It is advisable to use
-         * <a href="https://questdb.io/docs/concept/deduplication/">QuestDB deduplication</a> to mitigate this risk.
-         * <p>
-         * Default value: 10,000 milliseconds.
-         *
-         * @param retryTimeoutMillis the maximum retry duration in milliseconds.
-         * @return this instance, enabling method chaining.
-         */
-        public LineSenderBuilder retryTimeoutMillis(int retryTimeoutMillis) {
-            if (this.retryTimeoutMillis != PARAMETER_NOT_SET_EXPLICITLY) {
-                throw new LineSenderException("retry timeout was already configured ")
-                        .put("[retryTimeoutMillis=").put(this.retryTimeoutMillis).put("]");
-            }
-            if (retryTimeoutMillis < 0) {
-                throw new LineSenderException("retry timeout cannot be negative ")
-                        .put("[retryTimeoutMillis=").put(retryTimeoutMillis).put("]");
-            }
-            if (protocol == PROTOCOL_TCP) {
-                throw new LineSenderException("retrying is not supported for TCP protocol");
-            }
-            this.retryTimeoutMillis = retryTimeoutMillis;
-            return this;
-        }
-
         private void tcp() {
             if (protocol != PARAMETER_NOT_SET_EXPLICITLY) {
                 throw new LineSenderException("protocol was already configured ")
                         .put("[protocol=").put(protocol).put("]");
             }
             protocol = PROTOCOL_TCP;
-        }
-
-        private static int getValue(CharSequence configurationString, int pos, StringSink sink, String name) {
-            if ((pos = ConfStringParser.value(configurationString, pos, sink)) < 0) {
-                throw new LineSenderException("invalid ").put(name).put(" [error=").put(sink).put("]");
-            }
-            return pos;
-        }
-
-        private static int parseIntValue(@NotNull StringSink value, @NotNull String name) {
-            if (Chars.isBlank(value)) {
-                throw new LineSenderException(name).put(" cannot be empty");
-            }
-            try {
-                return Numbers.parseInt(value);
-            } catch (NumericException e) {
-                throw new LineSenderException("invalid ").put(name).put(" [value=").put(value).put("]");
-            }
-        }
-
-        private static RuntimeException rethrow(Throwable t) {
-            if (t instanceof LineSenderException) {
-                throw (LineSenderException) t;
-            }
-            throw new LineSenderException(t);
-        }
-
-        private void configureDefaults() {
-            if (protocol == PARAMETER_NOT_SET_EXPLICITLY) {
-                protocol = PROTOCOL_TCP;
-            }
-            if (bufferCapacity == PARAMETER_NOT_SET_EXPLICITLY) {
-                bufferCapacity = DEFAULT_BUFFER_CAPACITY;
-            }
-            if (maximumBufferCapacity == PARAMETER_NOT_SET_EXPLICITLY) {
-                maximumBufferCapacity = protocol == PROTOCOL_HTTP ? DEFAULT_MAXIMUM_BUFFER_CAPACITY : bufferCapacity;
-            }
-            if (port == PARAMETER_NOT_SET_EXPLICITLY) {
-                port = protocol == PROTOCOL_HTTP ? DEFAULT_HTTP_PORT : DEFAULT_TCP_PORT;
-            }
-            if (tlsValidationMode == null) {
-                tlsValidationMode = TlsValidationMode.DEFAULT;
-            }
         }
 
         private void validateParameters() {

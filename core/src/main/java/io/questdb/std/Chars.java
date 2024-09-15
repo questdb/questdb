@@ -865,7 +865,7 @@ public final class Chars {
                         if (inQuote) {
                             lastLen++;
                         } else {
-                            paths.add(new Path().of(args, lastIndex, lastLen + lastIndex).$());
+                            paths.add(new Path().of(args, lastIndex, lastLen + lastIndex));
                             lastLen = 0;
                         }
                     }
@@ -884,7 +884,7 @@ public final class Chars {
         }
 
         if (lastLen > 0) {
-            paths.add(new Path().of(args, lastIndex, lastLen + lastIndex).$());
+            paths.add(new Path().of(args, lastIndex, lastLen + lastIndex));
         }
         return paths;
     }
@@ -893,13 +893,8 @@ public final class Chars {
         if (cs == null || starts == null) {
             return false;
         }
-
         int l = starts.length();
-        if (l == 0) {
-            return true;
-        }
-
-        return cs.length() >= l && equalsChars(cs, starts, l);
+        return l == 0 || cs.length() >= l && equalsChars(cs, starts, l);
     }
 
     public static boolean startsWith(CharSequence _this, int thisLo, int thisHi, CharSequence that) {
@@ -919,6 +914,19 @@ public final class Chars {
 
     public static boolean startsWith(CharSequence _this, char c) {
         return _this.length() > 0 && _this.charAt(0) == c;
+    }
+
+    public static boolean startsWithIgnoreCase(CharSequence cs, CharSequence startsWith) {
+        if (cs == null || startsWith == null) {
+            return false;
+        }
+
+        int l = startsWith.length();
+        if (l == 0) {
+            return true;
+        }
+
+        return cs.length() >= l && equalsWithIgnoreCase(startsWith, cs, l);
     }
 
     // Pattern has to be lower-case.
@@ -1263,6 +1271,16 @@ public final class Chars {
         }
         return true;
     }
+
+    private static boolean equalsWithIgnoreCase(@NotNull CharSequence lLC, @NotNull CharSequence r, int len) {
+        for (int i = 0; i < len; i++) {
+            if (Character.toLowerCase(lLC.charAt(i)) != Character.toLowerCase(r.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
 
     static {
         CHAR_STRINGS = new String[128];

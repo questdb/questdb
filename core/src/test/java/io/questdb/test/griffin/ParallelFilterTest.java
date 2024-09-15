@@ -139,6 +139,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
         // queue capacity to exhibit various edge cases.
         setProperty(CAIRO_PAGE_FRAME_SHARD_COUNT, 2);
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, PAGE_FRAME_COUNT);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
         super.setUp();
     }
 
@@ -405,6 +406,36 @@ public class ParallelFilterTest extends AbstractCairoTest {
         testStrBindVariable("VARCHAR", SqlJitMode.JIT_MODE_ENABLED);
     }
 
+    @Test
+    public void testInJitDisabled() throws Exception {
+        testIn(SqlJitMode.JIT_MODE_DISABLED);
+    }
+
+    @Test
+    public void testInJitEnabled() throws Exception {
+        testIn(SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    @Test
+    public void testInTimestampJitDisabled() throws Exception {
+        testInTimestamp(SqlJitMode.JIT_MODE_DISABLED);
+    }
+
+    @Test
+    public void testInTimestampJitEnabled() throws Exception {
+        testInTimestamp(SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    @Test
+    public void testInAndInTimestampJitDisabled() throws Exception {
+        testInAndInTimestamp(SqlJitMode.JIT_MODE_DISABLED);
+    }
+
+    @Test
+    public void testInAndInTimestampJitEnabled() throws Exception {
+        testInAndInTimestamp(SqlJitMode.JIT_MODE_ENABLED);
+    }
+
     private static boolean assertCursor(
             CharSequence expected,
             RecordCursorFactory factory,
@@ -481,23 +512,23 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     MemoryTag.NATIVE_DEFAULT
             );
 
-            ddl(
-                    "create table x ( " +
-                            "v long, " +
-                            "s symbol capacity 4 cache " +
-                            ")"
-            );
-            insert("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")");
-
-            context.with(
-                    context.getSecurityContext(),
-                    context.getBindVariableService(),
-                    context.getRandom(),
-                    context.getRequestFd(),
-                    circuitBreaker
-            );
-
             try {
+                ddl(
+                        "create table x ( " +
+                                "v long, " +
+                                "s symbol capacity 4 cache " +
+                                ")"
+                );
+                insert("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")");
+
+                context.with(
+                        context.getSecurityContext(),
+                        context.getBindVariableService(),
+                        context.getRandom(),
+                        context.getRequestFd(),
+                        circuitBreaker
+                );
+
                 assertSql(
                         "s\n" +
                                 "A\n" +
@@ -543,23 +574,23 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     MemoryTag.NATIVE_DEFAULT
             );
 
-            ddl(
-                    "create table x ( " +
-                            "v long, " +
-                            "s symbol capacity 4 cache " +
-                            ")"
-            );
-            insert("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")");
-
-            context.with(
-                    context.getSecurityContext(),
-                    context.getBindVariableService(),
-                    context.getRandom(),
-                    context.getRequestFd(),
-                    circuitBreaker
-            );
-
             try {
+                ddl(
+                        "create table x ( " +
+                                "v long, " +
+                                "s symbol capacity 4 cache " +
+                                ")"
+                );
+                insert("insert into x select rnd_long() v, rnd_symbol('A','B','C') s from long_sequence(" + ROW_COUNT + ")");
+
+                context.with(
+                        context.getSecurityContext(),
+                        context.getBindVariableService(),
+                        context.getRandom(),
+                        context.getRequestFd(),
+                        circuitBreaker
+                );
+
                 assertSql(
                         "v\ts\n" +
                                 "3393210801760647293\tA\n" +
@@ -752,6 +783,99 @@ public class ParallelFilterTest extends AbstractCairoTest {
                                     "1970-01-01T00:00:00.000038Z\tt3\t0.7664256753596138\n" +
                                     "1970-01-01T00:00:00.000043Z\tt3\t0.05048190020054388\n" +
                                     "1970-01-01T00:00:00.000048Z\tt3\t0.8001121139739173\n"
+                    );
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    private void testIn(int jitMode) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
+
+        WorkerPool pool = new WorkerPool((() -> 4));
+        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    ddl(compiler, "CREATE TABLE tab (\n" +
+                            "  ts TIMESTAMP," +
+                            "  type INT," +
+                            "  value SYMBOL) timestamp (ts) PARTITION BY DAY;", sqlExecutionContext);
+                    insert(compiler, "insert into tab select x::timestamp, x%10, 't' || (x%10) from long_sequence(10)", sqlExecutionContext);
+
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select * from tab where type IN (2, 3, 4, 6) limit 10",
+                            sink,
+                            "ts\ttype\tvalue\n" +
+                                    "1970-01-01T00:00:00.000002Z\t2\tt2\n" +
+                                    "1970-01-01T00:00:00.000003Z\t3\tt3\n" +
+                                    "1970-01-01T00:00:00.000004Z\t4\tt4\n" +
+                                    "1970-01-01T00:00:00.000006Z\t6\tt6\n"
+                    );
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    private void testInTimestamp(int jitMode) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
+
+        WorkerPool pool = new WorkerPool((() -> 4));
+        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    ddl(compiler, "CREATE TABLE tab (\n" +
+                            "  ts TIMESTAMP," +
+                            "  preciseTs TIMESTAMP," +
+                            "  type INT," +
+                            "  value SYMBOL) timestamp (ts) PARTITION BY DAY;", sqlExecutionContext);
+                    insert(compiler, "insert into tab select (x * 1000 * 1000 * 60)::timestamp, (x * 1000 * 1000 * 60)::timestamp, x%10, 't' || (x%10) from long_sequence(10000)", sqlExecutionContext);
+
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select * from tab where preciseTs in '1970-01-01T00:00:00;3m;1d;5' and value = 't3' limit 10",
+                            sink,
+                            "ts\tpreciseTs\ttype\tvalue\n" +
+                                    "1970-01-01T00:03:00.000000Z\t1970-01-01T00:03:00.000000Z\t3\tt3\n" +
+                                    "1970-01-02T00:03:00.000000Z\t1970-01-02T00:03:00.000000Z\t3\tt3\n" +
+                                    "1970-01-03T00:03:00.000000Z\t1970-01-03T00:03:00.000000Z\t3\tt3\n" +
+                                    "1970-01-04T00:03:00.000000Z\t1970-01-04T00:03:00.000000Z\t3\tt3\n" +
+                                    "1970-01-05T00:03:00.000000Z\t1970-01-05T00:03:00.000000Z\t3\tt3\n"
+                    );
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    private void testInAndInTimestamp(int jitMode) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(jitMode));
+
+        WorkerPool pool = new WorkerPool((() -> 4));
+        TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    ddl(compiler, "CREATE TABLE tab (\n" +
+                            "  ts TIMESTAMP," +
+                            "  preciseTs TIMESTAMP," +
+                            "  type INT," +
+                            "  value SYMBOL) timestamp (ts) PARTITION BY DAY;", sqlExecutionContext);
+                    insert(compiler, "insert into tab select (x * 1000 * 1000 * 60)::timestamp, (x * 1000 * 1000 * 60)::timestamp, x%10, 't' || (x%10) from long_sequence(10000)", sqlExecutionContext);
+
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "select * from tab where preciseTs in '1970-01-01T00:00:00;3m;1d;5' and value IN ('t1', 't3') limit 10",
+                            sink,
+                            "ts\tpreciseTs\ttype\tvalue\n" +
+                                    "1970-01-01T00:01:00.000000Z\t1970-01-01T00:01:00.000000Z\t1\tt1\n" +
+                                    "1970-01-01T00:03:00.000000Z\t1970-01-01T00:03:00.000000Z\t3\tt3\n" +
+                                    "1970-01-02T00:01:00.000000Z\t1970-01-02T00:01:00.000000Z\t1\tt1\n" +
+                                    "1970-01-02T00:03:00.000000Z\t1970-01-02T00:03:00.000000Z\t3\tt3\n" +
+                                    "1970-01-03T00:01:00.000000Z\t1970-01-03T00:01:00.000000Z\t1\tt1\n" +
+                                    "1970-01-03T00:03:00.000000Z\t1970-01-03T00:03:00.000000Z\t3\tt3\n" +
+                                    "1970-01-04T00:01:00.000000Z\t1970-01-04T00:01:00.000000Z\t1\tt1\n" +
+                                    "1970-01-04T00:03:00.000000Z\t1970-01-04T00:03:00.000000Z\t3\tt3\n" +
+                                    "1970-01-05T00:01:00.000000Z\t1970-01-05T00:01:00.000000Z\t1\tt1\n" +
+                                    "1970-01-05T00:03:00.000000Z\t1970-01-05T00:03:00.000000Z\t3\tt3\n"
                     );
                 },
                 configuration,

@@ -32,10 +32,6 @@ import io.questdb.std.str.LPSZ;
  * Mapped memory with Offset
  */
 public interface MemoryOM extends MemoryM {
-    /**
-     * Extracts File Descriptor to reuse and unmaps the memory.
-     */
-    int detachFdClose();
 
     long getOffset();
 
@@ -59,7 +55,7 @@ public interface MemoryOM extends MemoryM {
      * @param memoryTag memory tag for diagnostics
      * @param opts      file options
      */
-    void ofOffset(FilesFacade ff, int fd, LPSZ name, long lo, long hi, int memoryTag, long opts);
+    void ofOffset(FilesFacade ff, long fd, LPSZ name, long lo, long hi, int memoryTag, long opts);
 
     /**
      * Maps file to memory

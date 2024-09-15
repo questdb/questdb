@@ -32,7 +32,6 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.Overrides;
@@ -505,13 +504,12 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testSplitMidPartitionFailedToSquash() throws Exception {
-        // Windows uses mmap-based writes instead of copyData to squash split partitions.
-        Assume.assumeFalse(Os.isWindows());
+        Assume.assumeTrue(engine.getConfiguration().isWriterMixedIOEnabled());
 
         AtomicLong failToCopyLen = new AtomicLong();
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public long copyData(int srcFd, int destFd, long offsetSrc, long destOffset, long length) {
+            public long copyData(long srcFd, long destFd, long offsetSrc, long destOffset, long length) {
                 long result = super.copyData(srcFd, destFd, offsetSrc, destOffset, length);
                 if (length == failToCopyLen.get()) {
                     return failToCopyLen.get() - 1;

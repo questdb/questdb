@@ -27,7 +27,10 @@ package io.questdb.cairo.map;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectString;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -385,17 +388,6 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     @Override
     public short getShort(int columnIndex) {
         return Unsafe.getUnsafe().getShort(addressOfColumn(columnIndex));
-    }
-
-    @Override
-    public void getStr(int columnIndex, Utf16Sink utf16Sink) {
-        long address = addressOfColumn(columnIndex);
-        int len = Unsafe.getUnsafe().getInt(address);
-        address += Integer.BYTES;
-        for (int i = 0; i < len; i++) {
-            utf16Sink.put(Unsafe.getUnsafe().getChar(address));
-            address += Character.BYTES;
-        }
     }
 
     @Override

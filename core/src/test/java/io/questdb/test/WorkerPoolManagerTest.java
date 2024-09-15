@@ -238,12 +238,22 @@ public class WorkerPoolManagerTest {
             }
 
             @Override
+            public MemoryConfiguration getMemoryConfiguration() {
+                return null;
+            }
+
+            @Override
             public MetricsConfiguration getMetricsConfiguration() {
                 return null;
             }
 
             @Override
             public PGWireConfiguration getPGWireConfiguration() {
+                return null;
+            }
+
+            @Override
+            public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
                 return null;
             }
 

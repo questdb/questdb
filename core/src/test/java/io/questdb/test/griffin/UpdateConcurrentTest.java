@@ -25,12 +25,12 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -43,7 +43,7 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.cairo.CursorPrinter;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -119,29 +119,30 @@ public class UpdateConcurrentTest extends AbstractCairoTest {
         testConcurrency(1, 1, 50, PartitionMode.SINGLE);
     }
 
-    private void assertReader(TableReader rdr, IntObjHashMap<CharSequence[]> expectedValues, IntObjHashMap<Validator> validators) throws SqlException {
-        final RecordMetadata metadata = rdr.getMetadata();
+    private void assertReader(TableReader reader, IntObjHashMap<CharSequence[]> expectedValues, IntObjHashMap<Validator> validators) throws SqlException {
+        final RecordMetadata metadata = reader.getMetadata();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             validators.get(i).reset();
         }
-        RecordCursor cursor = rdr.getCursor();
-        final Record record = cursor.getRecord();
-        int recordIndex = 0;
-        while (cursor.hasNext()) {
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                final StringSink readerSink = UpdateConcurrentTest.readerSink.get();
-                readerSink.clear();
-                CursorPrinter.printColumn(record, metadata, i, readerSink);
-                CharSequence[] expectedValueArray = expectedValues.get(i);
-                CharSequence expectedValue = expectedValueArray != null ? expectedValueArray[recordIndex] : null;
-                if (!validators.get(i).validate(expectedValue, readerSink)) {
-                    throw SqlException.$(0, "assertSql failed, recordIndex=").put(recordIndex)
-                            .put(", columnIndex=").put(i)
-                            .put(", expected=").put(expectedValue)
-                            .put(", actual=").put(readerSink);
+        try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
+            final Record record = cursor.getRecord();
+            int recordIndex = 0;
+            while (cursor.hasNext()) {
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    final StringSink readerSink = UpdateConcurrentTest.readerSink.get();
+                    readerSink.clear();
+                    CursorPrinter.printColumn(record, metadata, i, readerSink);
+                    CharSequence[] expectedValueArray = expectedValues.get(i);
+                    CharSequence expectedValue = expectedValueArray != null ? expectedValueArray[recordIndex] : null;
+                    if (!validators.get(i).validate(expectedValue, readerSink)) {
+                        throw SqlException.$(0, "assertSql failed, recordIndex=").put(recordIndex)
+                                .put(", columnIndex=").put(i)
+                                .put(", expected=").put(expectedValue)
+                                .put(", actual=").put(readerSink);
+                    }
                 }
+                recordIndex++;
             }
-            recordIndex++;
         }
     }
 
@@ -179,8 +180,7 @@ public class UpdateConcurrentTest extends AbstractCairoTest {
 
             for (int k = 0; k < numOfWriters; k++) {
                 Thread writer = new Thread(() -> {
-                    try {
-                        final SqlCompiler updateCompiler = engine.getSqlCompiler();
+                    try (SqlCompiler updateCompiler = engine.getSqlCompiler()) {
                         final SqlExecutionContext sqlExecutionContext = TestUtils.createSqlExecutionCtx(engine);
                         barrier.await();
                         for (int i = 0; i < numOfUpdates; i++) {
@@ -192,12 +192,12 @@ public class UpdateConcurrentTest extends AbstractCairoTest {
                             }
                             current.incrementAndGet();
                         }
-                        updateCompiler.close();
                     } catch (Throwable th) {
                         LOG.error().$("writer error ").$(th).$();
                         exceptions.add(th);
+                    } finally {
+                        Path.clearThreadLocals();
                     }
-                    Path.clearThreadLocals();
                 });
                 threads.add(writer);
                 writer.start();

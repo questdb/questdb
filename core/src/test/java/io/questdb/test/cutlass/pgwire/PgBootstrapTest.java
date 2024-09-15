@@ -24,12 +24,9 @@
 
 package io.questdb.test.cutlass.pgwire;
 
-import io.questdb.Bootstrap;
-import io.questdb.PropBootstrapConfiguration;
 import io.questdb.ServerMain;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -38,8 +35,6 @@ import org.postgresql.util.PSQLException;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Properties;
 
 public class PgBootstrapTest extends AbstractBootstrapTest {

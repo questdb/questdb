@@ -22,11 +22,9 @@
  *
  ******************************************************************************/
 
-#include <cstdio>
 #include <jni.h>
 #include <cstdint>
 #include "../share/vec_agg_vanilla.h"
-
 
 extern "C" {
 
@@ -105,8 +103,8 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_maxShort(JNIEnv *env, jclass cl,
     return maxShort_Vanilla((int16_t *) pShort, count);
 }
 
-JNIEXPORT jdouble JNICALL Java_io_questdb_std_Vect_getSupportedInstructionSet(JNIEnv *env, jclass cl) {
-    return 0.0;
+JNIEXPORT jint JNICALL Java_io_questdb_std_Vect_getSupportedInstructionSet(JNIEnv *env, jclass cl) {
+    return 0;
 }
 
 }

@@ -463,10 +463,10 @@ public class TableBackupTest {
     }
 
     private void assertDatabase() {
-        path.of(mainConfiguration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-        Assert.assertTrue(Files.exists(path));
-        finalBackupPath.trimTo(finalBackupPathLen).concat(mainConfiguration.getDbDirectory()).concat(TableUtils.TAB_INDEX_FILE_NAME).$();
-        Assert.assertTrue(Files.exists(finalBackupPath));
+        path.of(mainConfiguration.getRoot()).concat(TableUtils.TAB_INDEX_FILE_NAME);
+        Assert.assertTrue(Files.exists(path.$()));
+        finalBackupPath.trimTo(finalBackupPathLen).concat(mainConfiguration.getDbDirectory()).concat(TableUtils.TAB_INDEX_FILE_NAME);
+        Assert.assertTrue(Files.exists(finalBackupPath.$()));
 
         finalBackupPath.trimTo(finalBackupPathLen).concat(PropServerConfiguration.CONFIG_DIRECTORY).slash$();
         final int trimLen = finalBackupPath.size();
@@ -476,10 +476,10 @@ public class TableBackupTest {
         Assert.assertTrue(Files.exists(finalBackupPath.trimTo(trimLen).concat("date.formats").$()));
 
         if (isWal) {
-            path.parent().concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii(".0").$();
-            Assert.assertTrue(Files.exists(path));
-            finalBackupPath.trimTo(finalBackupPathLen).concat(mainConfiguration.getDbDirectory()).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii(".0").$();
-            Assert.assertTrue(Files.exists(finalBackupPath));
+            path.parent().concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii(".0");
+            Assert.assertTrue(Files.exists(path.$()));
+            finalBackupPath.trimTo(finalBackupPathLen).concat(mainConfiguration.getDbDirectory()).concat(WalUtils.TABLE_REGISTRY_NAME_FILE).putAscii(".0");
+            Assert.assertTrue(Files.exists(finalBackupPath.$()));
         }
     }
 

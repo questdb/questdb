@@ -211,7 +211,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                     "COMMIT; " +
                                     "DELETE FROM test; " +
                                     "INSERT INTO test VALUES (21, 'x');");
-                    assertException("PSQLException should be thrown");
+                    assertExceptionNoLeakCheck("PSQLException should be thrown");
                 } catch (PSQLException e) {
                     assertEquals("ERROR: unexpected token [FROM]\n  Position: 94", e.getMessage());
                 }
@@ -238,7 +238,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "COMMIT; " +
                             "DELETE FROM testA; " +
                             "DELETE FROM testB;");
-                    assertException("PSQLException should be thrown");
+                    assertExceptionNoLeakCheck("PSQLException should be thrown");
                 } catch (PSQLException e) {
                     assertEquals("ERROR: unexpected token [FROM]\n  Position: 173", e.getMessage());
                 }
@@ -390,7 +390,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "COMMIT; " +
                             "INSERT INTO mytable VALUES(2); " +
                             "DELETE from mytable3;");
-                    assertException("PSQLException expected");
+                    assertExceptionNoLeakCheck("PSQLException expected");
                 } catch (PSQLException e) {
                     assertEquals("ERROR: unexpected token [mytable3]\n  Position: 120", e.getMessage());
                 }
@@ -475,7 +475,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                     "INSERT INTO test VALUES(2020, to_timestamp('2020-03-01', 'yyyy-MM-dd'));" +
                                     "ALTER TABLE test ATTACH PARTITION LIST '2020';" +
                                     "SELECT l from TEST;");
-                    assertException("PSQLException should be thrown");
+                    assertExceptionNoLeakCheck("PSQLException should be thrown");
                 } catch (PSQLException e) {
                     TestUtils.assertContains(e.getMessage(), "could not attach partition [table=test, detachStatus=ATTACH_ERR_PARTITION_EXISTS");
                 }
@@ -649,7 +649,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "COMMIT; " +
                             "DELETE FROM test; " +
                             "INSERT INTO test VALUES (21, 'x');");
-                    assertException("PSQLException should be thrown");
+                    assertExceptionNoLeakCheck("PSQLException should be thrown");
                 } catch (PSQLException e) {
                     assertEquals("ERROR: unexpected token [FROM]\n  Position: 87", e.getMessage());
                 }
@@ -676,7 +676,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "DELETE FROM testA; " +
                             "DELETE FROM testB; " +
                             "INSERT INTO testA VALUES (21, 'x');");
-                    assertException("PSQLException should be thrown");
+                    assertExceptionNoLeakCheck("PSQLException should be thrown");
                 } catch (PSQLException e) {
                     assertEquals("ERROR: unexpected token [FROM]\n  Position: 171", e.getMessage());
                 }

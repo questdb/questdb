@@ -156,7 +156,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testBooleanToDoubleConstant() throws Exception {
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "cast\n0.0\n",
                 "select cast(false as double)",
                 null,
@@ -165,7 +165,7 @@ public class CastTest extends AbstractCairoTest {
                 true
         );
 
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "cast\n0.0\n",
                 "select cast((150 < 0) as double)",
                 null,
@@ -202,7 +202,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testBooleanToFloatConstant() throws Exception {
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "cast\n0.0000\n",
                 "select cast(false as float)",
                 null,
@@ -211,7 +211,7 @@ public class CastTest extends AbstractCairoTest {
                 true
         );
 
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "cast\n0.0000\n",
                 "select cast((150 < 100) as float)",
                 null,
@@ -248,7 +248,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testBooleanToIntConstant() throws Exception {
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "cast\n0\n",
                 "select cast(false as int)",
                 null,
@@ -257,7 +257,7 @@ public class CastTest extends AbstractCairoTest {
                 true
         );
 
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "cast\n0\n",
                 "select cast((150 < 0) as int)",
                 null,
@@ -266,7 +266,7 @@ public class CastTest extends AbstractCairoTest {
                 true
         );
 
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "cast\n1\n",
                 "select cast((150 < 250) as int)",
                 null,
@@ -678,7 +678,7 @@ public class CastTest extends AbstractCairoTest {
                 false
         );
 
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "cast\nfalse\n",
                 "select cast(0x00 as boolean)",
                 null,
@@ -686,7 +686,7 @@ public class CastTest extends AbstractCairoTest {
                 true,
                 true
         );
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "cast\ntrue\n",
                 "select cast(0xF0 as boolean)",
                 null,
@@ -2382,7 +2382,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testDoubleToBoolean() throws Exception {
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "cast\nfalse\n",
                 "select cast(0.0 as boolean)",
                 null,
@@ -2390,7 +2390,7 @@ public class CastTest extends AbstractCairoTest {
                 true,
                 true
         );
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "cast\ntrue\n",
                 "select cast(0.123 as boolean)",
                 null,
@@ -2930,7 +2930,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testFloatToBoolean() throws Exception {
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "cast\ntrue\n",
                 "select cast(0.0002 as boolean)",
                 null,
@@ -2938,7 +2938,7 @@ public class CastTest extends AbstractCairoTest {
                 true,
                 true
         );
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "cast\nfalse\n",
                 "select cast(0.0000 as boolean)",
                 null,
@@ -3579,7 +3579,7 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testIntConstToBoolean() throws Exception {
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "cast\tcast1\tcast2\tcast3\ntrue\tfalse\ttrue\ttrue\n",
                 "select cast(-1 as boolean), cast(0 as boolean), cast(1 as boolean), cast(2 as boolean)",
                 null,
@@ -3601,7 +3601,7 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n" +
+                        "false\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
@@ -4190,7 +4190,7 @@ public class CastTest extends AbstractCairoTest {
                 true,
                 false
         );
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "cast\nfalse\n",
                 "select cast(cast(0 as long) as boolean)",
                 null,
@@ -4198,7 +4198,7 @@ public class CastTest extends AbstractCairoTest {
                 true,
                 true
         );
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "cast\ntrue\n",
                 "select cast(cast(100 as long) as boolean)",
                 null,
@@ -4345,7 +4345,7 @@ public class CastTest extends AbstractCairoTest {
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n" +
+                        "false\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
@@ -4960,7 +4960,7 @@ public class CastTest extends AbstractCairoTest {
                 false
         );
 
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "cast\nfalse\n",
                 "select cast(cast(0 as short) as boolean)",
                 null,
@@ -4968,7 +4968,7 @@ public class CastTest extends AbstractCairoTest {
                 true,
                 true
         );
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "cast\ntrue\n",
                 "select cast(cast(256 as short) as boolean)",
                 null,
@@ -6537,21 +6537,21 @@ public class CastTest extends AbstractCairoTest {
                 "insert into tab select cast(rnd_timestamp(10000000000L, 100000000000L, 2) as boolean) from long_sequence(10)",
                 "a\n" +
                         "true\n" +
+                        "false\n" +
+                        "true\n" +
+                        "true\n" +
+                        "false\n" +
                         "true\n" +
                         "true\n" +
                         "true\n" +
-                        "true\n" +
-                        "true\n" +
-                        "true\n" +
-                        "true\n" +
-                        "true\n" +
+                        "false\n" +
                         "true\n",
                 true,
                 true,
                 false
         );
 
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "cast\nfalse\n",
                 "select cast(cast(0L as timestamp) as boolean)",
                 null,
@@ -6559,7 +6559,7 @@ public class CastTest extends AbstractCairoTest {
                 true,
                 true
         );
-        assertQuery(
+        assertQueryNoLeakCheck(
                 "cast\ntrue\n",
                 "select cast(cast(5L as timestamp) as boolean)",
                 null,
