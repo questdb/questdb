@@ -78,33 +78,39 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
                 holder.of(0).clearAndSet(new Utf8String("foobar"));
                 Assert.assertTrue(holder.isAscii());
                 TestUtils.assertEquals("foobar", holder);
-                long foobarPtr = holder.ptr();
+                assertPointerColorIsNotLeaking(holder);
+                long foobarPtr = holder.colouredPtr();
 
                 // store a direct sequence into a new location
                 holder.of(0).clearAndSet(stableDirectString);
                 // direct string doesn't copy ascii flag
                 Assert.assertFalse(holder.isAscii());
                 TestUtils.assertEquals("barbaz", holder);
-                long barbazPtr = holder.ptr();
+                assertPointerColorIsNotLeaking(holder);
+                long barbazPtr = holder.colouredPtr();
 
                 // store a direct sequence into the original location of the non-direct string
                 holder.of(foobarPtr).clearAndSet(stableDirectString);
                 Assert.assertFalse(holder.isAscii());
+                assertPointerColorIsNotLeaking(holder);
                 TestUtils.assertEquals("barbaz", holder);
 
                 // now add a non-direct string without changing the address
                 holder.clearAndSet(new Utf8String("something_else"));
                 Assert.assertTrue(holder.isAscii());
+                assertPointerColorIsNotLeaking(holder);
                 TestUtils.assertEquals("something_else", holder);
 
                 // and re-add the direct string. again, without changing the address
                 holder.clearAndSet(stableDirectString);
                 Assert.assertFalse(holder.isAscii());
+                assertPointerColorIsNotLeaking(holder);
                 TestUtils.assertEquals("barbaz", holder);
 
                 // store a non-direct long char sequence into the original location of the direct string
                 holder.of(barbazPtr).clearAndSet(new Utf8String("foobarfoobarfoobarfoobarfoobarfoobarfoobarfoobarfoobar"));
                 Assert.assertTrue(holder.isAscii());
+                assertPointerColorIsNotLeaking(holder);
                 TestUtils.assertEquals("foobarfoobarfoobarfoobarfoobarfoobarfoobarfoobarfoobar", holder);
             }
         });
@@ -115,10 +121,10 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (
                     GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB);
-                    DirectUtf8Sink directSink = new DirectUtf8Sink(16);
+                    DirectUtf8Sink directSink = new DirectUtf8Sink(16)
             ) {
                 Utf8StringSink sink = new Utf8StringSink();
-                StableAwareUtf8StringHolder holder = new StableAwareUtf8StringHolder();
+                final StableAwareUtf8StringHolder holder = new StableAwareUtf8StringHolder();
                 holder.setAllocator(allocator);
                 Rnd rnd = TestUtils.generateRandom(null);
                 TestDirectUtf8String stableDirectString = new TestDirectUtf8String(true);
@@ -127,12 +133,14 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
                     int size = rnd.nextPositiveInt() % 100;
                     if (size == 99) {
                         holder.clearAndSet(null);
+                        assertPointerColorIsNotLeaking(holder);
                         Assert.assertTrue(holder.isAscii());
                         Assert.assertEquals(0, holder.size());
                     } else if (useDirect) {
                         directSink.clear();
                         rnd.nextUtf8Str(size, directSink);
                         stableDirectString.of(directSink.lo(), directSink.hi());
+                        assertPointerColorIsNotLeaking(holder);
                         holder.clearAndSet(stableDirectString);
                         Assert.assertFalse(holder.isAscii());
                         TestUtils.assertEquals(stableDirectString, holder);
@@ -140,6 +148,7 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
                         sink.clear();
                         rnd.nextUtf8Str(size, sink);
                         holder.clearAndSet(sink);
+                        assertPointerColorIsNotLeaking(holder);
                         Assert.assertEquals(sink.isAscii(), holder.isAscii());
                         TestUtils.assertEquals(sink, holder);
                     }
@@ -194,5 +203,19 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private static void assertPointerColorIsNotLeaking(StableAwareUtf8StringHolder holder) {
+        long ptr = holder.ptr();
+        if (ptr > 0) {
+            return;
+        }
+
+        int size = holder.size();
+        if (ptr == 0) {
+            Assert.assertEquals("null pointer, but non-zero size [size=" + size + "]", 0, size);
+            return;
+        }
+        Assert.fail("Invalid pointer received [ptr=" + ptr + ", size=" + size + "]");
     }
 }
