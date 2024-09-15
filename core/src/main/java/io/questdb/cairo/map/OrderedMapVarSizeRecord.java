@@ -192,7 +192,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         final Long256Impl[] long256A;
         final Long256Impl[] long256B;
 
-        // csA and csB are pegged, checking one for null should be enough
+        // csA and csB are pegged checking one for null should be enough
         if (this.csA != null) {
             int n = this.csA.length;
             csA = new DirectString[n];
