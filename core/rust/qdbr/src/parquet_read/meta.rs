@@ -1,27 +1,37 @@
 use crate::parquet::error::ParquetResult;
+use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
 use crate::parquet_read::{ColumnMeta, ParquetDecoder};
 use crate::parquet_write::schema::ColumnType;
-use crate::parquet_write::QDB_TYPE_META_PREFIX;
-use parquet2::metadata::Descriptor;
+use parquet2::metadata::{Descriptor, FileMetaData};
 use parquet2::read::read_metadata;
 use parquet2::schema::types::PrimitiveLogicalType::{Timestamp, Uuid};
 use parquet2::schema::types::{
     IntegerType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
 };
-use std::collections::HashMap;
 use std::fs::File;
 use std::mem::ManuallyDrop;
+
+/// Extract the questdb-specific metadata from the parquet file metadata.
+/// Error if the JSON is not valid or the version is not supported.
+/// Returns `None` if the metadata is not present.
+fn extract_qdb_meta(file_metadata: &FileMetaData) -> ParquetResult<Option<QdbMeta>> {
+    let Some(key_value_meta) = file_metadata.key_value_metadata.as_ref() else {
+        return Ok(None);
+    };
+    let Some(questdb_key_value) = key_value_meta.iter().find(|kv| kv.key == QDB_META_KEY) else {
+        return Ok(None);
+    };
+    let Some(json) = questdb_key_value.value.as_deref() else {
+        return Ok(None);
+    };
+    Ok(Some(QdbMeta::deserialize(json)?))
+}
 
 impl ParquetDecoder {
     pub fn read(mut file: File) -> ParquetResult<Self> {
         let metadata = read_metadata(&mut file)?;
         let col_len = metadata.schema_descr.columns().len();
-        let additional_meta: Option<HashMap<String, Option<String>>> =
-            metadata.key_value_metadata.as_ref().map(|vec| {
-                vec.iter()
-                    .map(|kv| (kv.key.to_string(), kv.value.to_owned()))
-                    .collect()
-            });
+        let qdb_meta = extract_qdb_meta(&metadata)?;
         let mut row_group_sizes: Vec<i32> = Vec::with_capacity(metadata.row_groups.len());
         let mut columns = Vec::with_capacity(col_len);
 
@@ -32,7 +42,7 @@ impl ParquetDecoder {
         for (column_id, f) in metadata.schema_descr.columns().iter().enumerate() {
             // Some types are not supported, this will skip them.
             if let Some((data_type, column_type)) =
-                Self::descriptor_to_column_type(&f.descriptor, &additional_meta)
+                Self::descriptor_to_column_type(&f.descriptor, qdb_meta.as_ref())
             {
                 let name_str = &f.descriptor.primitive_type.field_info.name;
                 let name: Vec<u16> = name_str.encode_utf16().collect();
@@ -65,26 +75,22 @@ impl ParquetDecoder {
         Ok(decoder)
     }
 
+    fn extract_column_type_from_qdb_meta(
+        qdb_meta: Option<&QdbMeta>,
+        col_id: i32,
+    ) -> Option<(ColumnType, i32)> {
+        let col_meta = qdb_meta?.schema.columns.get(&col_id)?;
+        let col_type = ColumnType::try_from(col_meta.qdb_type_code).ok()?;
+        Some((col_type, col_meta.qdb_type_code))
+    }
+
     fn descriptor_to_column_type(
         des: &Descriptor,
-        additional_meta: &Option<HashMap<String, Option<String>>>,
+        qdb_meta: Option<&QdbMeta>,
     ) -> Option<(ColumnType, i32)> {
         if let Some(col_id) = des.primitive_type.field_info.id {
-            let meta_kv_key = format!("{}{}", QDB_TYPE_META_PREFIX, col_id);
-            let result = additional_meta
-                .as_ref()
-                .and_then(|hashmap| hashmap.get(&meta_kv_key));
-            if let Some(Some(val)) = result {
-                let full_col_type_int = match val.parse::<i32>() {
-                    Ok(col_type_int) => match ColumnType::try_from(col_type_int) {
-                        Ok(col_type) => return Some((col_type, col_type_int)),
-                        _ => None,
-                    },
-                    _ => None,
-                };
-                if full_col_type_int.is_some() {
-                    return full_col_type_int;
-                }
+            if let Some(pair) = Self::extract_column_type_from_qdb_meta(qdb_meta, col_id) {
+                return Some(pair);
             }
         }
 

@@ -25,7 +25,10 @@
 
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorCause, ParquetResult};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt::Debug;
+
+pub const QDB_META_KEY: &str = "questdb";
 
 /// A constant field that serializes always as the same value in JSON.
 /// On deserialization, it checks that the value is the same as the constant.
@@ -68,14 +71,14 @@ impl<'de, const N: u32> Deserialize<'de> for U32Const<N> {
 /// This contains just the `version` field that all the other versions
 /// of the metadata struct must also contain as a `
 #[derive(Deserialize)]
-struct VersionMetadata {
+struct VersionMeta {
     pub version: u32,
 }
 
 /// Special instructions on how to handle the column data,
 /// beyond the basic column type.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub enum Handling {
+pub enum QdbMetaColHandling {
     /// A symbol column where the local dictionary keys,
     /// i.e. the numeric keys in the parquet data match
     /// the QuestDB keys in the global symbol table.
@@ -83,41 +86,49 @@ pub enum Handling {
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Column {
+pub struct QdbMetaCol {
     /// The numeric code for the internal QuestDB column type.
     /// To convert, use `let column_type: ColumnType = col.qdb_type_code.try_into()?`.
     pub qdb_type_code: i32,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub handling: Option<Handling>,
+    pub handling: Option<QdbMetaColHandling>,
+}
+
+pub type ColId = i32;
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub struct QdbMetaSchema {
+    pub(crate) columns: HashMap<ColId, QdbMetaCol>,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct Schema {
-    columns: Vec<Column>,
-}
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct QdbMetadataV1 {
+pub struct QdbMetaV1 {
     version: U32Const<1>,
-    schema: Schema,
+    pub(crate) schema: QdbMetaSchema,
 }
 
-/// Alias to the latest version of struct.
+impl QdbMetaV1 {
+    pub fn new() -> Self {
+        Self {
+            version: U32Const,
+            schema: QdbMetaSchema { columns: HashMap::new() },
+        }
+    }
+}
+
+/// Alias to the latest version of the QuestDB-specific parquet metadata.
 /// This is the only one we use in the code base.
 /// Older versions upgraded to this version when read.
-pub type QdbMetadata = QdbMetadataV1;
-const CURRENT_VERSION: u32 = 1;
+pub type QdbMeta = QdbMetaV1;
 
-impl QdbMetadata {
-    pub fn deserialize(metadata: &[u8]) -> ParquetResult<Self> {
-        let json_str = std::str::from_utf8(metadata)
-            .map_err(|e| ParquetErrorCause::Utf8Decode(e).into_err())?;
-        let version: VersionMetadata = serde_json::from_str(json_str)
-            .map_err(|e| ParquetErrorCause::QdbMetadata(e.into()).into_err())?;
+impl QdbMeta {
+    pub fn deserialize(metadata: &str) -> ParquetResult<Self> {
+        let version: VersionMeta = serde_json::from_str(metadata)
+            .map_err(|e| ParquetErrorCause::QdbMeta(e.into()).into_err())?;
         match version.version {
-            1 => serde_json::from_str(json_str)
-                .map_err(|e| ParquetErrorCause::QdbMetadata(e.into()).into_err()),
+            1 => serde_json::from_str(metadata)
+                .map_err(|e| ParquetErrorCause::QdbMeta(e.into()).into_err()),
             _ => Err(fmt_err!(
                 Unsupported,
                 "unsupported questdb metadata version: {}",
@@ -127,7 +138,7 @@ impl QdbMetadata {
     }
 
     pub fn serialize(&self) -> ParquetResult<String> {
-        serde_json::to_string(self).map_err(|e| ParquetErrorCause::QdbMetadata(e.into()).into_err())
+        serde_json::to_string(self).map_err(|e| ParquetErrorCause::QdbMeta(e.into()).into_err())
     }
 }
 
@@ -139,47 +150,71 @@ mod tests {
 
     #[test]
     fn test_serialize() -> ParquetResult<()> {
-        let metadata = QdbMetadata {
+        let metadata = QdbMeta {
             version: U32Const,
-            schema: Schema {
-                columns: vec![
-                    Column {
-                        qdb_type_code: ColumnType::Symbol.code(),
-                        handling: Some(Handling::SymbolLocalIsGlobal),
-                    },
-                    Column {
-                        qdb_type_code: ColumnType::Int.code(),
-                        handling: None,
-                    },
-                ],
+            schema: QdbMetaSchema {
+                columns: HashMap::from([
+                    (
+                        0,
+                        QdbMetaCol {
+                            qdb_type_code: ColumnType::Symbol.code(),
+                            handling: Some(QdbMetaColHandling::SymbolLocalIsGlobal),
+                        },
+                    ),
+                    (
+                        1,
+                        QdbMetaCol {
+                            qdb_type_code: ColumnType::Int.code(),
+                            handling: None,
+                        },
+                    ),
+                ]),
             },
         };
 
         let expected = json!({
             "version": 1,
             "schema": {
-                "columns": [
-                    {
+                "columns": {
+                    "0": {
                         "qdb_type_code": 12,
                         "handling": "SymbolLocalIsGlobal"
                     },
-                    {
+                    "1": {
                         "qdb_type_code": 5
                     }
-                ]
+                }
             }
         });
 
         let serialized_str = metadata.serialize()?;
         let serialized: Value = serde_json::from_str(serialized_str.as_str())
-            .map_err(|e| ParquetErrorCause::QdbMetadata(e.into()).into_err())?;
+            .map_err(|e| ParquetErrorCause::QdbMeta(e.into()).into_err())?;
 
         // Check that it serializes to the expected JSON.
         assert_eq!(serialized, expected);
 
         // Check that it round-trips back to the original struct.
-        let deserialized = QdbMetadata::deserialize(serialized_str.as_bytes())?;
+        let deserialized = QdbMeta::deserialize(&serialized_str)?;
         assert_eq!(metadata, deserialized);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_bad_version() -> ParquetResult<()> {
+        let metadata = json!({
+            "version": 2,
+            "other_fields": ["are", "ignored"]
+        });
+
+        let serialized_str = serde_json::to_string(&metadata).unwrap();
+
+        let err = QdbMeta::deserialize(&serialized_str).unwrap_err();
+        assert!(matches!(err.get_cause(), ParquetErrorCause::Unsupported));
+
+        let msg = err.to_string();
+        assert_eq!(msg, "unsupported questdb metadata version: 2");
 
         Ok(())
     }

@@ -13,8 +13,6 @@ mod update;
 mod util;
 pub mod varchar;
 
-pub const QDB_TYPE_META_PREFIX: &str = "__qdb_type__";
-
 pub trait Nullable {
     fn is_null(&self) -> bool;
 }

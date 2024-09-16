@@ -1,7 +1,7 @@
 use std::slice;
 
 use crate::parquet::error::{fmt_err, ParquetError, ParquetResult};
-use crate::parquet_write::QDB_TYPE_META_PREFIX;
+use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol, QdbMetaColHandling, QDB_META_KEY};
 use parquet2::encoding::Encoding;
 use parquet2::metadata::KeyValue;
 use parquet2::metadata::SchemaDescriptor;
@@ -346,20 +346,29 @@ pub fn to_parquet_schema(
         .map(|c| column_type_to_parquet_type(c.id, c.name, c.data_type))
         .collect::<ParquetResult<Vec<_>>>()?;
 
-    let additinal_keyvals = partition
+    let mut qdb_meta = QdbMeta::new();
+    qdb_meta.schema.columns = partition
         .columns
         .iter()
         .map(|c| {
-            KeyValue::new(
-                format!("{}{}", QDB_TYPE_META_PREFIX, c.id),
-                c.full_column_type.to_string(),
-            )
+            let handling = if c.data_type == ColumnType::Symbol {
+                Some(QdbMetaColHandling::SymbolLocalIsGlobal)
+            } else {
+                None
+            };
+
+            let col = QdbMetaCol { qdb_type_code: c.full_column_type, handling };
+
+            (c.id, col)
         })
-        .collect::<Vec<_>>();
+        .collect();
+
+    let encoded_qdb_meta = qdb_meta.serialize()?;
+    let questdb_keyval = KeyValue::new(QDB_META_KEY.to_string(), encoded_qdb_meta);
 
     Ok((
         SchemaDescriptor::new(partition.table.clone(), parquet_types),
-        additinal_keyvals,
+        vec![questdb_keyval],
     ))
 }
 

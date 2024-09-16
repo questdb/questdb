@@ -29,7 +29,7 @@ use std::sync::Arc;
 #[derive(Debug, Clone)]
 pub enum ParquetErrorCause {
     Parquet2(parquet2::error::Error),
-    QdbMetadata(Arc<serde_json::Error>),
+    QdbMeta(Arc<serde_json::Error>),
     Layout,
     Unsupported,
     Invalid,
@@ -42,7 +42,7 @@ impl ParquetErrorCause {
     pub fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             ParquetErrorCause::Parquet2(err) => Some(err),
-            ParquetErrorCause::QdbMetadata(err) => Some(err.as_ref()),
+            ParquetErrorCause::QdbMeta(err) => Some(err.as_ref()),
             ParquetErrorCause::Utf8Decode(err) => Some(err),
             ParquetErrorCause::Utf16Decode(err) => Some(err),
             ParquetErrorCause::Io(err) => Some(err.as_ref()),
@@ -86,6 +86,11 @@ impl ParquetError {
             context: vec![descr.into()],
             backtrace: Backtrace::capture().into(),
         }
+    }
+
+    #[cfg(test)]
+    pub fn get_cause(&self) -> &ParquetErrorCause {
+        &self.cause
     }
 }
 
