@@ -32,11 +32,11 @@ import io.questdb.std.AbstractSelfReturningObject;
 import io.questdb.std.IntList;
 import io.questdb.std.WeakSelfReturningObjectPool;
 
-public abstract class AbstractTypeContainer<T extends AbstractTypeContainer<?>> extends AbstractSelfReturningObject<T> {
+public abstract class AbstractTypeContainerLegacy<T extends AbstractTypeContainerLegacy<?>> extends AbstractSelfReturningObject<T> {
     private final IntList types = new IntList();
     private boolean closing;
 
-    public AbstractTypeContainer(WeakSelfReturningObjectPool<T> parentPool) {
+    public AbstractTypeContainerLegacy(WeakSelfReturningObjectPool<T> parentPool) {
         super(parentPool);
     }
 

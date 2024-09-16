@@ -53,7 +53,7 @@ public final class DefaultPgWireAuthenticatorFactory implements PgWireAuthentica
         // and the authenticator will be responsible for closing them.
         final UsernamePasswordMatcher matcher = new DynamicUsernamePasswordMatcher(serverConfiguration, configuration);
 
-        return new CleartextPasswordPgWireAuthenticator(
+        return new CleartextPasswordPgWireAuthenticatorLegacy(
                 configuration,
                 circuitBreaker,
                 registry,
