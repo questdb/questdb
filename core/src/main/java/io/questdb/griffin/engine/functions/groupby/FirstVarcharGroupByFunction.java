@@ -62,7 +62,7 @@ public class FirstVarcharGroupByFunction extends VarcharFunction implements Grou
             mapValue.putBool(valueIndex + 2, true);
         } else {
             sink.of(0).clearAndSet(val);
-            mapValue.putLong(valueIndex + 1, sink.ptr());
+            mapValue.putLong(valueIndex + 1, sink.colouredPtr());
             mapValue.putBool(valueIndex + 2, false);
         }
     }
