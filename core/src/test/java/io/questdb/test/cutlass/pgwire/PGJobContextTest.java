@@ -106,10 +106,7 @@ import static org.junit.Assert.*;
     4. Collect PG messages from the log
         In the log you should see incoming and outgoing messages, such as ">0000006e00030" and "<520000000800000003".
         Collect all sent and received messages.
-    5. Replace the 4th message with "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549"
-        The only caveat with dumping PG messages is that the end of the 4th message contains a secret, which is randomly generated (see CleartextPasswordPgWireAuthenticator.prepareBackendKeyData()).
-        The above means that the dumped message will not work in our test, we need to replace it with the one used in this class.
-    6. Create a test to replay the messages
+    5. Create a test to replay the messages
         Now we can create a test to simulate the client running the SQL commands.
         Example:
             @Test
@@ -124,9 +121,9 @@ import static org.junit.Assert.*;
                         "<31000000043200000004540000004400037800000000000001000000140008ffffffff000024310000000000000200000413ffffffffffff000024320000000000000300000413ffffffffffff0000440000001e0003000000013100000001330000000a35303030303030303030440000001e0003000000013200000001330000000a35303030303030303030430000000d53454c454354203200\n";
                 assertHexScript(NetworkFacadeImpl.INSTANCE, script, getHexPgWireConfig());
             }
-    7. Disable dumping of PG messages
+    6. Disable dumping of PG messages
         Change PGWireConfiguration.getDumpNetworkTraffic() to return 'false' again.
-    8. Run the test
+    7. Run the test
  */
 @Ignore
 @RunWith(Parameterized.class)
