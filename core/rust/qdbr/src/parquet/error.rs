@@ -50,6 +50,7 @@ impl ParquetErrorCause {
         }
     }
 
+    #[track_caller]
     pub fn into_err(self) -> ParquetError {
         ParquetError::new(self)
     }

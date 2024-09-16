@@ -25,9 +25,11 @@
 
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorCause, ParquetResult};
 use serde::{Deserialize, Serialize};
+use std::fmt::Debug;
 
 /// A constant field that serializes always as the same value in JSON.
 /// On deserialization, it checks that the value is the same as the constant.
+#[derive(PartialEq)]
 struct U32Const<const N: u32>;
 
 impl<const N: u32> Serialize for U32Const<N> {
@@ -36,6 +38,12 @@ impl<const N: u32> Serialize for U32Const<N> {
         S: serde::Serializer,
     {
         N.serialize(serializer)
+    }
+}
+
+impl<const N: u32> Debug for U32Const<N> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{N}")
     }
 }
 
@@ -66,7 +74,7 @@ struct VersionMetadata {
 
 /// Special instructions on how to handle the column data,
 /// beyond the basic column type.
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub enum Handling {
     /// A symbol column where the local dictionary keys,
     /// i.e. the numeric keys in the parquet data match
@@ -74,7 +82,7 @@ pub enum Handling {
     SymbolLocalIsGlobal,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Column {
     /// The numeric code for the internal QuestDB column type.
     /// To convert, use `let column_type: ColumnType = col.qdb_type_code.try_into()?`.
@@ -84,12 +92,12 @@ pub struct Column {
     pub handling: Option<Handling>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Schema {
     columns: Vec<Column>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct QdbMetadataV1 {
     version: U32Const<1>,
     schema: Schema,
@@ -119,16 +127,15 @@ impl QdbMetadata {
     }
 
     pub fn serialize(&self) -> ParquetResult<String> {
-        serde_json::to_string(self)
-            .map_err(|e| ParquetErrorCause::QdbMetadata(e.into()).into_err())
+        serde_json::to_string(self).map_err(|e| ParquetErrorCause::QdbMetadata(e.into()).into_err())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use serde_json::{json, Value};
     use super::*;
     use crate::parquet_write::schema::ColumnType;
+    use serde_json::{json, Value};
 
     #[test]
     fn test_serialize() -> ParquetResult<()> {
@@ -162,9 +169,17 @@ mod tests {
                 ]
             }
         });
-        let serialized: Value = serde_json::from_str(metadata.serialize()?.as_str())
+
+        let serialized_str = metadata.serialize()?;
+        let serialized: Value = serde_json::from_str(serialized_str.as_str())
             .map_err(|e| ParquetErrorCause::QdbMetadata(e.into()).into_err())?;
+
+        // Check that it serializes to the expected JSON.
         assert_eq!(serialized, expected);
+
+        // Check that it round-trips back to the original struct.
+        let deserialized = QdbMetadata::deserialize(serialized_str.as_bytes())?;
+        assert_eq!(metadata, deserialized);
 
         Ok(())
     }
