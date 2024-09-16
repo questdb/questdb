@@ -61,6 +61,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
         this.sqlText = Chars.toString(sqlText);
         this.cursor = new RegisteredRecordCursor();
         this.jit = base.usesCompiledFilter();
+        System.out.println("----------------- OPEN -------------------");
     }
 
     public static void logEnd(long sqlId, CharSequence sqlText, SqlExecutionContext executionContext, long beginNanos, boolean jit) {
@@ -236,6 +237,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
+        System.out.println("-------------- CLOSE ----------------");
         cursor.close();
         base.close();
     }

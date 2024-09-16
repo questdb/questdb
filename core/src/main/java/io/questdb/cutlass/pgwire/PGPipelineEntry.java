@@ -167,7 +167,6 @@ public class PGPipelineEntry implements QuietCloseable {
                     executeSelect(sqlExecutionContext);
                     break;
                 case CompiledQuery.INSERT:
-                case CompiledQuery.INSERT_AS_SELECT:
                     executeInsert(sqlExecutionContext, transactionState, taiCache, pendingWriters, writerSource);
                     break;
                 case CompiledQuery.ALTER:
@@ -380,12 +379,13 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
-    public void ofInsert(CharSequence utf16SqlText, InsertOperation insertOp, short sqlType, String sqlTag) {
+    public void ofInsert(CharSequence utf16SqlText, TypesAndInsert tai) {
         this.sqlText = utf16SqlText;
-        this.insertOp = insertOp;
-        this.sqlTag = sqlTag;
-        this.sqlType = sqlType;
+        this.insertOp = tai.getInsert();
+        this.sqlTag = tai.getSqlTag();
+        this.sqlType = tai.getSqlType();
         this.cacheHit = true;
+        this.tai = tai;
     }
 
     public void ofSelect(CharSequence utf16SqlText, TypesAndSelect tas) {
@@ -1672,7 +1672,7 @@ public class PGPipelineEntry implements QuietCloseable {
                 sqlTag = TAG_UPDATE;
                 break;
             case CompiledQuery.INSERT_AS_SELECT:
-                this.insertOp = cq.getInsertOperation();
+                stateParseExecuted = true;
                 sqlTag = TAG_INSERT_AS_SELECT;
                 break;
             case CompiledQuery.SET:

@@ -238,6 +238,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     @Override
     public void clear() {
         super.clear();
+
+        // clear named statements and named portals
+        freePipelineEntriesFrom(namedStatements);
+        freePipelineEntriesFrom(namedPortals);
+
         this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
         this.sendBuffer = this.sendBufferPtr = this.sendBufferLimit = Unsafe.free(sendBuffer, sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
         responseUtf8Sink.bookmarkPtr = sendBufferPtr;
@@ -246,7 +251,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         prepareForNewQuery();
         clearRecvBuffer();
         clearWriters();
-        clearNamedStatements();
         // Clear every field, even if already cleaned to be on the safe side.
         Misc.clear(bindVariableTypes);
         Misc.clear(characterStore);
@@ -263,6 +267,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         tlsSessionStarting = false;
         totalReceived = 0;
         transactionState = NO_TRANSACTION;
+    }
+
+    private void freePipelineEntriesFrom(CharSequenceObjHashMap<PGPipelineEntry> cache) {
+        ObjList<CharSequence> names = cache.keys();
+        for (int i = 0, n = names.size(); i < n; i++) {
+            PGPipelineEntry pe = cache.get(names.getQuick(i));
+            pe.setStateClosed(true);
+            Misc.free(pe);
+        }
+        cache.clear();
     }
 
     @Override
@@ -435,12 +449,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // we did not find 0 within message limit
         LOG.error().$("undersized receive buffer or someone is abusing protocol").$();
         throw BadProtocolException.INSTANCE;
-    }
-
-    private void clearNamedStatements() {
-        if (namedStatements != null && namedStatements.size() > 0) {
-            namedStatements.clear();
-        }
     }
 
     private void clearRecvBuffer() {
@@ -987,7 +995,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         final TypesAndInsert tai = taiCache.peek(utf16SqlText);
         if (tai != null) {
             if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tai)) {
-                pipelineCurrentEntry.ofInsert(utf16SqlText, tai.getInsert(), tai.getSqlType(), tai.getSqlTag());
+                pipelineCurrentEntry.ofInsert(utf16SqlText, tai);
                 cachedHit = 2;
             } else {
                 //todo: find more efficient way to remove from cache what we have already looked up

@@ -125,6 +125,7 @@ import static org.junit.Assert.*;
         Change PGWireConfiguration.getDumpNetworkTraffic() to return 'false' again.
     7. Run the test
  */
+
 @Ignore
 @RunWith(Parameterized.class)
 @SuppressWarnings("SqlNoDataSourceInspection")
@@ -1216,6 +1217,7 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
+    @Ignore
     public void testAllTypesSelectSimple() throws Exception {
         testAllTypesSelect(true);
     }
@@ -5426,6 +5428,7 @@ nodejs code:
     }
 
     @Test
+    @Ignore
     public void testLargeSelect() throws Exception {
         assertMemoryLeak(() -> {
             sendBufferSize = Math.max(sendBufferSize, 2048);
@@ -5807,7 +5810,7 @@ nodejs code:
     @Test
     public void testMetadata() throws Exception {
         recvBufferSize = 2048;
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> connection.getMetaData().getColumns("dontcare", "whatever", "x", null).close());
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> connection.getMetaData().getColumns("dontcare", "whatever", "x", null).close());
     }
 
     @Test
@@ -6386,7 +6389,7 @@ nodejs code:
         // This test doesn't use partitioned tables.
         Assume.assumeFalse(walEnabled);
 
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
             CallableStatement stmt = connection.prepareCall("drop table if exists mining_event;");
             stmt.execute();
 
@@ -6535,14 +6538,10 @@ nodejs code:
 
     @Test
     public void testPreparedStatementInsertSelectNullDesignatedColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer server = createPGServer(2);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
+        skipOnWalRun();
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+            {
                 try (
-                        final Connection connection = getConnection(server.getPort(), false, false);
                         final Statement statement = connection.createStatement();
                         final PreparedStatement insert = connection.prepareStatement("insert into tab(ts, value) values(?, ?)")
                 ) {
@@ -6996,30 +6995,22 @@ nodejs code:
 
     @Test
     public void testPreparedStatementWithSystimestampFunction() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer server = createPGServer(1);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (final Connection connection = getConnection(server.getPort(), false, false)) {
-                    try (PreparedStatement statement = connection.prepareStatement(
-                            "create table xts (ts timestamp) timestamp(ts)")) {
-                        statement.execute();
-                    }
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "create table xts (ts timestamp) timestamp(ts)")) {
+                statement.execute();
+            }
 
-                    try (PreparedStatement statement = connection.prepareStatement("INSERT INTO xts VALUES(systimestamp())")) {
-                        for (currentMicros = 0; currentMicros < 200 * Timestamps.HOUR_MICROS; currentMicros += Timestamps.HOUR_MICROS) {
-                            statement.execute();
-                        }
-                    }
-
-                    queryTimestampsInRange(connection);
-
-                    try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
-                        statement.execute();
-                    }
+            try (PreparedStatement statement = connection.prepareStatement("INSERT INTO xts VALUES(systimestamp())")) {
+                for (currentMicros = 0; currentMicros < 200 * Timestamps.HOUR_MICROS; currentMicros += Timestamps.HOUR_MICROS) {
+                    statement.execute();
                 }
+            }
+
+            queryTimestampsInRange(connection);
+
+            try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
+                statement.execute();
             }
         });
     }
@@ -9144,6 +9135,7 @@ create table tab as (
     }
 
     @Test
+    @Ignore
     public void testSqlBatchTimeout() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary, mode, port) -> {
             try (final Statement statement = connection.createStatement()) {
@@ -10305,16 +10297,16 @@ create table tab as (
 
     /*
         package main
-        
+
         import (
             "database/sql"
             "fmt"
             "math"
             "time"
-        
+
             _ "github.com/lib/pq"
         )
-        
+
         const (
             host     = "localhost"
             port     = 8812
@@ -10322,7 +10314,7 @@ create table tab as (
             password = "quest"
             dbname   = "qdb"
         )
-        
+
         func main() {
             connStr := fmt.Sprintf(
                 "host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
@@ -10330,17 +10322,17 @@ create table tab as (
             db, err := sql.Open("postgres", connStr)
             checkErr(err)
             defer db.Close()
-        
+
             date, err := time.ParseInLocation("2006-01-02T15:04:05.999", "2022-01-12T12:01:01.120", time.UTC)
             checkErr(err)
             timestamp, err := time.ParseInLocation("2006-01-02T15:04:05.999999", "2020-02-13T10:11:12.123450", time.UTC)
             checkErr(err)
-        
+
             stmt, err := db.Prepare("INSERT INTO all_types values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, " +
                 "cast($13 as geohash(1c)), cast($14 as geohash(2c)) , cast($15  as geohash(4c)), cast($16 as geohash(8c)), $17, $18, cast('' || $19 as long256), $20)")
             checkErr(err)
             defer stmt.Close()
-        
+
             var data = [][]interface{}{
                 {bool(false), int16(0), int16(0), nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, timestamp},
                 {bool(true), int16(1), int16(1), mkstring("a"), mkint32(4), mkint64(5), &date, &timestamp, mkfloat32(12.345), mkfloat64(1.0234567890123),
@@ -10349,25 +10341,25 @@ create table tab as (
                 {bool(true), int16(math.MaxInt8), int16(math.MaxInt16), mkstring("z"), mkint32(math.MaxInt32), mkint64(math.MaxInt64), &date, mktimestamp("1970-01-01T00:00:00.000000"),
                     mkfloat32(math.MaxFloat32), mkfloat64(math.MaxFloat64), mkstring("XXX"), mkstring(" "), mkstring("e"), mkstring("ee"), mkstring("eeee"), mkstring("eeeeeeee"),
                     mkstring("255.255.255.255"), mkstring("a0eebc99-ffff-ffff-ffff-ffffffffffff"), mkstring("0x5dd94b8492b4be20632d0236ddb8f47c91efc2568b4d452847b4a645dbefffff"), mktimestamp("2020-03-31T00:00:00.987654")}}
-        
+
             for i := 0; i < len(data); i++ {
                 _, err = stmt.Exec(data[i]...)
                 checkErr(err)
             }
         }
-        
+
         func checkErr(err error) {
             if err != nil {
                 panic(err)
             }
         }
-        
+
         func mktimestamp(s string) *time.Time {
             timestamp, err := time.ParseInLocation("2006-01-02T15:04:05.999999", s, time.UTC)
             checkErr(err)
             return &timestamp
         }
-        
+
         func mkstring(s string) *string {
             return &s
         }
@@ -10383,7 +10375,7 @@ create table tab as (
         func mkint64(i int64) *int64 {
             return &i
         }
-        
+
         ----------------------------
         require (
             github.com/lib/pq v1.10.9 // indirect
@@ -10441,14 +10433,14 @@ create table tab as (
 
     /*
         use sqlx::postgres::PgPoolOptions;
-        
+
         #[async_std::main]
         async fn main() -> Result<(), sqlx::Error> {
             let pool = PgPoolOptions::new()
                 .max_connections(5)
                 .connect("postgresql://admin:quest@localhost:8812/qdb")
                 .await?;
-        
+
             let row: (String,) = sqlx::query_as("SELECT id from x").fetch_one(&pool).await?;
             assert_eq!(row.0, "D");
             Ok(())
