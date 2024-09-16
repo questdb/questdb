@@ -26,17 +26,39 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 
-import java.io.Closeable;
-
-public interface CircuitBreakerRegistry extends Closeable {
-    int add(NetworkSqlExecutionCircuitBreaker cb);
-
-    void cancel(int circuitBreakerIdx, int secret);
+/**
+ * This circuit breaker registry is used in hex tests - where we want deterministic client id and secrets.
+ * <p>
+ * It does not support cancellation of queries since hex tests do not need it. At least for now.
+ */
+public final class HexTestsCircuitBreakRegistry implements CircuitBreakerRegistry {
+    public static final HexTestsCircuitBreakRegistry INSTANCE = new HexTestsCircuitBreakRegistry();
+    private static final int CLIENT_ID = 63;
+    private static final int SECRET = -1148479920;
 
     @Override
-    void close();
+    public int add(NetworkSqlExecutionCircuitBreaker cb) {
+        return CLIENT_ID;
+    }
 
-    int getNewSecret();
+    @Override
+    public void cancel(int circuitBreakerIdx, int secret) {
+        throw new UnsupportedOperationException(this.getClass().getSimpleName() + " does not support query cancellation. " +
+                "It's meant to be used in hex tests where we want deterministic client id and secrets. ");
+    }
 
-    void remove(int contextId);
+    @Override
+    public void close() {
+        // intentionally empty
+    }
+
+    @Override
+    public int getNewSecret() {
+        return SECRET;
+    }
+
+    @Override
+    public void remove(int contextId) {
+        // intentionally empty
+    }
 }

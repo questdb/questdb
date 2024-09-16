@@ -31,7 +31,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
-import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.DefaultCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.*;
@@ -3791,7 +3791,7 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
+//    @Ignore("TODO PGWire 2.0")
     public void testHappyPathForIntParameterWithoutExplicitParameterTypeHex() throws Exception {
         skipOnWalRun(); // table not created
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
@@ -10608,13 +10608,7 @@ create table tab as (
 
     private void assertHexScript(String script) throws Exception {
         skipOnWalRun();
-        final Rnd rnd = new Rnd();
-        assertHexScript(NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration() {
-            @Override
-            public Rnd getRandom() {
-                return rnd;
-            }
-        });
+        assertHexScript(NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration());
     }
 
     private void assertHexScript(
@@ -10652,7 +10646,7 @@ create table tab as (
 
         assertMemoryLeak(() -> {
             try (
-                    PGWireServer server = createPGServer(configuration);
+                    PGWireServer server = createPGServer(configuration, true);
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -10749,7 +10743,7 @@ create table tab as (
         };
 
         WorkerPool workerPool = new TestWorkerPool(2, metrics);
-        CircuitBreakerRegistry registry = new CircuitBreakerRegistry(conf, engine.getConfiguration());
+        DefaultCircuitBreakerRegistry registry = new DefaultCircuitBreakerRegistry(conf, engine.getConfiguration());
         try {
             return createPGWireServer(
                     conf,
@@ -10924,7 +10918,7 @@ create table tab as (
         };
 
         try (
-                CircuitBreakerRegistry registry = new CircuitBreakerRegistry(conf, engine.getConfiguration());
+                DefaultCircuitBreakerRegistry registry = new DefaultCircuitBreakerRegistry(conf, engine.getConfiguration());
                 WorkerPool pool = new WorkerPool(conf, metrics)
         ) {
             pool.assign(engine.getEngineMaintenanceJob());
