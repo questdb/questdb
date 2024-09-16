@@ -482,7 +482,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE("debug.cairo.o3.column.memory.size", false, true),
     CAIRO_DEFAULT_SEQ_PART_TXN_COUNT("cairo.default.sequencer.part.txn.count"),
     POSTHOG_API_KEY("posthog.api.key"),
-    POSTHOG_ENABLED("posthog.enabled");
+    POSTHOG_ENABLED("posthog.enabled"),
+    LOG_SQL_QUERY_PROGRESS_EXE("log.sql.query.progress.exe");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;
