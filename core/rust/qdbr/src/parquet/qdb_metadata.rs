@@ -86,8 +86,6 @@ pub struct Column {
 
 #[derive(Serialize, Deserialize)]
 pub struct Schema {
-    table_name: String,
-    db_instance_id: String,
     columns: Vec<Column>,
 }
 
@@ -120,25 +118,23 @@ impl QdbMetadata {
         }
     }
 
-    pub fn serialize(&self) -> ParquetResult<Vec<u8>> {
+    pub fn serialize(&self) -> ParquetResult<String> {
         serde_json::to_string(self)
-            .map(|s| s.into_bytes())
             .map_err(|e| ParquetErrorCause::QdbMetadata(e.into()).into_err())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use serde_json::{json, Value};
     use super::*;
     use crate::parquet_write::schema::ColumnType;
 
     #[test]
-    fn test_serialize() {
+    fn test_serialize() -> ParquetResult<()> {
         let metadata = QdbMetadata {
             version: U32Const,
             schema: Schema {
-                table_name: "table_name_abc".to_string(),
-                db_instance_id: "123123123".to_string(),
                 columns: vec![
                     Column {
                         qdb_type_code: ColumnType::Symbol.code(),
@@ -151,11 +147,25 @@ mod tests {
                 ],
             },
         };
-        let serialized = metadata.serialize().unwrap();
-        let serialized_str = std::str::from_utf8(&serialized).unwrap();
-        assert_eq!(
-            serialized_str,
-            r#"{"version":1,"schema":{"table_name":"table_name_abc","db_instance_id":"123123123","columns":[{"qdb_type_code":12,"handling":"SymbolLocalIsGlobal"},{"qdb_type_code":5}]}}"#
-        );
+
+        let expected = json!({
+            "version": 1,
+            "schema": {
+                "columns": [
+                    {
+                        "qdb_type_code": 12,
+                        "handling": "SymbolLocalIsGlobal"
+                    },
+                    {
+                        "qdb_type_code": 5
+                    }
+                ]
+            }
+        });
+        let serialized: Value = serde_json::from_str(metadata.serialize()?.as_str())
+            .map_err(|e| ParquetErrorCause::QdbMetadata(e.into()).into_err())?;
+        assert_eq!(serialized, expected);
+
+        Ok(())
     }
 }
