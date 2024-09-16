@@ -165,7 +165,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     @Test // explicit transaction + commit
     @Ignore
     public void testBeginCreateInsertCommitThenErrorDoesntRollBackCommittedFirstInsertOnTwoTables() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             try (Statement statement = connection.createStatement()) {
                 try {
