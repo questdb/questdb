@@ -30,7 +30,7 @@ use parquet2::schema::types::PrimitiveType;
 use parquet2::types;
 
 use super::util::BinaryMaxMin;
-use crate::parquet::error::{fmt_unsupported_err, ParquetError, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetError, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
 
@@ -74,7 +74,8 @@ pub fn binary_to_page(
             encode_delta(offsets, data, null_count, &mut buffer, &mut stats);
             Ok(())
         }
-        _ => Err(fmt_unsupported_err!(
+        _ => Err(fmt_err!(
+            Unsupported,
             "unsupported encoding {encoding:?} while writing a binary column"
         )),
     }?;

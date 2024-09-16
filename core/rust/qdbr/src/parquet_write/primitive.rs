@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use crate::parquet::error::{fmt_unsupported_err, ParquetError, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetError, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter, MaxMin};
 use crate::parquet_write::Nullable;
@@ -62,7 +62,8 @@ where
             encode_delta_nullable,
         ),
         other => {
-            return Err(fmt_unsupported_err!(
+            return Err(fmt_err!(
+                Unsupported,
                 "unsupported encoding {other:?} while writing an int column"
             ))
         }
@@ -99,7 +100,8 @@ where
             encode_delta_notnull,
         ),
         other => {
-            return Err(fmt_unsupported_err!(
+            return Err(fmt_err!(
+                Unsupported,
                 "unsupported encoding {other:?} while writing an int column"
             ))
         }

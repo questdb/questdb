@@ -2,7 +2,7 @@ pub mod dict_decoder;
 pub mod dict_slicer;
 pub mod rle;
 
-use crate::parquet::error::{fmt_layout_err, ParquetError, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetError, ParquetResult};
 use parquet2::encoding::delta_bitpacked;
 use parquet2::encoding::hybrid_rle::BitmapIter;
 use std::mem::size_of;
@@ -79,13 +79,13 @@ impl<const N: usize> DataPageSlicer for DeltaBinaryPackedSlicer<'_, N> {
                 }
                 Err(_) => {
                     // TODO(amunra): Clean-up, this is _not_ a layout error!
-                    self.error = Err(fmt_layout_err!("not enough values to iterate"));
+                    self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
                     &self.error_value
                 }
             },
             None => {
                 // TODO(amunra): Clean-up, this is _not_ a layout error!
-                self.error = Err(fmt_layout_err!("not enough values to iterate"));
+                self.error = Err(fmt_err!(Layout, "not enough values to iterate"));
                 &self.error_value
             }
         }
@@ -222,13 +222,13 @@ impl<'a> DataPageSlicer for DeltaBytesArraySlicer<'a> {
                         }
                         None => {
                             self.error =
-                                Err(fmt_layout_err!("not enough suffix values to iterate"));
+                                Err(fmt_err!(Layout, "not enough suffix values to iterate"));
                             &[]
                         }
                     }
                 }
                 None => {
-                    self.error = Err(fmt_layout_err!("not enough prefix values to iterate"));
+                    self.error = Err(fmt_err!(Layout, "not enough prefix values to iterate"));
                     &[]
                 }
             },
@@ -355,7 +355,7 @@ impl<'a> DataPageSlicer for BooleanBitmapSlicer<'a> {
             }
             return &BOOL_FALSE;
         }
-        self.error = Err(fmt_layout_err!("not enough bitmap values to iterate"));
+        self.error = Err(fmt_err!(Layout, "not enough bitmap values to iterate"));
         &BOOL_FALSE
     }
 

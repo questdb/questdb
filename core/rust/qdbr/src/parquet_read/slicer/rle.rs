@@ -1,4 +1,4 @@
-use crate::parquet::error::{fmt_layout_err, fmt_unsupported_err, ParquetError, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetError, ParquetResult};
 use crate::parquet_read::slicer::dict_decoder::DictDecoder;
 use crate::parquet_read::slicer::DataPageSlicer;
 use parquet2::encoding::bitpacked;
@@ -45,7 +45,8 @@ impl<T: DictDecoder> DataPageSlicer for RleDictionarySlicer<'_, '_, T> {
             if idx < self.dict.len() {
                 self.dict.get_dict_value(idx)
             } else {
-                self.error = Some(fmt_layout_err!(
+                self.error = Some(fmt_err!(
+                    Layout,
                     "index {} is out of dict bounds {}",
                     idx,
                     self.dict.len()
@@ -143,12 +144,12 @@ impl<'a, 'b, T: DictDecoder> RleDictionarySlicer<'a, 'b, T> {
                     self.data = RleIterator::Rle(iterator);
                     return Ok(());
                 } else {
-                    return Err(fmt_unsupported_err!("encoding not supported: {encoded:?}"));
+                    return Err(fmt_err!(Unsupported, "encoding not supported: {encoded:?}"));
                 }
             }
         }
         // TODO(amunra): Not a layout error. This is just an iterator pattern gone wrong, needs cleaning up.
-        Err(fmt_layout_err!("Unexpected end of rle iterator"))
+        Err(fmt_err!(Layout, "Unexpected end of rle iterator"))
     }
 }
 
@@ -252,7 +253,7 @@ impl<'a, 'b> RleLocalIsGlobalSymbolDecoder<'a, 'b> {
 
     fn decode(&mut self) -> ParquetResult<()> {
         // TODO(amunra): Deduplicate this code.
-        let iter_err = || Err(fmt_layout_err!("Unexpected end of rle iterator"));
+        let iter_err = || Err(fmt_err!(Layout, "Unexpected end of rle iterator"));
 
         let Some(ref mut decoder) = self.decoder else {
             return iter_err();

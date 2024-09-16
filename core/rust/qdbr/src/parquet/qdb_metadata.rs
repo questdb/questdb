@@ -23,7 +23,7 @@
  ******************************************************************************/
 #![allow(dead_code)]
 
-use crate::parquet::error::{ParquetError, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorCause, ParquetResult};
 use serde::{Deserialize, Serialize};
 
 /// A constant field that serializes always as the same value in JSON.
@@ -105,23 +105,25 @@ const CURRENT_VERSION: u32 = 1;
 
 impl QdbMetadata {
     pub fn deserialize(metadata: &[u8]) -> ParquetResult<Self> {
-        let json_str =
-            std::str::from_utf8(metadata).map_err(|e| ParquetError::Utf8Decode { source: e })?;
+        let json_str = std::str::from_utf8(metadata)
+            .map_err(|e| ParquetErrorCause::Utf8Decode(e).into_err())?;
         let version: VersionMetadata = serde_json::from_str(json_str)
-            .map_err(|e| ParquetError::QdbMetadata { source: e.into() })?;
+            .map_err(|e| ParquetErrorCause::QdbMetadata(e.into()).into_err())?;
         match version.version {
             1 => serde_json::from_str(json_str)
-                .map_err(|e| ParquetError::QdbMetadata { source: e.into() }),
-            _ => Err(ParquetError::Unsupported {
-                msg: format!("unsupported questdb metadata version: {}", version.version),
-            }),
+                .map_err(|e| ParquetErrorCause::QdbMetadata(e.into()).into_err()),
+            _ => Err(fmt_err!(
+                Unsupported,
+                "unsupported questdb metadata version: {}",
+                version.version
+            )),
         }
     }
 
     pub fn serialize(&self) -> ParquetResult<Vec<u8>> {
         serde_json::to_string(self)
             .map(|s| s.into_bytes())
-            .map_err(|e| ParquetError::QdbMetadata { source: e.into() })
+            .map_err(|e| ParquetErrorCause::QdbMetadata(e.into()).into_err())
     }
 }
 

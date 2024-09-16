@@ -1,6 +1,4 @@
-use crate::parquet::error::{
-    fmt_layout_err, fmt_unsupported_err, ParquetError, ParquetErrorExt, ParquetResult,
-};
+use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
 use crate::parquet_read::column_sink::fixed::{
     FixedBooleanColumnSink, FixedDoubleColumnSink, FixedFloatColumnSink, FixedInt2ByteColumnSink,
     FixedInt2ShortColumnSink, FixedIntColumnSink, FixedLong256ColumnSink, FixedLongColumnSink,
@@ -93,7 +91,7 @@ impl ParquetDecoder {
         let chunk_size = column_metadata.compressed_size();
         let chunk_size = chunk_size
             .try_into()
-            .map_err(|_| fmt_layout_err!("column chunk size overflow, size: {chunk_size}"))?;
+            .map_err(|_| fmt_err!(Layout, "column chunk size overflow, size: {chunk_size}"))?;
 
         let page_reader = get_page_iterator(
             column_metadata,
@@ -106,7 +104,7 @@ impl ParquetDecoder {
         let version = match self.metadata.version {
             1 => Ok(Version::V1),
             2 => Ok(Version::V2),
-            ver => Err(fmt_unsupported_err!("unsupported parquet version: {ver}")),
+            ver => Err(fmt_err!(Unsupported, "unsupported parquet version: {ver}")),
         }?;
 
         let mut dict = None;
@@ -822,7 +820,8 @@ pub fn decoder_page(
 
     match decoding_result {
         Ok(row_count) => Ok(row_count),
-        Err(_) => Err(fmt_unsupported_err!(
+        Err(_) => Err(fmt_err!(
+            Unsupported,
             "encoding not supported, physical type: {:?}, \
                 encoding {:?}, \
                 logical type {:?}, \

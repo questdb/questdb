@@ -1,6 +1,6 @@
 use std::slice;
 
-use crate::parquet::error::{fmt_invalid_err, ParquetError, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetError, ParquetResult};
 use crate::parquet_write::QDB_TYPE_META_PREFIX;
 use parquet2::encoding::Encoding;
 use parquet2::metadata::KeyValue;
@@ -74,7 +74,7 @@ impl TryFrom<i32> for ColumnType {
             24 => Ok(ColumnType::Long128),
             25 => Ok(ColumnType::IPv4),
             26 => Ok(ColumnType::Varchar),
-            _ => Err(fmt_invalid_err!("unknown QuestDB column type code: {}", v)),
+            _ => Err(fmt_err!(Invalid, "unknown QuestDB column type code: {}", v)),
         }
     }
 }

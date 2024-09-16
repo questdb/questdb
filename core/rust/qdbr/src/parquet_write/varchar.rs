@@ -1,7 +1,7 @@
 use std::mem;
 
 use super::util::ExactSizedIter;
-use crate::parquet::error::{fmt_unsupported_err, ParquetError, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetError, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, BinaryMaxMin};
 use parquet2::encoding::{delta_bitpacked, Encoding};
@@ -103,7 +103,8 @@ pub fn varchar_to_page(
             encode_delta(&utf8_slices, null_count, &mut buffer, &mut stats);
         }
         _ => {
-            return Err(fmt_unsupported_err!(
+            return Err(fmt_err!(
+                Unsupported,
                 "unsupported encoding {encoding:?} while writing a string column"
             ))
         }

@@ -2,7 +2,7 @@ use std::fs::File;
 use std::path::Path;
 use std::slice;
 
-use crate::parquet::error::{fmt_unsupported_err, ParquetError, ParquetErrorExt, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
 use crate::parquet_write::file::ParquetWriter;
 use crate::parquet_write::schema::{Column, Partition};
 use jni::objects::JClass;
@@ -193,7 +193,7 @@ fn version_from_i32(value: i32) -> Result<Version, ParquetError> {
     match value {
         1 => Ok(Version::V1),
         2 => Ok(Version::V2),
-        _ => Err(fmt_unsupported_err!("unsupported parquet version {value}")),
+        _ => Err(fmt_err!(Unsupported, "unsupported parquet version {value}")),
     }
 }
 
@@ -219,7 +219,8 @@ fn compression_from_i64(value: i64) -> Result<CompressionOptions, ParquetError> 
             level_id,
         )?))),
         7 => Ok(CompressionOptions::Lz4Raw),
-        _ => Err(fmt_unsupported_err!(
+        _ => Err(fmt_err!(
+            Unsupported,
             "unsupported compression codec id: {codec_id}"
         )),
     }
