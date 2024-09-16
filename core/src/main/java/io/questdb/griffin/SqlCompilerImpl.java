@@ -310,6 +310,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    @Override
+    public BytecodeAssembler getAsm() {
+        return asm;
+    }
+
     public CairoEngine getEngine() {
         return engine;
     }

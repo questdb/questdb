@@ -45,13 +45,11 @@ public class MaterializedViewTest extends AbstractCairoTest {
             TableToken baseToken = engine.verifyTableName("base_price");
             createMatView(baseToken);
 
-
             insert("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')" +
                     ",('gbpusd', 1.323, '2024-09-10T12:02')" +
                     ",('jpyusd', 103.21, '2024-09-10T12:02')" +
                     ",('gbpusd', 1.321, '2024-09-10T13:02')"
             );
-
             drainWalQueue();
 
             MaterializedViewRefreshJob refreshJob = new MaterializedViewRefreshJob(engine);
@@ -84,7 +82,7 @@ public class MaterializedViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testViewManualRefresh() throws Exception {
+    public void testSimpleRefresh() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
 
         assertMemoryLeak(() -> {
@@ -134,8 +132,7 @@ public class MaterializedViewTest extends AbstractCairoTest {
         MaterializedViewDefinition viewDefinition = new MaterializedViewDefinition();
 
         viewDefinition.setParentTableName(baseToken.getTableName());
-        viewDefinition.setViewSql("insert into price_1h " +
-                "select sym, last(price), ts from base_price " +
+        viewDefinition.setViewSql("select sym, last(price), ts from base_price " +
                 "where ts >= :from and ts <= :to " +
                 "sample by 1h");
         viewDefinition.setSampleByPeriodMicros(Timestamps.HOUR_MICROS);

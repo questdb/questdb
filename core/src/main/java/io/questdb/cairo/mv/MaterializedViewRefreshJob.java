@@ -25,9 +25,10 @@
 package io.questdb.cairo.mv;
 
 import io.questdb.cairo.*;
+import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
-import io.questdb.griffin.CompiledQuery;
-import io.questdb.griffin.SqlException;
+import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
@@ -41,6 +42,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
     public static final String MAT_VIEW_REFRESH_TABLE_WRITE_REASON = "Mat View refresh";
     private static final Log LOG = LogFactory.getLog(MaterializedViewRefreshJob.class);
     private final MatViewGraph.AffectedMatViewsSink childViewSink = new MatViewGraph.AffectedMatViewsSink();
+    private final EntityColumnFilter columnFilter = new EntityColumnFilter();
     private final CairoEngine engine;
     private final MatViewRefreshExecutionContext matViewRefreshExecutionContext;
     private final ObjList<CharSequence> parents = new ObjList<>();
@@ -80,6 +82,71 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
         return false;
     }
 
+    private ColumnFilter generatedColumnFilter(RecordMetadata cursorMetadata, TableRecordMetadata writerMetadata) throws SqlException {
+        for (int i = 0, n = cursorMetadata.getColumnCount(); i < n; i++) {
+            int columnType = cursorMetadata.getColumnType(i);
+            assert columnType > 0;
+            if (columnType != writerMetadata.getColumnType(i)) {
+                throw SqlException.$(0, "materialized view column type mismatch. Query column: ")
+                        .put(cursorMetadata.getColumnName(i))
+                        .put(" type: ")
+                        .put(ColumnType.nameOf(columnType))
+                        .put(", view column: ")
+                        .put(writerMetadata.getColumnName(i))
+                        .put(" type: ")
+                        .put(ColumnType.nameOf(writerMetadata.getColumnType(i)));
+            }
+
+        }
+        columnFilter.of(cursorMetadata.getColumnCount());
+        return columnFilter;
+    }
+
+    private void insertAsSelect(MaterializedViewDefinition viewDef, TableWriterAPI tableWriter) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            CompiledQuery compiledQuery = compiler.compile(viewDef.getViewSql(), matViewRefreshExecutionContext);
+            if (compiledQuery.getType() != CompiledQuery.SELECT) {
+                throw SqlException.$(0, "materialized view query must be a SELECT statement");
+            }
+
+            try (RecordCursorFactory factory = compiledQuery.getRecordCursorFactory()) {
+                ColumnFilter entityColumnFilter = generatedColumnFilter(
+                        factory.getMetadata(),
+                        tableWriter.getMetadata()
+                );
+
+
+                int cursorTimestampIndex = factory.getMetadata().getColumnIndex(
+                        tableWriter.getMetadata().getColumnName(tableWriter.getMetadata().getTimestampIndex())
+                );
+
+                if (cursorTimestampIndex < 0) {
+                    throw SqlException.invalidColumn(0, "timestamp column '")
+                            .put(tableWriter.getMetadata().getColumnName(tableWriter.getMetadata().getTimestampIndex()))
+                            .put("' not found in view select query");
+                }
+
+                RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(
+                        compiler.getAsm(),
+                        factory.getMetadata(),
+                        tableWriter.getMetadata(),
+                        entityColumnFilter
+                );
+
+                try (RecordCursor cursor = factory.getCursor(matViewRefreshExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        TableWriter.Row row = tableWriter.newRow(record.getTimestamp(cursorTimestampIndex));
+                        copier.copy(record, row);
+                        row.append();
+                    }
+                }
+
+                tableWriter.commit();
+            }
+        }
+    }
+
     private void refreshView(TableToken baseToken, SeqTxnTracker viewTxnTracker, TableToken viewToken, MaterializedViewDefinition viewDef, long fromBaseTxn, long toBaseTxn) {
         // Steps:
         // - compile view and execute with timestamp ranges from the unprocessed commits
@@ -113,18 +180,18 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
                                 .$(", fromSeqTxn=").$(fromBaseTxn)
                                 .$(", toSeqTxn=").$(toBaseTxn).I$();
 
-                        try (var compiler = engine.getSqlCompiler()) {
-                            CompiledQuery compiledQuery = compiler.compile(viewDef.getViewSql(), matViewRefreshExecutionContext);
+                        try (TableWriterAPI commitWriter = engine.getTableWriterAPI(viewToken, "Mat View refresh")) {
+                            insertAsSelect(viewDef, commitWriter);
+                            engine.getTableSequencerAPI().setLastRefreshBaseTxn(viewToken, toBaseTxn);
+                            viewTxnTracker.setLastRefreshBaseTxn(toBaseTxn);
                         }
-                        engine.getTableSequencerAPI().setLastRefreshBaseTxn(viewToken, toBaseTxn);
-                        viewTxnTracker.setLastRefreshBaseTxn(toBaseTxn);
                     }
                 } finally {
                     matViewRefreshExecutionContext.clean();
                 }
             } catch (SqlException sqlException) {
                 LOG.error().$("error refreshing materialized view [view=").$(viewToken).$(", error=")
-                        .$((Throwable) sqlException).I$();
+                        .$(sqlException.getFlyweightMessage()).I$();
             }
         } catch (EntryUnavailableException tableBusy) {
             //noinspection StringEquality
