@@ -6426,7 +6426,6 @@ nodejs code:
                     "        from mining_event\n" +
                     "        where ts >= '2024-01-12 00:00:00' sample by 5m fill (none) align to calendar;";
             try (PreparedStatement statement = connection.prepareStatement(insertAsSelect)) {
-                long micros = TimestampFormatUtils.parseTimestamp("2025-04-19T18:50:00.998666Z");
                 statement.execute();
             }
 
@@ -6553,7 +6552,7 @@ nodejs code:
                         insert.executeUpdate();
                         assertExceptionNoLeakCheck("cannot insert null when the column is designated");
                     } catch (PSQLException expected) {
-                        Assert.assertEquals("ERROR: timestamp before 1970-01-01 is not allowed\n" +
+                        Assert.assertEquals("ERROR: designated timestamp column cannot be NULL\n" +
                                 "  Position: 1", expected.getMessage());
                     }
                     // Insert a dud

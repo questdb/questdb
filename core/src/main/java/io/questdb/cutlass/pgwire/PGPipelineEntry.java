@@ -1863,6 +1863,7 @@ public class PGPipelineEntry implements QuietCloseable {
     }
 
     void clearState() {
+        error = false;
         stateSync = 0;
         stateParse = false;
         stateBind = false;

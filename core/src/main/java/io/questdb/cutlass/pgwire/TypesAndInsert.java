@@ -59,5 +59,6 @@ public class TypesAndInsert extends AbstractTypeContainer<TypesAndInsert> {
         copyTypesFrom(bindVariableService);
         this.hasBindVariables = bindVariableService.getIndexedVariableCount() > 0;
         this.sqlType = sqlType;
+        this.sqlTag = sqlTag;
     }
 }
