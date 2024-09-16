@@ -28,10 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
-import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
-import io.questdb.cutlass.pgwire.DefaultPGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.cutlass.pgwire.*;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
@@ -116,13 +113,15 @@ public abstract class BasePGTest extends AbstractCairoTest {
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
-            WorkerPool workerPool
+            WorkerPool workerPool,
+            boolean fixedClientIdAndSecret
     ) {
         if (!configuration.isEnabled()) {
             return null;
         }
 
-        CircuitBreakerRegistry registry = new CircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
+        CircuitBreakerRegistry registry = fixedClientIdAndSecret ? HexTestsCircuitBreakRegistry.INSTANCE :
+                new DefaultCircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
 
         return PGWireServer.newInstance(
                 configuration,
@@ -131,6 +130,15 @@ public abstract class BasePGTest extends AbstractCairoTest {
                 registry,
                 () -> new SqlExecutionContextImpl(cairoEngine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
         );
+    }
+
+
+    public static PGWireServer createPGWireServer(
+            PGWireConfiguration configuration,
+            CairoEngine cairoEngine,
+            WorkerPool workerPool
+    ) {
+        return createPGWireServer(configuration, cairoEngine, workerPool, false);
     }
 
     public static long printToSink(StringSink sink, ResultSet rs, @Nullable IntIntHashMap map) throws SQLException, IOException {
@@ -417,6 +425,10 @@ public abstract class BasePGTest extends AbstractCairoTest {
     }
 
     protected PGWireServer createPGServer(PGWireConfiguration configuration) throws SqlException {
+        return createPGServer(configuration, false);
+    }
+
+    protected PGWireServer createPGServer(PGWireConfiguration configuration, boolean fixedClientIdAndSecret) throws SqlException {
         TestWorkerPool workerPool = new TestWorkerPool(configuration.getWorkerCount(), metrics);
         copyRequestJob = new CopyRequestJob(engine, configuration.getWorkerCount());
 
@@ -426,7 +438,8 @@ public abstract class BasePGTest extends AbstractCairoTest {
         return createPGWireServer(
                 configuration,
                 engine,
-                workerPool
+                workerPool,
+                fixedClientIdAndSecret
         );
     }
 
