@@ -44,15 +44,15 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.SecurityContext.AUTH_TYPE_CREDENTIALS;
 import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
-import static io.questdb.cutlass.pgwire.legacy.PGConnectionContext.dumpBuffer;
+import static io.questdb.cutlass.pgwire.legacy.PGConnectionContextLegacy.dumpBuffer;
 
-public class CleartextPasswordPgWireAuthenticator implements Authenticator {
+public class CleartextPasswordPgWireAuthenticatorLegacy implements Authenticator {
     public static final char STATUS_IDLE = 'I';
     private static final int INIT_CANCEL_REQUEST = 80877102;
     private static final int INIT_GSS_REQUEST = 80877104;
     private static final int INIT_SSL_REQUEST = 80877103;
     private static final int INIT_STARTUP_MESSAGE = 196608;
-    private static final Log LOG = LogFactory.getLog(CleartextPasswordPgWireAuthenticator.class);
+    private static final Log LOG = LogFactory.getLog(CleartextPasswordPgWireAuthenticatorLegacy.class);
     private static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
     private static final byte MESSAGE_TYPE_LOGIN_RESPONSE = 'R';
     private static final byte MESSAGE_TYPE_PARAMETER_STATUS = 'S';
@@ -82,7 +82,7 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
     private State state = State.EXPECT_INIT_MESSAGE;
     private CharSequence username;
 
-    public CleartextPasswordPgWireAuthenticator(
+    public CleartextPasswordPgWireAuthenticatorLegacy(
             PGWireConfiguration configuration,
             NetworkSqlExecutionCircuitBreaker circuitBreaker,
             CircuitBreakerRegistry registry,
@@ -413,7 +413,7 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
         // at this point we have a full message available ready to be processed
         recvBufReadPos += 1 + Integer.BYTES; // first move beyond the msgType and msgLen
 
-        long hi = PGConnectionContext.getStringLength(recvBufReadPos, msgLimit, "bad password length");
+        long hi = PGConnectionContextLegacy.getStringLength(recvBufReadPos, msgLimit, "bad password length");
         authType = verifyPassword(username, recvBufReadPos, (int) (hi - recvBufReadPos));
         if (authType != AUTH_TYPE_NONE) {
             recvBufReadPos = msgLimit;
@@ -433,9 +433,9 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
         // there is an extra byte at the end, and it has to be 0
         while (lo < msgLimit - 1) {
             final long nameLo = lo;
-            final long nameHi = PGConnectionContext.getStringLength(lo, msgLimit, "malformed property name");
+            final long nameHi = PGConnectionContextLegacy.getStringLength(lo, msgLimit, "malformed property name");
             final long valueLo = nameHi + 1;
-            final long valueHi = PGConnectionContext.getStringLength(valueLo, msgLimit, "malformed property value");
+            final long valueHi = PGConnectionContextLegacy.getStringLength(valueLo, msgLimit, "malformed property value");
             lo = valueHi + 1;
 
             // store user

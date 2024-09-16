@@ -60,7 +60,7 @@ import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TI
  * <a href="https://www.postgresql.org/docs/current/protocol-flow.html">Wire protocol</a><br>
  * <a href="https://www.postgresql.org/docs/current/protocol-message-formats.html">Message formats</a>
  */
-public class PGConnectionContext extends IOContext<PGConnectionContext> implements WriterSource, OptionsListener {
+public class PGConnectionContextLegacy extends IOContext<PGConnectionContextLegacy> implements WriterSource, OptionsListener {
 
     public static final byte STATUS_IDLE = 'I';
     public static final byte STATUS_IN_ERROR = 'E';
@@ -111,7 +111,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private static final int SYNC_PARSE = 1;
     private static final String WRITER_LOCK_REASON = "pgConnection";
     @SuppressWarnings("FieldMayBeFinal")
-    private static Log LOG = LogFactory.getLog(PGConnectionContext.class);
+    private static Log LOG = LogFactory.getLog(PGConnectionContextLegacy.class);
     private final BatchCallback batchCallback;
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
     // stores result format codes (0=Text,1=Binary) from the latest bind message
@@ -140,7 +140,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final int sendBufferSize;
     private final IntList syncActions = new IntList(4);
     private final SCSequence tempSequence = new SCSequence();
-    private final WeakSelfReturningObjectPool<TypesAndInsert> typesAndInsertPool;
+    private final WeakSelfReturningObjectPool<TypesAndInsertLegacy> typesAndInsertPool;
     private final WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool;
     private final DirectUtf8String utf8String = new DirectUtf8String();
     // this is a reference to types either from the context or named statement, where it is provided
@@ -188,16 +188,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private long totalReceived = 0;
     private int transactionState = NO_TRANSACTION;
     private final PGResumeProcessor resumeQueryCompleteRef = this::resumeQueryComplete;
-    private TypesAndInsert typesAndInsert = null;
+    private TypesAndInsertLegacy typesAndInsert = null;
     // insert 'statements' are cached only for the duration of user session
-    private SimpleAssociativeCache<TypesAndInsert> typesAndInsertCache;
+    private SimpleAssociativeCache<TypesAndInsertLegacy> typesAndInsertCache;
     // these references are held by context only for a period of processing single request
     // in PF world this request can span multiple messages, but still, only for one request
     // the rationale is to be able to return "selectAndTypes" instance to thread-local
     // cache, which is "typesAndSelectCache". We typically do this after query results are
     // served to client or query errored out due to network issues
-    private TypesAndSelect typesAndSelect = null;
-    private AssociativeCache<TypesAndSelect> typesAndSelectCache;
+    private TypesAndSelectLegacy typesAndSelect = null;
+    private AssociativeCache<TypesAndSelectLegacy> typesAndSelectCache;
     private boolean typesAndSelectIsCached = true;
     private TypesAndUpdate typesAndUpdate = null;
     private SimpleAssociativeCache<TypesAndUpdate> typesAndUpdateCache;
@@ -208,12 +208,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final PGResumeProcessor setResumeComputeCursorSizeExecuteRef = this::setResumeComputeCursorSizeExecute;
     private NamedStatementWrapper wrapper;
 
-    public PGConnectionContext(
+    public PGConnectionContextLegacy(
             CairoEngine engine,
             PGWireConfiguration configuration,
             SqlExecutionContextImpl sqlExecutionContext,
             NetworkSqlExecutionCircuitBreaker circuitBreaker,
-            AssociativeCache<TypesAndSelect> typesAndSelectCache
+            AssociativeCache<TypesAndSelectLegacy> typesAndSelectCache
     ) {
         super(
                 configuration.getFactoryProvider().getPGWireSocketFactory(),
@@ -258,7 +258,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1;
             final int insertRowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1;
             this.typesAndInsertCache = new SimpleAssociativeCache<>(insertBlockCount, insertRowCount);
-            this.typesAndInsertPool = new WeakSelfReturningObjectPool<>(TypesAndInsert::new, insertBlockCount * insertRowCount);
+            this.typesAndInsertPool = new WeakSelfReturningObjectPool<>(TypesAndInsertLegacy::new, insertBlockCount * insertRowCount);
 
             this.batchCallback = new PGConnectionBatchCallback();
             this.queryTag = TAG_OK;
@@ -526,7 +526,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     @Override
-    public PGConnectionContext of(int fd, @NotNull IODispatcher<PGConnectionContext> dispatcher) {
+    public PGConnectionContextLegacy of(int fd, @NotNull IODispatcher<PGConnectionContextLegacy> dispatcher) {
         super.of(fd, dispatcher);
         sqlExecutionContext.with(fd);
         if (recvBuffer == 0) {
@@ -2240,11 +2240,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             case CompiledQuery.EXPLAIN:
                 // explain results should not be cached
                 typesAndSelectIsCached = false;
-                typesAndSelect = new TypesAndSelect(cq.getRecordCursorFactory());
+                typesAndSelect = new TypesAndSelectLegacy(cq.getRecordCursorFactory());
                 typesAndSelect.copyTypesFrom(bindVariableService);
                 queryTag = TAG_EXPLAIN;
             case CompiledQuery.SELECT:
-                typesAndSelect = new TypesAndSelect(cq.getRecordCursorFactory());
+                typesAndSelect = new TypesAndSelectLegacy(cq.getRecordCursorFactory());
                 typesAndSelect.copyTypesFrom(bindVariableService);
                 queryTag = TAG_SELECT;
                 LOG.debug().$("cache select [sql=").$(queryText).$(", thread=").$(Thread.currentThread().getId()).I$();
@@ -2274,7 +2274,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 if (factory != null) {
                     // this query is non-cacheable
                     typesAndSelectIsCached = false;
-                    typesAndSelect = new TypesAndSelect(cq.getRecordCursorFactory());
+                    typesAndSelect = new TypesAndSelectLegacy(cq.getRecordCursorFactory());
                     typesAndSelect.copyTypesFrom(bindVariableService);
                 }
                 queryTag = TAG_PSEUDO_SELECT;
@@ -2956,7 +2956,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         @Override
         public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence text) throws Exception {
             try {
-                PGConnectionContext.this.queryText = text;
+                PGConnectionContextLegacy.this.queryText = text;
                 processCompiledQuery(cq);
 
                 if (typesAndSelect != null) {
@@ -2993,9 +2993,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         public void preCompile(SqlCompiler compiler) {
             sendRNQ = true;
             prepareForNewBatchQuery();
-            PGConnectionContext.this.typesAndInsert = null;
-            PGConnectionContext.this.typesAndUpdate = null;
-            PGConnectionContext.this.typesAndSelect = null;
+            PGConnectionContextLegacy.this.typesAndInsert = null;
+            PGConnectionContextLegacy.this.typesAndUpdate = null;
+            PGConnectionContextLegacy.this.typesAndSelect = null;
             circuitBreaker.resetTimer();
         }
     }

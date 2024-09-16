@@ -25,38 +25,28 @@
 package io.questdb.cutlass.pgwire.legacy;
 
 import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.std.IntList;
-import io.questdb.std.Misc;
-import io.questdb.std.QuietCloseable;
+import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.std.WeakSelfReturningObjectPool;
 
-/**
- * Unlike other TypesAnd* classes, this one doesn't self-return to a pool. That's because
- * it's used for multithreaded calls to {@link io.questdb.std.ConcurrentAssociativeCache}.
- */
-public class TypesAndSelect implements QuietCloseable {
-    private final IntList types = new IntList();
-    private RecordCursorFactory factory;
+public class TypesAndInsertLegacy extends AbstractTypeContainerLegacy<TypesAndInsertLegacy> {
+    private boolean hasBindVariables;
+    private InsertOperation insert;
 
-    public TypesAndSelect(RecordCursorFactory factory) {
-        this.factory = factory;
+    public TypesAndInsertLegacy(WeakSelfReturningObjectPool<TypesAndInsertLegacy> parentPool) {
+        super(parentPool);
     }
 
-    @Override
-    public void close() {
-        factory = Misc.free(factory);
+    public InsertOperation getInsert() {
+        return insert;
     }
 
-    public void copyTypesFrom(BindVariableService bindVariableService) {
-        AbstractTypeContainer.copyTypes(bindVariableService, types);
+    public boolean hasBindVariables() {
+        return hasBindVariables;
     }
 
-    public void defineBindVariables(BindVariableService bindVariableService) throws SqlException {
-        AbstractTypeContainer.defineBindVariables(types, bindVariableService);
-    }
-
-    public RecordCursorFactory getFactory() {
-        return factory;
+    public void of(InsertOperation insert, BindVariableService bindVariableService) {
+        this.insert = insert;
+        copyTypesFrom(bindVariableService);
+        this.hasBindVariables = bindVariableService.getIndexedVariableCount() > 0;
     }
 }
