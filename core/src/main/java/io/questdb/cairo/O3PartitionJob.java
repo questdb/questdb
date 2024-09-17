@@ -31,7 +31,10 @@ import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.griffin.engine.table.parquet.*;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -1220,9 +1223,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final MemoryR offsetsMem = symbolMapWriter.getSymbolOffsetsMemory();
                     final MemoryR valuesMem = symbolMapWriter.getSymbolValuesMemory();
 
-                    final MemoryCARWImpl dstFixMem =  dstColumnsMemory.getQuick(columnOffset);
+                    final MemoryCARWImpl dstFixMem = dstColumnsMemory.getQuick(columnOffset);
                     dstFixMem.clear();
-                    final MemoryCARWImpl dstVarMem =  dstColumnsMemory.getQuick(columnOffset + 1);
+                    final MemoryCARWImpl dstVarMem = dstColumnsMemory.getQuick(columnOffset + 1);
                     dstVarMem.clear();
 
                     O3CopyJob.mergeSymbols(
@@ -1259,9 +1262,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     long dstVarSize = ctd.getDataVectorSize(srcOooFixAddr, mergeRangeLo, mergeRangeHi)
                             + ctd.getDataVectorSizeAt(columnAuxPtr, rowGroupRowCount - 1);
 
-                    final MemoryCARWImpl dstFixMem =  dstColumnsMemory.getQuick(columnOffset);
+                    final MemoryCARWImpl dstFixMem = dstColumnsMemory.getQuick(columnOffset);
                     dstFixMem.extend(dstFixSize);
-                    final MemoryCARWImpl dstVarMem =  dstColumnsMemory.getQuick(columnOffset + 1);
+                    final MemoryCARWImpl dstVarMem = dstColumnsMemory.getQuick(columnOffset + 1);
                     dstVarMem.extend(dstVarSize);
 
                     O3CopyJob.mergeCopy(
@@ -1292,7 +1295,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 } else {
                     final long srcOooFixAddr = oooMem1.addressOf(0);
                     long dstFixSize = mergeRowCount * ColumnType.sizeOf(columnType);
-                    final MemoryCARWImpl dstFixMem =  dstColumnsMemory.getQuick(columnOffset);
+                    final MemoryCARWImpl dstFixMem = dstColumnsMemory.getQuick(columnOffset);
                     dstFixMem.extend(dstFixSize);
 
                     // Merge column data
