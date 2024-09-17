@@ -125,6 +125,20 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewNonDeterministicSampleByTest() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            try {
+                ddl("create materialized view test as select ts, rnd_boolean(), avg(v) from " + TABLE1 + " sample by 30s");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Non-deterministic column: rnd_boolean");
+            }
+        });
+    }
+
+    @Test
     public void testCreateMatViewNonOptimizedSampleByTest() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -180,6 +194,34 @@ public class CreateMatViewTest extends AbstractCairoTest {
             final String expected = "ts\tavg\n" +
                     "1970-01-01T00:00:00.000000Z\t2.5\n" +
                     "1970-01-01T00:01:00.000000Z\t7.0\n";
+
+            assertQuery(
+                    expected,
+                    "test",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCreateMatViewWithOperatorTest() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            ddl("create materialized view test as select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s");
+
+            final String expected = "ts\tdoubleV\tavg\n" +
+                    "1970-01-01T00:00:00.000000Z\t0\t0.0\n" +
+                    "1970-01-01T00:00:00.000000Z\t2\t1.0\n" +
+                    "1970-01-01T00:00:00.000000Z\t4\t2.0\n" +
+                    "1970-01-01T00:00:30.000000Z\t6\t3.0\n" +
+                    "1970-01-01T00:00:30.000000Z\t8\t4.0\n" +
+                    "1970-01-01T00:00:30.000000Z\t10\t5.0\n" +
+                    "1970-01-01T00:01:00.000000Z\t12\t6.0\n" +
+                    "1970-01-01T00:01:00.000000Z\t14\t7.0\n" +
+                    "1970-01-01T00:01:00.000000Z\t16\t8.0\n";
 
             assertQuery(
                     expected,

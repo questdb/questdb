@@ -80,6 +80,10 @@ public class GroupByUtils {
                         executionContext
                 );
 
+                if (model.isMatView() && function.isNonDeterministic()) {
+                    throw SqlException.nonDeterministicColumn(node.position, node.token);
+                }
+
                 if (function instanceof GroupByFunction) {
                     // configure map value columns for group-by functions
                     // some functions may need more than one column in values,
@@ -317,7 +321,6 @@ public class GroupByUtils {
             return;
         }
 
-        final QueryModel nested = model.getNestedModel();
         QueryModel chooseModel = model;
         while (chooseModel != null
                 && chooseModel.getSelectModelType() != QueryModel.SELECT_MODEL_CHOOSE

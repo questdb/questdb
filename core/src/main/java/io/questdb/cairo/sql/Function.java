@@ -198,6 +198,11 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return false;
     }
 
+    // TODO: set it to true on all rnd functions + now() + sysdate()
+    default boolean isNonDeterministic() {
+        return false;
+    }
+
     default boolean isNullConstant() {
         return false;
     }

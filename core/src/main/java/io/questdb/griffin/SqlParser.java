@@ -620,6 +620,7 @@ public class SqlParser {
                     executionContext,
                     sqlParserCallback
             );
+            queryModel.setIsMatView(true);
             model.setQueryModel(queryModel);
 
             // create view columns based on query
@@ -647,7 +648,6 @@ public class SqlParser {
             model.setBaseTableName(baseTableName.toString());
 
             // find sampling interval
-            // TODO: make this recursive to find sampling interval in inner queries too
             CharSequence intervalConst = null;
             final ExpressionNode sampleBy = queryModel.getSampleBy();
             if (sampleBy != null && sampleBy.type == ExpressionNode.CONSTANT) {
@@ -681,7 +681,24 @@ public class SqlParser {
             }
             model.setIntervalMicros(interval);
 
-            // TODO: find dedup keys and set them on the model
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final QueryColumn column = columns.getQuick(i);
+                final ExpressionNode ast = column.getAst();
+                switch (ast.type) {
+                    case ExpressionNode.FUNCTION:
+                    case ExpressionNode.CONSTANT:
+                    case ExpressionNode.OPERATION:
+                        // allowed, nothing to do
+                        break;
+                    case ExpressionNode.LITERAL:
+                        // aggregation key, add as dedup key
+                        model.setDedupKeyFlag(i);
+                        break;
+                    default:
+                        // TODO: any other type can be allowed?
+                        throw SqlException.$(lexer.lastTokenPosition(), "Unsupported materialized view query");
+                }
+            }
 
             tok = optTok(lexer);
             if (tok != null && !Chars.equals(tok, ';')) {
