@@ -1652,6 +1652,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getPartitionNameTxn(partitionIndex);
     }
 
+    public long getPartitionNameTxnByPartitionTimestamp(long partitionTimestamp) {
+        return txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp, -1L);
+    }
+
     public long getPartitionO3SplitThreshold() {
         long splitMinSizeBytes = configuration.getPartitionO3SplitMinSize();
         return splitMinSizeBytes /
@@ -1663,6 +1667,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return txWriter.getTransientRowCount();
         }
         return txWriter.getPartitionSize(partitionIndex);
+    }
+
+    public long getPartitionParquetFileSize(int partitionIndex) {
+        return txWriter.getPartitionParquetFileSize(partitionIndex);
+    }
+
+    public int getPartitionIndexByTimestamp(long timestamp) {
+        return txWriter.getPartitionIndex(timestamp);
     }
 
     public long getPartitionTimestamp(int partitionIndex) {
@@ -6263,8 +6275,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final long newPartitionSize = srcDataMax + srcOooBatchRowSize;
 
                     // check partition read-only state
-                    final boolean partitionIsReadOnly = txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp);
-                    final boolean isParquet = txWriter.isPartitionParquetByPartitionTimestamp(partitionTimestamp);
+                    final boolean partitionIsReadOnly = partitionIndexRaw > -1 && txWriter.isPartitionReadOnlyByRawIndex(partitionIndexRaw);
+                    final boolean isParquet = partitionIndexRaw > -1 && txWriter.isPartitionParquetByRawIndex(partitionIndexRaw);
 
                     pCount++;
 
