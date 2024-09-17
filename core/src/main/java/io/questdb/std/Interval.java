@@ -24,8 +24,73 @@
 
 package io.questdb.std;
 
-public interface Interval {
-    long getHi();
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.model.IntervalOperation;
+import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
-    long getLo();
+public class Interval implements Sinkable {
+    public static final Interval EMPTY = new Interval();
+
+    long hi = Long.MIN_VALUE;
+    long lo = Long.MIN_VALUE;
+
+    public Interval() {
+    }
+
+    public void clear() {
+        lo = Long.MIN_VALUE;
+        hi = Long.MIN_VALUE;
+    }
+
+    public long getHi() {
+        return hi;
+    }
+
+    public long getLo() {
+        return lo;
+    }
+
+    public void of(CharSequence seq, LongList list) throws NumericException, SqlException {
+        IntervalUtils.parseInterval(seq, 0, seq.length(), IntervalOperation.NONE, list);
+        assert list.size() != 0;
+        if (list.size() != 2) {
+            throw SqlException.$(-1, "only compatible with simple intervals");
+        }
+        lo = list.get(0);
+        hi = list.get(1);
+    }
+
+    public void of(long lo, long hi) {
+        this.lo = lo;
+        this.hi = hi;
+    }
+
+    @Override
+    public void toSink(@NotNull CharSink<?> sink) {
+        sink.put('(');
+        if (lo != Long.MIN_VALUE) {
+            sink.put('\'');
+            sink.put(Timestamps.toString(lo));
+            sink.put('\'');
+            if (hi != Long.MIN_VALUE) {
+                sink.put(", ");
+                sink.put('\'');
+                sink.put(Timestamps.toString(hi));
+                sink.put('\'');
+            }
+        }
+        sink.put(')');
+    }
+
+    @Override
+    public String toString() {
+        StringSink sink = new StringSink();
+        toSink(sink);
+        return sink.toString();
+    }
 }

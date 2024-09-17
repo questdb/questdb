@@ -31,8 +31,10 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.IntervalFunction;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Timestamps;
 
@@ -49,12 +51,29 @@ public class TodayFunctionFactory implements FunctionFactory {
         return new TodayFunction();
     }
 
-    private static class TodayFunction extends TimestampFunction implements Function {
+    private static class TodayFunction extends IntervalFunction implements Function {
+        private final Interval interval = new Interval();
         private SqlExecutionContext context;
 
         @Override
-        public long getTimestamp(Record rec) {
-            return Timestamps.floorDD(context.getNow());
+        public Interval getInterval(Record rec) {
+            long today = Timestamps.floorDD(context.getNow());
+            long tomorrow = Timestamps.floorDD(Timestamps.addDays(context.getNow(), 1));
+            interval.of(
+                    today,
+                    tomorrow - 1
+            );
+            return interval;
+        }
+
+        @Override
+        public Function getLeft() {
+            return new TimestampConstant(interval.getLo());
+        }
+
+        @Override
+        public Function getRight() {
+            return new TimestampConstant(interval.getHi());
         }
 
         @Override

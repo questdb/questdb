@@ -361,6 +361,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
     }
 
+    private static void putIntervalValue(HttpChunkedResponse response, Record rec, int col) {
+        response.put(rec.getInterval(col));
+    }
+
     private static void putLong256Value(HttpChunkedResponse response, Record rec, int col) {
         response.putAscii('"');
         rec.getLong256(col, response);
@@ -606,6 +610,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     break;
                 case ColumnType.IPv4:
                     putIPv4Value(response, record, columnIdx);
+                    break;
+                case ColumnType.INTERVAL:
+                    putIntervalValue(response, record, columnIdx);
                     break;
                 default:
                     assert false : "Not supported type in output " + ColumnType.nameOf(columnType);

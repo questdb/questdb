@@ -85,15 +85,15 @@ public final class ColumnType {
     public static final short LONG128 = GEOHASH + 1;            // = 24  Limited support, few tests only
     public static final short IPv4 = LONG128 + 1;               // = 25
     public static final short VARCHAR = IPv4 + 1;               // = 26
-    public static final short INTERVAL = VARCHAR + 1;           // = 27
     // PG specific types to work with 3rd party software
     // with canned catalogue queries:
     // REGCLASS, REGPROCEDURE, ARRAY_STRING, PARAMETER
-    public static final short REGCLASS = VARCHAR + 1;           // = 28;
-    public static final short REGPROCEDURE = REGCLASS + 1;      // = 29;
-    public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 30;
-    public static final short PARAMETER = ARRAY_STRING + 1;     // = 31;
-    public static final short NULL = PARAMETER + 1;             // = 32; ALWAYS the last
+    public static final short REGCLASS = VARCHAR + 1;           // = 27;
+    public static final short REGPROCEDURE = REGCLASS + 1;      // = 28;
+    public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 29;
+    public static final short PARAMETER = ARRAY_STRING + 1;     // = 30;
+    public static final short INTERVAL = PARAMETER + 1;           // = 31
+    public static final short NULL = INTERVAL + 1;             // = 32; ALWAYS the last
     private static final short[] TYPE_SIZE = new short[NULL + 1];
     private static final short[] TYPE_SIZE_POW2 = new short[TYPE_SIZE.length];
     // slightly bigger than needed to make it a power of 2
