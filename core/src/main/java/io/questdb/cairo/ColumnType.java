@@ -29,10 +29,13 @@ import io.questdb.std.str.StringSink;
 
 // ColumnType layout - 32bit
 //
-// | PGWire format | Extra type information | Type discriminant (tag) |
+// | Skip column   | Extra type information | Type discriminant (tag) |
 // +---------------+------------------------+-------------------------+
 // |    1 bit      |        23 bits         |         8 bits          |
 // +---------------+------------------------+-------------------------+
+//
+// The top bit is set for columns that should be skipped.
+// I.e. `if (columnType < 0) { skip }`.
 
 /**
  * Column types as numeric (integer) values

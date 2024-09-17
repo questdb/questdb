@@ -58,7 +58,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _class: JClass,
     decoder: *mut ParquetDecoder,
     row_group_bufs: *mut RowGroupBuffers,
-    to_column_types: *const i32, //
+    to_column_types: *const i32, // negative numbers for columns to skip
     row_group_index: i32,
 ) -> usize {
     assert!(!decoder.is_null(), "decoder pointer is null");

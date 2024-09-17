@@ -23,6 +23,7 @@
  ******************************************************************************/
 use crate::parquet::error::{fmt_err, ParquetError};
 use serde::{Deserialize, Serialize};
+use std::num::NonZeroI32;
 
 #[repr(i8)]
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -106,23 +107,24 @@ fn tag_of(col_type: i32) -> u8 {
 #[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ColumnType {
-    code: i32,
+    // Optimization so `Option<ColumnType>` is the same size as `ColumnType`.
+    code: NonZeroI32,
 }
 
 impl ColumnType {
     pub fn new(tag: ColumnTypeTag, extra_type_info: i32) -> Self {
         let shifted_extra_type_info = extra_type_info << 8;
-        let code = tag as i32 | shifted_extra_type_info;
+        let code = NonZeroI32::new(tag as i32 | shifted_extra_type_info)
+            .expect("column type code should never be zero");
         Self { code }
     }
 
-    #[cfg(test)]
     pub fn code(&self) -> i32 {
-        self.code
+        self.code.get()
     }
 
     pub fn tag(&self) -> ColumnTypeTag {
-        let col_tag_num: u8 = tag_of(self.code);
+        let col_tag_num: u8 = tag_of(self.code());
         // Constructing from int should already have validated the tag.
         col_tag_num
             .try_into()
@@ -137,6 +139,7 @@ impl TryFrom<i32> for ColumnType {
         // Start with removing geohash size bits. See ColumnType#tagOf().
         let col_tag_num = tag_of(v);
         let _tag: ColumnTypeTag = col_tag_num.try_into()?; // just validate
-        Ok(Self { code: v })
+        let code = NonZeroI32::new(v).expect("column type code should never be zero");
+        Ok(Self { code })
     }
 }
