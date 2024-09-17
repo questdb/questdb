@@ -86,6 +86,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // 3, oldPartitionSize
     // 4, flags (partitionMutates INT, isLastWrittenPartition INT)
     // 5. o3SplitPartitionSize size of "split" partition, new partition that branches out of the old one
+    // 6. ...
+    // 7. parquet partition file size
     // ... column top for every column
     public static final int PARTITION_SINK_SIZE_LONGS = 8;
     public static final int PARTITION_SINK_COL_TOP_OFFSET = PARTITION_SINK_SIZE_LONGS * Long.BYTES;
@@ -5716,9 +5718,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .$("merged partition [table=`").utf8(tableToken.getTableName())
                             .$("`, ts=").$ts(partitionTimestamp)
                             .$(", txn=").$(txWriter.txn).I$();
-                    txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
-                    partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
-                    txWriter.bumpPartitionTableVersion();
+
+                    final long parquetFileSize = Unsafe.getUnsafe().getLong(blockAddress + 7 * Long.BYTES);
+                    if (parquetFileSize > -1) {
+                        // Since we're technically performing an "append" here,
+                        // there's no need to increment the txn or partition table version.
+                        txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
+                        txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileSize);
+                    } else {
+                        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
+                        partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                        txWriter.bumpPartitionTableVersion();
+                    }
                 } else {
                     if (partitionTimestamp != lastPartitionTimestamp) {
                         txWriter.bumpPartitionTableVersion();
