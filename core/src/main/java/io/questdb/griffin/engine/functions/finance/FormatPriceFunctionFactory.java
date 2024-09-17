@@ -36,7 +36,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class FormatPriceFunctionFactory implements FunctionFactory  {
+public class FormatPriceFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "format_price(DI)";
