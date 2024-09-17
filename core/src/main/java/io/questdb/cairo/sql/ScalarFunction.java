@@ -31,6 +31,11 @@ public interface ScalarFunction extends Function {
     }
 
     @Override
+    default CharSequence getInterval(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     default Record getRecord(Record rec) {
         throw new UnsupportedOperationException();
     }
