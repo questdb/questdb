@@ -33,26 +33,16 @@ import io.questdb.std.str.Utf8Sequence;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
 
 public class PartitionEncoder {
-    public static int COMPRESSION_BROTLI = 4;
-    public static int COMPRESSION_GZIP = 2;
-    public static int COMPRESSION_LZ4 = 5;
-    public static int COMPRESSION_LZ4_RAW = 7;
-    public static int COMPRESSION_LZO = 3;
-    public static int COMPRESSION_SNAPPY = 1;
-    public static int COMPRESSION_UNCOMPRESSED = 0;
-    public static int COMPRESSION_ZSTD = 6;
-    public static int PARQUET_VERSION_V1 = 1;
-    public static int PARQUET_VERSION_V2 = 2;
 
     public static void encode(PartitionDescriptor descriptor, Path destPath) {
         encodeWithOptions(
                 descriptor,
                 destPath,
-                COMPRESSION_UNCOMPRESSED,
+                ParquetCompression.COMPRESSION_UNCOMPRESSED,
                 true,
-                0, // DEFAULT_ROW_GROUP_SIZE
-                0, // DEFAULT_DATA_PAGE_SIZE
-                PARQUET_VERSION_V1
+                0, // DEFAULT_ROW_GROUP_SIZE (512 * 512) rows
+                0, // DEFAULT_DATA_PAGE_SIZE (1024 * 1024) bytes
+                ParquetVersion.PARQUET_VERSION_V1
         );
     }
 
@@ -173,41 +163,6 @@ public class PartitionEncoder {
         }
     }
 
-    public static void update(PartitionDescriptor descriptor, short rowGroupId, Path destPath) {
-        final int columnCount = descriptor.getColumnCount();
-        final long partitionSize = descriptor.getPartitionRowCount();
-        final int timestampIndex = descriptor.getTimestampIndex();
-        try {
-            updatePartition(
-                    rowGroupId,
-                    columnCount,
-                    descriptor.getColumnNamesPtr(),
-                    descriptor.getColumnNamesSize(),
-                    descriptor.getColumnNameLengthsPtr(),
-                    descriptor.getColumnTypesPtr(),
-                    descriptor.getColumnIdsPtr(),
-                    timestampIndex,
-                    descriptor.getColumnTopsPtr(),
-                    descriptor.getColumnAddressesPtr(),
-                    descriptor.getColumnSizesPtr(),
-                    descriptor.getColumnSecondaryAddressesPtr(),
-                    descriptor.getColumnSecondarySizesPtr(),
-                    descriptor.getSymbolOffsetsAddressesPtr(),
-                    descriptor.getSymbolOffsetsSizesPtr(),
-                    partitionSize,
-                    destPath.ptr(),
-                    destPath.size()
-            );
-        } catch (Throwable th) {
-            throw CairoException.critical(0).put("Could not update partition: [table=").put(descriptor.getTableName())
-                    .put(", exception=").put(th.getClass().getSimpleName())
-                    .put(", msg=").put(th.getMessage())
-                    .put(']');
-        } finally {
-            descriptor.clear();
-        }
-    }
-
     private static native void encodePartition(
             long tableNamePtr,
             int tableNameSize,
@@ -233,27 +188,6 @@ public class PartitionEncoder {
             long rowGroupSize,
             long dataPageSize,
             int version
-    );
-
-    private static native void updatePartition(
-            short rowGroupId,
-            int columnCount,
-            long columnNamesPtr,
-            int columnNamesLength,
-            long columnNameLengthsPtr,
-            long columnTypesPtr,
-            long columnIdsPtr,
-            int timestampIndex,
-            long columnTopsPtr,
-            long columnAddrsPtr,
-            long columnSizesPtr,
-            long columnSecondaryAddrsPtr,
-            long columnSecondarySizesPtr,
-            long symbolOffsetsAddrsPtr,
-            long symbolOffsetsSizesPtr,
-            long rowCount,
-            long destPathPtr,
-            int destPathLength
     );
 
     static {
