@@ -27,6 +27,7 @@ open module io.questdb {
     requires static org.jetbrains.annotations;
     requires static java.management;
     requires jdk.management;
+    requires jdk.incubator.vector;
 
     uses io.questdb.griffin.FunctionFactory;
     exports io.questdb;
@@ -631,6 +632,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.bool.InTimestampTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.bool.BetweenTimestampFunctionFactory,
             io.questdb.griffin.engine.functions.bool.InUuidFunctionFactory,
+            io.questdb.griffin.engine.functions.bool.InTimestampIntervalFunctionFactory,
 //                  'all'
             io.questdb.griffin.engine.functions.bool.AllNotEqStrFunctionFactory,
             io.questdb.griffin.engine.functions.bool.AllNotEqVarcharFunctionFactory,
