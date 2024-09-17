@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -342,6 +343,55 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testFullLtJoinDoesNotConvertSymbolKeyToString() throws Exception {
         testFullJoinDoesNotConvertSymbolKeyToString("lt join");
+    }
+
+    @Test
+    public void testInterleaved1() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            insert("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
+            insert("INSERT INTO t1 values ('2022-10-05T08:17:00.000000Z', 1, 'a');");
+            insert("INSERT INTO t1 values ('2022-10-05T08:21:00.000000Z', 2, 'a');");
+            insert("INSERT INTO t1 values ('2022-10-05T08:21:00.000000Z', 2, 'b');");
+            insert("INSERT INTO t1 values ('2022-10-10T01:01:00.000000Z', 3, 'a');");
+
+            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            insert("INSERT INTO t2 values ('2022-10-05T08:18:00.000000Z', 4, 'a');");
+            insert("INSERT INTO t2 values ('2022-10-05T08:19:00.000000Z', 5, 'a');");
+            insert("INSERT INTO t2 values ('2023-10-05T09:00:00.000000Z', 6, 'a');");
+            insert("INSERT INTO t2 values ('2023-10-06T01:00:00.000000Z', 7, 'a');");
+
+            assertResultSetsMatch("t1", "t2");
+        });
+    }
+
+    @Test
+    public void testInterleaved2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            insert("INSERT INTO t1 values ('2000-02-07T22:00:00.000000Z', 1, 'a');");
+            insert("INSERT INTO t1 values ('2000-02-08T06:00:00.000000Z', 2, 'a');");
+            insert("INSERT INTO t1 values ('2000-02-08T19:00:00.000000Z', 3, 'a');");
+            insert("INSERT INTO t1 values ('2000-02-08T19:00:00.000000Z', 3, 'b');");
+            insert("INSERT INTO t1 values ('2000-02-09T16:00:00.000000Z', 4, 'a');");
+            insert("INSERT INTO t1 values ('2000-02-09T16:00:00.000000Z', 5, 'a');");
+            insert("INSERT INTO t1 values ('2000-02-10T06:00:00.000000Z', 6, 'a');");
+            insert("INSERT INTO t1 values ('2000-02-10T06:00:00.000000Z', 6, 'b');");
+            insert("INSERT INTO t1 values ('2000-02-10T19:00:00.000000Z', 7, 'a');");
+
+            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            insert("INSERT INTO t1 values ('2000-02-07T14:00:00.000000Z', 8, 'a');");
+            insert("INSERT INTO t1 values ('2000-02-08T02:00:00.000000Z', 9, 'a');");
+            insert("INSERT INTO t1 values ('2000-02-08T02:00:00.000000Z', 10, 'a');");
+            insert("INSERT INTO t1 values ('2000-02-08T02:00:00.000000Z', 10, 'c');");
+            insert("INSERT INTO t1 values ('2000-02-08T21:00:00.000000Z', 11, 'a');");
+            insert("INSERT INTO t1 values ('2000-02-09T15:00:00.000000Z', 12, 'a');");
+            insert("INSERT INTO t1 values ('2000-02-09T20:00:00.000000Z', 13, 'a');");
+            insert("INSERT INTO t1 values ('2000-02-09T20:00:00.000000Z', 13, 'c');");
+            insert("INSERT INTO t1 values ('2000-02-10T16:00:00.000000Z', 14, 'a');");
+
+            assertResultSetsMatch("t1", "t2");
+        });
     }
 
     @Test
@@ -1304,6 +1354,127 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRightHandAfter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            insert("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
+            insert("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 1, 'a');");
+            insert("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 2, 'a');");
+            insert("INSERT INTO t1 values ('2022-10-05T08:17:00.000000Z', 2, 'b');");
+
+            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            insert("INSERT INTO t2 values ('2023-10-05T04:00:00.000000Z', 3, 'a');");
+            insert("INSERT INTO t2 values ('2023-10-05T04:00:00.000000Z', 3, 'b');");
+
+            assertResultSetsMatch("t1", "t2");
+        });
+    }
+
+    @Test
+    public void testRightHandBefore() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            insert("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
+            insert("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 1, 'a');");
+            insert("INSERT INTO t1 values ('2022-10-05T08:16:30.000000Z', 1, 'b');");
+            insert("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 2, 'a');");
+
+            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            insert("INSERT INTO t2 values ('2021-10-01T00:00:00.000000Z', 3, 'a');");
+            insert("INSERT INTO t2 values ('2021-10-03T01:00:00.000000Z', 4, 'a');");
+            insert("INSERT INTO t2 values ('2021-10-03T01:00:00.000000Z', 4, 'b');");
+            insert("INSERT INTO t2 values ('2021-10-05T04:00:00.000000Z', 5, 'a');");
+
+            assertResultSetsMatch("t1", "t2");
+        });
+    }
+
+    @Test
+    public void testRightHandDuplicate() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            insert("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
+            insert("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 1, 'a');");
+            insert("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 2, 'a');");
+
+            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            insert("INSERT INTO t2 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
+            insert("INSERT INTO t2 values ('2022-10-05T08:15:00.000000Z', 1, 'a');");
+            insert("INSERT INTO t2 values ('2022-10-05T08:15:00.000000Z', 2, 'a');");
+
+            assertResultSetsMatch("t1", "t2");
+        });
+    }
+
+    @Test
+    public void testRightHandEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            insert("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
+            insert("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 1, 'a');");
+            insert("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 2, 'a');");
+
+            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            insert("INSERT INTO t2 values ('2023-10-05T04:00:00.000000Z', 3, 'a');");
+
+            assertResultSetsMatch("t1", "t2");
+        });
+    }
+
+    @Test
+    public void testRightHandPartitionBoundary() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            insert("INSERT INTO t1 values ('2022-10-05T00:00:00.000000Z', 0, 'a');");
+            insert("INSERT INTO t1 values ('2022-10-05T00:00:00.000000Z', 0, 'b');");
+
+            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            insert("INSERT INTO t2 values ('2022-10-04T23:59:59.999999Z', 1, 'a');");
+            insert("INSERT INTO t2 values ('2022-10-04T23:59:59.999999Z', 1, 'b');");
+            insert("INSERT INTO t2 values ('2022-10-05T00:00:00.000000Z', 2, 'a');");
+
+            assertResultSetsMatch("t1", "t2");
+        });
+    }
+
+    @Test
+    public void testRightHandSame() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            insert("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
+            insert("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 1, 'a');");
+            insert("INSERT INTO t1 values ('2022-10-05T08:16:00.000000Z', 1, 'b');");
+            insert("INSERT INTO t1 values ('2022-10-07T08:16:00.000000Z', 2, 'a');");
+
+            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            insert("INSERT INTO t2 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
+            insert("INSERT INTO t2 values ('2022-10-05T08:15:00.000000Z', 0, 'c');");
+            insert("INSERT INTO t2 values ('2022-10-05T08:16:00.000000Z', 1, 'a');");
+            insert("INSERT INTO t2 values ('2022-10-07T08:16:00.000000Z', 2, 'a');");
+
+            assertResultSetsMatch("t1", "t2");
+        });
+    }
+
+    @Test
+    public void testSelfJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE t (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            insert("INSERT INTO t values ('2022-10-05T00:00:00.000000Z', 0, 'a');");
+            insert("INSERT INTO t values ('2022-10-05T08:16:00.000000Z', 1, 'a');");
+            insert("INSERT INTO t values ('2022-10-05T08:16:00.000000Z', 3, 'a');");
+            insert("INSERT INTO t values ('2022-10-05T23:59:59.999999Z', 4, 'a');");
+            insert("INSERT INTO t values ('2022-10-05T23:59:59.999999Z', 4, 'b');");
+            insert("INSERT INTO t values ('2022-10-06T00:00:00.000000Z', 5, 'a');");
+            insert("INSERT INTO t values ('2022-10-06T00:01:00.000000Z', 6, 'a');");
+            insert("INSERT INTO t values ('2022-10-06T00:01:00.000000Z', 6, 'c');");
+            insert("INSERT INTO t values ('2022-10-06T00:02:00.000000Z', 7, 'a');");
+
+            assertResultSetsMatch("t as t1", "t as t2");
+        });
+    }
+
+    @Test
     public void testSelfJoinOnSymbolKey1() throws Exception {
         assertMemoryLeak(() -> {
             ddl("CREATE TABLE trades (pair SYMBOL, ts TIMESTAMP, price INT) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1547,6 +1718,17 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     "BTC-USD\t2002-01-01T00:00:03.000000Z\t3\tBTC-USD\t2002-01-01T00:00:03.000000Z\t3\n";
             assertQueryNoLeakCheck(expected, query, null, false, false);
         });
+    }
+
+    private void assertResultSetsMatch(String leftTable, String rightTable) throws Exception {
+        final StringSink expectedSink = new StringSink();
+        // equivalent of the below query, but uses slow factory
+        printSql("select * from " + leftTable + " asof join (" + rightTable + " where i >= 0) on s", expectedSink);
+
+        final StringSink actualSink = new StringSink();
+        printSql("select * from " + leftTable + " asof join " + rightTable + " on s", actualSink);
+
+        TestUtils.assertEquals(expectedSink, actualSink);
     }
 
     private void testExplicitTimestampIsNotNecessaryWhenJoining(String joinType, String timestamp) throws Exception {

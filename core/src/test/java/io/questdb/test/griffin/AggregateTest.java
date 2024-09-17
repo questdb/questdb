@@ -2019,7 +2019,7 @@ public class AggregateTest extends AbstractCairoTest {
         AbstractCairoTest.create(tt1);
 
         // Insert a lot of empty rows to test function's merge correctness.
-        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("tt1"))) {
+        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("tt1"), engine)) {
             for (int i = 0; i < 2 * PAGE_FRAME_MAX_ROWS; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.append();

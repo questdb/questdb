@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongHashSet;
@@ -168,6 +169,17 @@ public class WalTxnDetails {
         return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + MAX_TIMESTAMP_OFFSET));
     }
 
+    private static WalEventCursor openWalEFile(Path tempPath, WalEventReader eventReader, int segmentTxn, long seqTxn) {
+        WalEventCursor walEventCursor;
+        try {
+            walEventCursor = eventReader.of(tempPath, WAL_FORMAT_VERSION, segmentTxn);
+        } catch (CairoException ex) {
+            throw CairoException.critical(ex.getErrno()).put("cannot read WAL even file for seqTxn=").put(seqTxn)
+                    .put(", ").put(ex.getFlyweightMessage()).put(']');
+        }
+        return walEventCursor;
+    }
+
     private void loadTransactionDetailsV1(Path tempPath, TransactionLogCursor transactionLogCursor, int rootLen, long maxCommittedTimestamp) {
         try (WalEventReader eventReader = walEventReader) {
 
@@ -192,14 +204,14 @@ public class WalTxnDetails {
                     tempPath.trimTo(rootLen).concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
 
                     if (prevWalId != walId || prevSegmentId != segmentId || prevSegmentTxn + 1 != segmentTxn) {
-                        walEventCursor = eventReader.of(tempPath, WAL_FORMAT_VERSION, segmentTxn);
+                        walEventCursor = openWalEFile(tempPath, eventReader, segmentTxn, transactionLogCursor.getTxn());
                         prevWalId = walId;
                         prevSegmentId = segmentId;
                         prevSegmentTxn = segmentTxn;
                     } else {
                         // This is same WALE file, just read next txn transaction.
                         if (!walEventCursor.hasNext()) {
-                            walEventCursor = eventReader.of(tempPath, WAL_FORMAT_VERSION, segmentTxn);
+                            walEventCursor = openWalEFile(tempPath, eventReader, segmentTxn, transactionLogCursor.getTxn());
                         }
                     }
 

@@ -219,6 +219,8 @@ public interface CairoConfiguration {
     @NotNull
     CharSequence getLegacyCheckpointRoot(); // same as root/../snapshot
 
+    boolean getLogSqlQueryProgressExe();
+
     int getMaxCrashFiles();
 
     int getMaxFileNameLength();
@@ -373,7 +375,7 @@ public interface CairoConfiguration {
 
     int getSqlCopyBufferSize();
 
-    // null input root disables "copy" sql
+    // null or empty input root disables "copy" sql
     CharSequence getSqlCopyInputRoot();
 
     CharSequence getSqlCopyInputWorkRoot();
@@ -624,6 +626,8 @@ public interface CairoConfiguration {
 
     default void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
     }
+
+    boolean useFastAsOfJoin();
 
     int getPartitionEncoderVersion();
 

@@ -25,9 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.std.Rnd;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -62,36 +59,6 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         node1.setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_LOOKAHEAD, 3);
-    }
-
-    @Test
-    public void testFuzzManyDuplicates() throws Exception {
-        testFuzz(50);
-    }
-
-    @Test
-    public void testFuzzNoDuplicates() throws Exception {
-        testFuzz(0);
-    }
-
-    @Test
-    public void testFuzzPartitionByNoneManyDuplicates() throws Exception {
-        testFuzzPartitionByNone(50);
-    }
-
-    @Test
-    public void testFuzzPartitionByNoneNoDuplicates() throws Exception {
-        testFuzzPartitionByNone(0);
-    }
-
-    @Test
-    public void testFuzzPartitionByNoneSomeDuplicates() throws Exception {
-        testFuzzPartitionByNone(10);
-    }
-
-    @Test
-    public void testFuzzSomeDuplicates() throws Exception {
-        testFuzz(10);
     }
 
     @Test
@@ -270,66 +237,6 @@ public class AsOfJoinNoKeyTest extends AbstractCairoTest {
         printSql("select * from " + leftTable + " " + join + " join " + rightTable, actualSink);
 
         TestUtils.assertEquals(expectedSink, actualSink);
-    }
-
-    private void testFuzz(int tsDuplicatePercentage) throws Exception {
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> {
-            final int table1Size = rnd.nextPositiveInt() % 1000;
-            final int table2Size = rnd.nextPositiveInt() % 1000;
-
-            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            long ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
-            ts += Timestamps.HOUR_MICROS * (rnd.nextLong() % 48);
-            for (int i = 0; i < table1Size; i++) {
-                if (rnd.nextInt(100) >= tsDuplicatePercentage) {
-                    ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
-                }
-                insert("INSERT INTO t1 values (" + ts + ", " + i + ", 't1_" + i + "');");
-            }
-
-            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
-            ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
-            ts += Timestamps.HOUR_MICROS * rnd.nextLong(48);
-            for (int i = 0; i < table2Size; i++) {
-                if (rnd.nextInt(100) >= tsDuplicatePercentage) {
-                    ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
-                }
-                insert("INSERT INTO t2 values (" + ts + ", " + i + ", 't2_" + i + "');");
-            }
-
-            assertResultSetsMatch("t1", "t2");
-        });
-    }
-
-    private void testFuzzPartitionByNone(int tsDuplicatePercentage) throws Exception {
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> {
-            final int table1Size = rnd.nextPositiveInt() % 1000;
-            final int table2Size = rnd.nextPositiveInt() % 1000;
-
-            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts)");
-            long ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
-            ts += Timestamps.HOUR_MICROS * (rnd.nextLong() % 48);
-            for (int i = 0; i < table1Size; i++) {
-                if (rnd.nextInt(100) >= tsDuplicatePercentage) {
-                    ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
-                }
-                insert("INSERT INTO t1 values (" + ts + ", " + i + ", 't1_" + i + "');");
-            }
-
-            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts)");
-            ts = TimestampFormatUtils.parseTimestamp("2000-01-01T00:00:00.000Z");
-            ts += Timestamps.HOUR_MICROS * rnd.nextLong(48);
-            for (int i = 0; i < table2Size; i++) {
-                if (rnd.nextInt(100) >= tsDuplicatePercentage) {
-                    ts += Timestamps.HOUR_MICROS * rnd.nextLong(24);
-                }
-                insert("INSERT INTO t2 values (" + ts + ", " + i + ", 't2_" + i + "');");
-            }
-
-            assertResultSetsMatch("t1", "t2");
-        });
     }
 
     public enum JoinType {

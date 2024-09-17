@@ -176,6 +176,7 @@ public class TableSequencerImpl implements TableSequencer {
         final long txn = tableTransactionLog.addEntry(getStructureVersion(), WalUtils.DROP_TABLE_WALID,
                 0, 0, timestamp, 0, 0, 0);
         metadata.dropTable();
+        engine.metadataCacheRemoveTable(tableToken);
         notifyTxnCommitted(Long.MAX_VALUE);
         engine.getWalListener().tableDropped(tableToken, txn, timestamp);
     }

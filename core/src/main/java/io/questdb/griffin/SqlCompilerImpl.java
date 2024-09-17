@@ -1953,7 +1953,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         engine.getConfiguration().getRoot(),
                         engine.getDdlListener(tableToken),
                         engine.getCheckpointStatus(),
-                        engine.getMetrics()
+                        engine.getMetrics(),
+                        engine
                 );
             } else {
                 writerAPI = engine.getTableWriterAPI(tableToken, "create as select");
@@ -2900,7 +2901,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 engine.unlockReaders(tableToken);
                             }
                         } else {
-                            throw SqlException.$(0, "there is an active query against '").put(tableToken).put("'. Try again.");
+                            throw SqlException.$(0, "there is an active query against '").put(tableToken.getTableName()).put("'. Try again.");
                         }
                     }
                 } catch (CairoException | CairoError e) {

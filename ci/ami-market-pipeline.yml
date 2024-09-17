@@ -1,10 +1,4 @@
-trigger:
-  tags:
-    include:
-      - "*"
-  branches:
-    exclude:
-      - "*"
+trigger: none
 
 pr: none
 

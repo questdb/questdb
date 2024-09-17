@@ -158,6 +158,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
         return NullMemoryCMR.INSTANCE.getFloat(0);
     }
 
+    public int getFrameIndex() {
+        return frameIndex;
+    }
+
     @Override
     public byte getGeoByte(int columnIndex) {
         final long address = pageAddresses.getQuick(columnIndex);
@@ -271,6 +275,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
     @Override
     public long getRowId() {
         return Rows.toRowID(frameIndex, rowIndex);
+    }
+
+    public long getRowIndex() {
+        return rowIndex;
     }
 
     @Override
@@ -515,10 +523,6 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, Closea
             utf8ViewsB.extendAndSet(columnIndex, new Utf8SplitString(this));
         }
         return utf8ViewsB.getQuick(columnIndex);
-    }
-
-    int getFrameIndex() {
-        return frameIndex;
     }
 
     void init(
