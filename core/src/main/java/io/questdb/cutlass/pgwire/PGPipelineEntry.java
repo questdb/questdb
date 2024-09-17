@@ -62,6 +62,7 @@ public class PGPipelineEntry implements QuietCloseable {
     private RecordCursor cursor;
     private boolean empty;
     private boolean error = false;
+    private int errorMessagePosition;
     // this is a "union", so should only be one, depending on SQL type
     // SELECT or EXPLAIN
     private RecordCursorFactory factory = null;
@@ -183,15 +184,14 @@ public class PGPipelineEntry implements QuietCloseable {
                     // in the way we have to reply back to the client. Reply format out of 'execute' message is
                     // different from that of 'close' message.
 
-                    getErrorMessageSink().put("unsupported for now");
                     preparedStatementNameToDeallocate = Chars.toString(compiledQuery.getStatementName());
-                    throw BadProtocolException.INSTANCE;
+                    throw kaput().put("unsupported for now");
                 case CompiledQuery.BEGIN:
                     return IN_TRANSACTION;
                 case CompiledQuery.COMMIT:
                 case CompiledQuery.ROLLBACK:
                     freePendingWriters(pendingWriters, this.sqlType == CompiledQuery.COMMIT);
-                    return NO_TRANSACTION;
+                    return transactionState;
                 default:
                     // execute DDL that has not been parse-executed
                     if (!empty) {
@@ -214,6 +214,10 @@ public class PGPipelineEntry implements QuietCloseable {
         return transactionState;
     }
 
+    public int getErrorMessagePosition() {
+        return errorMessagePosition;
+    }
+
     public StringSink getErrorMessageSink() {
         error = true;
         return errorMessageSink;
@@ -223,8 +227,7 @@ public class PGPipelineEntry implements QuietCloseable {
         if (address + Integer.BYTES <= msgLimit) {
             return getIntUnsafe(address);
         }
-        getErrorMessageSink().put(errorMessage);
-        throw BadProtocolException.INSTANCE;
+        throw kaput().put(errorMessage);
     }
 
     public PGPipelineEntry getParentPreparedStatementPipelineEntry() {
@@ -247,8 +250,7 @@ public class PGPipelineEntry implements QuietCloseable {
         if (address + Short.BYTES <= msgLimit) {
             return getShortUnsafe(address);
         }
-        getErrorMessageSink().put(errorMessage);
-        throw BadProtocolException.INSTANCE;
+        throw kaput().put(errorMessage);
     }
 
     public CharSequence getSqlText() {
@@ -312,16 +314,17 @@ public class PGPipelineEntry implements QuietCloseable {
                     } else if (selectFormatCodeCount == 1) {
                         msgBindSelectFormatCodes.setAll(columnCount, getShortUnsafe(lo));
                     } else {
-                        getErrorMessageSink()
-                                .put("could not process column format codes [fmtCount=").put(selectFormatCodeCount)
-                                .put(", columnCount=").put(columnCount);
-                        throw BadProtocolException.INSTANCE;
+                        throw kaput().put("could not process column format codes [fmtCount=").put(selectFormatCodeCount)
+                                .put(", columnCount=").put(columnCount)
+                                .put(']');
+
                     }
                 } else {
-                    getErrorMessageSink()
+                    throw kaput()
                             .put("could not process column format codes [bufSpaceNeeded=").put(spaceNeeded)
-                            .put(", bufSpaceAvail=").put(msgLimit);
-                    throw BadProtocolException.INSTANCE;
+                            .put(", bufSpaceAvail=").put(msgLimit)
+                            .put(']');
+
                 }
             } else if (selectFormatCodeCount == 0) {
                 // if count == 0 then we've to use default and clear binary flags that might come from cached statements
@@ -366,12 +369,10 @@ public class PGPipelineEntry implements QuietCloseable {
         this.msgBindParameterValueCount = valueCount;
         if (valueCount > 0) {
             if (valueCount < getMsgParseParameterTypeCount()) {
-                getErrorMessageSink().put("parameter type count must be less or equals to number of parameters values");
-                throw BadProtocolException.INSTANCE;
+                throw kaput().put("parameter type count must be less or equals to number of parameters values");
             }
             if (msgBindParameterFormatCodeCount > 1 && msgBindParameterFormatCodeCount != valueCount) {
-                getErrorMessageSink().put("parameter format count and parameter value count must match");
-                throw BadProtocolException.INSTANCE;
+                throw kaput().put("parameter format count and parameter value count must match");
             }
         }
     }
@@ -425,12 +426,7 @@ public class PGPipelineEntry implements QuietCloseable {
                 resolveSqlType(sqlExecutionContext, taiPool, cq);
                 buildResultSetColumnTypes();
             } catch (Throwable e) {
-                if (e instanceof FlyweightMessageContainer) {
-                    getErrorMessageSink().put(((FlyweightMessageContainer) e).getFlyweightMessage());
-                } else {
-                    getErrorMessageSink().put(e.getMessage());
-                }
-                throw BadProtocolException.INSTANCE;
+                throw kaput().put(e);
             }
         }
     }
@@ -458,14 +454,13 @@ public class PGPipelineEntry implements QuietCloseable {
                 );
                 buildResultSetColumnTypes();
             } catch (Throwable e) {
-                if (e instanceof FlyweightMessageContainer) {
-                    getErrorMessageSink().put(((FlyweightMessageContainer) e).getFlyweightMessage());
-                } else {
-                    getErrorMessageSink().put(e.getMessage());
-                }
-                throw BadProtocolException.INSTANCE;
+                throw kaput().put(e);
             }
         }
+    }
+
+    public void setErrorMessagePosition(int errorMessagePosition) {
+        this.errorMessagePosition = errorMessagePosition;
     }
 
     public void setParentPreparedStatement(PGPipelineEntry preparedStatementPipelineEntry) {
@@ -544,7 +539,8 @@ public class PGPipelineEntry implements QuietCloseable {
         if (isError()) {
             utf8Sink.resetToBookmark();
             // todo: we need to test scenario, when sync does not fit the buffer
-            outError(utf8Sink, 0, getErrorMessageSink());
+            outError(utf8Sink, getErrorMessagePosition(), getErrorMessageSink());
+            freePendingWriters(pendingWriters, false);
         } else {
             switch (stateSync) {
                 case 0:
@@ -567,7 +563,6 @@ public class PGPipelineEntry implements QuietCloseable {
                         case 1:
                             // portal
                             if (factory != null) {
-                                System.out.println("----------------- ROW DESC-----------------");
                                 outRowDescription(utf8Sink);
                             } else {
                                 outNoData(utf8Sink);
@@ -788,11 +783,11 @@ public class PGPipelineEntry implements QuietCloseable {
         if (sizeRequired == sizeActual) {
             return;
         }
-        getErrorMessageSink()
+        throw kaput()
                 .put("bad parameter value length [sizeRequired=").put(sizeRequired)
                 .put(", sizeActual=").put(sizeActual)
-                .put(", variableIndex=").put(variableIndex);
-        throw BadProtocolException.INSTANCE;
+                .put(", variableIndex=").put(variableIndex)
+                .put(']');
     }
 
     private void executeCompiledQuery(SqlExecutionContext sqlExecutionContext, int transactionState) throws SqlException {
@@ -891,6 +886,10 @@ public class PGPipelineEntry implements QuietCloseable {
         return msgParseParameterTypes.size();
     }
 
+    private BadProtocolException kaput() {
+        return BadProtocolException.instance(this);
+    }
+
     private long msgBindDefineBindVariablesAsStrings(
             long lo,
             long msgLimit,
@@ -906,11 +905,10 @@ public class PGPipelineEntry implements QuietCloseable {
                 setBindVariableAsStr(j, lo, valueSize, bindVariableService, characterStore, utf8String);
                 lo += valueSize;
             } else if (valueSize != -1) {
-                getErrorMessageSink().put("value length is outside of buffer [parameterIndex=").put(j)
+                throw kaput().put("value length is outside of buffer [parameterIndex=").put(j)
                         .put(", valueSize=").put(valueSize)
                         .put(", messageRemaining=").put(msgLimit - lo)
                         .put(']');
-                throw BadProtocolException.INSTANCE;
             }
         }
         return lo;
@@ -972,17 +970,15 @@ public class PGPipelineEntry implements QuietCloseable {
                     }
                     lo += valueSize;
                 } else {
-                    getErrorMessageSink()
+                    throw kaput()
                             .put("value length is outside of buffer [parameterIndex=").put(j)
                             .put(", valueSize=").put(valueSize)
                             .put(", messageRemaining=").put(msgLimit - lo)
                             .put(']');
-                    throw BadProtocolException.INSTANCE;
                 }
             }
-        } catch (SqlException e) {
-            getErrorMessageSink().put(e.getFlyweightMessage());
-            throw BadProtocolException.INSTANCE;
+        } catch (Throwable e) {
+            throw kaput().put(e);
         }
         return lo;
     }
@@ -1145,12 +1141,11 @@ public class PGPipelineEntry implements QuietCloseable {
             if (blobSize < utf8Sink.getMaxBlobSize()) {
                 utf8Sink.put(sequence);
             } else {
-                getErrorMessageSink()
+                throw kaput()
                         .put("blob is too large [blobSize=").put(blobSize)
                         .put(", maxBlobSize=").put(utf8Sink.getMaxBlobSize())
                         .put(", columnIndex=").put(i)
                         .put(']');
-                throw BadProtocolException.INSTANCE;
             }
         }
     }
@@ -1394,7 +1389,6 @@ public class PGPipelineEntry implements QuietCloseable {
             if (e instanceof FlyweightMessageContainer) {
                 getErrorMessageSink().put(((FlyweightMessageContainer) e).getFlyweightMessage());
             } else {
-                // todo: we should absorb the exception into the pipeline entry so that we can print it out later
                 e.printStackTrace();
                 String msg = e.getMessage();
                 getErrorMessageSink().put(msg != null ? msg : "no message provided (internal error)");
@@ -1728,8 +1722,7 @@ public class PGPipelineEntry implements QuietCloseable {
         if (Utf8s.utf8ToUtf16(valueAddr, valueAddr + valueSize, e)) {
             bindVariableService.setChar(variableIndex, characterStore.toImmutable().charAt(0));
         } else {
-            getErrorMessageSink().put("invalid char UTF8 bytes [variableIndex=").put(variableIndex).put(']');
-            throw BadProtocolException.INSTANCE;
+            throw kaput().put("invalid char UTF8 bytes [variableIndex=").put(variableIndex).put(']');
         }
     }
 
@@ -1745,8 +1738,7 @@ public class PGPipelineEntry implements QuietCloseable {
             bindVariableService.define(variableIndex, ColumnType.DATE, 0);
             bindVariableService.setStr(variableIndex, characterStore.toImmutable());
         } else {
-            getErrorMessageSink().put("invalid str UTF8 bytes [variableIndex=").put(variableIndex).put(']');
-            throw BadProtocolException.INSTANCE;
+            throw kaput().put("invalid str UTF8 bytes [variableIndex=").put(variableIndex).put(']');
         }
     }
 
@@ -1825,8 +1817,7 @@ public class PGPipelineEntry implements QuietCloseable {
                         ascii = false;
                         break;
                     default:
-                        getErrorMessageSink().put("invalid varchar bind variable type [variableIndex=").put(variableIndex).put(']');
-                        throw BadProtocolException.INSTANCE;
+                        throw kaput().put("invalid varchar bind variable type [variableIndex=").put(variableIndex).put(']');
                 }
                 // todo: copy value of bind variable into the arena so that the receive buffer can
                 //     remain to be dynamic
@@ -1835,13 +1826,11 @@ public class PGPipelineEntry implements QuietCloseable {
                 if (Utf8s.utf8ToUtf16(valueAddr, valueAddr + valueSize, e)) {
                     bindVariableService.setStr(variableIndex, characterStore.toImmutable());
                 } else {
-                    getErrorMessageSink().put("invalid str bind variable type [variableIndex=").put(variableIndex).put(']');
-                    throw BadProtocolException.INSTANCE;
+                    throw kaput().put("invalid str bind variable type [variableIndex=").put(variableIndex).put(']');
                 }
             }
-        } catch (SqlException ex) {
-            getErrorMessageSink().put(ex.getFlyweightMessage());
-            throw BadProtocolException.INSTANCE;
+        } catch (Throwable ex) {
+            throw kaput().put(ex);
         }
     }
 

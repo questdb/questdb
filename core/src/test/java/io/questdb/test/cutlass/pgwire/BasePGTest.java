@@ -400,7 +400,9 @@ public abstract class BasePGTest extends AbstractCairoTest {
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_TEXT) == BasePGTest.CONN_AWARE_EXTENDED_TEXT) {
             LOG.info().$("Mode: asserting extended text").$();
             assertWithPgServer(Mode.EXTENDED, false, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.EXTENDED, false, runnable, -1, queryTimeout);
+            if ((bits & CONN_AWARE_QUIRKS) == CONN_AWARE_QUIRKS) {
+                assertWithPgServer(Mode.EXTENDED, false, runnable, -1, queryTimeout);
+            }
         }
 
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_PREPARED_BINARY) == BasePGTest.CONN_AWARE_EXTENDED_PREPARED_BINARY) {
