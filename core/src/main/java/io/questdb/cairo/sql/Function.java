@@ -31,6 +31,7 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
@@ -124,6 +125,8 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     int getInt(Record rec);
 
     CharSequence getInterval(Record rec);
+
+    Interval getInterval();
 
     long getLong(Record rec);
 

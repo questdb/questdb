@@ -25,41 +25,34 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.engine.functions.constants.LongConstant;
-import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
-public class IntervalFunction implements QuaternaryFunction {
-    CharSequence interval;
-    CharSequence modifier;
-    long repetition;
-    long timestamp;
+public abstract class IntervalFunction implements QuaternaryFunction {
 
     @Override
     public int getArrayLength() {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public BinarySequence getBin(Record rec) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getBinLen(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public boolean getBool(Record rec) {
-        return false;
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -69,147 +62,127 @@ public class IntervalFunction implements QuaternaryFunction {
 
     @Override
     public char getChar(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getDate(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public double getDouble(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public float getFloat(Record rec) {
-        return 0;
-    }
-
-    @Override
-    public Function getFunc0() {
-        return new LongConstant(timestamp);
-    }
-
-    @Override
-    public Function getFunc1() {
-        return new StrConstant(modifier);
-    }
-
-    @Override
-    public Function getFunc2() {
-        return new StrConstant(interval);
-    }
-
-    @Override
-    public Function getFunc3() {
-        return new LongConstant(repetition);
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public byte getGeoByte(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getGeoInt(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getGeoLong(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public short getGeoShort(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getIPv4(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getInt(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getLong(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getLong128Hi(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public long getLong128Lo(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public void getLong256(Record rec, CharSink<?> sink) {
-
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public Long256 getLong256A(Record rec) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public Long256 getLong256B(Record rec) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public Record getRecord(Record rec) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public RecordCursorFactory getRecordCursorFactory() {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public short getShort(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getStrA(Record rec) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getStrA(Record rec, int arrayIndex) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getStrB(Record rec) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public CharSequence getStrB(Record rec, int arrayIndex) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getStrLen(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getStrLen(Record rec, int arrayIndex) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -234,16 +207,16 @@ public class IntervalFunction implements QuaternaryFunction {
 
     @Override
     public @Nullable Utf8Sequence getVarcharA(Record rec) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public @Nullable Utf8Sequence getVarcharB(Record rec) {
-        return null;
+        throw new UnsupportedOperationException();
     }
 
     @Override
     public int getVarcharSize(Record rec) {
-        return 0;
+        throw new UnsupportedOperationException();
     }
 }
