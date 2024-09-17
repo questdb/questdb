@@ -28,7 +28,9 @@ import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
 
-public abstract class PartitionDescriptor implements QuietCloseable {
+// This class manages memory for Parquet partition data.
+// It handles memory with a different lifetime than the PartitionDescriptor.
+public class PartitionDescriptor implements QuietCloseable {
     protected DirectLongList columnAddrs = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
     protected DirectIntList columnIds = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
     protected DirectIntList columnNameLengths = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
@@ -44,10 +46,37 @@ public abstract class PartitionDescriptor implements QuietCloseable {
     protected long partitionRowCount;
     protected int timestampIndex = -1;
 
-    public abstract void clear();
+    public void clear() {
+        tableName.clear();
+        columnNames.clear();
+        columnNameLengths.clear();
+        columnIds.clear();
+        columnTops.clear();
+        columnTypes.clear();
+        columnAddrs.clear();
+        columnSizes.clear();
+        columnSecondaryAddrs.clear();
+        columnSecondarySizes.clear();
+        symbolOffsetsAddrs.clear();
+        symbolOffsetsSizes.clear();
+    }
 
     @Override
-    public abstract void close();
+    public void close() {
+        clear();
+        tableName = Misc.free(tableName);
+        columnNames = Misc.free(columnNames);
+        columnNameLengths = Misc.free(columnNameLengths);
+        columnTypes = Misc.free(columnTypes);
+        columnIds = Misc.free(columnIds);
+        columnTops = Misc.free(columnTops);
+        columnAddrs = Misc.free(columnAddrs);
+        columnSizes = Misc.free(columnSizes);
+        columnSecondaryAddrs = Misc.free(columnSecondaryAddrs);
+        columnSecondarySizes = Misc.free(columnSecondarySizes);
+        symbolOffsetsAddrs = Misc.free(symbolOffsetsAddrs);
+        symbolOffsetsSizes = Misc.free(symbolOffsetsSizes);
+    }
 
     public void addColumn(
             final CharSequence columnName,

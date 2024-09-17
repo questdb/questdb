@@ -1153,6 +1153,15 @@ public final class TableUtils {
         throw CairoException.critical(errno).put("could not open read-only [file=").put(path).put(']');
     }
 
+    public static long mapRO(FilesFacade ff, LPSZ path, Log log, long size, int memoryTag) {
+        final long fd = openRO(ff, path, log);
+        try {
+            return mapRO(ff, fd, size, memoryTag);
+        } finally {
+            ff.close(fd);
+        }
+    }
+
     public static long openRW(FilesFacade ff, LPSZ path, Log log, long opts) {
         final long fd = ff.openRW(path, opts);
         if (fd > -1) {

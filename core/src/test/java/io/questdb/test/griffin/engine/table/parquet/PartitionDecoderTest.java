@@ -29,7 +29,6 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
-import io.questdb.griffin.engine.table.parquet.BorrowedMemoryPartitionDescriptor;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -73,7 +72,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
             try (
                     Path path = new Path();
                     PartitionDecoder partitionDecoder = new PartitionDecoder(engine.getConfiguration().getFilesFacade());
-                    PartitionDescriptor partitionDescriptor = new BorrowedMemoryPartitionDescriptor();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
                     TableReader reader = engine.getReader("x")
             ) {
                 path.of(root).concat("x.parquet").$();

@@ -28,7 +28,8 @@ import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 
-public class MappedMemoryPartitionDescriptor extends BorrowedMemoryPartitionDescriptor {
+// This class is used to free memory mapped regions
+public class MappedMemoryPartitionDescriptor extends PartitionDescriptor {
     @Override
     public void clear() {
         for (long i = 0, n = columnAddrs.size(); i < n; i++) {

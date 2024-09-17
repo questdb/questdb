@@ -32,7 +32,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
-import io.questdb.griffin.engine.table.parquet.BorrowedMemoryPartitionDescriptor;
 import io.questdb.std.Files;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -132,7 +131,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
 
             try (
                     Path path = new Path();
-                    PartitionDescriptor partitionDescriptor = new BorrowedMemoryPartitionDescriptor();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
                     TableReader reader = engine.getReader("x")
             ) {
                 path.of(root).concat("x.parquet");
@@ -158,7 +157,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
 
             try (
                     Path path = new Path();
-                    PartitionDescriptor partitionDescriptor = new BorrowedMemoryPartitionDescriptor();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
                     TableReader reader = engine.getReader("x")
             ) {
                 path.of(root).concat("x.parquet").$();
@@ -221,7 +220,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
 
             try (
                     Path path = new Path();
-                    PartitionDescriptor partitionDescriptor = new BorrowedMemoryPartitionDescriptor();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
                     TableReader reader = engine.getReader("x")
             ) {
                 path.of(root).concat("x.parquet");

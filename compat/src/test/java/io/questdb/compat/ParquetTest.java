@@ -166,7 +166,7 @@ public class ParquetTest extends AbstractTest {
             final String parquetPathStr;
             try (
                     Path path = new Path();
-                    PartitionDescriptor partitionDescriptor = new BorrowedMemoryPartitionDescriptor();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
                     TableReader reader = serverMain.getEngine().getReader("x")
             ) {
                 path.of(root).concat("x.parquet").$();

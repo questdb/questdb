@@ -77,11 +77,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final TableRecordMetadata tableWriterMetadata = tableWriter.getMetadata();
         Path path = getParquetPartitionPath(Path.getThreadLocal(pathToTable), partitionBy, partitionTimestamp, srcNameTxn);
 
-        // TODO: merge with partition descriptor
         final int columnCount = tableWriterMetadata.getColumnCount();
-        ObjList<MemoryCARWImpl> mergeDstMemory = new ObjList<>(2 * columnCount);
+
+        // dstColumnsMemory and partitionDescriptor are reused across all row groups.
+        ObjList<MemoryCARWImpl> dstColumnsMemory = new ObjList<>(2 * columnCount);
         for (int i = 0, size = 2 * columnCount; i < size; i++) {
-            mergeDstMemory.add(new MemoryCARWImpl(PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3));
+            dstColumnsMemory.add(new MemoryCARWImpl(PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3));
         }
 
         final int partitionIndex = tableWriter.getPartitionIndexByTimestamp(partitionTimestamp);
@@ -91,7 +92,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         FilesFacade ff = tableWriter.getFilesFacade();
         try (PartitionDecoder partitionDecoder = new PartitionDecoder(ff);
              PartitionUpdater partitionUpdater = new PartitionUpdater(ff);
-             PartitionDescriptor partitionDescriptor = new BorrowedMemoryPartitionDescriptor()) {
+             PartitionDescriptor partitionDescriptor = new PartitionDescriptor()) {
 
             partitionDecoder.of(path.$());
 
@@ -138,7 +139,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 mergeRowGroup(
                         partitionDescriptor,
                         partitionUpdater,
-                        mergeDstMemory,
+                        dstColumnsMemory,
                         oooColumns,
                         sortedTimestampsAddr,
                         tableWriter,
@@ -160,7 +161,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 mergeRowGroup(
                         partitionDescriptor,
                         partitionUpdater,
-                        mergeDstMemory,
+                        dstColumnsMemory,
                         oooColumns,
                         sortedTimestampsAddr,
                         tableWriter,
@@ -200,7 +201,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             tableWriter.o3CountDownDoneLatch();
             tableWriter.o3ClockDownPartitionUpdateCount();
 
-            Misc.freeObjListAndClear(mergeDstMemory);
+            Misc.freeObjListAndClear(dstColumnsMemory);
         }
     }
 
@@ -1157,7 +1158,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     private static void mergeRowGroup(
             PartitionDescriptor partitionDescriptor,
             PartitionUpdater partitionUpdater,
-            ObjList<MemoryCARWImpl> mergeDstMemory,
+            ObjList<MemoryCARWImpl> dstColumnsMemory,
             ReadOnlyObjList<? extends MemoryCR> oooColumns,
             long sortedTimestampsAddr,
             TableWriter tableWriter,
@@ -1219,9 +1220,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final MemoryR offsetsMem = symbolMapWriter.getSymbolOffsetsMemory();
                     final MemoryR valuesMem = symbolMapWriter.getSymbolValuesMemory();
 
-                    final MemoryCARWImpl dstFixMem = mergeDstMemory.getQuick(columnOffset);
+                    final MemoryCARWImpl dstFixMem =  dstColumnsMemory.getQuick(columnOffset);
                     dstFixMem.clear();
-                    final MemoryCARWImpl dstVarMem = mergeDstMemory.getQuick(columnOffset + 1);
+                    final MemoryCARWImpl dstVarMem =  dstColumnsMemory.getQuick(columnOffset + 1);
                     dstVarMem.clear();
 
                     O3CopyJob.mergeSymbols(
@@ -1258,11 +1259,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     long dstVarSize = ctd.getDataVectorSize(srcOooFixAddr, mergeRangeLo, mergeRangeHi)
                             + ctd.getDataVectorSizeAt(columnAuxPtr, rowGroupRowCount - 1);
 
-                    final MemoryCARWImpl dstFixMem = mergeDstMemory.getQuick(columnOffset);
-                    dstFixMem.clear();
+                    final MemoryCARWImpl dstFixMem =  dstColumnsMemory.getQuick(columnOffset);
                     dstFixMem.extend(dstFixSize);
-                    final MemoryCARWImpl dstVarMem = mergeDstMemory.getQuick(columnOffset + 1);
-                    dstVarMem.clear();
+                    final MemoryCARWImpl dstVarMem =  dstColumnsMemory.getQuick(columnOffset + 1);
                     dstVarMem.extend(dstVarSize);
 
                     O3CopyJob.mergeCopy(
@@ -1293,8 +1292,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 } else {
                     final long srcOooFixAddr = oooMem1.addressOf(0);
                     long dstFixSize = mergeRowCount * ColumnType.sizeOf(columnType);
-                    final MemoryCARWImpl dstFixMem = mergeDstMemory.getQuick(columnOffset);
-                    dstFixMem.clear();
+                    final MemoryCARWImpl dstFixMem =  dstColumnsMemory.getQuick(columnOffset);
                     dstFixMem.extend(dstFixSize);
 
                     // Merge column data
