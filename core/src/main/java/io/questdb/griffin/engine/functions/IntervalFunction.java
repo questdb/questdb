@@ -33,7 +33,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
-public abstract class IntervalFunction implements QuaternaryFunction {
+public abstract class IntervalFunction implements BinaryFunction {
 
     @Override
     public int getArrayLength() {

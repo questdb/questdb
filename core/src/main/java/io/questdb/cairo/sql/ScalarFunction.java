@@ -24,6 +24,8 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.std.Interval;
+
 public interface ScalarFunction extends Function {
     @Override
     default int getArrayLength() {
@@ -31,7 +33,7 @@ public interface ScalarFunction extends Function {
     }
 
     @Override
-    default CharSequence getInterval(Record rec) {
+    default Interval getInterval(Record rec) {
         throw new UnsupportedOperationException();
     }
 

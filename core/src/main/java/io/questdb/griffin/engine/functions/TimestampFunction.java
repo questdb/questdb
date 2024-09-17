@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
@@ -106,6 +107,11 @@ public abstract class TimestampFunction implements ScalarFunction {
 
     @Override
     public final int getInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public final Interval getInterval(Record rec) {
         throw new UnsupportedOperationException();
     }
 

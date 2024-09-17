@@ -32,6 +32,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.InterpolationUtil;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -156,6 +157,11 @@ public class InterpolationGroupByFunction implements GroupByFunction {
             return (int) InterpolationUtil.interpolate(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getInt(target));
         }
         return value;
+    }
+
+    @Override
+    public final Interval getInterval(Record rec) {
+        throw new UnsupportedOperationException();
     }
 
     @Override

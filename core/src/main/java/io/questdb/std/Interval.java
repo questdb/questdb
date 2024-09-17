@@ -25,13 +25,7 @@
 package io.questdb.std;
 
 public interface Interval {
-    CharSequence getInterval();
+    long getHi();
 
-    CharSequence getModifier();
-
-    long getRepetition();
-
-    CharSequence getTimestamp();
-
-    String toString();
+    long getLo();
 }

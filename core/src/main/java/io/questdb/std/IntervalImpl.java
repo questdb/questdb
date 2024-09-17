@@ -24,88 +24,67 @@
 
 package io.questdb.std;
 
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.model.IntervalOperation;
+import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 public class IntervalImpl implements Interval, Sinkable {
-    public static IntervalImpl EMPTY = new IntervalImpl();
+    public static final IntervalImpl EMPTY = new IntervalImpl();
 
-    CharSequence interval = null;
-    CharSequence modifier = null;
-    long repetition = -1;
-    CharSequence timestamp = null;
+    long hi = Long.MIN_VALUE;
+    long lo = Long.MIN_VALUE;
 
     public IntervalImpl() {
     }
 
     public void clear() {
-        interval = null;
-        modifier = null;
-        repetition = -1;
-        timestamp = null;
+        lo = Long.MIN_VALUE;
+        hi = Long.MIN_VALUE;
     }
 
     @Override
-    public CharSequence getInterval() {
-        return interval;
+    public long getHi() {
+        return hi;
     }
 
     @Override
-    public CharSequence getModifier() {
-        return modifier;
+    public long getLo() {
+        return lo;
     }
 
-    @Override
-    public long getRepetition() {
-        return repetition;
+    public void of(CharSequence seq, LongList list) throws NumericException, SqlException {
+        IntervalUtils.parseInterval(seq, 0, seq.length(), IntervalOperation.NONE, list);
+        assert list.size() != 0;
+        if (list.size() != 2) {
+            throw SqlException.$(-1, "only compatible with simple intervals");
+        }
+        lo = list.get(0);
+        hi = list.get(1);
     }
 
-    @Override
-    public CharSequence getTimestamp() {
-        return timestamp;
-    }
-
-    public void of(CharSequence interval, CharSequence modifier, long repetition, CharSequence timestamp) {
-        this.interval = interval;
-        this.modifier = modifier;
-        this.repetition = repetition;
-        this.timestamp = timestamp;
+    public void of(long lo, long hi) {
+        this.lo = lo;
+        this.hi = hi;
     }
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        sink.put(timestamp);
-        if (modifier != null) {
-            sink.put(';');
-            sink.put(modifier);
-        }
-        if (interval != null) {
-            sink.put(';');
-            sink.put(interval);
-        }
-        if (repetition != -1) {
-            sink.put(';');
-            sink.put(repetition);
-        }
+        sink.put('(');
+        sink.put(Timestamps.toString(lo));
+        sink.put(',');
+        sink.put(Timestamps.toString(hi));
+        sink.put(')');
     }
 
     @Override
     public String toString() {
-        StringBuilder sb = new StringBuilder();
-        sb.append(timestamp);
-        if (modifier != null) {
-            sb.append(';');
-            sb.append(modifier);
-        }
-        if (interval != null) {
-            sb.append(';');
-            sb.append(interval);
-        }
-        if (repetition != -1) {
-            sb.append(';');
-            sb.append(repetition);
-        }
-        return sb.toString();
+        StringSink sink = new StringSink();
+        toSink(sink);
+        return sink.toString();
     }
 }

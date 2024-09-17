@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
@@ -119,6 +120,11 @@ class NullCaseFunction implements CaseFunction {
 
     @Override
     public int getInt(Record rec) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public Interval getInterval(Record rec) {
         throw new UnsupportedOperationException();
     }
 
