@@ -269,16 +269,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         transactionState = NO_TRANSACTION;
     }
 
-    private void freePipelineEntriesFrom(CharSequenceObjHashMap<PGPipelineEntry> cache) {
-        ObjList<CharSequence> names = cache.keys();
-        for (int i = 0, n = names.size(); i < n; i++) {
-            PGPipelineEntry pe = cache.get(names.getQuick(i));
-            pe.setStateClosed(true);
-            Misc.free(pe);
-        }
-        cache.clear();
-    }
-
     @Override
     public void clearSuspendEvent() {
         suspendEvent = Misc.free(suspendEvent);
@@ -501,6 +491,16 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (bufferRemainingSize > 0) {
             sendBuffer(bufferRemainingOffset, bufferRemainingSize);
         }
+    }
+
+    private void freePipelineEntriesFrom(CharSequenceObjHashMap<PGPipelineEntry> cache) {
+        ObjList<CharSequence> names = cache.keys();
+        for (int i = 0, n = names.size(); i < n; i++) {
+            PGPipelineEntry pe = cache.get(names.getQuick(i));
+            pe.setStateClosed(true);
+            Misc.free(pe);
+        }
+        cache.clear();
     }
 
     @Nullable

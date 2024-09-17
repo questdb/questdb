@@ -94,6 +94,11 @@ public class TypesAndSelect implements QuietCloseable, TypeContainer {
         factory = Misc.free(factory);
     }
 
+    public void copyParameterTypes(IntList outTypeDescriptionTypes) {
+        outTypeDescriptionTypes.clear();
+        outTypeDescriptionTypes.addAll(pgParameterTypes);
+    }
+
     @Override
     public void defineBindVariables(BindVariableService bindVariableService) throws SqlException {
         AbstractTypeContainer.defineBindVariables(pgParameterTypes, bindVariableService);

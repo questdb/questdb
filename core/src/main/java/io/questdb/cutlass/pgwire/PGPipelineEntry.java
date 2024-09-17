@@ -340,7 +340,7 @@ public class PGPipelineEntry implements QuietCloseable {
     ) throws BadProtocolException {
         if (msgBindParameterValueCount > 0) {
             // client doesn't need to specify any type in Parse message and can just use types returned in ParameterDescription message
-            if (this.getMsgParseParameterTypeCount() > 0) {
+            if (this.outTypeDescriptionTypes.size() > 0) {
                 return msgBindDefineBindVariablesFromValues(
                         lo,
                         msgLimit,
@@ -400,6 +400,7 @@ public class PGPipelineEntry implements QuietCloseable {
         this.tas = tas;
         this.cacheHit = true;
         buildResultSetColumnTypes();
+        tas.copyParameterTypes(outTypeDescriptionTypes);
     }
 
     public void ofSimpleQuery(
@@ -925,14 +926,14 @@ public class PGPipelineEntry implements QuietCloseable {
             ObjectPool<DirectBinarySequence> binarySequenceParamsPool
     ) throws BadProtocolException {
         try {
-            for (int j = 0; j < msgBindParameterValueCount; j++) {
+            for (int j = 0; j < outTypeDescriptionTypes.size(); j++) {
                 final int valueSize = getInt(lo, msgLimit, "malformed bind variable");
                 lo += Integer.BYTES;
                 if (valueSize == -1) {
                     // undefined function?
                     defineBindVariableType(bindVariableService, j);
                 } else if (lo + valueSize <= msgLimit) {
-                    switch (msgParseParameterTypes.getQuick(j)) {
+                    switch (outTypeDescriptionTypes.getQuick(j)) {
                         case X_B_PG_INT4:
                             setBindVariableAsInt(j, lo, valueSize, bindVariableService);
                             break;
@@ -991,7 +992,7 @@ public class PGPipelineEntry implements QuietCloseable {
         if (lo + Short.BYTES * parameterFormatCount <= msgLimit) {
             for (int i = 0; i < parameterFormatCount; i++) {
                 final short code = getShortUnsafe(lo + i * Short.BYTES);
-                msgParseParameterTypes.setQuick(i, toParamBinaryType(code, msgParseParameterTypes.getQuick(i)));
+                outTypeDescriptionTypes.setQuick(i, toParamBinaryType(code, outTypeDescriptionTypes.getQuick(i)));
             }
         } else {
             getErrorMessageSink().put("invalid format code count [value=").put(parameterFormatCount).put(']');
@@ -1001,8 +1002,8 @@ public class PGPipelineEntry implements QuietCloseable {
 
     private void msgBindMergeParameterTypesAndFormatCodesOneForAll(long lo, long msgLimit) throws BadProtocolException {
         short code = getShort(lo, msgLimit, "could not read parameter formats");
-        for (int i = 0, n = msgParseParameterTypes.size(); i < n; i++) {
-            msgParseParameterTypes.setQuick(i, toParamBinaryType(code, msgParseParameterTypes.getQuick(i)));
+        for (int i = 0, n = outTypeDescriptionTypes.size(); i < n; i++) {
+            outTypeDescriptionTypes.setQuick(i, toParamBinaryType(code, outTypeDescriptionTypes.getQuick(i)));
         }
     }
 
@@ -1455,11 +1456,11 @@ public class PGPipelineEntry implements QuietCloseable {
     private void outParameterTypeDescription(PGResponseSink utf8Sink) {
         utf8Sink.put(MESSAGE_TYPE_PARAMETER_DESCRIPTION);
         final long offset = utf8Sink.skipInt();
-        final int n = msgParseParameterTypes.size();
+        final int n = outTypeDescriptionTypes.size();
         utf8Sink.putNetworkShort((short) n);
         if (n > 0) {
             for (int i = 0; i < n; i++) {
-                utf8Sink.putIntDirect(toParamType(msgParseParameterTypes.getQuick(i)));
+                utf8Sink.putIntDirect(toParamType(outTypeDescriptionTypes.getQuick(i)));
             }
         }
         utf8Sink.putLen(offset);
@@ -1669,11 +1670,13 @@ public class PGPipelineEntry implements QuietCloseable {
                 sqlTag = TAG_INSERT;
                 // todo: check why TypeAndSelect has separate method for copying types from BindVariableService
                 tai.of(insertOp, sqlExecutionContext.getBindVariableService(), sqlType, sqlTag);
+                msgParseCopyOutTypeDescriptionTypesFromService(sqlExecutionContext.getBindVariableService());
                 break;
             case CompiledQuery.UPDATE:
                 // copy contents of the mutable CompiledQuery into our cache
                 compiledQuery.ofUpdate(cq.getUpdateOperation());
                 compiledQuery.withSqlText(cq.getSqlText());
+                msgParseCopyOutTypeDescriptionTypesFromService(sqlExecutionContext.getBindVariableService());
                 sqlTag = TAG_UPDATE;
                 break;
             case CompiledQuery.INSERT_AS_SELECT:
