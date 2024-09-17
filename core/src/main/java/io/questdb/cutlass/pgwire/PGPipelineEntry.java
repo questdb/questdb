@@ -271,6 +271,10 @@ public class PGPipelineEntry implements QuietCloseable {
         return preparedStatement;
     }
 
+    public boolean isStateExec() {
+        return stateExec;
+    }
+
     public void msgBindCopyParameterFormatCodes(long lo, long msgLimit, short formatCodeCount) throws BadProtocolException {
         this.msgBindParameterFormatCodeCount = formatCodeCount;
         if (formatCodeCount > 0) {
@@ -563,6 +567,7 @@ public class PGPipelineEntry implements QuietCloseable {
                         case 1:
                             // portal
                             if (factory != null) {
+                                System.out.println("----------------- ROW DESC-----------------");
                                 outRowDescription(utf8Sink);
                             } else {
                                 outNoData(utf8Sink);

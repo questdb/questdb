@@ -670,6 +670,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             return;
         }
 
+        if (pipelineCurrentEntry != null && pipelineCurrentEntry.isStateExec()) {
+            // this is the sequence of B/E/B/E where B starts a new pipeline entry
+            pipeline.add(pipelineCurrentEntry);
+            pipelineCurrentEntry = null;
+        }
+
         short parameterValueCount;
 
         LOG.debug().$("bind").$();

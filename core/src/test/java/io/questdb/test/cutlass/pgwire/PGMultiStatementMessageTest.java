@@ -81,38 +81,47 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test // explicit transaction + rollback on two tables
-    @Ignore
     public void testBeginCreateInsertCommitInsertRollbackRetainsOnlyCommittedDataOnTwoTables() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q & (~CONN_AWARE_QUIRKS), (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             try (Statement statement = connection.createStatement()) {
                 boolean hasResult =
                         statement.execute("BEGIN; " +
-                                "CREATE TABLE testA(l long,s string); " +
-                                "CREATE TABLE testB(b byte, d double); " +
-                                "INSERT INTO testA VALUES (150, '150'); " +
-                                "INSERT INTO testB VALUES (78, 5.0);" +
+                                "CREATE TABLE testa(l long, s string);" +
+                                "CREATE TABLE testb(b long, d double); " +
+                                "INSERT INTO testa VALUES (150, '150'); " +
+                                "INSERT INTO testb VALUES (78, 5.0);" +
                                 "COMMIT TRANSACTION; " +
                                 "BEGIN; " +
-                                "INSERT INTO testA VALUES (29, 'g'); " +
-                                "INSERT INTO testB VALUES (2, 1.0);" +
+                                "INSERT INTO testa VALUES (29, 'g'); " +
+                                "INSERT INTO testb VALUES (2, 1.0);" +
                                 "ROLLBACK TRANSACTION; /* rolls back implicit txn */" +
-                                "SELECT * from testA;" +
-                                "SELECT * from testB;");
-
-                assertResults(statement, hasResult, count(0), count(0), count(0),
-                        count(1), count(1), count(0), count(0),
-                        count(1), count(1), count(0),
-                        data(row(150L, "150")), data(row((byte) 78, 5.0d))
+                                "SELECT * from testa;" +
+                                "SELECT * from testb;"
+                        );
+                assertResults(
+                        statement,
+                        hasResult,
+                        count(0),
+                        count(0),
+                        count(0),
+                        count(1),
+                        count(1),
+                        count(0),
+                        count(0),
+                        count(1),
+                        count(1),
+                        count(0),
+                        data(row(150L, "150")),
+                        data(row((byte) 78, 5.0d))
                 );
             }
         });
     }
 
     @Test // explicit transaction + rollback on two tables
-    @Ignore
     public void testBeginCreateInsertCommitRollbackRetainsCommittedDataOnTwoTables() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q & (~CONN_AWARE_QUIRKS), (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             try (Statement statement = connection.createStatement()) {
                 boolean hasResult =
@@ -128,10 +137,20 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "SELECT * from testA;" +
                                 "SELECT * from testB;");
 
-                assertResults(statement, hasResult, zero(), zero(), zero(),
-                        count(1), count(1), zero(), zero(),
-                        count(1), count(1),
-                        data(row(50L, "z"), row(29L, "g")), data(row((byte) 8, 1.0d), row((byte) 2, 1.0d))
+                assertResults(
+                        statement,
+                        hasResult,
+                        zero(),
+                        zero(),
+                        zero(),
+                        count(1),
+                        count(1),
+                        zero(),
+                        zero(),
+                        count(1),
+                        count(1),
+                        data(row(50L, "z"), row(29L, "g")),
+                        data(row((byte) 8, 1.0d), row((byte) 2, 1.0d))
                 );
             }
         });
