@@ -624,4 +624,16 @@ public interface CairoConfiguration {
 
     default void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
     }
+
+    int getPartitionEncoderVersion();
+
+    boolean isPartitionEncoderStatisticsEnabled();
+
+    int getPartitionEncoderCompressionCodec();
+
+    int getPartitionEncoderCompressionLevel();
+
+    int getPartitionEncoderRowGroupSize();
+
+    int getPartitionEncoderDataPageSize();
 }

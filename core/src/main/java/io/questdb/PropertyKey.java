@@ -481,7 +481,13 @@ public enum PropertyKey implements ConfigPropertyKey {
     DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE("debug.cairo.o3.column.memory.size", false, true),
     CAIRO_DEFAULT_SEQ_PART_TXN_COUNT("cairo.default.sequencer.part.txn.count"),
     POSTHOG_API_KEY("posthog.api.key"),
-    POSTHOG_ENABLED("posthog.enabled");
+    POSTHOG_ENABLED("posthog.enabled"),
+    CAIRO_PARTITION_ENCODER_VERSION("cairo.partition.encoder.version"),
+    CAIRO_PARTITION_ENCODER_STATISTICS_ENABLED("cairo.partition.encoder.statistics.enabled"),
+    CAIRO_PARTITION_ENCODER_COMPRESSION_CODEC("cairo.partition.encoder.compression.codec"),
+    CAIRO_PARTITION_ENCODER_COMPRESSION_LEVEL("cairo.partition.encoder.compression.level"),
+    CAIRO_PARTITION_ENCODER_ROW_GROUP_SIZE("cairo.partition.encoder.row.group.size"),
+    CAIRO_PARTITION_ENCODER_DATA_PAGE_SIZE("cairo.partition.encoder.data.page.size");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

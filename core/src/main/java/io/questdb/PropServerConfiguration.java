@@ -40,6 +40,8 @@ import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.log.Log;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -237,6 +239,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean o3QuickSortEnabled;
     private final int parallelIndexThreshold;
     private final boolean parallelIndexingEnabled;
+    private final boolean partitionEncoderStatisticsEnabled;
+    private final int partitionEncoderVersion;
+    private final int partitionEncoderCompressionCodec;
+    private final int partitionEncoderCompressionLevel;
+    private final int partitionEncoderRowGroupSize;
+    private final int partitionEncoderDataPageSize;
     private final boolean pgEnabled;
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final String posthogApiKey;
@@ -1355,6 +1363,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.posthogEnabled = getBoolean(properties, env, PropertyKey.POSTHOG_ENABLED, false);
         this.posthogApiKey = getString(properties, env, PropertyKey.POSTHOG_API_KEY, null);
         this.configReloadEnabled = getBoolean(properties, env, PropertyKey.CONFIG_RELOAD_ENABLED, true);
+
+        this.partitionEncoderVersion = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_VERSION, ParquetVersion.PARQUET_VERSION_V1);
+        this.partitionEncoderStatisticsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_STATISTICS_ENABLED, true);
+        this.partitionEncoderCompressionCodec = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_COMPRESSION_CODEC, ParquetCompression.COMPRESSION_UNCOMPRESSED);
+        this.partitionEncoderCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_COMPRESSION_LEVEL, 0);
+        this.partitionEncoderRowGroupSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_ROW_GROUP_SIZE, 0);
+        this.partitionEncoderDataPageSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_DATA_PAGE_SIZE, 0);
     }
 
     public static String rootSubdir(CharSequence dbRoot, CharSequence subdir) {
@@ -3110,6 +3125,36 @@ public class PropServerConfiguration implements ServerConfiguration {
             settings.put(RELEASE_TYPE, str(getReleaseType()));
             settings.put(RELEASE_VERSION, str(getBuildInformation().getSwVersion()));
             settings.put(ACL_ENABLED, Boolean.toString(!Chars.empty(httpUsername)));
+        }
+
+        @Override
+        public int getPartitionEncoderVersion() {
+            return partitionEncoderVersion;
+        }
+
+        @Override
+        public boolean isPartitionEncoderStatisticsEnabled() {
+            return partitionEncoderStatisticsEnabled;
+        }
+
+        @Override
+        public int getPartitionEncoderCompressionCodec() {
+            return partitionEncoderCompressionCodec;
+        }
+
+        @Override
+        public int getPartitionEncoderCompressionLevel() {
+            return partitionEncoderCompressionLevel;
+        }
+
+        @Override
+        public int getPartitionEncoderRowGroupSize() {
+            return partitionEncoderRowGroupSize;
+        }
+
+        @Override
+        public int getPartitionEncoderDataPageSize() {
+            return partitionEncoderDataPageSize;
         }
     }
 

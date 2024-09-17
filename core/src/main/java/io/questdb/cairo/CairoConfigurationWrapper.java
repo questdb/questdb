@@ -1154,6 +1154,36 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
         getDelegate().populateSettings(settings);
     }
 
+    @Override
+    public int getPartitionEncoderVersion() {
+        return getDelegate().getPartitionEncoderVersion();
+    }
+
+    @Override
+    public boolean isPartitionEncoderStatisticsEnabled() {
+        return getDelegate().isPartitionEncoderStatisticsEnabled();
+    }
+
+    @Override
+    public int getPartitionEncoderCompressionCodec() {
+        return getDelegate().getPartitionEncoderCompressionCodec();
+    }
+
+    @Override
+    public int getPartitionEncoderCompressionLevel() {
+        return getDelegate().getPartitionEncoderCompressionLevel();
+    }
+
+    @Override
+    public int getPartitionEncoderRowGroupSize() {
+        return getDelegate().getPartitionEncoderRowGroupSize();
+    }
+
+    @Override
+    public int getPartitionEncoderDataPageSize() {
+        return getDelegate().getPartitionEncoderDataPageSize();
+    }
+
     protected CairoConfiguration getDelegate() {
         return delegate;
     }
