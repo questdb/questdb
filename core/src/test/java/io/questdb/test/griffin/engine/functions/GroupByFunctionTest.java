@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -118,6 +119,11 @@ public class GroupByFunctionTest {
         @Override
         public int getInt(Record rec) {
             return 0;
+        }
+
+        @Override
+        public Interval getInterval(Record rec) {
+            return Interval.EMPTY;
         }
 
         @Override

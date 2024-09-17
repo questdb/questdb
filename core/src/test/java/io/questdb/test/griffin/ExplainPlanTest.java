@@ -2449,6 +2449,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     }
                                 } else if ((factory instanceof HydrateTableMetadataFunctionFactory)) {
                                     args.add(new StrConstant("*"));
+                                } else if ((factory instanceof InTimestampIntervalFunctionFactory)) {
+                                    args.add(new TimestampConstant(123141));
+                                    args.add(new IntervalConstant(1231, 123146));
                                 } else if (Chars.equals(key, "approx_count_distinct") && sigArgCount == 2 && p == 1 && sigArgType == ColumnType.INT) {
                                     args.add(new IntConstant(4)); // precision has to be in the range of 4 to 18
                                 } else if (!useConst) {

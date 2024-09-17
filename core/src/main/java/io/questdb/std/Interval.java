@@ -34,12 +34,17 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
 public class Interval implements Sinkable {
-    public static final Interval EMPTY = new Interval();
+    public static final Interval EMPTY = new Interval(Long.MIN_VALUE, Long.MIN_VALUE);
+    public static final Interval MAX_VALUE = new Interval(Long.MAX_VALUE, Long.MAX_VALUE);
 
     long hi = Long.MIN_VALUE;
     long lo = Long.MIN_VALUE;
 
     public Interval() {
+    }
+
+    public Interval(long lo, long hi) {
+        this.of(lo, hi);
     }
 
     public void clear() {

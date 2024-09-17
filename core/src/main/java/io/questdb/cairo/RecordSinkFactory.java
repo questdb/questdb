@@ -409,6 +409,7 @@ public class RecordSinkFactory {
                     asm.invokeInterface(wPutLong128, 4);
                     break;
                 case ColumnType.NULL:
+                case ColumnType.INTERVAL:
                     break; // ignore
                 default:
                     throw new IllegalArgumentException("Unexpected column type: " + ColumnType.nameOf(type));

@@ -393,6 +393,13 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public Interval getInterval(Record rec) {
+            Assert.assertEquals(ColumnType.INTERVAL, type);
+            callCount++;
+            return Interval.MAX_VALUE;
+        }
+
+        @Override
         public long getLong(Record rec) {
             Assert.assertEquals(ColumnType.LONG, type);
             callCount++;

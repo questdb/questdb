@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
+import io.questdb.std.Interval;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractCairoTest;
@@ -32,18 +33,38 @@ import org.junit.Test;
 public class TodayTomorrowYesterdayTest extends AbstractCairoTest {
 
     @Test
+    public void testTimestampInInterval() throws Exception {
+        assertSql("result\n", "select true as result from long_sequence(1)\n" +
+                "where now() in tomorrow()");
+        assertSql("result\n" +
+                "true\n", "select true as result from long_sequence(1)\n" +
+                "where now() in today()");
+        assertSql("result\n", "select true as result from long_sequence(1)\n" +
+                "where now() in yesterday()");
+    }
+
+    @Test
     public void testToday() throws Exception {
-        assertSql("cast\n" + Timestamps.floorDD(Os.currentTimeMicros()) + "\n", "select today()::long");
+        long todayStart = Timestamps.floorDD(Os.currentTimeMicros());
+        long todayEnd = Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), 1)) - 1;
+        final Interval interval = new Interval(todayStart, todayEnd);
+        assertSql("today\n" + interval + "\n", "select today()");
     }
 
     @Test
     public void testTomorrow() throws Exception {
-        assertSql("cast\n" + Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), 1)) + "\n", "select tomorrow()::long");
+        long tomorrowStart = Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), 1));
+        long tomorrowEnd = Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), 2)) - 1;
+        final Interval interval = new Interval(tomorrowStart, tomorrowEnd);
+        assertSql("tomorrow\n" + interval + "\n", "select tomorrow()");
     }
 
     @Test
     public void testYesterday() throws Exception {
-        assertSql("cast\n" + Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), -1)) + "\n", "select yesterday()::long");
+        long yesterdayStart = Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), -1));
+        long yesterdayEnd = Timestamps.floorDD(Os.currentTimeMicros()) - 1;
+        final Interval interval = new Interval(yesterdayStart, yesterdayEnd);
+        assertSql("yesterday\n" + interval + "\n", "select yesterday()");
     }
 
 }
