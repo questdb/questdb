@@ -70,6 +70,7 @@ import static io.questdb.griffin.model.ExpressionNode.*;
 import static io.questdb.griffin.model.QueryModel.QUERY;
 import static io.questdb.griffin.model.QueryModel.*;
 
+
 public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_HOUR_INT = 1;
     public static final int GKK_VANILLA_INT = 0;
@@ -168,7 +169,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeStringAsVarcharB = new BitSet();
     private final BitSet writeSymbolAsString = new BitSet();
     private boolean enableJitNullChecks = true;
-    private boolean fastAsOfJoins = true;
+    private final boolean fastAsOfJoins;
     private boolean fullFatJoins = false;
 
     public SqlCodeGenerator(
@@ -4821,10 +4822,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+
     private RecordCursorFactory generateSubQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         assert model.getNestedModel() != null;
         return generateQuery(model.getNestedModel(), executionContext, true);
     }
+
 
     private RecordCursorFactory generateTableQuery(
             QueryModel model,
@@ -4981,29 +4984,40 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         model.setWhereClause(withinExtracted);
 
         boolean orderDescendingByDesignatedTimestampOnly = isOrderDescendingByDesignatedTimestampOnly(model);
-        if (withinExtracted != null) {
-            CharSequence preferredKeyColumn = null;
 
-            if (latestByColumnCount == 1) {
-                final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
+        if (withinExtracted != null || executionContext.overrideIntrinsics(reader.getTableToken())) {
 
-                if (ColumnType.isSymbol(myMeta.getColumnType(latestByIndex))) {
-                    preferredKeyColumn = latestBy.getQuick(0).token;
+            final IntrinsicModel intrinsicModel;
+            if (withinExtracted != null) {
+                CharSequence preferredKeyColumn = null;
+
+                if (latestByColumnCount == 1) {
+                    final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
+
+                    if (ColumnType.isSymbol(myMeta.getColumnType(latestByIndex))) {
+                        preferredKeyColumn = latestBy.getQuick(0).token;
+                    }
                 }
+
+                intrinsicModel = whereClauseParser.extract(
+                        model,
+                        withinExtracted,
+                        metadata,
+                        preferredKeyColumn,
+                        readerTimestampIndex,
+                        functionParser,
+                        myMeta,
+                        executionContext,
+                        latestByColumnCount > 1,
+                        reader
+                );
+            } else {
+                intrinsicModel = whereClauseParser.getEmpty();
             }
 
-            final IntrinsicModel intrinsicModel = whereClauseParser.extract(
-                    model,
-                    withinExtracted,
-                    metadata,
-                    preferredKeyColumn,
-                    readerTimestampIndex,
-                    functionParser,
-                    myMeta,
-                    executionContext,
-                    latestByColumnCount > 1,
-                    reader
-            );
+            // When we run materialized view refresh we want to restrict queries to the base table
+            // to the timestamp range that is updated by the previous transactions.
+            executionContext.overrideWhereIntrinsics(reader.getTableToken(), intrinsicModel);
 
             // intrinsic parser can collapse where clause when removing parts it can replace
             // need to make sure that filter is updated on the model in case it is processed up the call stack
@@ -5414,7 +5428,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     supportsRandomAccess
             );
         }
-
         // 'latest by' clause takes over the latest by nodes, so that the later generateLatestBy() is no-op
         model.getLatestBy().clear();
 
@@ -5447,11 +5460,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
         }
-
         boolean symbolKeysOnly = true;
         for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
             symbolKeysOnly &= ColumnType.isSymbol(keyTypes.getColumnType(i));
         }
+
         if (symbolKeysOnly) {
             IntList partitionByColumnIndexes = new IntList(listColumnFilterA.size());
             for (int i = 0, n = listColumnFilterA.size(); i < n; i++) {
@@ -6053,7 +6066,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
     }
-
     static {
         joinsRequiringTimestamp[JOIN_INNER] = false;
         joinsRequiringTimestamp[JOIN_OUTER] = false;

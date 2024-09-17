@@ -112,6 +112,10 @@ public final class WhereClauseParser implements Mutable {
         withinPosition = -1;
     }
 
+    public IntrinsicModel getEmpty() {
+        return models.next();
+    }
+
     public IntrinsicModel extract(
             AliasTranslator translator,
             ExpressionNode node,

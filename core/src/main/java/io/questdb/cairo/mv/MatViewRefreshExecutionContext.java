@@ -28,12 +28,12 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.model.IntrinsicModel;
 
 public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
     private final CairoEngine engine;
     private TableReader baseTableReader;
     private TableToken viewTableToken;
-    private TableWriter viewTableWriter;
 
     public MatViewRefreshExecutionContext(CairoEngine engine) {
         super(engine, 1);
@@ -62,12 +62,26 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
         return getCairoEngine().getReader(tableToken);
     }
 
-    public void of(TableReader baseTableReader, TableWriter viewTableWriter) {
-        this.viewTableToken = viewTableWriter.getTableToken();
+    public void of(TableReader baseTableReader) {
+        this.viewTableToken = baseTableReader.getTableToken();
         this.baseTableReader = baseTableReader;
 
         // Operate sql on a fixed reader that has known max transactions visible
         this.engine.detachReader(baseTableReader);
-        this.viewTableWriter = viewTableWriter;
+    }
+
+    @Override
+    public boolean overrideIntrinsics(TableToken tableToken) {
+        return tableToken == baseTableReader.getTableToken();
+    }
+
+    @Override
+    public void overrideWhereIntrinsics(TableToken tableToken, IntrinsicModel intrinsicModel) {
+        if (tableToken != baseTableReader.getTableToken()) {
+            return;
+        }
+
+        intrinsicModel.setBetweenBoundary(getBindVariableService().getFunction(":from"));
+        intrinsicModel.setBetweenBoundary(getBindVariableService().getFunction(":to"));
     }
 }

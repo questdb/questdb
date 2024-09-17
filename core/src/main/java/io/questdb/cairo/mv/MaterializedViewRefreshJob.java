@@ -110,11 +110,11 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
             }
 
             try (RecordCursorFactory factory = compiledQuery.getRecordCursorFactory()) {
+
                 ColumnFilter entityColumnFilter = generatedColumnFilter(
                         factory.getMetadata(),
                         tableWriter.getMetadata()
                 );
-
 
                 int cursorTimestampIndex = factory.getMetadata().getColumnIndex(
                         tableWriter.getMetadata().getColumnName(tableWriter.getMetadata().getTimestampIndex())
@@ -141,7 +141,6 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
                         row.append();
                     }
                 }
-
                 tableWriter.commit();
             }
         }
@@ -153,9 +152,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
         // - write the result set to WAL (or directly to table writer O3 area)
         // - apply resulting commit
         // - update applied to Txn in MatViewGraph
-        try (TableWriter viewTableWriter = engine.getWriterUnsafe(viewToken, MAT_VIEW_REFRESH_TABLE_WRITE_REASON)) {
-            assert viewTableWriter.getMetadata().getTableId() == viewToken.getTableId();
-
+        try {
             if (fromBaseTxn < 0) {
                 fromBaseTxn = engine.getTableSequencerAPI().getLastRefreshBaseTxn(viewToken);
                 if (fromBaseTxn >= toBaseTxn) {
@@ -171,7 +168,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
             }
 
             try (TableReader baseTableReader = engine.getReader(baseToken)) {
-                matViewRefreshExecutionContext.of(baseTableReader, viewTableWriter);
+                matViewRefreshExecutionContext.of(baseTableReader);
                 try {
                     if (findCommitTimestampRanges(matViewRefreshExecutionContext, baseTableReader, fromBaseTxn, viewDef)) {
                         toBaseTxn = baseTableReader.getSeqTxn();
