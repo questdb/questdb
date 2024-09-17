@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.table.parquet;
 
-import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
