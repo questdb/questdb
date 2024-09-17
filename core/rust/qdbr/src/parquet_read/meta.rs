@@ -66,6 +66,7 @@ impl ParquetDecoder {
             row_group_sizes,
             file: ManuallyDrop::new(file),
             metadata,
+            qdb_meta,
             decompress_buf: vec![],
             columns_ptr: columns.as_ptr(),
             columns,
@@ -79,7 +80,7 @@ impl ParquetDecoder {
         col_id: i32,
     ) -> Option<ColumnType> {
         let col_meta = qdb_meta?.schema.columns.get(&col_id)?;
-        Some(col_meta.qdb_type)
+        Some(col_meta.column_type)
     }
 
     fn descriptor_to_column_type(

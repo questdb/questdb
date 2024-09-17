@@ -78,7 +78,7 @@ struct VersionMeta {
 
 /// Special instructions on how to handle the column data,
 /// beyond the basic column type.
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Copy, Clone)]
 pub enum QdbMetaColHandling {
     /// For dict-encoded columns, the row-range local dict key
     /// is the same as the QuestDB's global dict key.
@@ -86,9 +86,9 @@ pub enum QdbMetaColHandling {
     LocalKeyIsGlobal,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Copy, Clone)]
 pub struct QdbMetaCol {
-    pub qdb_type: ColumnType,
+    pub column_type: ColumnType,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub handling: Option<QdbMetaColHandling>,
@@ -156,14 +156,14 @@ mod tests {
                     (
                         0,
                         QdbMetaCol {
-                            qdb_type: ColumnType::new(ColumnTypeTag::Symbol, 0),
+                            column_type: ColumnType::new(ColumnTypeTag::Symbol, 0),
                             handling: Some(QdbMetaColHandling::LocalKeyIsGlobal),
                         },
                     ),
                     (
                         1,
                         QdbMetaCol {
-                            qdb_type: ColumnType::new(ColumnTypeTag::Int, 0),
+                            column_type: ColumnType::new(ColumnTypeTag::Int, 0),
                             handling: None,
                         },
                     ),
@@ -176,11 +176,11 @@ mod tests {
             "schema": {
                 "columns": {
                     "0": {
-                        "qdb_type": 12,
+                        "column_type": 12,
                         "handling": "LocalKeyIsGlobal"
                     },
                     "1": {
-                        "qdb_type": 5
+                        "column_type": 5
                     }
                 }
             }

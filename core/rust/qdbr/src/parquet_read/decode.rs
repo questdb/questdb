@@ -1,5 +1,6 @@
-use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
+use crate::parquet::col_type::ColumnTypeTag;
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
+use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColHandling};
 use crate::parquet_read::column_sink::fixed::{
     FixedBooleanColumnSink, FixedDoubleColumnSink, FixedFloatColumnSink, FixedInt2ByteColumnSink,
     FixedInt2ShortColumnSink, FixedIntColumnSink, FixedLong256ColumnSink, FixedLongColumnSink,
@@ -83,7 +84,7 @@ impl ParquetDecoder {
         column_chunk_bufs: &mut ColumnChunkBuffers,
         row_group_index: usize,
         file_column_index: usize,
-        column_type: ColumnType,
+        col_info: QdbMetaCol,
     ) -> ParquetResult<usize> {
         let columns = self.metadata.row_groups[row_group_index].columns();
         let column_metadata = &columns[file_column_index];
@@ -120,24 +121,19 @@ impl ParquetDecoder {
                     dict = Some(page);
                 }
                 Page::Data(page) => {
-                    row_count += decoder_page(
-                        version,
-                        &page,
-                        dict.as_ref(),
-                        column_chunk_bufs,
-                        column_type,
-                    )
-                    .with_context(|_| {
-                        format!(
-                            "could not decode page for column {} in row group {}",
-                            self.metadata.schema_descr.columns()[file_column_index]
-                                .descriptor
-                                .primitive_type
-                                .field_info
-                                .name,
-                            row_group_index,
-                        )
-                    })?;
+                    row_count +=
+                        decoder_page(version, &page, dict.as_ref(), column_chunk_bufs, col_info)
+                            .with_context(|_| {
+                                format!(
+                                    "could not decode page for column {} in row group {}",
+                                    self.metadata.schema_descr.columns()[file_column_index]
+                                        .descriptor
+                                        .primitive_type
+                                        .field_info
+                                        .name,
+                                    row_group_index,
+                                )
+                            })?;
                 }
             };
         }
@@ -153,10 +149,11 @@ pub fn decoder_page(
     page: &DataPage,
     dict: Option<&DictPage>,
     bufs: &mut ColumnChunkBuffers,
-    column_type: ColumnType,
+    col_info: QdbMetaCol,
 ) -> ParquetResult<usize> {
     let (_rep_levels, _, values_buffer) = split_buffer(page)?;
     let row_count = page.header().num_values();
+    let column_type = col_info.column_type;
 
     let encoding_error = true;
     let decoding_result = match (
@@ -615,6 +612,12 @@ pub fn decoder_page(
                 }
 
                 (Encoding::RleDictionary, Some(_dict_page), ColumnTypeTag::Symbol) => {
+                    if col_info.handling != Some(QdbMetaColHandling::LocalKeyIsGlobal) {
+                        return Err(fmt_err!(
+                            Unsupported,
+                            "only special LocalKeyIsGlobal-encoded symbol columns are supported",
+                        ));
+                    }
                     let mut slicer = RleLocalIsGlobalSymbolDecoder::try_new(
                         values_buffer,
                         row_count,
@@ -910,6 +913,7 @@ pub fn get_selected_rows(page: &DataPage) -> VecDeque<Interval> {
 #[cfg(test)]
 mod tests {
     use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
+    use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColHandling};
     use crate::parquet_read::decode::{INT_NULL, LONG_NULL, UUID_NULL};
     use crate::parquet_read::{ColumnChunkBuffers, ParquetDecoder};
     use crate::parquet_write::file::ParquetWriter;
@@ -951,9 +955,10 @@ mod tests {
 
         for column_index in 0..column_count {
             let column_type = decoder.columns[column_index].column_type;
+            let col_info = QdbMetaCol { column_type, handling: None };
             for row_group_index in 0..row_group_count {
                 decoder
-                    .decode_column_chunk(bufs, row_group_index, column_index, column_type)
+                    .decode_column_chunk(bufs, row_group_index, column_index, col_info)
                     .unwrap();
 
                 assert_eq!(bufs.data_size, expected_buff.data_vec.len());
@@ -1149,6 +1154,11 @@ mod tests {
 
         for (column_index, (column_buffs, column_type)) in expected_buffs.iter().enumerate() {
             let column_type = *column_type;
+            let handling = if column_type.tag() == ColumnTypeTag::Symbol {
+                Some(QdbMetaColHandling::LocalKeyIsGlobal)
+            } else {
+                None
+            };
             let mut data_offset = 0usize;
             let mut col_row_count = 0usize;
             let expected = column_buffs
@@ -1162,7 +1172,12 @@ mod tests {
 
             for row_group_index in 0..row_group_count {
                 let row_count = decoder
-                    .decode_column_chunk(bufs, row_group_index, column_index, column_type)
+                    .decode_column_chunk(
+                        bufs,
+                        row_group_index,
+                        column_index,
+                        QdbMetaCol { column_type, handling },
+                    )
                     .unwrap();
 
                 assert_eq!(bufs.data_vec.len(), bufs.data_size);

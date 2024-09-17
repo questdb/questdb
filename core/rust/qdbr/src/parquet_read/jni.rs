@@ -7,6 +7,7 @@ use jni::objects::JClass;
 use jni::JNIEnv;
 
 use crate::parquet::col_type::ColumnType;
+use crate::parquet::qdb_metadata::QdbMetaCol;
 use crate::parquet_read::{ColumnChunkBuffers, ColumnMeta, ParquetDecoder, RowGroupBuffers};
 
 fn from_raw_file_descriptor(raw: i32) -> File {
@@ -111,11 +112,12 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
             let column_chunk_bufs = &mut row_group_bufs.column_bufs[column_idx];
             let column_file_index = decoder.columns[column_idx].id;
 
+            let col_info = QdbMetaCol { column_type, handling: None };
             match decoder.decode_column_chunk(
                 column_chunk_bufs,
                 row_group_index as usize,
                 column_file_index as usize,
-                column_type,
+                col_info,
             ) {
                 Ok(column_chunk_size) => {
                     if row_group_size > 0 && row_group_size != column_chunk_size {

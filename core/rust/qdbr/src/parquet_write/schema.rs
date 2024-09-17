@@ -287,7 +287,7 @@ pub fn to_parquet_schema(
                 None
             };
 
-            let col = QdbMetaCol { qdb_type: c.data_type, handling };
+            let col = QdbMetaCol { column_type: c.data_type, handling };
 
             (c.id, col)
         })

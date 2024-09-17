@@ -1,4 +1,5 @@
 use crate::parquet::col_type::ColumnType;
+use crate::parquet::qdb_metadata::QdbMeta;
 use parquet2::metadata::FileMetaData;
 use std::fs::File;
 use std::mem::ManuallyDrop;
@@ -21,6 +22,7 @@ pub struct ParquetDecoder {
     pub columns: Vec<ColumnMeta>,
     file: ManuallyDrop<File>, // the fd is managed by Java code
     metadata: FileMetaData,
+    qdb_meta: Option<QdbMeta>,
     decompress_buf: Vec<u8>,
 }
 
