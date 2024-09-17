@@ -362,7 +362,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     private static void putIntervalValue(HttpChunkedResponse response, Record rec, int col) {
-        response.put(rec.getInterval(col));
+        response.put('"').put(rec.getInterval(col)).put('"');
     }
 
     private static void putLong256Value(HttpChunkedResponse response, Record rec, int col) {
