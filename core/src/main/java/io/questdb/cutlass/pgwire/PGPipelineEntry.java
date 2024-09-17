@@ -390,6 +390,7 @@ public class PGPipelineEntry implements QuietCloseable {
         this.sqlType = tai.getSqlType();
         this.cacheHit = true;
         this.tai = tai;
+        tai.copyOutTypeDescriptionTypesTo(outTypeDescriptionTypes);
     }
 
     public void ofSelect(CharSequence utf16SqlText, TypesAndSelect tas) {
@@ -400,7 +401,7 @@ public class PGPipelineEntry implements QuietCloseable {
         this.tas = tas;
         this.cacheHit = true;
         buildResultSetColumnTypes();
-        tas.copyParameterTypes(outTypeDescriptionTypes);
+        tas.copyOutTypeDescriptionTypesTo(outTypeDescriptionTypes);
     }
 
     public void ofSimpleQuery(
@@ -816,41 +817,34 @@ public class PGPipelineEntry implements QuietCloseable {
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             WriterSource writerSource
     ) throws SqlException {
-        try {
-            switch (transactionState) {
-                case IN_TRANSACTION:
-                    final InsertMethod m = insertOp.createMethod(sqlExecutionContext, writerSource);
-                    try {
-                        sqlAffectedRowCount = m.execute();
-                        TableWriterAPI writer = m.popWriter();
-                        pendingWriters.put(writer.getTableToken(), writer);
-                        if (tai.hasBindVariables()) {
-                            taiCache.put(sqlText, tai);
-                        }
-                    } catch (Throwable e) {
-                        Misc.free(m);
-                        throw e;
-                    }
-                    break;
-                case ERROR_TRANSACTION:
-                    // when transaction is in error state, skip execution
-                    break;
-                default:
-                    // in any other case we will commit in place
-                    try (final InsertMethod m2 = insertOp.createMethod(sqlExecutionContext, writerSource)) {
-                        sqlAffectedRowCount = m2.execute();
-                        m2.commit();
-                    }
+        switch (transactionState) {
+            case IN_TRANSACTION:
+                final InsertMethod m = insertOp.createMethod(sqlExecutionContext, writerSource);
+                try {
+                    sqlAffectedRowCount = m.execute();
+                    TableWriterAPI writer = m.popWriter();
+                    pendingWriters.put(writer.getTableToken(), writer);
                     if (tai.hasBindVariables()) {
                         taiCache.put(sqlText, tai);
                     }
-                    break;
-            }
-        } catch (Throwable e) {
-            // todo: find out why "tai" does not close the underlying insertOp
-            tai = Misc.free(tai);
-            insertOp = Misc.free(insertOp);
-            throw e;
+                } catch (Throwable e) {
+                    Misc.free(m);
+                    throw e;
+                }
+                break;
+            case ERROR_TRANSACTION:
+                // when transaction is in error state, skip execution
+                break;
+            default:
+                // in any other case we will commit in place
+                try (final InsertMethod m2 = insertOp.createMethod(sqlExecutionContext, writerSource)) {
+                    sqlAffectedRowCount = m2.execute();
+                    m2.commit();
+                }
+                if (tai.hasBindVariables()) {
+                    taiCache.put(sqlText, tai);
+                }
+                break;
         }
     }
 

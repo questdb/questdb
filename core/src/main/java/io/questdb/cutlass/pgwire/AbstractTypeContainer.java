@@ -50,6 +50,14 @@ public abstract class AbstractTypeContainer<T extends AbstractTypeContainer<?>> 
         }
     }
 
+    public void copyOutTypeDescriptionTypesTo(IntList outTypeDescriptionTypes) {
+        for (int i = 0, n = types.size(); i < n; i++) {
+            int nativeType = types.getQuick(i);
+            int pgType = PGOids.getTypeOid(nativeType);
+            outTypeDescriptionTypes.add(pgType);
+        }
+    }
+
     @Override
     public void defineBindVariables(BindVariableService bindVariableService) throws SqlException {
         defineBindVariables(types, bindVariableService);
