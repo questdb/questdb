@@ -361,7 +361,7 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public boolean isPartitionParquet(int i) {
-        return isParquetPartitionByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+        return isPartitionParquetByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
     public boolean isPartitionReadOnly(int i) {
@@ -372,14 +372,6 @@ public class TxReader implements Closeable, Mutable {
         int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(ts);
         if (indexRaw > -1) {
             return isPartitionReadOnlyByRawIndex(indexRaw);
-        }
-        return false;
-    }
-
-    public boolean isPartitionParquetByPartitionTimestamp(long ts) {
-        int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(ts);
-        if (indexRaw > -1) {
-            return isParquetPartitionByRawIndex(indexRaw);
         }
         return false;
     }
@@ -534,11 +526,11 @@ public class TxReader implements Closeable, Mutable {
         return attachedPartitions.getQuick(partitionRawIndex + PARTITION_PARQUET_FILE_SIZE_OFFSET);
     }
 
-    private boolean isParquetPartitionByRawIndex(int indexRaw) {
+    public boolean isPartitionParquetByRawIndex(int indexRaw) {
         return checkPartitionOptionBit(indexRaw, PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET);
     }
 
-    private boolean isPartitionReadOnlyByRawIndex(int indexRaw) {
+    public boolean isPartitionReadOnlyByRawIndex(int indexRaw) {
         return checkPartitionOptionBit(indexRaw, PARTITION_MASK_READ_ONLY_BIT_OFFSET);
     }
 
