@@ -116,20 +116,21 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
                 " rnd_varchar(1, 1, 1) v2," +
                 " from long_sequence(" + nTotalRows + ")" +
                 ") timestamp (ts) partition by HOUR";
+
         compiler.compile(sql, sqlExecutionContext);
         compiler.compile("create table y as (select * from x) timestamp (ts) partition by HOUR", sqlExecutionContext);
         TestUtils.assertEquals(compiler, sqlExecutionContext, "y", "x");
 
+        final int partitionIndex;
         final long partitionTs;
         StringSink stringSink = new StringSink();
         try (TableReader xr = engine.getReader("x")) {
-            final int partitionIndex = rnd.nextInt(xr.getPartitionCount() - 1);
+            partitionIndex = rnd.nextInt(xr.getPartitionCount() - 1);
             partitionTs = xr.getPartitionTimestampByIndex(partitionIndex);
-            final int partitionBy = xr.getPartitionedBy();
+            int partitionBy = xr.getPartitionedBy();
             PartitionBy.setSinkForPartition(stringSink, partitionBy, partitionTs);
             CairoEngine.compile(compiler, "alter table x convert partition to parquet list '" + stringSink + "'", sqlExecutionContext);
         }
-
 
         long minTs = partitionTs - 3600000000L;
         long maxTs = partitionTs + 2 * 3600000000L;
@@ -178,7 +179,16 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
 
             TableToken tt = engine.getTableTokenIfExists("x");
             String partitionName = stringSink.toString();
-            Path parquet = Path.getThreadLocal(root).concat(tt.getDirName()).concat(partitionName).put(".parquet");
+
+            Path parquet = Path.getThreadLocal(root).concat(tt.getDirName());
+            TableUtils.setPathForPartition(
+                    parquet,
+                    xw.getPartitionBy(),
+                    partitionTs,
+                    xw.getPartitionNameTxnByPartitionTimestamp(partitionTs)
+            );
+            parquet.put(".parquet");
+
             String y = "select * from y where ts in '" + partitionName + "'";
             String x = "select * from read_parquet('" + parquet + "')";
             assertEquals(compiler, sqlExecutionContext, y, x);
