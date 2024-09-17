@@ -8053,7 +8053,7 @@ nodejs code:
                     try (ResultSet rs = metaData.getCatalogs()) {
                         assertResultSet(
                                 "TABLE_CAT[VARCHAR]\n" +
-                                        "qdb\n",
+                                        "questdb\n",
                                 sink,
                                 rs
                         );

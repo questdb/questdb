@@ -2794,6 +2794,8 @@ public class SqlParser {
                 node.rhs.token = "double";
             } else if (SqlKeywords.isFloat4Keyword(node.rhs.token)) {
                 node.rhs.token = "float";
+            } else if (SqlKeywords.isInt4Keyword(node.rhs.token)) {
+                node.rhs.token = "int";
             }
         }
     }
