@@ -57,15 +57,14 @@ public class TodayFunctionFactory implements FunctionFactory {
 
         @Override
         public Interval getInterval(Record rec) {
-            long today = Timestamps.floorDD(context.getNow());
-            long tomorrow = Timestamps.floorDD(Timestamps.addDays(context.getNow(), 1));
+            long todayStart = Timestamps.floorDD(context.getNow());
+            long todayEnd = Timestamps.floorDD(Timestamps.addDays(context.getNow(), 1)) - 1;
             interval.of(
-                    today,
-                    tomorrow - 1
+                    todayStart,
+                    todayEnd
             );
             return interval;
         }
-//        {"query":"select today()","columns":[{"name":"today","type":"unknown"}],"timestamp":-1,"dataset":[[('2024-09-17T00:00:00.000Z', '2024-09-17T23:59:59.999Z')]],"count":1}
 
         @Override
         public Function getLeft() {
