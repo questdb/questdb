@@ -23,6 +23,7 @@
  ******************************************************************************/
 #![allow(dead_code)]
 
+use crate::parquet::col_type::ColumnType;
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorCause, ParquetResult};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -69,7 +70,7 @@ impl<'de, const N: u32> Deserialize<'de> for U32Const<N> {
 /// A basic "version"-only metadata struct that's exclusively used to select
 /// which version of the metadata struct to deserialize.
 /// This contains just the `version` field that all the other versions
-/// of the metadata struct must also contain as a `
+/// of the metadata struct must also contain as a `U32Const<N>`.
 #[derive(Deserialize)]
 struct VersionMeta {
     pub version: u32,
@@ -79,17 +80,15 @@ struct VersionMeta {
 /// beyond the basic column type.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub enum QdbMetaColHandling {
-    /// A symbol column where the local dictionary keys,
-    /// i.e. the numeric keys in the parquet data match
-    /// the QuestDB keys in the global symbol table.
-    SymbolLocalIsGlobal,
+    /// For dict-encoded columns, the row-range local dict key
+    /// is the same as the QuestDB's global dict key.
+    /// Used for symbol columns.
+    LocalKeyIsGlobal,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct QdbMetaCol {
-    /// The numeric code for the internal QuestDB column type.
-    /// To convert, use `let column_type: ColumnType = col.qdb_type_code.try_into()?`.
-    pub qdb_type_code: i32,
+    pub qdb_type: ColumnType,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub handling: Option<QdbMetaColHandling>,
@@ -145,7 +144,7 @@ impl QdbMeta {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parquet_write::schema::ColumnType;
+    use crate::parquet::col_type::ColumnTypeTag;
     use serde_json::{json, Value};
 
     #[test]
@@ -157,14 +156,14 @@ mod tests {
                     (
                         0,
                         QdbMetaCol {
-                            qdb_type_code: ColumnType::Symbol.code(),
-                            handling: Some(QdbMetaColHandling::SymbolLocalIsGlobal),
+                            qdb_type: ColumnType::new(ColumnTypeTag::Symbol, 0),
+                            handling: Some(QdbMetaColHandling::LocalKeyIsGlobal),
                         },
                     ),
                     (
                         1,
                         QdbMetaCol {
-                            qdb_type_code: ColumnType::Int.code(),
+                            qdb_type: ColumnType::new(ColumnTypeTag::Int, 0),
                             handling: None,
                         },
                     ),
@@ -177,11 +176,11 @@ mod tests {
             "schema": {
                 "columns": {
                     "0": {
-                        "qdb_type_code": 12,
-                        "handling": "SymbolLocalIsGlobal"
+                        "qdb_type": 12,
+                        "handling": "LocalKeyIsGlobal"
                     },
                     "1": {
-                        "qdb_type_code": 5
+                        "qdb_type": 5
                     }
                 }
             }

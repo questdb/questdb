@@ -1,3 +1,4 @@
+use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
 use crate::parquet_read::column_sink::fixed::{
     FixedBooleanColumnSink, FixedDoubleColumnSink, FixedFloatColumnSink, FixedInt2ByteColumnSink,
@@ -15,7 +16,6 @@ use crate::parquet_read::slicer::{
     DeltaLengthArraySlicer, PlainVarSlicer, ValueConvertSlicer,
 };
 use crate::parquet_read::{ColumnChunkBuffers, ParquetDecoder, RowGroupBuffers};
-use crate::parquet_write::schema::ColumnType;
 use parquet2::deserialize::{
     FilteredHybridEncoded, FilteredHybridRleDecoderIter, HybridDecoderBitmapIter,
 };
@@ -165,12 +165,12 @@ pub fn decoder_page(
         page.descriptor.primitive_type.converted_type,
     ) {
         (PhysicalType::Int32, logical_type, converted_type) => {
-            match (page.encoding(), dict, logical_type, column_type) {
+            match (page.encoding(), dict, logical_type, column_type.tag()) {
                 (
                     Encoding::Plain,
                     _,
                     _,
-                    ColumnType::Short | ColumnType::Char | ColumnType::GeoShort,
+                    ColumnTypeTag::Short | ColumnTypeTag::Char | ColumnTypeTag::GeoShort,
                 ) => {
                     decode_page(
                         version,
@@ -188,7 +188,7 @@ pub fn decoder_page(
                     Encoding::DeltaBinaryPacked,
                     _,
                     _,
-                    ColumnType::Short | ColumnType::Char | ColumnType::GeoShort,
+                    ColumnTypeTag::Short | ColumnTypeTag::Char | ColumnTypeTag::GeoShort,
                 ) => {
                     decode_page(
                         version,
@@ -202,7 +202,7 @@ pub fn decoder_page(
                     )?;
                     Ok(row_count)
                 }
-                (Encoding::Plain, _, _, ColumnType::Byte | ColumnType::GeoByte) => {
+                (Encoding::Plain, _, _, ColumnTypeTag::Byte | ColumnTypeTag::GeoByte) => {
                     decode_page(
                         version,
                         page,
@@ -215,7 +215,12 @@ pub fn decoder_page(
                     )?;
                     Ok(row_count)
                 }
-                (Encoding::DeltaBinaryPacked, _, _, ColumnType::Byte | ColumnType::GeoByte) => {
+                (
+                    Encoding::DeltaBinaryPacked,
+                    _,
+                    _,
+                    ColumnTypeTag::Byte | ColumnTypeTag::GeoByte,
+                ) => {
                     decode_page(
                         version,
                         page,
@@ -232,7 +237,7 @@ pub fn decoder_page(
                     Encoding::Plain,
                     _,
                     _,
-                    ColumnType::Int | ColumnType::GeoInt | ColumnType::IPv4,
+                    ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
                 ) => {
                     decode_page(
                         version,
@@ -246,7 +251,7 @@ pub fn decoder_page(
                     )?;
                     Ok(row_count)
                 }
-                (Encoding::Plain, _, _, ColumnType::Date) => {
+                (Encoding::Plain, _, _, ColumnTypeTag::Date) => {
                     decode_page(
                         version,
                         page,
@@ -272,7 +277,7 @@ pub fn decoder_page(
                     Encoding::DeltaBinaryPacked,
                     _,
                     _,
-                    ColumnType::Int | ColumnType::GeoInt | ColumnType::IPv4,
+                    ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
                 ) => {
                     decode_page(
                         version,
@@ -290,7 +295,7 @@ pub fn decoder_page(
                     Encoding::RleDictionary | Encoding::PlainDictionary,
                     Some(dict_page),
                     _,
-                    ColumnType::Int | ColumnType::GeoInt | ColumnType::IPv4,
+                    ColumnTypeTag::Int | ColumnTypeTag::GeoInt | ColumnTypeTag::IPv4,
                 ) => {
                     let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
@@ -308,7 +313,7 @@ pub fn decoder_page(
 
                     Ok(row_count)
                 }
-                (encoding, dict, logical_type, ColumnType::Double) => {
+                (encoding, dict, logical_type, ColumnTypeTag::Double) => {
                     let scale = match logical_type {
                         Some(PrimitiveLogicalType::Decimal(_, scale)) => scale,
                         _ => match converted_type {
@@ -361,7 +366,7 @@ pub fn decoder_page(
                     Encoding::RleDictionary | Encoding::PlainDictionary,
                     Some(dict_page),
                     _,
-                    ColumnType::Short | ColumnType::Char | ColumnType::GeoShort,
+                    ColumnTypeTag::Short | ColumnTypeTag::Char | ColumnTypeTag::GeoShort,
                 ) => {
                     let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
@@ -383,7 +388,7 @@ pub fn decoder_page(
             }
         }
         (PhysicalType::Int64, logical_type, _) => {
-            match (page.encoding(), dict, logical_type, column_type) {
+            match (page.encoding(), dict, logical_type, column_type.tag()) {
                 (
                     Encoding::Plain,
                     _,
@@ -391,7 +396,7 @@ pub fn decoder_page(
                         is_adjusted_to_utc: _,
                         unit: TimeUnit::Nanoseconds | TimeUnit::Milliseconds,
                     }),
-                    ColumnType::Timestamp,
+                    ColumnTypeTag::Timestamp,
                 ) => {
                     if let Some(PrimitiveLogicalType::Timestamp {
                         is_adjusted_to_utc: _,
@@ -427,10 +432,10 @@ pub fn decoder_page(
                     Encoding::Plain,
                     _,
                     _,
-                    ColumnType::Long
-                    | ColumnType::Date
-                    | ColumnType::GeoLong
-                    | ColumnType::Timestamp,
+                    ColumnTypeTag::Long
+                    | ColumnTypeTag::Date
+                    | ColumnTypeTag::GeoLong
+                    | ColumnTypeTag::Timestamp,
                 ) => {
                     decode_page(
                         version,
@@ -448,10 +453,10 @@ pub fn decoder_page(
                     Encoding::DeltaBinaryPacked,
                     _,
                     _,
-                    ColumnType::Long
-                    | ColumnType::Timestamp
-                    | ColumnType::Date
-                    | ColumnType::GeoLong,
+                    ColumnTypeTag::Long
+                    | ColumnTypeTag::Timestamp
+                    | ColumnTypeTag::Date
+                    | ColumnTypeTag::GeoLong,
                 ) => {
                     decode_page(
                         version,
@@ -469,10 +474,10 @@ pub fn decoder_page(
                     Encoding::RleDictionary | Encoding::PlainDictionary,
                     Some(dict_page),
                     _,
-                    ColumnType::Long
-                    | ColumnType::Timestamp
-                    | ColumnType::Date
-                    | ColumnType::GeoLong,
+                    ColumnTypeTag::Long
+                    | ColumnTypeTag::Timestamp
+                    | ColumnTypeTag::Date
+                    | ColumnTypeTag::GeoLong,
                 ) => {
                     let dict_decoder = FixedDictDecoder::<8>::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
@@ -494,8 +499,8 @@ pub fn decoder_page(
             }
         }
         (PhysicalType::FixedLenByteArray(16), Some(PrimitiveLogicalType::Uuid), _) => {
-            match (page.encoding(), column_type) {
-                (Encoding::Plain, ColumnType::Uuid) => {
+            match (page.encoding(), column_type.tag()) {
+                (Encoding::Plain, ColumnTypeTag::Uuid) => {
                     decode_page(
                         version,
                         page,
@@ -512,8 +517,8 @@ pub fn decoder_page(
             }
         }
         (PhysicalType::FixedLenByteArray(32), _logical_type, _) => {
-            match (page.encoding(), column_type) {
-                (Encoding::Plain, ColumnType::Long256) => {
+            match (page.encoding(), column_type.tag()) {
+                (Encoding::Plain, ColumnTypeTag::Long256) => {
                     decode_page(
                         version,
                         page,
@@ -532,8 +537,8 @@ pub fn decoder_page(
         (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String), _)
         | (PhysicalType::ByteArray, _, Some(PrimitiveConvertedType::Utf8)) => {
             let encoding = page.encoding();
-            match (encoding, dict, column_type) {
-                (Encoding::DeltaLengthByteArray, None, ColumnType::String) => {
+            match (encoding, dict, column_type.tag()) {
+                (Encoding::DeltaLengthByteArray, None, ColumnTypeTag::String) => {
                     let mut slicer = DeltaLengthArraySlicer::try_new(values_buffer, row_count)?;
                     decode_page(
                         version,
@@ -544,7 +549,7 @@ pub fn decoder_page(
                     Ok(row_count)
                 }
 
-                (Encoding::DeltaLengthByteArray, None, ColumnType::Varchar) => {
+                (Encoding::DeltaLengthByteArray, None, ColumnTypeTag::Varchar) => {
                     let mut slicer = DeltaLengthArraySlicer::try_new(values_buffer, row_count)?;
                     decode_page(
                         version,
@@ -558,7 +563,7 @@ pub fn decoder_page(
                 (
                     Encoding::RleDictionary | Encoding::PlainDictionary,
                     Some(dict_page),
-                    ColumnType::Varchar,
+                    ColumnTypeTag::Varchar,
                 ) => {
                     let dict_decoder = VarDictDecoder::try_new(dict_page, true)?;
                     let mut slicer = RleDictionarySlicer::try_new(
@@ -576,7 +581,7 @@ pub fn decoder_page(
                     Ok(row_count)
                 }
 
-                (Encoding::Plain, None, ColumnType::String) => {
+                (Encoding::Plain, None, ColumnTypeTag::String) => {
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page(
                         version,
@@ -587,7 +592,7 @@ pub fn decoder_page(
                     Ok(row_count)
                 }
 
-                (Encoding::Plain, _, ColumnType::Varchar) => {
+                (Encoding::Plain, _, ColumnTypeTag::Varchar) => {
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page(
                         version,
@@ -598,7 +603,7 @@ pub fn decoder_page(
                     Ok(row_count)
                 }
 
-                (Encoding::DeltaByteArray, _, ColumnType::Varchar) => {
+                (Encoding::DeltaByteArray, _, ColumnTypeTag::Varchar) => {
                     let mut slicer = DeltaBytesArraySlicer::try_new(values_buffer, row_count)?;
                     decode_page(
                         version,
@@ -609,7 +614,7 @@ pub fn decoder_page(
                     Ok(row_count)
                 }
 
-                (Encoding::RleDictionary, Some(_dict_page), ColumnType::Symbol) => {
+                (Encoding::RleDictionary, Some(_dict_page), ColumnTypeTag::Symbol) => {
                     let mut slicer = RleLocalIsGlobalSymbolDecoder::try_new(
                         values_buffer,
                         row_count,
@@ -629,8 +634,8 @@ pub fn decoder_page(
         }
         (PhysicalType::ByteArray, None, _) => {
             let encoding = page.encoding();
-            match (encoding, dict, column_type) {
-                (Encoding::Plain, None, ColumnType::Binary) => {
+            match (encoding, dict, column_type.tag()) {
+                (Encoding::Plain, None, ColumnTypeTag::Binary) => {
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page(
                         version,
@@ -640,7 +645,7 @@ pub fn decoder_page(
                     )?;
                     Ok(row_count)
                 }
-                (Encoding::DeltaLengthByteArray, None, ColumnType::Binary) => {
+                (Encoding::DeltaLengthByteArray, None, ColumnTypeTag::Binary) => {
                     let mut slicer = DeltaLengthArraySlicer::try_new(values_buffer, row_count)?;
                     decode_page(
                         version,
@@ -653,7 +658,7 @@ pub fn decoder_page(
                 (
                     Encoding::RleDictionary | Encoding::PlainDictionary,
                     Some(dict_page),
-                    ColumnType::Binary,
+                    ColumnTypeTag::Binary,
                 ) => {
                     let dict_decoder = VarDictDecoder::try_new(dict_page, false)?;
                     let mut slicer =
@@ -671,8 +676,8 @@ pub fn decoder_page(
         }
         (PhysicalType::Int96, logical_type, _) => {
             // Int96 is used for nano timestamps
-            match (page.encoding(), dict, logical_type, column_type) {
-                (Encoding::Plain, _, _, ColumnType::Timestamp) => {
+            match (page.encoding(), dict, logical_type, column_type.tag()) {
+                (Encoding::Plain, _, _, ColumnTypeTag::Timestamp) => {
                     decode_page(
                         version,
                         page,
@@ -689,7 +694,7 @@ pub fn decoder_page(
                     Encoding::PlainDictionary | Encoding::RleDictionary,
                     Some(dict_page),
                     _,
-                    ColumnType::Timestamp,
+                    ColumnTypeTag::Timestamp,
                 ) => {
                     let dict_decoder = FixedDictDecoder::<12>::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
@@ -713,8 +718,8 @@ pub fn decoder_page(
             bufs.aux_vec.clear();
             bufs.aux_ptr = ptr::null_mut();
 
-            match (page.encoding(), dict, typ, column_type) {
-                (Encoding::Plain, None, PhysicalType::Double, ColumnType::Double) => {
+            match (page.encoding(), dict, typ, column_type.tag()) {
+                (Encoding::Plain, None, PhysicalType::Double, ColumnTypeTag::Double) => {
                     decode_page(
                         version,
                         page,
@@ -732,7 +737,7 @@ pub fn decoder_page(
                     Encoding::RleDictionary | Encoding::PlainDictionary,
                     Some(dict_page),
                     PhysicalType::Double,
-                    ColumnType::Double,
+                    ColumnTypeTag::Double,
                 ) => {
                     let dict_decoder = FixedDictDecoder::<8>::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
@@ -753,7 +758,7 @@ pub fn decoder_page(
                     Encoding::RleDictionary | Encoding::PlainDictionary,
                     Some(dict_page),
                     PhysicalType::Float,
-                    ColumnType::Float,
+                    ColumnTypeTag::Float,
                 ) => {
                     let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
                     let mut slicer = RleDictionarySlicer::try_new(
@@ -770,7 +775,7 @@ pub fn decoder_page(
                     )?;
                     Ok(row_count)
                 }
-                (Encoding::Plain, None, PhysicalType::Float, ColumnType::Float) => {
+                (Encoding::Plain, None, PhysicalType::Float, ColumnTypeTag::Float) => {
                     decode_page(
                         version,
                         page,
@@ -784,7 +789,7 @@ pub fn decoder_page(
 
                     Ok(row_count)
                 }
-                (Encoding::Plain, None, PhysicalType::Boolean, ColumnType::Boolean) => {
+                (Encoding::Plain, None, PhysicalType::Boolean, ColumnTypeTag::Boolean) => {
                     decode_page(
                         version,
                         page,
@@ -798,7 +803,7 @@ pub fn decoder_page(
 
                     Ok(row_count)
                 }
-                (Encoding::Rle, None, PhysicalType::Boolean, ColumnType::Boolean) => {
+                (Encoding::Rle, None, PhysicalType::Boolean, ColumnTypeTag::Boolean) => {
                     decode_page(
                         version,
                         page,
@@ -904,10 +909,11 @@ pub fn get_selected_rows(page: &DataPage) -> VecDeque<Interval> {
 
 #[cfg(test)]
 mod tests {
+    use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
     use crate::parquet_read::decode::{INT_NULL, LONG_NULL, UUID_NULL};
     use crate::parquet_read::{ColumnChunkBuffers, ParquetDecoder};
     use crate::parquet_write::file::ParquetWriter;
-    use crate::parquet_write::schema::{Column, ColumnType, Partition};
+    use crate::parquet_write::schema::{Column, Partition};
     use crate::parquet_write::varchar::{append_varchar, append_varchar_null};
     use arrow::datatypes::ToByteSlice;
     use bytes::Bytes;
@@ -944,10 +950,10 @@ mod tests {
         let bufs = &mut ColumnChunkBuffers::new();
 
         for column_index in 0..column_count {
-            let column_typ = decoder.columns[column_index].typ;
+            let column_type = decoder.columns[column_index].column_type;
             for row_group_index in 0..row_group_count {
                 decoder
-                    .decode_column_chunk(bufs, row_group_index, column_index, column_typ)
+                    .decode_column_chunk(bufs, row_group_index, column_index, column_type)
                     .unwrap();
 
                 assert_eq!(bufs.data_size, expected_buff.data_vec.len());
@@ -999,9 +1005,9 @@ mod tests {
             row_count,
             "int_col",
             expected_int_buff.data_vec.as_ref(),
-            ColumnType::Int,
+            ColumnTypeTag::Int.into_type(),
         ));
-        expected_buffs.push((expected_int_buff, ColumnType::Int));
+        expected_buffs.push((expected_int_buff, ColumnTypeTag::Int.into_type()));
 
         let expected_long_buff =
             create_col_data_buff::<i64, 8, _>(row_count, LONG_NULL, |int| int.to_le_bytes());
@@ -1010,9 +1016,9 @@ mod tests {
             row_count,
             "long_col",
             expected_long_buff.data_vec.as_ref(),
-            ColumnType::Long,
+            ColumnTypeTag::Long.into_type(),
         ));
-        expected_buffs.push((expected_long_buff, ColumnType::Long));
+        expected_buffs.push((expected_long_buff, ColumnTypeTag::Long.into_type()));
 
         let string_buffers = create_col_data_buff_string(row_count, 3);
         columns.push(create_var_column(
@@ -1021,9 +1027,9 @@ mod tests {
             "string_col",
             string_buffers.data_vec.as_ref(),
             string_buffers.aux_vec.as_ref().unwrap(),
-            ColumnType::String,
+            ColumnTypeTag::String.into_type(),
         ));
-        expected_buffs.push((string_buffers, ColumnType::String));
+        expected_buffs.push((string_buffers, ColumnTypeTag::String.into_type()));
 
         let string_buffers = create_col_data_buff_varchar(row_count, 3);
         columns.push(create_var_column(
@@ -1032,9 +1038,9 @@ mod tests {
             "varchar_col",
             string_buffers.data_vec.as_ref(),
             string_buffers.aux_vec.as_ref().unwrap(),
-            ColumnType::Varchar,
+            ColumnTypeTag::Varchar.into_type(),
         ));
-        expected_buffs.push((string_buffers, ColumnType::Varchar));
+        expected_buffs.push((string_buffers, ColumnTypeTag::Varchar.into_type()));
 
         let symbol_buffs = create_col_data_buff_symbol(row_count, 10);
         columns.push(create_symbol_column(
@@ -1044,9 +1050,9 @@ mod tests {
             symbol_buffs.data_vec.as_ref(),
             symbol_buffs.sym_chars.as_ref().unwrap(),
             symbol_buffs.sym_offsets.as_ref().unwrap(),
-            ColumnType::Symbol,
+            ColumnTypeTag::Symbol.into_type(),
         ));
-        expected_buffs.push((symbol_buffs, ColumnType::Varchar));
+        expected_buffs.push((symbol_buffs, ColumnTypeTag::Varchar.into_type()));
 
         assert_columns(
             row_count,
@@ -1073,9 +1079,9 @@ mod tests {
             row_count,
             "bool_col",
             expected_bool_buff.data_vec.as_ref(),
-            ColumnType::Boolean,
+            ColumnTypeTag::Boolean.into_type(),
         ));
-        expected_buffs.push((expected_bool_buff, ColumnType::Boolean));
+        expected_buffs.push((expected_bool_buff, ColumnTypeTag::Boolean.into_type()));
 
         let expected_col_buff =
             create_col_data_buff::<i16, 2, _>(row_count, i16::MIN.to_le_bytes(), |short| {
@@ -1086,9 +1092,9 @@ mod tests {
             row_count,
             "bool_short",
             expected_col_buff.data_vec.as_ref(),
-            ColumnType::Short,
+            ColumnTypeTag::Short.into_type(),
         ));
-        expected_buffs.push((expected_col_buff, ColumnType::Short));
+        expected_buffs.push((expected_col_buff, ColumnTypeTag::Short.into_type()));
 
         let expected_bool_buff =
             create_col_data_buff::<i16, 2, _>(row_count, i16::MIN.to_le_bytes(), |short| {
@@ -1099,9 +1105,9 @@ mod tests {
             row_count,
             "bool_char",
             expected_bool_buff.data_vec.as_ref(),
-            ColumnType::Char,
+            ColumnTypeTag::Char.into_type(),
         ));
-        expected_buffs.push((expected_bool_buff, ColumnType::Char));
+        expected_buffs.push((expected_bool_buff, ColumnTypeTag::Char.into_type()));
 
         let expected_uuid_buff =
             create_col_data_buff::<i128, 16, _>(row_count, UUID_NULL, |uuid| uuid.to_le_bytes());
@@ -1110,9 +1116,9 @@ mod tests {
             row_count,
             "bool_char",
             expected_uuid_buff.data_vec.as_ref(),
-            ColumnType::Uuid,
+            ColumnTypeTag::Uuid.into_type(),
         ));
-        expected_buffs.push((expected_uuid_buff, ColumnType::Uuid));
+        expected_buffs.push((expected_uuid_buff, ColumnTypeTag::Uuid.into_type()));
 
         assert_columns(
             row_count,
@@ -1175,7 +1181,7 @@ mod tests {
                 if let Some(expected_aux_data) = expected_aux {
                     if col_row_count == 0 {
                         assert_eq!(&expected_aux_data[0..bufs.aux_size], bufs.aux_vec);
-                    } else if column_type == ColumnType::String {
+                    } else if column_type.tag() == ColumnTypeTag::String {
                         let mut expected_aux_data_slice = vec![];
                         let vec_i64_ref = unsafe {
                             std::slice::from_raw_parts(
@@ -1216,7 +1222,7 @@ mod tests {
             row_count,
             "int_col",
             expected_buff,
-            ColumnType::Int,
+            ColumnTypeTag::Int.into_type(),
         )];
 
         write_cols_to_parquet_file(row_group_size, data_page_size, version, columns)
@@ -1465,7 +1471,7 @@ mod tests {
         Column::from_raw_data(
             id,
             name,
-            col_type as i32,
+            col_type.code(),
             0,
             row_count,
             primary_data.as_ptr(),
@@ -1489,7 +1495,7 @@ mod tests {
         Column::from_raw_data(
             id,
             name,
-            col_type as i32,
+            col_type.code(),
             0,
             row_count,
             primary_data.as_ptr(),
@@ -1514,7 +1520,7 @@ mod tests {
         Column::from_raw_data(
             id,
             name,
-            col_type as i32,
+            col_type.code(),
             0,
             row_count,
             primary_data.as_ptr(),

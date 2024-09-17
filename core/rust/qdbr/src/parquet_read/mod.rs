@@ -1,4 +1,4 @@
-use crate::parquet_write::schema::ColumnType;
+use crate::parquet::col_type::ColumnType;
 use parquet2::metadata::FileMetaData;
 use std::fs::File;
 use std::mem::ManuallyDrop;
@@ -27,8 +27,7 @@ pub struct ParquetDecoder {
 #[repr(C)]
 #[derive(Debug)]
 pub struct ColumnMeta {
-    pub typ: ColumnType,
-    pub column_type: i32,
+    pub column_type: ColumnType,
     pub id: i32,
     pub name_size: i32,
     pub name_ptr: *const u16,

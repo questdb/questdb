@@ -1,7 +1,7 @@
+use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
 use crate::parquet::error::ParquetResult;
 use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
 use crate::parquet_read::{ColumnMeta, ParquetDecoder};
-use crate::parquet_write::schema::ColumnType;
 use parquet2::metadata::{Descriptor, FileMetaData};
 use parquet2::read::read_metadata;
 use parquet2::schema::types::PrimitiveLogicalType::{Timestamp, Uuid};
@@ -41,14 +41,13 @@ impl ParquetDecoder {
 
         for (column_id, f) in metadata.schema_descr.columns().iter().enumerate() {
             // Some types are not supported, this will skip them.
-            if let Some((data_type, column_type)) =
+            if let Some(column_type) =
                 Self::descriptor_to_column_type(&f.descriptor, qdb_meta.as_ref())
             {
                 let name_str = &f.descriptor.primitive_type.field_info.name;
                 let name: Vec<u16> = name_str.encode_utf16().collect();
 
                 columns.push(ColumnMeta {
-                    typ: data_type,
                     column_type,
                     id: column_id as i32,
                     name_size: name.len() as i32,
@@ -78,23 +77,22 @@ impl ParquetDecoder {
     fn extract_column_type_from_qdb_meta(
         qdb_meta: Option<&QdbMeta>,
         col_id: i32,
-    ) -> Option<(ColumnType, i32)> {
+    ) -> Option<ColumnType> {
         let col_meta = qdb_meta?.schema.columns.get(&col_id)?;
-        let col_type = ColumnType::try_from(col_meta.qdb_type_code).ok()?;
-        Some((col_type, col_meta.qdb_type_code))
+        Some(col_meta.qdb_type)
     }
 
     fn descriptor_to_column_type(
         des: &Descriptor,
         qdb_meta: Option<&QdbMeta>,
-    ) -> Option<(ColumnType, i32)> {
+    ) -> Option<ColumnType> {
         if let Some(col_id) = des.primitive_type.field_info.id {
-            if let Some(pair) = Self::extract_column_type_from_qdb_meta(qdb_meta, col_id) {
-                return Some(pair);
+            if let Some(col_type) = Self::extract_column_type_from_qdb_meta(qdb_meta, col_id) {
+                return Some(col_type);
             }
         }
 
-        let column_type = match (
+        let column_type_tag = match (
             des.primitive_type.physical_type,
             des.primitive_type.logical_type,
             des.primitive_type.converted_type,
@@ -107,7 +105,7 @@ impl ParquetDecoder {
                 })
                 | Some(Timestamp { unit: TimeUnit::Nanoseconds, is_adjusted_to_utc: _ }),
                 _,
-            ) => Some(ColumnType::Timestamp),
+            ) => Some(ColumnTypeTag::Timestamp),
             (
                 PhysicalType::Int64,
                 Some(Timestamp {
@@ -115,57 +113,56 @@ impl ParquetDecoder {
                     is_adjusted_to_utc: _,
                 }),
                 _,
-            ) => Some(ColumnType::Date),
-            (PhysicalType::Int64, None, _) => Some(ColumnType::Long),
+            ) => Some(ColumnTypeTag::Date),
+            (PhysicalType::Int64, None, _) => Some(ColumnTypeTag::Long),
             (PhysicalType::Int64, Some(PrimitiveLogicalType::Integer(IntegerType::Int64)), _) => {
-                Some(ColumnType::Long)
+                Some(ColumnTypeTag::Long)
             }
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int32)), _) => {
-                Some(ColumnType::Int)
+                Some(ColumnTypeTag::Int)
             }
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Decimal(_, _)), _)
             | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Decimal(_, _))) => {
-                Some(ColumnType::Double)
+                Some(ColumnTypeTag::Double)
             }
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int16)), _) => {
-                Some(ColumnType::Short)
+                Some(ColumnTypeTag::Short)
             }
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::UInt16)), _) => {
-                Some(ColumnType::Int)
+                Some(ColumnTypeTag::Int)
             }
             (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int16)) => {
-                Some(ColumnType::Short)
+                Some(ColumnTypeTag::Short)
             }
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Integer(IntegerType::Int8)), _)
             | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int8)) => {
-                Some(ColumnType::Byte)
+                Some(ColumnTypeTag::Byte)
             }
             (PhysicalType::Int32, Some(PrimitiveLogicalType::Date), _)
             | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Date)) => {
-                Some(ColumnType::Date)
+                Some(ColumnTypeTag::Date)
             }
             (PhysicalType::Int32, None, _)
             | (PhysicalType::Int32, _, Some(PrimitiveConvertedType::Int32)) => {
-                Some(ColumnType::Int)
+                Some(ColumnTypeTag::Int)
             }
-            (PhysicalType::Boolean, None, _) => Some(ColumnType::Boolean),
-            (PhysicalType::Double, None, _) => Some(ColumnType::Double),
-            (PhysicalType::Float, None, _) => Some(ColumnType::Float),
-            (PhysicalType::FixedLenByteArray(16), Some(Uuid), _) => Some(ColumnType::Uuid),
-            (PhysicalType::FixedLenByteArray(16), None, None) => Some(ColumnType::Long128),
+            (PhysicalType::Boolean, None, _) => Some(ColumnTypeTag::Boolean),
+            (PhysicalType::Double, None, _) => Some(ColumnTypeTag::Double),
+            (PhysicalType::Float, None, _) => Some(ColumnTypeTag::Float),
+            (PhysicalType::FixedLenByteArray(16), Some(Uuid), _) => Some(ColumnTypeTag::Uuid),
+            (PhysicalType::FixedLenByteArray(16), None, None) => Some(ColumnTypeTag::Long128),
             (PhysicalType::ByteArray, Some(PrimitiveLogicalType::String), _) => {
-                Some(ColumnType::Varchar)
+                Some(ColumnTypeTag::Varchar)
             }
-            (PhysicalType::FixedLenByteArray(32), None, _) => Some(ColumnType::Long256),
+            (PhysicalType::FixedLenByteArray(32), None, _) => Some(ColumnTypeTag::Long256),
             (PhysicalType::ByteArray, None, Some(PrimitiveConvertedType::Utf8)) => {
-                Some(ColumnType::Varchar)
+                Some(ColumnTypeTag::Varchar)
             }
-            (PhysicalType::ByteArray, None, _) => Some(ColumnType::Binary),
-            (PhysicalType::Int96, None, None) => Some(ColumnType::Timestamp),
+            (PhysicalType::ByteArray, None, _) => Some(ColumnTypeTag::Binary),
+            (PhysicalType::Int96, None, None) => Some(ColumnTypeTag::Timestamp),
             (_, _, _) => None,
         };
-
-        column_type.map(|ct| (ct, ct as i32))
+        column_type_tag.map(|tag| ColumnType::new(tag, 0))
     }
 }
 
@@ -177,13 +174,13 @@ mod tests {
     use std::path::Path;
     use std::ptr::null;
 
+    use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
     use crate::parquet_read::meta::ParquetDecoder;
     use crate::parquet_write::file::ParquetWriter;
+    use crate::parquet_write::schema::{Column, Partition};
     use arrow::datatypes::ToByteSlice;
     use bytes::Bytes;
     use tempfile::NamedTempFile;
-
-    use crate::parquet_write::schema::{Column, ColumnType, Partition};
 
     #[test]
     fn test_decode_column_type_fixed() {
@@ -192,26 +189,29 @@ mod tests {
         let mut buffers_columns = Vec::new();
         let mut columns = Vec::new();
 
-        let cols = vec![
-            (ColumnType::Long128, size_of::<i64>() * 2, "col_long128"),
-            (ColumnType::Long256, size_of::<i64>() * 4, "col_long256"),
-            (ColumnType::Timestamp, size_of::<i64>(), "col_ts"),
-            (ColumnType::Int, size_of::<i32>(), "col_int"),
-            (ColumnType::Long, size_of::<i64>(), "col_long"),
-            (ColumnType::Uuid, size_of::<i64>() * 2, "col_uuid"),
-            (ColumnType::Boolean, size_of::<bool>(), "col_bool"),
-            (ColumnType::Date, size_of::<i64>(), "col_date"),
-            (ColumnType::Byte, size_of::<u8>(), "col_byte"),
-            (ColumnType::Short, size_of::<i16>(), "col_short"),
-            (ColumnType::Double, size_of::<f64>(), "col_double"),
-            (ColumnType::Float, size_of::<f32>(), "col_float"),
-            (ColumnType::GeoInt, size_of::<f32>(), "col_geo_int"),
-            (ColumnType::GeoShort, size_of::<u16>(), "col_geo_short"),
-            (ColumnType::GeoByte, size_of::<u8>(), "col_geo_byte"),
-            (ColumnType::GeoLong, size_of::<i64>(), "col_geo_long"),
-            (ColumnType::IPv4, size_of::<i32>(), "col_geo_ipv4"),
-            (ColumnType::Char, size_of::<u16>(), "col_char"),
-        ];
+        let cols: Vec<_> = ([
+            (ColumnTypeTag::Long128, size_of::<i64>() * 2, "col_long128"),
+            (ColumnTypeTag::Long256, size_of::<i64>() * 4, "col_long256"),
+            (ColumnTypeTag::Timestamp, size_of::<i64>(), "col_ts"),
+            (ColumnTypeTag::Int, size_of::<i32>(), "col_int"),
+            (ColumnTypeTag::Long, size_of::<i64>(), "col_long"),
+            (ColumnTypeTag::Uuid, size_of::<i64>() * 2, "col_uuid"),
+            (ColumnTypeTag::Boolean, size_of::<bool>(), "col_bool"),
+            (ColumnTypeTag::Date, size_of::<i64>(), "col_date"),
+            (ColumnTypeTag::Byte, size_of::<u8>(), "col_byte"),
+            (ColumnTypeTag::Short, size_of::<i16>(), "col_short"),
+            (ColumnTypeTag::Double, size_of::<f64>(), "col_double"),
+            (ColumnTypeTag::Float, size_of::<f32>(), "col_float"),
+            (ColumnTypeTag::GeoInt, size_of::<f32>(), "col_geo_int"),
+            (ColumnTypeTag::GeoShort, size_of::<u16>(), "col_geo_short"),
+            (ColumnTypeTag::GeoByte, size_of::<u8>(), "col_geo_byte"),
+            (ColumnTypeTag::GeoLong, size_of::<i64>(), "col_geo_long"),
+            (ColumnTypeTag::IPv4, size_of::<i32>(), "col_geo_ipv4"),
+            (ColumnTypeTag::Char, size_of::<u16>(), "col_char"),
+        ])
+        .iter()
+        .map(|(tag, value_size, name)| (ColumnType::new(*tag, 0), *value_size, *name))
+        .collect();
 
         for (col_id, (col_type, value_size, name)) in cols.iter().enumerate() {
             let (buff, column) =
@@ -245,7 +245,7 @@ mod tests {
 
         for (i, col) in meta.columns.iter().enumerate() {
             let (col_type, _, name) = cols[i];
-            assert_eq!(col.typ, col_type);
+            assert_eq!(col.column_type, col_type);
             let actual_name: String = String::from_utf16(&col.name_vec).unwrap();
             assert_eq!(actual_name, name);
         }

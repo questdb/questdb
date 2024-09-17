@@ -6,8 +6,8 @@ use std::slice;
 use jni::objects::JClass;
 use jni::JNIEnv;
 
+use crate::parquet::col_type::ColumnType;
 use crate::parquet_read::{ColumnChunkBuffers, ColumnMeta, ParquetDecoder, RowGroupBuffers};
-use crate::parquet_write::schema::ColumnType;
 
 fn from_raw_file_descriptor(raw: i32) -> File {
     unsafe {
@@ -58,7 +58,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _class: JClass,
     decoder: *mut ParquetDecoder,
     row_group_bufs: *mut RowGroupBuffers,
-    to_column_types: *const i32,
+    to_column_types: *const i32, //
     row_group_index: i32,
 ) -> usize {
     assert!(!decoder.is_null(), "decoder pointer is null");
@@ -96,7 +96,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
         if to_column_type < 0 {
             continue; // skip this column
         }
-        let column_type = decoder.columns[column_idx].typ;
+        let column_type = decoder.columns[column_idx].column_type;
         if !matches!(ColumnType::try_from(to_column_type), Ok(v) if v == column_type) {
             return throw_java_ex(
                 &mut env,

@@ -41,9 +41,6 @@ public interface SymbolMapReader extends StaticSymbolTable {
     // Mapped memory to the .c file
     MemoryR getSymbolValuesColumn();
 
-    // Mapped memory to the .k file
-    // todo: MemoryR getSymbolKeysColumn();
-
     /**
      * @return true if symbol table is cached, otherwise false.
      */

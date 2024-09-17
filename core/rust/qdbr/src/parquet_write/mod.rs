@@ -118,8 +118,9 @@ impl AsPrimitive<i32> for IPv4 {
 
 #[cfg(test)]
 mod tests {
+    use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
     use crate::parquet_write::file::ParquetWriter;
-    use crate::parquet_write::schema::{Column, ColumnType, Partition};
+    use crate::parquet_write::schema::{Column, Partition};
     use arrow::array::Array;
     use arrow::datatypes::ToByteSlice;
     use bytes::Bytes;
@@ -155,7 +156,7 @@ mod tests {
                 Column::from_raw_data(
                     i as i32,
                     name,
-                    ColumnType::Int.code(),
+                    ColumnTypeTag::Int.into_type().code(),
                     0,
                     row_count as usize,
                     buffer.as_ptr() as *const u8,
@@ -258,7 +259,10 @@ mod tests {
         col_chars: Vec<u8>,
         offsets: Vec<u64>,
     ) {
-        assert_eq!(ColumnType::Symbol, ColumnType::try_from(12).expect("fail"));
+        assert_eq!(
+            ColumnTypeTag::Symbol,
+            ColumnType::try_from(12).expect("fail").tag()
+        );
         let col1_w = Column::from_raw_data(
             0,
             "col1",

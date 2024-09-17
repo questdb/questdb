@@ -35,10 +35,9 @@ mod tests {
     use std::ptr::null;
 
     use crate::parquet_write::file::{create_row_group, ParquetWriter, WriteOptions};
-    use crate::parquet_write::schema::{
-        to_encodings, to_parquet_schema, Column, ColumnType, Partition,
-    };
+    use crate::parquet_write::schema::{to_encodings, to_parquet_schema, Column, Partition};
 
+    use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
     use arrow::datatypes::ToByteSlice;
     use num_traits::float::FloatCore;
     use parquet2::read::read_metadata_with_size;
@@ -77,8 +76,8 @@ mod tests {
         let col2 = [0.5f32, 0.001, f32::nan(), 3.15];
         let _expected2 = [Some(0.5f32), Some(0.001), None, Some(3.15)];
 
-        let col1_w = make_column("col1", ColumnType::Int, &col1);
-        let col2_w = make_column("col2", ColumnType::Float, &col2);
+        let col1_w = make_column("col1", ColumnTypeTag::Int.into_type(), &col1);
+        let col2_w = make_column("col2", ColumnTypeTag::Float.into_type(), &col2);
 
         let partition = Partition {
             table: "test_table".to_string(),
@@ -94,8 +93,8 @@ mod tests {
         let col2_extra = [f32::nan(), 3.13, std::f32::consts::PI];
         let extra_expected2 = [None, Some(3.13), Some(std::f32::consts::PI)];
 
-        let col1_extra_w = make_column("col1", ColumnType::Int, &col1_extra);
-        let col2_extra_w = make_column("col2", ColumnType::Float, &col2_extra);
+        let col1_extra_w = make_column("col1", ColumnTypeTag::Int.into_type(), &col1_extra);
+        let col2_extra_w = make_column("col2", ColumnTypeTag::Float.into_type(), &col2_extra);
 
         let new_partition = Partition {
             table: "test_table".to_string(),
