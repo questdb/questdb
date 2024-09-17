@@ -380,7 +380,7 @@ public class SymbolCacheTest extends AbstractCairoTest {
                 long mem = Unsafe.malloc(DBCS_MAX_SIZE, MemoryTag.NATIVE_DEFAULT);
                 TableToken tableToken = engine.verifyTableName(tableName);
                 try (
-                        TableWriter writer = TestUtils.newOffPoolWriter(configuration, tableToken, metrics);
+                        TableWriter writer = TestUtils.newOffPoolWriter(configuration, tableToken, metrics, engine);
                         TxReader txReader = new TxReader(ff).ofRO(
                                 path.of(configuration.getRoot()).concat(tableToken).concat(TXN_FILE_NAME).$(),
                                 PartitionBy.DAY

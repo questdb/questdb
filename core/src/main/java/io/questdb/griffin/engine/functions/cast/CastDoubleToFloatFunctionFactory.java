@@ -41,11 +41,11 @@ public class CastDoubleToFloatFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0));
+        return new CastDoubleToFloatFunction(args.getQuick(0));
     }
 
-    private static class Func extends AbstractCastToFloatFunction {
-        public Func(Function arg) {
+    public static class CastDoubleToFloatFunction extends AbstractCastToFloatFunction {
+        public CastDoubleToFloatFunction(Function arg) {
             super(arg);
         }
 

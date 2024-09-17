@@ -22,45 +22,25 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.table;
+package io.questdb.griffin.engine.functions.finance;
 
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.jit.CompiledFilter;
-import io.questdb.std.ObjList;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
+import io.questdb.std.Numbers;
 
-public interface StealableFilterRecordCursorFactory {
+public class FinanceUtils {
 
-    // to be used in combination with compiled filter
-    @Nullable
-    default ObjList<Function> getBindVarFunctions() {
-        return null;
+    public static double mid(double bid, double ask) {
+        if (Numbers.isNull(bid) || Numbers.isNull(ask)) {
+            return Double.NaN;
+        }
+        return ((ask + bid) / 2.0);
     }
 
-    // to be used in combination with compiled filter
-    @Nullable
-    default MemoryCARW getBindVarMemory() {
-        return null;
+    public static double spread(double bid, double ask) {
+        if (Numbers.isNull(bid) || Numbers.isNull(ask)) {
+            return Double.NaN;
+        } else {
+            return (ask - bid);
+        }
     }
 
-    @Nullable
-    default CompiledFilter getCompiledFilter() {
-        return null;
-    }
-
-    @NotNull
-    Function getFilter();
-
-    /**
-     * Closes everything but base factory and filter.
-     */
-    void halfClose();
-
-    /**
-     * Returns true if the factory stands for nothing more but a filter, so that
-     * the above factory (e.g. a parallel GROUP BY one) can steal the filter.
-     */
-    boolean supportsFilterStealing();
 }

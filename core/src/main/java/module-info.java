@@ -22,8 +22,6 @@
  *
  ******************************************************************************/
 
-import io.questdb.griffin.FunctionFactory;
-
 open module io.questdb {
     requires transitive jdk.unsupported;
     requires static org.jetbrains.annotations;
@@ -121,13 +119,14 @@ open module io.questdb {
     exports io.questdb.std.filewatch;
     exports io.questdb.griffin.engine.table.parquet;
 
-    provides FunctionFactory with
+    provides io.questdb.griffin.FunctionFactory with
 
             // finance
             io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory,
             io.questdb.griffin.engine.functions.finance.SpreadFunctionFactory,
             io.questdb.griffin.engine.functions.finance.MidPriceFunctionFactory,
             io.questdb.griffin.engine.functions.finance.WeightedMidPriceFunctionFactory,
+            io.questdb.griffin.engine.functions.finance.SpreadBpsFunctionFactory,
 
 
             // query activity functions
@@ -277,6 +276,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.regex.MatchCharFunctionFactory,
             io.questdb.griffin.engine.functions.regex.MatchVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.regex.MatchSymbolFunctionFactory,
+//                    comparison
+            io.questdb.griffin.engine.functions.math.GreatestNumericFunctionFactory,
+            io.questdb.griffin.engine.functions.math.LeastNumericFunctionFactory,
 //                    like
             io.questdb.griffin.engine.functions.regex.LikeStrFunctionFactory,
             io.questdb.griffin.engine.functions.regex.LikeVarcharFunctionFactory,
@@ -329,6 +331,10 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.date.TimestampFloorOffsetFunctionFactory,
             io.questdb.griffin.engine.functions.date.TimestampCeilFunctionFactory,
             io.questdb.griffin.engine.functions.date.DateTruncFunctionFactory,
+            io.questdb.griffin.engine.functions.date.TodayFunctionFactory,
+            io.questdb.griffin.engine.functions.date.TomorrowFunctionFactory,
+            io.questdb.griffin.engine.functions.date.YesterdayFunctionFactory,
+
             io.questdb.griffin.engine.functions.rnd.RndByteCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndBinCCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory,
@@ -840,7 +846,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.catalogue.PgRangeFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PgGetKeywordsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetKeywordsFunctionFactory,
-            io.questdb.griffin.engine.functions.catalogue.ShowTablesFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.TablesFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.KeywordsFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.FunctionListFunctionFactory,
             io.questdb.griffin.engine.functions.catalogue.WalTableListFunctionFactory,
@@ -902,7 +908,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.groupby.CorrGroupByFunctionFactory,
 //                  ^
             io.questdb.griffin.engine.functions.math.PowDoubleFunctionFactory,
-            io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory,
+            io.questdb.griffin.engine.functions.catalogue.AllTablesFunctionFactory,
             io.questdb.griffin.engine.functions.table.TableColumnsFunctionFactory,
             io.questdb.griffin.engine.functions.table.TablePartitionsFunctionFactory,
             io.questdb.griffin.engine.functions.table.TableStorageFunctionFactory,
@@ -913,6 +919,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.table.MemoryMetricsFunctionFactory,
             io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory,
             io.questdb.griffin.engine.functions.table.ParquetScanFunctionFactory,
+            io.questdb.griffin.engine.functions.table.HydrateTableMetadataFunctionFactory,
             io.questdb.griffin.engine.functions.table.WaitWalTableFunctionFactory,
 
             // strpos

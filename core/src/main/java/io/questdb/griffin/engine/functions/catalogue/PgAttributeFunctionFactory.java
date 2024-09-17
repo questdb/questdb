@@ -27,20 +27,29 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.std.*;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
 
 import static io.questdb.cutlass.pgwire.PGOids.PG_TYPE_TO_SIZE_MAP;
 
 public class PgAttributeFunctionFactory implements FunctionFactory {
+
+    public static final int N_ATTRELID_COL = 0;
+    public static final int N_ATTNAME_COL = N_ATTRELID_COL + 1;
+    private static final int N_ATTNUM_COL = N_ATTNAME_COL + 1;
+    private static final int N_ATTTYPID_COL = N_ATTNUM_COL + 1;
+    private static final int N_ATTNOTNULL_COL = N_ATTTYPID_COL + 1;
+    private static final int N_ATTTYPMOD_COL = N_ATTNOTNULL_COL + 1;
+    private static final int N_ATTLEN_COL = N_ATTTYPMOD_COL + 1;
+    private static final int N_ATTIDENTITY_COL = N_ATTLEN_COL + 1;
+    private static final int N_ATTISDROPPED_COL = N_ATTIDENTITY_COL + 1;
+    private static final int N_ATTHASDEF_COL = N_ATTISDROPPED_COL + 1;
 
     private static final RecordMetadata METADATA;
     private static final String SIGNATURE = "pg_attribute()";
@@ -65,7 +74,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
     ) {
         return new CursorFunction(
                 new AttributeCatalogueCursorFactory(
-                        configuration,
+                        sqlExecutionContext.getCairoEngine(),
                         METADATA
                 )
         ) {
@@ -79,12 +88,10 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
     private static class AttributeCatalogueCursorFactory extends AbstractRecordCursorFactory {
 
         private final AttributeClassCatalogueCursor cursor;
-        private final MemoryMR metaMem = Vm.getCMRInstance();
-        private final Path path = new Path();
 
-        public AttributeCatalogueCursorFactory(CairoConfiguration configuration, RecordMetadata metadata) {
+        public AttributeCatalogueCursorFactory(CairoEngine engine, RecordMetadata metadata) {
             super(metadata);
-            this.cursor = new AttributeClassCatalogueCursor(configuration, path, metaMem);
+            this.cursor = new AttributeClassCatalogueCursor(engine);
         }
 
         @Override
@@ -103,59 +110,68 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
             sink.type(SIGNATURE);
         }
 
-        @Override
-        protected void _close() {
-            Misc.free(path);
-            Misc.free(metaMem);
-        }
     }
 
     private static class AttributeClassCatalogueCursor implements NoRandomAccessRecordCursor {
-        private final DiskReadingRecord diskReadingRecord = new DiskReadingRecord();
-        private final FilesFacade ff;
-        private final MemoryMR metaMem;
-        private final Path path;
-        private final int plimit;
+        private final PgAttributeRecord record = new PgAttributeRecord();
+        private final ObjHashSet<TableToken> tableTokenSet;
+        CairoEngine engine;
         private int columnCount;
         private int columnIndex = 0;
-        private long findFileStruct = 0;
-        private boolean foundMetadataFile = false;
-        private boolean hasNextFile = true;
-        private boolean readNextFileFromDisk = true;
+        private CairoTable nextTable;
+        private int pos = -1;
         private int tableId = 1000;
+        private ObjList<TableToken> tableTokens;
 
-        public AttributeClassCatalogueCursor(CairoConfiguration configuration, Path path, MemoryMR metaMem) {
-            this.ff = configuration.getFilesFacade();
-            this.path = path;
-            this.path.of(configuration.getRoot()).$();
-            this.plimit = path.size();
-            this.metaMem = metaMem;
+        public AttributeClassCatalogueCursor(CairoEngine engine) {
+            this.engine = engine;
+            tableTokenSet = new ObjHashSet<>(engine.getTableTokenCount(false));
         }
 
         @Override
         public void close() {
-            findFileStruct = ff.findClose(findFileStruct);
-            metaMem.close();
+
         }
 
         @Override
         public Record getRecord() {
-            return diskReadingRecord;
+            return record;
         }
+
 
         @Override
         public boolean hasNext() {
-            if (findFileStruct == 0) {
-                findFileStruct = ff.findFirst(path.trimTo(plimit).$());
-                if (findFileStruct > 0) {
-                    return next0();
-                }
-
-                findFileStruct = 0;
-                return false;
+            if (columnIndex == columnCount) {
+                nextTable = null;
+                columnIndex = 0;
             }
 
-            return next0();
+            if (nextTable == null) {
+                if (pos < tableTokens.size() - 1) {
+                    do {
+                        pos++;
+                        nextTable = engine.metadataCacheGetTable(tableTokens.getQuiet(pos));
+                    } while (nextTable == null);
+                    columnCount = (int) nextTable.getColumnCount();
+                    tableId = nextTable.getId();
+                }
+            }
+
+            if (nextTable != null) {
+                if (columnIndex < columnCount) {
+                    final CairoColumn nextColumn = nextTable.columns.getQuick(columnIndex);
+                    final int type = PGOids.getTypeOid(nextColumn.getType());
+                    record.intValues[N_ATTTYPID_COL] = type;
+                    record.name = nextColumn.getName();
+                    record.shortValues[N_ATTNUM_COL] = (short) (columnIndex + 1);
+                    record.shortValues[N_ATTLEN_COL] = (short) PG_TYPE_TO_SIZE_MAP.get(type);
+                    record.intValues[N_ATTRELID_COL] = tableId;
+                    columnIndex++;
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         @Override
@@ -165,67 +181,22 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
         @Override
         public void toTop() {
-            findFileStruct = ff.findClose(findFileStruct);
+            engine.getTableTokens(tableTokenSet, false);
+            tableTokens = tableTokenSet.getList();
+            pos = -1;
+            nextTable = null;
+            columnCount = 0;
+            columnIndex = 0;
         }
 
-        private boolean next0() {
-            do {
-                if (readNextFileFromDisk) {
-                    foundMetadataFile = false;
-                    final long pUtf8NameZ = ff.findName(findFileStruct);
-                    if (hasNextFile) {
-                        if (ff.isDirOrSoftLinkDirNoDots(path, plimit, pUtf8NameZ, ff.findType(findFileStruct))) {
-                            if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
-                                foundMetadataFile = true;
-                                metaMem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
-                                columnCount = metaMem.getInt(TableUtils.META_OFFSET_COUNT);
-                                tableId = metaMem.getInt(TableUtils.META_OFFSET_TABLE_ID);
-                            }
-                        }
-                        hasNextFile = ff.findNext(findFileStruct) > 0;
-                    }
-                }
-
-                if (foundMetadataFile) {
-                    long offset = TableUtils.getColumnNameOffset(columnCount);
-                    for (int i = 0; i < columnCount; i++) {
-                        CharSequence name = metaMem.getStrA(offset);
-                        if (columnIndex == i) {
-                            int type = PGOids.getTypeOid(TableUtils.getColumnType(metaMem, i));
-                            diskReadingRecord.intValues[3] = type;
-                            diskReadingRecord.name = name;
-                            diskReadingRecord.shortValues[2] = (short) (i + 1);
-                            diskReadingRecord.shortValues[6] = (short) PG_TYPE_TO_SIZE_MAP.get(type);
-                            diskReadingRecord.intValues[0] = tableId;
-                            columnIndex++;
-                            if (columnIndex == columnCount) {
-                                readNextFileFromDisk = true;
-                                columnIndex = 0;
-                            } else {
-                                readNextFileFromDisk = false;
-                            }
-                            return true;
-                        }
-                        offset += Vm.getStorageLength(name);
-                    }
-                }
-            } while (hasNextFile);
-
-            findFileStruct = ff.findClose(findFileStruct);
-            hasNextFile = true;
-            foundMetadataFile = false;
-            return false;
-        }
-
-        static class DiskReadingRecord implements Record {
+        static class PgAttributeRecord implements Record {
             public final int[] intValues = new int[9];
             public final short[] shortValues = new short[9];
-            private final StringSink strBSink = new StringSink();
             public CharSequence name = null;
 
             @Override
             public boolean getBool(int col) {
-                return col == 9;
+                return col == N_ATTHASDEF_COL;
             }
 
             @Override
@@ -252,12 +223,7 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
 
             @Override
             public CharSequence getStrB(int col) {
-                if (name != null) {
-                    strBSink.clear();
-                    strBSink.put(name);
-                    return strBSink;
-                }
-                return null;
+                return getStrA(col);
             }
 
             @Override

@@ -310,6 +310,10 @@ public class ObjList<T> implements Mutable, Sinkable, ReadOnlyObjList<T> {
         Arrays.sort(buffer, from, to, cmp);
     }
 
+    public T[] toArray() {
+        return (T[]) Arrays.stream(buffer).limit(pos).toArray();
+    }
+
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         toSink(sink, 0, size());

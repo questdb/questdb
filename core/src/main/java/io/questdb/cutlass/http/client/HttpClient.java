@@ -452,6 +452,10 @@ public abstract class HttpClient implements QuietCloseable {
             return this;
         }
 
+        public void trimContentToLen(int contentLen) {
+            ptr = contentStart + contentLen;
+        }
+
         public Request url(CharSequence url) {
             assert state == STATE_URL;
             state = STATE_URL_DONE;
