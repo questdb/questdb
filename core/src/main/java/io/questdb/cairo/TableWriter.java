@@ -44,6 +44,7 @@ import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.engine.table.parquet.MappedMemoryPartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
@@ -1258,8 +1259,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 path.trimTo(partitionLen);
                 path.put(".parquet");
-                LOG.info().$("writing parquet [path=").$substr(pathRootSize, path).I$();
-                PartitionEncoder.encode(partitionDescriptor, path);
+
+                final CairoConfiguration config = this.getConfiguration();
+                final int compressionCodec = config.getPartitionEncoderCompressionCodec();
+                final int compressionLevel = config.getPartitionEncoderCompressionLevel();
+                final int rowGroupSize = config.getPartitionEncoderRowGroupSize();
+                final int dataPageSize = config.getPartitionEncoderDataPageSize();
+                final boolean statisticsEnabled = config.isPartitionEncoderStatisticsEnabled();
+                final int parquetVersion = config.getPartitionEncoderVersion();
+
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                        statisticsEnabled,
+                        rowGroupSize,
+                        dataPageSize,
+                        parquetVersion
+
+                );
                 parquetFileLength = ff.length(path.$());
             }
         } finally {
