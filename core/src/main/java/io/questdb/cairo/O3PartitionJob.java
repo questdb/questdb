@@ -1166,7 +1166,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long mergeRangeLo,
             long mergeRangeHi,
             TableRecordMetadata tableWriterMetadata,
-            long srcOooBatchRowSize,
+            long srcOooBatchRowSize
     ) {
 
         long timestampChunkPtr = file.decodeColumnChunk(rowGroup, timestampIndex, timestampColumnType);
