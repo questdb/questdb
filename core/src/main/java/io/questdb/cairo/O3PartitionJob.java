@@ -88,26 +88,29 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long partitionParquetFileSize = tableWriter.getPartitionParquetFileSize(partitionIndex);
 
         CairoConfiguration cairoConfiguration = tableWriter.getConfiguration();
-        try (PartitionDecoder file = new PartitionDecoder(tableWriter.getFilesFacade());
-             PartitionUpdater partitionUpdater = new PartitionUpdater();
+        FilesFacade ff = tableWriter.getFilesFacade();
+        try (PartitionDecoder partitionDecoder = new PartitionDecoder(ff);
+             PartitionUpdater partitionUpdater = new PartitionUpdater(ff);
              PartitionDescriptor partitionDescriptor = new BorrowedMemoryPartitionDescriptor()) {
 
-            file.of(path.$());
+            partitionDecoder.of(path.$());
 
-            final int rowGroupCount = file.getMetadata().rowGroupCount();
+            final int rowGroupCount = partitionDecoder.getMetadata().rowGroupCount();
             final int timestampIndex = tableWriterMetadata.getTimestampIndex();
             final int timestampColumnType = tableWriterMetadata.getColumnType(timestampIndex);
             assert ColumnType.isTimestamp(timestampColumnType);
 
-            // for API completeness, we'll use the same configuration as the initial partition file.
+            // for API completeness, we'll use the same configuration as the initial partition partitionDecoder.
             final int compressionCodec = cairoConfiguration.getPartitionEncoderCompressionCodec();
             final int compressionLevel = cairoConfiguration.getPartitionEncoderCompressionLevel();
             final int rowGroupSize = cairoConfiguration.getPartitionEncoderRowGroupSize();
             final int dataPageSize = cairoConfiguration.getPartitionEncoderDataPageSize();
             final boolean statisticsEnabled = cairoConfiguration.isPartitionEncoderStatisticsEnabled();
 
-            // partitionUpdater is the owner of the file descriptor
+            // partitionUpdater is the owner of the partitionDecoder descriptor
+            final long opts = cairoConfiguration.getWriterFileOpenOpts();
             partitionUpdater.of(path.$(),
+                    opts,
                     partitionParquetFileSize,
                     timestampIndex,
                     ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
@@ -120,7 +123,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // Each of these intervals is merged into the previous row group (rowGroupN-1).
             long mergeRangeLo = srcOooLo;
             for (int rowGroup = 1; rowGroup < rowGroupCount; rowGroup++) {
-                final long min = file.getColumnChunkMinTimestamp(rowGroup, timestampIndex);
+                final long min = partitionDecoder.getColumnChunkMinTimestamp(rowGroup, timestampIndex);
                 final long mergeRangeHi = Vect.boundedBinarySearchIndexT(
                         sortedTimestampsAddr,
                         min,
@@ -139,7 +142,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         oooColumns,
                         sortedTimestampsAddr,
                         tableWriter,
-                        file,
+                        partitionDecoder,
                         rowGroup - 1,
                         timestampIndex,
                         timestampColumnType,
@@ -161,7 +164,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         oooColumns,
                         sortedTimestampsAddr,
                         tableWriter,
-                        file,
+                        partitionDecoder,
                         rowGroupCount - 1,
                         timestampIndex,
                         timestampColumnType,
@@ -176,7 +179,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     .$(", e=").$(e)
                     .I$();
             // the file is re-opened here because PartitionUpdater owns the file descriptor.
-            FilesFacade ff = tableWriter.getFilesFacade();
             final long fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
             // truncate partition file to the previous uncorrupted size
             if (!ff.truncate(fd, partitionParquetFileSize)) {

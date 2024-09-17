@@ -25,15 +25,21 @@
 package io.questdb.griffin.engine.table.parquet;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.std.Files;
-import io.questdb.std.Os;
-import io.questdb.std.QuietCloseable;
-import io.questdb.std.Transient;
+import io.questdb.cairo.TableUtils;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.std.*;
 import io.questdb.std.str.LPSZ;
 
 public class PartitionUpdater implements QuietCloseable {
+    private static final Log LOG = LogFactory.getLog(PartitionUpdater.class);
     private long fd;
     private long ptr;
+    private final FilesFacade ff;
+
+    public PartitionUpdater(FilesFacade ff) {
+        this.ff = ff;
+    }
 
     // Currently unused; will be used for optimisation in the future.
     public void appendRowGroup(PartitionDescriptor descriptor) {
@@ -75,6 +81,7 @@ public class PartitionUpdater implements QuietCloseable {
 
     public void of(
             @Transient LPSZ srcPath,
+            long fileOpenOpts,
             long fileSize,
             int timestampIndex,
             long compressionCodec,
@@ -83,7 +90,7 @@ public class PartitionUpdater implements QuietCloseable {
             long dataPageSize
     ) {
         destroy();
-        this.fd = Files.openRW(srcPath);
+        this.fd = TableUtils.openRW(ff, srcPath, LOG, fileOpenOpts);
         try {
             ptr = create(
                     Files.detach(fd),
