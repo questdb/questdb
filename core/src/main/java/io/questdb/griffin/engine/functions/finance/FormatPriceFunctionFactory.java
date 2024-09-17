@@ -88,7 +88,7 @@ public class FormatPriceFunctionFactory implements FunctionFactory  {
         }
 
         public static String formatPrice(double decimalPrice, int tickSize) {
-            if(Numbers.isNull(decimalPrice) || tickSize <= 0) {
+            if (Numbers.isNull(decimalPrice) || tickSize <= 0) {
                 return "NULL";
             }
             int wholePart = (int) decimalPrice;
