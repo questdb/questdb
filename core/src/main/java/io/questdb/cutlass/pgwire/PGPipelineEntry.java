@@ -283,7 +283,7 @@ public class PGPipelineEntry implements QuietCloseable {
             if (formatCodeCount == 1) {
                 // same format applies to all parameters
                 msgBindMergeParameterTypesAndFormatCodesOneForAll(lo, msgLimit);
-            } else if (msgParseParameterTypes.size() > 0) {
+            } else if (outTypeDescriptionTypes.size() > 0) {
                 //client doesn't need to specify types in Parse message and can use those returned in ParameterDescription
                 msgBindMergeParameterTypesAndFormatCodes(lo, msgLimit, formatCodeCount);
             }

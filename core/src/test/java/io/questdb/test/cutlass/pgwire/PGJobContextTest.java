@@ -8351,7 +8351,6 @@ create table tab as (
     loop.run_until_complete(run())
      */
     @Test//bind variables make sense in extended mode only
-    @Ignore("TODO PGWire 2.0")
     public void testSelectBindVarsInSelectAndWhereAsyncPG() throws Exception {
         skipOnWalRun(); // non-partitioned table
 
