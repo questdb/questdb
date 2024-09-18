@@ -29,7 +29,7 @@ fn basic() -> Result<(), Error> {
             },
             None,
         );
-        writer.end(vec![])?;
+        writer.end(None)?;
         let (_, mut metadata) = writer.into_inner_and_metadata();
 
         // once done, we write their relative paths:

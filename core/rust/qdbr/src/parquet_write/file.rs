@@ -215,7 +215,7 @@ impl<W: Write> ChunkedWriter<W> {
 
     /// Write the footer of the parquet file. Returns the total size of the file.
     pub fn finish(&mut self, additional_meta: Vec<KeyValue>) -> ParquetResult<u64> {
-        let size = self.writer.end(additional_meta)?;
+        let size = self.writer.end(Some(additional_meta))?;
         Ok(size)
     }
 }

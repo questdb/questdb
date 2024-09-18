@@ -182,7 +182,7 @@ impl<W: Write> FileWriter<W> {
 
     /// Writes the footer of the parquet file. Returns the total size of the file and the
     /// underlying writer.
-    pub fn end(&mut self, additional_meta: Vec<KeyValue>) -> Result<u64> {
+    pub fn end(&mut self, additional_meta: Option<Vec<KeyValue>>) -> Result<u64> {
         if self.offset == 0 {
             self.start()?;
         }

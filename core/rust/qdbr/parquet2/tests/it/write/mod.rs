@@ -94,7 +94,7 @@ fn test_column(column: &str, compression: CompressionOptions) -> Result<()> {
     let mut writer = FileWriter::new(writer, schema, options, None);
 
     writer.write(DynIter::new(columns))?;
-    writer.end(vec![])?;
+    writer.end(None)?;
 
     let data = writer.into_inner().into_inner();
 
@@ -217,7 +217,7 @@ fn basic() -> Result<()> {
     let mut writer = FileWriter::new(writer, schema, options, None);
 
     writer.write(DynIter::new(columns))?;
-    writer.end(vec![])?;
+    writer.end(None)?;
 
     let data = writer.into_inner().into_inner();
     let mut reader = Cursor::new(data);
