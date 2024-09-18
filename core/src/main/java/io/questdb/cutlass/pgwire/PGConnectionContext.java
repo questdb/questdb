@@ -61,7 +61,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     public static final String TAG_COMMIT = "COMMIT";
     public static final String TAG_CREATE_ROLE = "CREATE ROLE";
     // create as select tag
-    public static final String TAG_CTAS = "CTAS";
     public static final String TAG_DEALLOCATE = "DEALLOCATE";
     public static final String TAG_EXPLAIN = "EXPLAIN";
     public static final String TAG_INSERT = "INSERT";
@@ -88,7 +87,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     static final byte MESSAGE_TYPE_PORTAL_SUSPENDED = 's';
     static final byte MESSAGE_TYPE_ROW_DESCRIPTION = 'T';
     static final int NO_TRANSACTION = 0;
-    private static final int COMMIT_TRANSACTION = 2;
     private static final Log LOG = LogFactory.getLog(PGConnectionContext.class);
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
     private static final byte MESSAGE_TYPE_SSL_SUPPORTED_RESPONSE = 'S';
@@ -366,7 +364,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                             shiftReceiveBuffer(recvBufferReadOffset);
                         }
                     }
-
                     recv();
                 }
 
@@ -633,11 +630,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (portalName != null) {
             PGPipelineEntry pe = namedPortals.get(portalName);
             if (pe == null) {
-                if (pipelineCurrentEntry == null) {
-                    pipelineCurrentEntry = new PGPipelineEntry(engine);
-                }
-                pipelineCurrentEntry.getErrorMessageSink().put(" portal does not exist [name=").put(portalName).put(']');
-                throw BadProtocolException.INSTANCE;
+                throw msgKaput()
+                        .put(" portal does not exist [name=").put(portalName).put(']');
             }
 
             replaceCurrentPipelineEntry(pe);
@@ -650,12 +644,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (statementName != null) {
             PGPipelineEntry pe = namedStatements.get(statementName);
             if (pe == null) {
-                // we cannot continue if the prepared statement name is invalid
-                if (pipelineCurrentEntry == null) {
-                    pipelineCurrentEntry = new PGPipelineEntry(engine);
-                }
-                pipelineCurrentEntry.getErrorMessageSink().put("statement or portal does not exist [name=").put(statementName).put(']');
-                throw BadProtocolException.INSTANCE;
+                throw msgKaput()
+                        .put("statement or portal does not exist [name=").put(statementName).put(']');
             }
 
             replaceCurrentPipelineEntry(pe);
@@ -694,9 +684,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // Past this point the pipeline entry must not be null.
         // If it is - this means back-to-back "bind" messages were received with no prepared statement name.
         if (pipelineCurrentEntry == null) {
-            pipelineCurrentEntry = new PGPipelineEntry(engine);
-            pipelineCurrentEntry.getErrorMessageSink().put("spurious bind message");
-            throw BadProtocolException.INSTANCE;
+            throw msgKaput().put("spurious bind message");
         }
 
         pipelineCurrentEntry.setStateBind(true);
@@ -745,12 +733,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     pipelineCurrentEntry.setPortal(true, (String) portalName);
                     namedPortals.putAt(index, portalName, pipelineCurrentEntry);
                 } else {
-                    pipelineCurrentEntry.getErrorMessageSink().put("portal already exists [portalName=").put(portalName).put(']');
-                    throw BadProtocolException.INSTANCE;
+                    throw msgKaput().put("portal already exists [portalName=").put(portalName).put(']');
                 }
             } else {
-                pipelineCurrentEntry.getErrorMessageSink().put("cannot create portal for non-SELECT SQL [portalName=").put(portalName).put(']');
-                throw BadProtocolException.INSTANCE;
+                throw msgKaput().put("cannot create portal for non-SELECT SQL [portalName=").put(portalName).put(']');
             }
         }
 
@@ -811,9 +797,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 lookedUpPipelineEntry = uncacheNamedPortal(getUtf16Str(lo, high, "invalid UTF8 bytes in portal name (close)"));
                 break;
             default:
-                // todo: we need to have valid pipeline entry so that we can send this message to the client
-                LOG.error().$("invalid type for close message [type=").$(type).I$();
-                throw BadProtocolException.INSTANCE;
+                throw msgKaput().put("invalid type for close message [type=").put(type).put(']');
         }
 
         // if we already have the current pipeline entry, we will use that to produce the 'close'
@@ -870,9 +854,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // a pipeline entry
 
         if (pipelineCurrentEntry == null) {
-            pipelineCurrentEntry = new PGPipelineEntry(engine);
-            pipelineCurrentEntry.getErrorMessageSink().put("spurious describe message received");
-            throw BadProtocolException.INSTANCE;
+            throw msgKaput().put("spurious describe message received");
         }
 
         pipelineCurrentEntry.setStateDesc(nullTargetName ? 1 : isPortal ? 2 : 3);
@@ -887,8 +869,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         lookupPipelineEntryForPortalName(getUtf16Str(lo, hi, "invalid UTF8 bytes in portal name (execute)"));
 
         if (pipelineCurrentEntry == null) {
-            LOG.error().$("spurious execute message").I$();
-            throw BadProtocolException.INSTANCE;
+            throw msgKaput().put("spurious execute message");
         }
 
         lo = hi + 1;
@@ -923,7 +904,22 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         resumeCallback = null;
     }
 
+    private BadProtocolException msgKaput() {
+        // The error message and position is to be reported to the client
+        // To do that, we store message on the pipeline entry, if it exists and
+        // make sure this entry is added to the pipeline (eventually)
+        if (pipelineCurrentEntry == null) {
+            pipelineCurrentEntry = new PGPipelineEntry(engine);
+        }
+        return BadProtocolException.instance(pipelineCurrentEntry);
+    }
+
     private void msgParse(long address, long lo, long msgLimit) throws BadProtocolException {
+
+        if (pipelineCurrentEntry != null && pipelineCurrentEntry.isError()) {
+            return;
+        }
+
         // Parse message typically starts a new pipeline entry. So if there is existing one in flight
         // we have to add it to the pipeline
         addPipelineEntry();
@@ -953,8 +949,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         hi = getUtf8StrSize(lo, msgLimit, "bad query text length", pipelineCurrentEntry);
         final CharacterStoreEntry e = characterStore.newEntry();
         if (!Utf8s.utf8ToUtf16(lo, hi, e)) {
-            pipelineCurrentEntry.getErrorMessageSink().put("invalid UTF8 bytes in parse query");
-            throw BadProtocolException.INSTANCE;
+            throw msgKaput().put("invalid UTF8 bytes in parse query");
         }
 
         final CharSequence utf16SqlText = e.toImmutable();
@@ -968,11 +963,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // process parameter types
         if (parameterTypeCount > 0) {
             if (lo + Short.BYTES + parameterTypeCount * 4L > msgLimit) {
-                pipelineCurrentEntry.getErrorMessageSink()
+                throw msgKaput()
                         .put("could not read parameters [parameterCount=").put(parameterTypeCount)
                         .put(", offset=").put(lo - address)
                         .put(", remaining=").put(msgLimit - lo);
-                throw BadProtocolException.INSTANCE;
             }
 
             LOG.debug().$("params [count=").$(parameterTypeCount).I$();
@@ -981,10 +975,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // validation of the "bind" message.
             pipelineCurrentEntry.msgParseCopyParameterTypesFromMsg(lo + Short.BYTES, parameterTypeCount);
         } else if (parameterTypeCount < 0) {
-            pipelineCurrentEntry.getErrorMessageSink()
+            throw msgKaput()
                     .put("invalid parameter count [parameterCount=").put(parameterTypeCount)
                     .put(", offset=").put(lo - address);
-            throw BadProtocolException.INSTANCE;
         }
 
         // At this point parameters may or may not be defined.
@@ -1044,8 +1037,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 pipelineCurrentEntry.setPreparedStatement(true, preparedStatementName);
                 namedStatements.putAt(index, preparedStatementName, pipelineCurrentEntry);
             } else {
-                pipelineCurrentEntry.getErrorMessageSink().put("duplicate statement [name=").put(targetStatementName).put(']');
-                throw BadProtocolException.INSTANCE;
+                throw msgKaput()
+                        .put("duplicate statement [name=").put(targetStatementName).put(']');
             }
         }
     }
@@ -1059,22 +1052,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 compiler.compileBatch(activeSqlText, sqlExecutionContext, batchCallback);
             } catch (Throwable ex) {
                 transactionState = ERROR_TRANSACTION;
-                if (pipelineCurrentEntry == null) {
-                    pipelineCurrentEntry = new PGPipelineEntry(engine);
-                }
-                StringSink errorSink = pipelineCurrentEntry.getErrorMessageSink();
-                if (e instanceof FlyweightMessageContainer) {
-                    errorSink.put(((FlyweightMessageContainer) e).getFlyweightMessage());
-                } else {
-                    errorSink.put(ex.getMessage());
-                }
-                throw BadProtocolException.INSTANCE;
+                throw msgKaput().put(ex);
             } finally {
                 msgSync();
             }
         } else {
-            LOG.error().$("invalid UTF8 bytes in parse query").$();
-            throw BadProtocolException.INSTANCE;
+            throw msgKaput().put("invalid UTF8 bytes in parse query");
         }
     }
 
@@ -1193,11 +1176,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 msgClose(msgLo, msgLimit);
                 break;
             default:
-                if (pipelineCurrentEntry == null) {
-                    pipelineCurrentEntry = new PGPipelineEntry(engine);
-                }
-                pipelineCurrentEntry.getErrorMessageSink().put("unknown message [type=").put(type).put(']');
-                throw BadProtocolException.INSTANCE;
+                throw msgKaput().put("unknown message [type=").put(type).put(']');
         }
     }
 
@@ -1338,10 +1317,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     );
                 } catch (NoSpaceLeftInResponseBufferException e1) {
                     // oopsie, buffer is too small for single record
-                    pipelineCurrentEntry.getErrorMessageSink()
-                            .put("not enough space in send buffer [sendBufferSize=").put(responseUtf8Sink.getSendBufferSize()).put(']');
                     responseUtf8Sink.reset();
-                    throw BadProtocolException.INSTANCE;
+                    throw msgKaput()
+                            .put("not enough space in send buffer [sendBufferSize=").put(responseUtf8Sink.getSendBufferSize()).put(']');
                 }
             }
             pipelineCurrentEntry.cacheIfPossible(tasCache, taiCache);
@@ -1663,9 +1641,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         @Override
         public void resetToBookmark() {
-            assert bookmarkPtr != -1;
-            sendBufferPtr = bookmarkPtr;
-            bookmarkPtr = -1;
+            if (bookmarkPtr != -1) {
+                sendBufferPtr = bookmarkPtr;
+                bookmarkPtr = -1;
+            }
         }
 
         @Override

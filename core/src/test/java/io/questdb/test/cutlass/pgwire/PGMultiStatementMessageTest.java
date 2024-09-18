@@ -61,21 +61,18 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     // all of these commands are no-op (at the moment)
     @Test
     public void testAsyncPGCommandBlockDoesntProduceError() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final PGWireServer server = createPGServer(2);
-                    WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (final Connection connection = getConnection(server.getPort(), true, true)) {
-                    try (Statement statement = connection.createStatement()) {
-                        boolean result = statement.execute("SELECT pg_advisory_unlock_all();\nCLOSE ALL;\nUNLISTEN *;\nRESET ALL;");
-                        Assert.assertTrue(result);
-                        ResultSet results = statement.getResultSet();
-                        results.next();
-                        assertNull(null, results.getString(1));
-                    }
-                }
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                boolean result = statement.execute(
+                        "SELECT pg_advisory_unlock_all();" +
+                                "CLOSE ALL;" +
+                                "UNLISTEN *;" +
+                                "RESET ALL;"
+                );
+                Assert.assertTrue(result);
+                ResultSet results = statement.getResultSet();
+                results.next();
+                assertNull(null, results.getString(1));
             }
         });
     }
@@ -134,6 +131,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                                 "ROLLBACK TRANSACTION; /* rolls back implicit txn */" +
                                 "INSERT INTO testA VALUES (29, 'g'); " +
                                 "INSERT INTO testB VALUES (2, 1.0);" +
+                                "COMMIT;" +
                                 "SELECT * from testA;" +
                                 "SELECT * from testB;");
 
@@ -149,6 +147,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                         zero(),
                         count(1),
                         count(1),
+                        zero(),
                         data(row(50L, "z"), row(29L, "g")),
                         data(row((byte) 8, 1.0d), row((byte) 2, 1.0d))
                 );
@@ -157,22 +156,29 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test // explicit transaction + commit
-    @Ignore
     public void testBeginCreateInsertCommitThenErrorDoesntRollBackCommittedFirstInsert() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q & (~CONN_AWARE_QUIRKS), (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             try (Statement statement = connection.createStatement()) {
                 try {
+                    statement.execute("drop table if exists test;");
+                    // this is a JDBC driver quirk:
+                    // in "simple" mode the server parses the 'script' and returns error position relative to
+                    // the whole text, however in "extended" mode, the JDBC driver parses the 'script' and
+                    // the server sees one SQL at a time. Therefore, the error position in this case
+                    // is relative to the individual SQL and not the whole text.
                     statement.execute(
                             "BEGIN; " +
                                     "CREATE TABLE test(l long,s string); " +
                                     "INSERT INTO test VALUES (20, 'z'); " +
-                                    "COMMIT; " +
-                                    "DELETE FROM test; " +
-                                    "INSERT INTO test VALUES (21, 'x');");
-                    assertExceptionNoLeakCheck("PSQLException should be thrown");
+                                    "COMMIT TRANSACTION; " +
+                                    "DELETE FROM1 test; " +
+                                    "INSERT INTO test VALUES (21, 'x');"
+                    );
+                    Assert.fail();
                 } catch (PSQLException e) {
-                    assertEquals("ERROR: unexpected token [FROM]\n  Position: 94", e.getMessage());
+                    assertEquals("ERROR: unexpected token [test]\n" +
+                            "  Position: 15", e.getMessage());
                 }
 
                 boolean hasResult = statement.execute("select * from test; ");
@@ -209,50 +215,67 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test // explicit transaction + rollback
     public void testBeginCreateInsertRollback() throws Exception {
-        assertMemoryLeak(() -> {
-            try (PGTestSetup test = new PGTestSetup()) {
-                test.connection.setAutoCommit(false);
-                Statement statement = test.statement;
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q & (~CONN_AWARE_QUIRKS), (connection, binary, mode, port) -> {
+            connection.setAutoCommit(false);
+            Statement statement = connection.createStatement();
 
-                boolean hasResult =
-                        statement.execute("BEGIN; " +
-                                "CREATE TABLE test(l long,s string); " +
-                                "INSERT INTO test VALUES (19, 'k'); " +
-                                "ROLLBACK TRANSACTION; " +
-                                "INSERT INTO test VALUES (27, 'f');" +
-                                "SELECT * from test;");
+            boolean hasResult =
+                    statement.execute("BEGIN; " +
+                            "CREATE TABLE test(l long,s string); " +
+                            "INSERT INTO test VALUES (19, 'k'); " +
+                            "ROLLBACK TRANSACTION; " +
+                            "INSERT INTO test VALUES (27, 'f');" +
+                            "COMMIT;" +
+                            "SELECT * from test;");
 
-                assertResults(statement, hasResult, count(0), count(0), count(1), count(0),
-                        count(1), data(row(27L, "f"))
-                );
-            }
+            assertResults(
+                    statement,
+                    hasResult,
+                    zero(),
+                    zero(),
+                    count(1),
+                    zero(),
+                    count(1),
+                    zero(),
+                    data(row(27L, "f"))
+            );
         });
     }
 
     @Test // explicit transaction + rollback on two tables
     public void testBeginCreateInsertRollbackOnTwoTables() throws Exception {
-        assertMemoryLeak(() -> {
-            try (PGTestSetup test = new PGTestSetup()) {
-                test.connection.setAutoCommit(false);
-                Statement statement = test.statement;
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q & (~CONN_AWARE_QUIRKS), (connection, binary, mode, port) -> {
+            connection.setAutoCommit(false);
+            Statement statement = connection.createStatement();
 
-                boolean hasResult =
-                        statement.execute("BEGIN; " +
-                                "CREATE TABLE testA(l long,s string); " +
-                                "CREATE TABLE testB(b byte, d double); " +
-                                "INSERT INTO testA VALUES (20, 'j'); " +
-                                "INSERT INTO testB VALUES (1, 0.0);" +
-                                "ROLLBACK TRANSACTION; " +
-                                "INSERT INTO testA VALUES (29, 'g'); " +
-                                "INSERT INTO testB VALUES (2, 1.0);" +
-                                "SELECT * from testA;" +
-                                "SELECT * from testB;");
+            boolean hasResult =
+                    statement.execute("BEGIN; " +
+                            "CREATE TABLE testA(l long,s string); " +
+                            "CREATE TABLE testB(b byte, d double); " +
+                            "INSERT INTO testA VALUES (20, 'j'); " +
+                            "INSERT INTO testB VALUES (1, 0.0);" +
+                            "ROLLBACK TRANSACTION; " +
+                            "INSERT INTO testA VALUES (29, 'g'); " +
+                            "INSERT INTO testB VALUES (2, 1.0);" +
+                            "COMMIT;" +
+                            "SELECT * from testA;" +
+                            "SELECT * from testB;");
 
-                assertResults(statement, hasResult, count(0), count(0), count(0),
-                        count(1), count(1), count(0),
-                        count(1), count(1), data(row(29L, "g")), data(row((byte) 2, 1.0d))
-                );
-            }
+            assertResults(
+                    statement,
+                    hasResult,
+                    zero(),
+                    zero(),
+                    zero(),
+                    count(1),
+                    count(1),
+                    zero(),
+                    count(1),
+                    count(1),
+                    zero(),
+                    data(row(29L, "g")),
+                    data(row((byte) 2, 1.0d))
+            );
         });
     }
 
@@ -333,30 +356,25 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Ignore("without implicit transaction second insert runs in autocommit mode")
     @Test // example taken from https://www.postgresql.org/docs/current/protocol-flow.html#id-1.10.5.7.4
     public void testCreateBeginInsertCommitInsertErrorRetainsOnlyCommittedData() throws Exception {
-        assertMemoryLeak(() -> {
-            try (PGTestSetup test = new PGTestSetup()) {
-                test.connection.setAutoCommit(false);
-                Statement statement = test.statement;
-
-                try {
-                    statement.execute("CREATE TABLE mytable(l long); " +
-                            "BEGIN; " +
-                            "INSERT INTO mytable VALUES(1); " +
-                            "COMMIT; " +
-                            "INSERT INTO mytable VALUES(2); " +
-                            "DELETE from mytable3;");
-                    assertExceptionNoLeakCheck("PSQLException expected");
-                } catch (PSQLException e) {
-                    assertEquals("ERROR: unexpected token [mytable3]\n  Position: 120", e.getMessage());
-                }
-
-                boolean hasResult = statement.execute("select * from mytable;");
-
-                assertResults(statement, hasResult, data(row(1L)));
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q & (~CONN_AWARE_QUIRKS), (connection, binary, mode, port) -> {
+            connection.setAutoCommit(false);
+            Statement statement = connection.createStatement();
+            try {
+                statement.execute("CREATE TABLE mytable(l long); " +
+                        "BEGIN; " +
+                        "INSERT INTO mytable VALUES(1); " +
+                        "COMMIT; " +
+                        "INSERT INTO mytable VALUES(2); " +
+                        "DELETE from mytable3;");
+                Assert.fail();
+            } catch (PSQLException e) {
+                assertEquals("ERROR: unexpected token [from]\n" +
+                        "  Position: 9", e.getMessage());
             }
+            boolean hasResult = statement.execute("select * from mytable;");
+            assertResults(statement, hasResult, data(row(1L)));
         });
     }
 
@@ -706,22 +724,31 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test // implicit transaction + rollback
     public void testCreateInsertRollback() throws Exception {
-        assertMemoryLeak(() -> {
-            try (PGTestSetup test = new PGTestSetup()) {
-                test.connection.setAutoCommit(false);
-                Statement statement = test.statement;
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q & (~CONN_AWARE_QUIRKS), (connection, binary, mode, port) -> {
+            connection.setAutoCommit(false);
+            Statement statement = connection.createStatement();
 
-                boolean hasResult =
-                        statement.execute("CREATE TABLE test(l long,s string); " +
-                                "INSERT INTO test VALUES (19, 'k'); " +
-                                "ROLLBACK TRANSACTION; " +
-                                "INSERT INTO test VALUES (27, 'f'); " +
-                                "SELECT * from test;");
+            boolean hasResult =
+                    statement.execute(
+                            "CREATE TABLE test(l long,s string); " +
+                                    "INSERT INTO test VALUES (19, 'k'); " +
+                                    "ROLLBACK TRANSACTION; " +
+                                    "INSERT INTO test VALUES (27, 'f');" +
+                                    "COMMIT;" +
+                                    "SELECT * from test;"
+                    );
 
-                assertResults(statement, hasResult, count(0), count(1), count(0),
-                        count(1), data(row(27L, "f"))
-                );
-            }
+            assertResults(
+                    statement,
+                    hasResult,
+                    count(0),
+                    count(1),
+                    count(0),
+                    count(1),
+                    count(0),
+                    data(row(27L, "f")
+                    )
+            );
         });
     }
 
