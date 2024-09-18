@@ -22,10 +22,10 @@
  *
  ******************************************************************************/
 use crate::parquet::error::{fmt_err, ParquetError};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::num::NonZeroI32;
 
-#[repr(i8)]
+#[repr(u8)]
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum ColumnTypeTag {
     Boolean = 1,
@@ -104,7 +104,7 @@ fn tag_of(col_type: i32) -> u8 {
 }
 
 #[repr(transparent)]
-#[derive(Debug, Copy, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct ColumnType {
     // Optimization so `Option<ColumnType>` is the same size as `ColumnType`.
@@ -141,5 +141,15 @@ impl TryFrom<i32> for ColumnType {
         let _tag: ColumnTypeTag = col_tag_num.try_into()?; // just validate
         let code = NonZeroI32::new(v).expect("column type code should never be zero");
         Ok(Self { code })
+    }
+}
+
+impl Deserialize for ColumnType {
+    fn deserialize<'de, D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let code = i32::deserialize(deserializer)?;
+        ColumnType::try_from(code).map_err(serde::de::Error::custom)
     }
 }

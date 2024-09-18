@@ -1,5 +1,5 @@
 use super::util::BinaryMaxMin;
-use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorCause, ParquetResult};
+use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorCause, ParquetErrorExt, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, ExactSizedIter};
@@ -200,9 +200,7 @@ pub fn symbol_to_pages(
     let mut stats = BinaryMaxMin::new(&primitive_type);
     let (dict_buffer, keys, max_key) =
         encode_symbols_dict(column_values, offsets, chars, &mut stats)
-            // TODO(amunra): Consolidate error handling,
-            //               Widen result type since it's currently too narrow to handle IO/logic errors.
-            .unwrap();
+            .context("could not write symbols dict map page")?;
     let bits_per_key = util::get_bit_width(max_key as u64);
 
     let non_null_len = column_values.len() - null_count;

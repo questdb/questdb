@@ -149,6 +149,9 @@ pub trait ParquetErrorExt<T> {
 }
 
 impl<T> ParquetErrorExt<T> for ParquetResult<T> {
+    /// Add a layer of context to the error.
+    /// The `context: &str` is copied into a `String` iff the error is an `Err`.
+    /// Use the `with_context` method if you need to compute the context lazily.
     fn context(self, context: &str) -> Self {
         match self {
             Ok(val) => Ok(val),
@@ -159,6 +162,7 @@ impl<T> ParquetErrorExt<T> for ParquetResult<T> {
         }
     }
 
+    /// Lazily add a layer of context to the error.
     fn with_context<F>(self, context: F) -> Self
     where
         F: FnOnce(&mut ParquetError) -> String,
