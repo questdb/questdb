@@ -3467,7 +3467,6 @@ if __name__ == "__main__":
         .catch(console.error)
     */
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testFetch1RowAtaTimeWithFlushInBetween() throws Exception {
         assertHexScript(">0000003600030000757365720061646d696e0064617461626173650071646200636c69656e745f656e636f64696e6700555446380000\n" +
                 "<520000000800000003\n" +
@@ -4455,7 +4454,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testInsertExtendedText() throws Exception {
         testInsert0(false, false);
     }
@@ -6766,7 +6764,6 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testPreparedStatementSelectNull() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
