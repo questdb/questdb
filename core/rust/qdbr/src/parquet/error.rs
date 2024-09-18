@@ -36,6 +36,12 @@ pub enum ParquetErrorCause {
     Utf8Decode(std::str::Utf8Error),
     Utf16Decode(std::char::DecodeUtf16Error),
     Io(Arc<std::io::Error>),
+
+    #[cfg(test)]
+    Arrow(Arc<arrow::error::ArrowError>),
+
+    #[cfg(test)]
+    ArrowParquet(Arc<parquet::errors::ParquetError>),
 }
 
 impl ParquetErrorCause {
@@ -136,6 +142,20 @@ impl From<parquet2::error::Error> for ParquetError {
 impl From<std::io::Error> for ParquetError {
     fn from(e: std::io::Error) -> Self {
         Self::new(ParquetErrorCause::Io(Arc::new(e)))
+    }
+}
+
+#[cfg(test)]
+impl From<arrow::error::ArrowError> for ParquetError {
+    fn from(e: arrow::error::ArrowError) -> Self {
+        Self::new(ParquetErrorCause::Arrow(Arc::new(e)))
+    }
+}
+
+#[cfg(test)]
+impl From<parquet::errors::ParquetError> for ParquetError {
+    fn from(e: parquet::errors::ParquetError) -> Self {
+        Self::new(ParquetErrorCause::ArrowParquet(Arc::new(e)))
     }
 }
 

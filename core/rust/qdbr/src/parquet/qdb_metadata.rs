@@ -52,7 +52,7 @@ impl<const N: u32> Debug for U32Const<N> {
 }
 
 impl<'de, const N: u32> Deserialize<'de> for U32Const<N> {
-    fn deserialize<D>(deserializer: D) -> Result<U32Const<N>, D::Error>
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
