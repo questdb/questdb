@@ -32,7 +32,9 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.fuzz.FuzzTransaction;
@@ -43,10 +45,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.IOException;
 import java.util.zip.CRC32;
-import java.util.zip.CheckedInputStream;
 
 public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
 
@@ -236,7 +235,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
 
     static long calcChecksum(String path, long maxBytesToProcess) {
         final int bufferSize = 8 * 1024;
-        java.nio.file.Path filePath = java.nio.file.Path.of(path);
+        java.nio.file.Path filePath = java.nio.file.Paths.get(path);
 
         CRC32 crc = new CRC32();
 
