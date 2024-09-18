@@ -4361,7 +4361,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testInsertExtendedBinary() throws Exception {
         testInsert0(false, true);
     }
@@ -4644,7 +4643,6 @@ nodejs code:
     }
 
     @Test
-    @Ignore
     public void testInsertSimpleText() throws Exception {
         testInsert0(true, false);
     }
@@ -7097,7 +7095,6 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testQueryAgainstIndexedSymbol() throws Exception {
         final String[] values = {"'5'", "null", "'5' || ''", "replace(null, 'A', 'A')", "?5", "?null"};
         final CharSequenceObjHashMap<String> valMap = new CharSequenceObjHashMap<>();
