@@ -5671,6 +5671,11 @@ public class JoinTest extends AbstractCairoTest {
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
                 }
+                @Override
+                public int errno() {
+                    // return "Too many open files" to avoid conflicting with ERRNO_FILE_DOES_NOT_EXIST.
+                    return 4;
+                }
             };
 
             ddl("create table xx as (" +
