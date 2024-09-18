@@ -206,6 +206,28 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewWithExistingTableNameTest() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createTable(TABLE2);
+
+            try {
+                ddl("create materialized view " + TABLE2 + " as select ts, rnd_boolean(), avg(v) from " + TABLE1 + " sample by 30s");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "A view or a table already exists with this name");
+            }
+
+            try {
+                ddl("create materialized view if not exists " + TABLE2 + " as select ts, rnd_boolean(), avg(v) from " + TABLE1 + " sample by 30s");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "A table already exists with this name");
+            }
+        });
+    }
+
+    @Test
     public void testCreateMatViewWithOperatorTest() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);

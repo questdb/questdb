@@ -45,7 +45,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private long batchO3MaxLag = -1;
     private long batchSize = -1;
     private boolean ignoreIfExists = false;
-    private boolean isMatView;
     private ExpressionNode likeTableName;
     private int maxUncommittedRows;
     private ExpressionNode name;
@@ -268,10 +267,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
 
     public void setLikeTableName(ExpressionNode tableName) {
         this.likeTableName = tableName;
-    }
-
-    public void setMatView(boolean matView) {
-        isMatView = matView;
     }
 
     public void setMaxUncommittedRows(int maxUncommittedRows) {

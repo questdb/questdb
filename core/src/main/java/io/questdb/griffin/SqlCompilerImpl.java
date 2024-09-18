@@ -2064,7 +2064,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // Fast path for CREATE MATERIALIZED VIEW IF NOT EXISTS in scenario when the view already exists
         final int status = executionContext.getTableStatus(path, name.token);
         if (createMatViewModel.isIgnoreIfExists() && status == TableUtils.TABLE_EXISTS) {
-            compiledQuery.ofCreateTable(executionContext.getTableTokenIfExists(name.token));
+            final TableToken tt = engine.getTableTokenIfExists(name.token);
+            if (!tt.isMatView()) {
+                throw SqlException.$(name.position, "A table already exists with this name");
+            }
+            compiledQuery.ofCreateMatView(tt);
         } else if (status == TableUtils.TABLE_EXISTS) {
             throw SqlException.$(name.position, "A view or a table already exists with this name");
         } else {

@@ -753,7 +753,6 @@ public final class TestUtils {
 
     public static TableToken create(TableModel model, CairoEngine engine) {
         int tableId = (int) engine.getTableIdGenerator().getNextId();
-        // todo: Update TableModel for Materialized Views. Maybe.
         TableToken tableToken = engine.lockTableName(model.getTableName(), tableId, false, model.isWalEnabled());
         if (tableToken == null) {
             throw new RuntimeException("table already exists: " + model.getTableName());
@@ -1362,8 +1361,10 @@ public final class TestUtils {
         }
     }
 
-    public static String replaceSizeToMatchOS(String expected, String tableName,
-                                              CairoConfiguration configuration, CairoEngine engine, StringSink sink) {
+    public static String replaceSizeToMatchOS(
+            String expected, String tableName,
+            CairoConfiguration configuration, CairoEngine engine, StringSink sink
+    ) {
         return replaceSizeToMatchOS(expected, new Utf8String(configuration.getRoot()), tableName, engine, sink);
     }
 
@@ -1390,11 +1391,6 @@ public final class TestUtils {
             sink.put(line).put('\n');
         }
         return sink.toString();
-    }
-
-    public static String replaceSizeToMatchPartitionSumInOS(String expected, String tableName, List<String> partitionColumnNames,
-                                                            CairoConfiguration configuration, CairoEngine engine, StringSink sink) {
-        return replaceSizeToMatchPartitionSumInOS(expected, new Utf8String(configuration.getRoot()), tableName, engine, sink, partitionColumnNames);
     }
 
     public static void setupWorkerPool(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {

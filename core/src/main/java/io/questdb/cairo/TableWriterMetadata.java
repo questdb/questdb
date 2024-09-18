@@ -113,7 +113,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
 
     @Override
     public boolean isMatView() {
-        return false;
+        return tableToken.isMatView();
     }
 
     @Override
@@ -195,8 +195,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.tableToken = tableToken;
     }
 
-    void addColumn(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity, int columnIndex,
-                   boolean sequential, int symbolCapacity, boolean isDedupKey, boolean isSymbolCached) {
+    void addColumn(
+            CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity, int columnIndex,
+            boolean sequential, int symbolCapacity, boolean isDedupKey, boolean isSymbolCached
+    ) {
         String str = name.toString();
         columnNameIndexMap.put(str, columnMetadata.size());
         columnMetadata.add(
@@ -221,8 +223,10 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         }
     }
 
-    void addColumn(CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity, int columnIndex,
-                   boolean sequential, int symbolCapacity, boolean isDedupKey, int replacingIndex, boolean isSymbolCached) {
+    void addColumn(
+            CharSequence name, int type, boolean indexFlag, int indexValueBlockCapacity, int columnIndex,
+            boolean sequential, int symbolCapacity, boolean isDedupKey, int replacingIndex, boolean isSymbolCached
+    ) {
         String str = name.toString();
         columnNameIndexMap.put(str, columnMetadata.size());
         columnMetadata.add(
