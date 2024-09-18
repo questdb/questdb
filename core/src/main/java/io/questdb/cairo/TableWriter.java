@@ -5232,23 +5232,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private long mapAppendColumnBufferDD(MemoryMA column, long offset, long size, boolean rw) {
-        if (size == 0) {
-            return 0;
-        }
-
-        column.jumpTo(offset + size);
-        long address = column.map(offset, size);
-
-        // column could not provide necessary length of buffer
-        // because perhaps its internal buffer is not big enough
-        if (address != 0) {
-            return address;
-        } else {
-            return -TableUtils.mapAppendColumnBuffer(ff, column.getFd(), offset, size, rw, MemoryTag.MMAP_PARALLEL_IMPORT);
-        }
-    }
-
     private long mapAppendColumnBuffer(MemoryMA column, long offset, long size, boolean rw) {
         if (size == 0) {
             return 0;
@@ -5271,13 +5254,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             TableUtils.mapAppendColumnBufferRelease(ff, -address, offset, size, MemoryTag.MMAP_TABLE_WRITER);
         }
     }
-
-    private void mapAppendColumnBufferReleaseDD(long address, long offset, long size) {
-        if (address < 0) {
-            TableUtils.mapAppendColumnBufferRelease(ff, -address, offset, size, MemoryTag.MMAP_PARALLEL_IMPORT);
-        }
-    }
-
 
     private void mmapWalColsEager() {
         for (int i = 0, n = walMappedColumns.size(); i < n; i++) {
