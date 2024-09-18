@@ -1211,13 +1211,11 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0: Memory leak")
     public void testAllTypesSelectExtended() throws Exception {
         testAllTypesSelect(false);
     }
 
     @Test
-    @Ignore
     public void testAllTypesSelectSimple() throws Exception {
         testAllTypesSelect(true);
     }
@@ -1470,7 +1468,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testBasicFetchIPv4MultiCol() throws Exception {
         skipOnWalRun(); // Non-partitioned
         assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
@@ -1635,7 +1632,6 @@ if __name__ == "__main__":
 //    }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testBasicFetchIPv4Null() throws Exception {
         skipOnWalRun(); // Non-partitioned
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -8374,7 +8370,6 @@ create table tab as (
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0: Mem leak")
     public void testSelectStringInWithBindVariables() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
@@ -8495,7 +8490,6 @@ create table tab as (
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testSendingBufferWhenFlushMessageReceivedHex() throws Exception {
         skipOnWalRun(); // non-partitioned table
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
@@ -8738,7 +8732,6 @@ create table tab as (
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0: Mem leak")
     public void testSingleInClause() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -8826,7 +8819,6 @@ create table tab as (
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0: Mem leak")
     public void testSingleInClauseNonDedicatedTimestamp() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
@@ -9210,19 +9202,16 @@ create table tab as (
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testStringBindvarEqStringyCol() throws Exception {
         testVarcharBindVars("select v,s from x where ? != v and ? != s");
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testStringyColEqStringBindvar() throws Exception {
         testVarcharBindVars("select v,s from x where v != ? and s != ?");
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testStringyColEqVarcharBindvar() throws Exception {
         testVarcharBindVars(
                 "select v,s from x where v != ?::varchar and s != ?::varchar");
@@ -9278,7 +9267,6 @@ create table tab as (
             Ok(())
         }
      */
-    @Ignore("TODO PGWire 2.0")
     public void testSyncAfterLoginSendsRNQ() throws Exception {
         skipOnWalRun();
         String script =
@@ -9614,7 +9602,6 @@ create table tab as (
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testUndefinedBindVariableInSymbol() throws Exception {
         final String[] values = {"'5'", "null", "'5' || ''", "replace(null, 'A', 'A')", "?5", "?null"};
         final CharSequenceObjHashMap<String> valMap = new CharSequenceObjHashMap<>();
@@ -9647,7 +9634,6 @@ create table tab as (
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testUnsupportedParameterType() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
@@ -10219,7 +10205,6 @@ create table tab as (
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testUuidType_insertIntoUUIDColumn() throws Exception {
         skipOnWalRun();
         assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
@@ -10532,7 +10517,6 @@ create table tab as (
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0: Mem leak")
     public void testVarcharBindvarEqStringyCol() throws Exception {
         testVarcharBindVars(
                 "select v,s from x where ?::varchar != v and ?::varchar != s");
