@@ -428,19 +428,19 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
-    @Ignore
+    @Ignore("ALTER TABLE should fail due to partition already existing, but it passes")
     public void testCreateInsertAlterTableAttachPartitionListAndSelectFromTableInBlockFails() throws Exception {
         // this test confirms that command is parsed and executed properly
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             try {
                 statement.execute(
-                        "CREATE TABLE test(l long,ts timestamp) timestamp(ts) partition by year; " +
+                        "CREATE TABLE test(l long,ts timestamp) TIMESTAMP(ts) PARTITION BY YEAR; " +
                                 "INSERT INTO test VALUES(1970, 0); " +
-                                "INSERT INTO test VALUES(2020, to_timestamp('2020-03-01', 'yyyy-MM-dd'));" +
-                                "ALTER TABLE test ATTACH PARTITION LIST '2020';" +
-                                "SELECT l from TEST;");
-                assertExceptionNoLeakCheck("PSQLException should be thrown");
+                                "INSERT INTO test VALUES(2020, to_timestamp('2020-03-01', 'yyyy-MM-dd')); " +
+                                "ALTER TABLE test ATTACH PARTITION LIST '2020'; " +
+                                "SELECT l FROM test;");
+                fail("PSQLException should be thrown");
             } catch (PSQLException e) {
                 TestUtils.assertContains(e.getMessage(), "could not attach partition [table=test, detachStatus=ATTACH_ERR_PARTITION_EXISTS");
             }
@@ -462,7 +462,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
-    @Ignore
+    @Ignore("Dropped partitions still visible to SELECT")
     public void testCreateInsertAlterTableDropPartitionList2SelectFromTableInBlock() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
@@ -474,14 +474,15 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "INSERT INTO test VALUES(2021, to_timestamp('2021-03-01', 'yyyy-MM-dd'));" +
                             "ALTER TABLE test DROP PARTITION LIST '1970', '2020'; " +
                             "SELECT l from test;");
-            assertResults(statement, hasResult, Result.ZERO, count(1), count(1),
+            assertResults(statement, hasResult,
+                    Result.ZERO, count(1), count(1),
                     count(1), Result.ZERO, data(row(2021L))
             );
         });
     }
 
     @Test
-    @Ignore
+    @Ignore("Dropped partition still visible to SELECT")
     public void testCreateInsertAlterTableDropPartitionListSelectFromTableInBlock() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
@@ -498,7 +499,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
-    @Ignore
+    @Ignore("Dropped partitions still visible to SELECT")
     public void testCreateInsertAlterTableDropPartitionWhereSelectFromTableInBlock() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
@@ -517,7 +518,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
-    @Ignore
+    @Ignore("SELECT doesn't observe the column was renamed")
     public void testCreateInsertAlterTableRenameColumnSelectFromTableInBlock() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
@@ -538,14 +539,14 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             boolean hasResult = statement.execute(
                     "CREATE TABLE test(l long, de string); " +
                             "INSERT INTO test VALUES(3,'c'); " +
-                            "ALTER TABLE test set param maxUncommittedRows = 150; " +
-                            "SELECT l,de from test;");
+                            "ALTER TABLE test SET PARAM maxUncommittedRows = 150; " +
+                            "SELECT l,de FROM test;");
             assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(3L, "c")));
         });
     }
 
     @Test
-    @Ignore
+    @Ignore("QuestDB doesn't report inserted row count with insert-as-select")
     public void testCreateInsertAsSelectAndSelectFromTableInBlock() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
@@ -788,9 +789,11 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test // running statements in block should create implicit transaction so first insert should be rolled back
+    @Test // running statements in a block should create an implicit transaction so first insert should be rolled back
     // This test passes even though QuestDB doesn't support implicit transactions!
-    // autoCommit == false means the JDBC driver prepends an initial BEGIN to the block
+    // autoCommit == false actually _disables_ implicit transaction on Postgres, by sending an explicit BEGIN.
+    // But, since QuestDB doesn't support implicit transactions, autoCommit == false behaves more like
+    // implicit transaction than with autoCommit == true
     public void testCreateInsertThenErrorRollsBackFirstInsertAsPartOfImplicitTransaction() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
@@ -814,9 +817,9 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test // running statements in block should create implicit transaction so first insert should be rolled back
+    @Test // running statements in a block should create an implicit transaction so first insert should be rolled back
     // This test passes even though QuestDB doesn't support implicit transactions!
-    // autoCommit == false means the JDBC driver prepends an initial BEGIN to the block
+    // See longer explanation on testCreateInsertThenErrorRollsBackFirstInsertAsPartOfImplicitTransaction()
     public void testCreateInsertThenErrorRollsBackFirstInsertAsPartOfImplicitTransactionOnTwoTables() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
@@ -973,10 +976,9 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     public void testImplicitTransactionIsCommittedAtEndOfBlock() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
-            connection.setAutoCommit(false);
 
             boolean hasResult = statement.execute("CREATE TABLE mytable(l long); " +
-                    "INSERT INTO mytable VALUES(1); COMMIT;"); //transaction should be committed right after insert
+                    "INSERT INTO mytable VALUES(1); COMMIT;"); // transaction should be committed right after insert
             assertResults(statement, hasResult, count(0), count(1));
 
             hasResult = statement.execute("ROLLBACK; " +
@@ -1126,23 +1128,19 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testRunBEGINWithSemicolonReturnsNextQueryResultOnly() throws Exception {
-        assertMemoryLeak(() -> {
-            try (PGTestSetup test = new PGTestSetup()) {
-                Statement statement = test.statement;
-                boolean hasResult = statement.execute("BEGIN; select 2");
-                assertResults(statement, hasResult, Result.ZERO, data(row(2L)));
-            }
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("BEGIN; select 2");
+            assertResults(statement, hasResult, Result.ZERO, data(row(2L)));
         });
     }
 
     @Test
     public void testRunBEGINWithoutSemicolonReturnsNoResult() throws Exception {
-        assertMemoryLeak(() -> {
-            try (PGTestSetup test = new PGTestSetup()) {
-                Statement statement = test.statement;
-                boolean hasResult = statement.execute("BEGIN");
-                assertResults(statement, hasResult, Result.ZERO);
-            }
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("BEGIN");
+            assertResults(statement, hasResult, Result.ZERO);
         });
     }
 
