@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.AbstractSelfReturningObject;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.WeakSelfReturningObjectPool;
 
 public abstract class AbstractTypeContainer<T extends AbstractTypeContainer<?>> extends AbstractSelfReturningObject<T> implements TypeContainer {
@@ -53,7 +54,7 @@ public abstract class AbstractTypeContainer<T extends AbstractTypeContainer<?>> 
     public void copyOutTypeDescriptionTypesTo(IntList outTypeDescriptionTypes) {
         for (int i = 0, n = types.size(); i < n; i++) {
             int nativeType = types.getQuick(i);
-            int pgType = PGOids.getTypeOid(nativeType);
+            int pgType = Numbers.bswap(PGOids.getTypeOid(nativeType));
             outTypeDescriptionTypes.add(pgType);
         }
     }

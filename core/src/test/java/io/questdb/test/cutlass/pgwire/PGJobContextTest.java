@@ -2146,25 +2146,21 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testBindVariablesWithIndexedSymbolInFilterBinaryTransfer() throws Exception {
         testBindVariablesWithIndexedSymbolInFilter(true, true);
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testBindVariablesWithIndexedSymbolInFilterStringTransfer() throws Exception {
         testBindVariablesWithIndexedSymbolInFilter(false, true);
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testBindVariablesWithNonIndexedSymbolInFilterBinaryTransfer() throws Exception {
         testBindVariablesWithIndexedSymbolInFilter(true, false);
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testBindVariablesWithNonIndexedSymbolInFilterStringTransfer() throws Exception {
         testBindVariablesWithIndexedSymbolInFilter(false, false);
     }

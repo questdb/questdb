@@ -29,10 +29,7 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.IntList;
-import io.questdb.std.Misc;
-import io.questdb.std.QuietCloseable;
-import io.questdb.std.Transient;
+import io.questdb.std.*;
 
 /**
  * Unlike other TypesAnd* classes, this one doesn't self-return to a pool. That's because
@@ -97,7 +94,7 @@ public class TypesAndSelect implements QuietCloseable, TypeContainer {
     public void copyOutTypeDescriptionTypesTo(IntList outTypeDescriptionTypes) {
         for (int i = 0, n = bindVariableTypes.size(); i < n; i++) {
             int nativeType = bindVariableTypes.getQuick(i);
-            int pgType = PGOids.getTypeOid(nativeType);
+            int pgType = Numbers.bswap(PGOids.getTypeOid(nativeType));
             outTypeDescriptionTypes.add(pgType);
         }
     }
