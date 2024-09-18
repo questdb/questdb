@@ -8,8 +8,7 @@ use parquet2::schema::types::PrimitiveLogicalType::{Timestamp, Uuid};
 use parquet2::schema::types::{
     IntegerType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
 };
-use std::fs::File;
-use std::mem::ManuallyDrop;
+use std::io::{Read, Seek};
 
 /// Extract the questdb-specific metadata from the parquet file metadata.
 /// Error if the JSON is not valid or the version is not supported.
@@ -27,9 +26,9 @@ fn extract_qdb_meta(file_metadata: &FileMetaData) -> ParquetResult<Option<QdbMet
     Ok(Some(QdbMeta::deserialize(json)?))
 }
 
-impl ParquetDecoder {
-    pub fn read(mut file: File) -> ParquetResult<Self> {
-        let metadata = read_metadata(&mut file)?;
+impl<R: Read + Seek> ParquetDecoder<R> {
+    pub fn read(mut reader: R) -> ParquetResult<Self> {
+        let metadata = read_metadata(&mut reader)?;
         let col_len = metadata.schema_descr.columns().len();
         let qdb_meta = extract_qdb_meta(&metadata)?;
         let mut row_group_sizes: Vec<i32> = Vec::with_capacity(metadata.row_groups.len());
@@ -58,21 +57,19 @@ impl ParquetDecoder {
         }
 
         // TODO: add some validation
-        let decoder = ParquetDecoder {
-            col_count: columns.len() as i32,
+        Ok(Self {
+            col_count: columns.len() as u32,
             row_count: metadata.num_rows,
-            row_group_count: metadata.row_groups.len() as i32,
+            row_group_count: metadata.row_groups.len() as u32,
             row_group_sizes_ptr: row_group_sizes.as_ptr(),
             row_group_sizes,
-            file: ManuallyDrop::new(file),
+            reader,
             metadata,
             qdb_meta,
             decompress_buf: vec![],
             columns_ptr: columns.as_ptr(),
             columns,
-        };
-
-        Ok(decoder)
+        })
     }
 
     fn extract_column_type_from_qdb_meta(

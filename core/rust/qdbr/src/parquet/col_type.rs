@@ -144,7 +144,7 @@ impl TryFrom<i32> for ColumnType {
     }
 }
 
-impl <'de> Deserialize<'de> for ColumnType {
+impl<'de> Deserialize<'de> for ColumnType {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,

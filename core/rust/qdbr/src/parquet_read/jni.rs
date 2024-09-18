@@ -1,4 +1,3 @@
-use std::fs::File;
 use std::mem::{offset_of, size_of};
 use std::ptr;
 use std::slice;
@@ -7,32 +6,18 @@ use jni::objects::JClass;
 use jni::JNIEnv;
 
 use crate::parquet::col_type::ColumnType;
-use crate::parquet::qdb_metadata::QdbMetaCol;
+use crate::parquet::error::ParquetResult;
+use crate::parquet_read::io::NonOwningFile;
 use crate::parquet_read::{ColumnChunkBuffers, ColumnMeta, ParquetDecoder, RowGroupBuffers};
-
-fn from_raw_file_descriptor(raw: i32) -> File {
-    unsafe {
-        #[cfg(unix)]
-        {
-            use std::os::unix::io::{FromRawFd, RawFd};
-            File::from_raw_fd(raw as RawFd)
-        }
-
-        #[cfg(windows)]
-        {
-            use std::os::windows::io::{FromRawHandle, RawHandle};
-            File::from_raw_handle(raw as usize as RawHandle)
-        }
-    }
-}
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_create(
     mut env: JNIEnv,
     _class: JClass,
     raw_fd: i32,
-) -> *mut ParquetDecoder {
-    match ParquetDecoder::read(from_raw_file_descriptor(raw_fd)) {
+) -> *mut ParquetDecoder<NonOwningFile> {
+    let reader = NonOwningFile::from_raw_fd(raw_fd);
+    match ParquetDecoder::read(reader) {
         Ok(decoder) => Box::into_raw(Box::new(decoder)),
         Err(err) => throw_java_ex(&mut env, "PartitionDecoder.create", &err, ptr::null_mut()),
     }
@@ -42,25 +27,40 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_destroy(
     _env: JNIEnv,
     _class: JClass,
-    decoder: *mut ParquetDecoder,
+    decoder: *mut ParquetDecoder<NonOwningFile>,
 ) {
     if decoder.is_null() {
         panic!("decoder pointer is null");
     }
 
-    unsafe {
-        drop(Box::from_raw(decoder));
+    drop(unsafe { Box::from_raw(decoder) });
+}
+
+fn map_column_types_from_ints(
+    to_column_types: *const i32,
+    col_count: usize,
+) -> ParquetResult<Vec<Option<ColumnType>>> {
+    let to_column_types_ints = unsafe { slice::from_raw_parts(to_column_types, col_count) };
+    let mut to_column_types = Vec::with_capacity(col_count);
+    for &v in to_column_types_ints.iter() {
+        if v <= 0 {
+            to_column_types.push(None);
+        } else {
+            let column_type: ColumnType = v.try_into()?;
+            to_column_types.push(Some(column_type));
+        }
     }
+    Ok(to_column_types)
 }
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_decodeRowGroup(
     mut env: JNIEnv,
     _class: JClass,
-    decoder: *mut ParquetDecoder,
+    decoder: *mut ParquetDecoder<NonOwningFile>,
     row_group_bufs: *mut RowGroupBuffers,
     to_column_types: *const i32, // negative numbers for columns to skip
-    row_group_index: i32,
+    row_group_index: u32,
 ) -> usize {
     assert!(!decoder.is_null(), "decoder pointer is null");
     assert!(
@@ -72,76 +72,17 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     let decoder = unsafe { &mut *decoder };
     let col_count = decoder.col_count as usize;
     let row_group_bufs = unsafe { &mut *row_group_bufs };
-    let to_column_types = unsafe { slice::from_raw_parts(to_column_types, col_count) };
-
-    if row_group_index >= decoder.row_group_count {
-        return throw_java_ex(
-            &mut env,
-            "decodeRowGroup",
-            &format!(
-                "row group index {} out of range [0,{})",
-                row_group_index, decoder.row_group_count
-            ),
-            0,
-        );
-    }
-
-    if row_group_bufs.column_bufs.len() < col_count {
-        row_group_bufs
-            .column_bufs
-            .resize_with(col_count, ColumnChunkBuffers::new);
-    }
-
-    let mut row_group_size = 0;
-    for (column_idx, &to_column_type) in to_column_types.iter().enumerate() {
-        if to_column_type < 0 {
-            continue; // skip this column
+    let to_column_types = match map_column_types_from_ints(to_column_types, col_count) {
+        Ok(v) => v,
+        Err(err) => {
+            return throw_java_ex(&mut env, "decodeRowGroup", &err, 0);
         }
-        let column_type = decoder.columns[column_idx].column_type;
-        if !matches!(ColumnType::try_from(to_column_type), Ok(v) if v == column_type) {
-            return throw_java_ex(
-                &mut env,
-                "decodeRowGroup",
-                &format!(
-                    "requested column type {} does not match file column type {:?}, column index: {}",
-                    to_column_type, column_type, column_idx
-                ),
-                0,
-            );
-        } else {
-            let column_chunk_bufs = &mut row_group_bufs.column_bufs[column_idx];
-            let column_file_index = decoder.columns[column_idx].id;
+    };
 
-            let col_info = QdbMetaCol { column_type, handling: None };
-            match decoder.decode_column_chunk(
-                column_chunk_bufs,
-                row_group_index as usize,
-                column_file_index as usize,
-                col_info,
-            ) {
-                Ok(column_chunk_size) => {
-                    if row_group_size > 0 && row_group_size != column_chunk_size {
-                        return throw_java_ex(
-                            &mut env,
-                            "decodeRowGroup",
-                            &format!(
-                                "column chunk size {} does not match previous size {}",
-                                column_chunk_size, row_group_size
-                            ),
-                            0,
-                        );
-                    }
-                    row_group_size = column_chunk_size;
-                }
-                Err(err) => {
-                    return throw_java_ex(&mut env, "decodeRowGroup", &err, 0);
-                }
-            }
-        }
+    match decoder.decode_row_group(row_group_bufs, &to_column_types, row_group_index) {
+        Ok(row_count) => row_count,
+        Err(err) => throw_java_ex(&mut env, "decodeRowGroup", &err, 0),
     }
-
-    row_group_bufs.refresh_ptrs();
-    row_group_size
 }
 
 #[no_mangle]
@@ -149,7 +90,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _env: JNIEnv,
     _class: JClass,
 ) -> usize {
-    offset_of!(ParquetDecoder, col_count)
+    offset_of!(ParquetDecoder<NonOwningFile>, col_count)
 }
 
 #[no_mangle]
@@ -157,7 +98,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _env: JNIEnv,
     _class: JClass,
 ) -> usize {
-    offset_of!(ParquetDecoder, row_count)
+    offset_of!(ParquetDecoder<NonOwningFile>, row_count)
 }
 
 #[no_mangle]
@@ -165,7 +106,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _env: JNIEnv,
     _class: JClass,
 ) -> usize {
-    offset_of!(ParquetDecoder, row_group_count)
+    offset_of!(ParquetDecoder<NonOwningFile>, row_group_count)
 }
 
 #[no_mangle]
@@ -173,7 +114,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _env: JNIEnv,
     _class: JClass,
 ) -> usize {
-    offset_of!(ParquetDecoder, row_group_sizes_ptr)
+    offset_of!(ParquetDecoder<NonOwningFile>, row_group_sizes_ptr)
 }
 
 #[no_mangle]
@@ -181,7 +122,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _env: JNIEnv,
     _class: JClass,
 ) -> usize {
-    offset_of!(ParquetDecoder, columns_ptr)
+    offset_of!(ParquetDecoder<NonOwningFile>, columns_ptr)
 }
 
 #[no_mangle]

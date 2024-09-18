@@ -1,4 +1,4 @@
-use crate::parquet::col_type::ColumnTypeTag;
+use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColHandling};
 use crate::parquet_read::column_sink::fixed::{
@@ -30,7 +30,7 @@ use parquet2::schema::types::{
 };
 use parquet2::write::Version;
 use std::collections::VecDeque;
-use std::ops::DerefMut;
+use std::io::{Read, Seek};
 use std::ptr;
 
 impl RowGroupBuffers {
@@ -78,7 +78,86 @@ const DOUBLE_NULL: [u8; 8] = unsafe { std::mem::transmute([f64::NAN]) };
 const FLOAT_NULL: [u8; 4] = unsafe { std::mem::transmute([f32::NAN]) };
 const TIMESTAMP_96_EMPTY: [u8; 12] = [0; 12];
 
-impl ParquetDecoder {
+impl<R: Read + Seek> ParquetDecoder<R> {
+    pub fn decode_row_group(
+        &mut self,
+        row_group_bufs: &mut RowGroupBuffers,
+
+        // Columns to skip are encoded as `None`.
+        to_column_types: &[Option<ColumnType>],
+        row_group_index: u32,
+    ) -> ParquetResult<usize> {
+        if row_group_index > self.row_group_count {
+            return Err(fmt_err!(
+                Invalid,
+                "row group index {} out of range [0,{})",
+                row_group_index,
+                self.row_group_count
+            ));
+        }
+
+        let col_count = self.col_count as usize;
+        if row_group_bufs.column_bufs.len() < (col_count) {
+            row_group_bufs
+                .column_bufs
+                .resize_with(col_count, ColumnChunkBuffers::new);
+        }
+
+        let mut row_group_size = 0usize;
+        for (column_idx, &to_column_type) in to_column_types.iter().enumerate() {
+            let Some(to_column_type) = to_column_type else {
+                continue; // skip this column
+            };
+
+            let column_type = self.columns[column_idx].column_type;
+
+            if column_type != to_column_type {
+                return Err(fmt_err!(
+                    Invalid,
+                    "requested column type {} does not match file column type {}, column index: {}",
+                    to_column_type.code(),
+                    column_type.code(),
+                    column_idx));
+            }
+
+            let column_chunk_bufs = &mut row_group_bufs.column_bufs[column_idx];
+            let column_file_index = self.columns[column_idx].id;
+
+            // Get the column's handling from the "questdb" key-value metadata stored in the file.
+            let handling = self
+                .qdb_meta
+                .as_ref()
+                .and_then(|m| m.schema.columns.get(&column_file_index))
+                .and_then(|c| c.handling);
+
+            let col_info = QdbMetaCol { column_type, handling };
+            match self.decode_column_chunk(
+                column_chunk_bufs,
+                row_group_index as usize,
+                column_file_index as usize,
+                col_info,
+            ) {
+                Ok(column_chunk_size) => {
+                    if row_group_size > 0 && row_group_size != column_chunk_size {
+                        return Err(fmt_err!(
+                            Invalid,
+                            "column chunk size {} does not match previous size {}",
+                            column_chunk_size,
+                            row_group_size
+                        ));
+                    }
+                    row_group_size = column_chunk_size;
+                }
+                Err(err) => {
+                    return Err(err);
+                }
+            }
+        }
+
+        row_group_bufs.refresh_ptrs();
+        Ok(row_group_size)
+    }
+
     pub fn decode_column_chunk(
         &mut self,
         column_chunk_bufs: &mut ColumnChunkBuffers,
@@ -94,13 +173,8 @@ impl ParquetDecoder {
             .try_into()
             .map_err(|_| fmt_err!(Layout, "column chunk size overflow, size: {chunk_size}"))?;
 
-        let page_reader = get_page_iterator(
-            column_metadata,
-            self.file.deref_mut(),
-            None,
-            vec![],
-            chunk_size,
-        )?;
+        let page_reader =
+            get_page_iterator(column_metadata, &mut self.reader, None, vec![], chunk_size)?;
 
         let version = match self.metadata.version {
             1 => Ok(Version::V1),

@@ -52,6 +52,10 @@ impl ParquetErrorCause {
             ParquetErrorCause::Utf8Decode(err) => Some(err),
             ParquetErrorCause::Utf16Decode(err) => Some(err),
             ParquetErrorCause::Io(err) => Some(err.as_ref()),
+            #[cfg(test)]
+            ParquetErrorCause::Arrow(err) => Some(err.as_ref()),
+            #[cfg(test)]
+            ParquetErrorCause::ArrowParquet(err) => Some(err.as_ref()),
             _ => None,
         }
     }
