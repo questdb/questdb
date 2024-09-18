@@ -357,6 +357,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test // example taken from https://www.postgresql.org/docs/current/protocol-flow.html#id-1.10.5.7.4
+    @Ignore("QuestDB does not support implicit transactions")
     public void testCreateBeginInsertCommitInsertErrorRetainsOnlyCommittedData() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL_SANS_Q & (~CONN_AWARE_QUIRKS), (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);

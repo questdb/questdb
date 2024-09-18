@@ -191,7 +191,7 @@ public class PGPipelineEntry implements QuietCloseable {
                 case CompiledQuery.COMMIT:
                 case CompiledQuery.ROLLBACK:
                     freePendingWriters(pendingWriters, this.sqlType == CompiledQuery.COMMIT);
-                    return transactionState;
+                    return NO_TRANSACTION;
                 default:
                     // execute DDL that has not been parse-executed
                     if (!empty) {
