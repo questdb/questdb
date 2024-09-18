@@ -74,11 +74,21 @@ mod tests {
     use parquet::file::properties::{WriterProperties, WriterVersion};
     use std::io::Cursor;
     use std::sync::Arc;
+    use parquet::format::KeyValue;
     use crate::parquet::col_type::ColumnTypeTag;
+    use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol};
 
     #[test]
     fn fn_load_symbol_without_local_is_global_handling_meta() -> ParquetResult<()> {
-        let buf = gen_test_symbol_parquet()?;
+        let mut qdb_meta = QdbMeta::new();
+        qdb_meta.schema.columns.insert(0, QdbMetaCol {
+            column_type: ColumnTypeTag::Symbol.into_type(),
+            handling: None,   // It should error because this is missing.
+        });
+
+        let buf = gen_test_symbol_parquet(Some(
+            qdb_meta.serialize()?
+        ))?;
 
         eprintln!("buf: {:?}", buf);
         let reader = Cursor::new(buf);
@@ -93,7 +103,7 @@ mod tests {
         Ok(())
     }
 
-    fn gen_test_symbol_parquet() -> ParquetResult<Vec<u8>> {
+    fn gen_test_symbol_parquet(qdb_metadata: Option<String>) -> ParquetResult<Vec<u8>> {
         let symbol_col_data = StringArray::from(vec![
             Some("abc"),
             None,
@@ -114,9 +124,15 @@ mod tests {
 
         let batch = RecordBatch::try_new(Arc::new(schema), vec![Arc::new(symbol_col_data)])?;
 
+        let kv_metadata = qdb_metadata.map(
+            |qdb_meta_string| {
+                vec![KeyValue::new("questdb".to_string(), qdb_meta_string)]
+            });
+
         let props = WriterProperties::builder()
             .set_dictionary_enabled(true)
             .set_writer_version(WriterVersion::PARQUET_1_0)
+            .set_key_value_metadata(kv_metadata)
             .build();
 
         let mut buf: Vec<u8> = Vec::new();

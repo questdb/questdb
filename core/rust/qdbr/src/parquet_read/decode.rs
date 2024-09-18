@@ -115,8 +115,8 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                 return Err(fmt_err!(
                     Invalid,
                     "requested column type {} does not match file column type {}, column index: {}",
-                    to_column_type.code(),
-                    column_type.code(),
+                    to_column_type,
+                    column_type,
                     column_idx));
             }
 

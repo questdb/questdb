@@ -21,6 +21,7 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+use std::fmt::{Display, Formatter};
 use crate::parquet::error::{fmt_err, ParquetError};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::num::NonZeroI32;
@@ -129,6 +130,12 @@ impl ColumnType {
         col_tag_num
             .try_into()
             .expect("invalid column type tag, should already be validated")
+    }
+}
+
+impl Display for ColumnType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} ({:?})", self.code, self.tag())
     }
 }
 
