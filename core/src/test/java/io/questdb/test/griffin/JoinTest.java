@@ -5665,16 +5665,17 @@ public class JoinTest extends AbstractCairoTest {
             AtomicInteger counter = new AtomicInteger();
             ff = new TestFilesFacadeImpl() {
                 @Override
+                public int errno() {
+                    // return "Too many open files" to avoid conflicting with ERRNO_FILE_DOES_NOT_EXIST.
+                    return 4;
+                }
+
+                @Override
                 public long openRO(LPSZ name) {
                     if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "ts.d") && counter.incrementAndGet() == 1) {
                         return -1;
                     }
                     return TestFilesFacadeImpl.INSTANCE.openRO(name);
-                }
-                @Override
-                public int errno() {
-                    // return "Too many open files" to avoid conflicting with ERRNO_FILE_DOES_NOT_EXIST.
-                    return 4;
                 }
             };
 
