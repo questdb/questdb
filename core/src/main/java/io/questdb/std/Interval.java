@@ -52,12 +52,23 @@ public class Interval implements Sinkable {
         hi = Long.MIN_VALUE;
     }
 
+    @Override
+    public boolean equals(Object obj) {
+        assert obj instanceof Interval;
+        return lo == ((Interval) obj).lo && hi == ((Interval) obj).hi;
+    }
+
     public long getHi() {
         return hi;
     }
 
     public long getLo() {
         return lo;
+    }
+
+    public void of(long lo, long hi) {
+        this.lo = lo;
+        this.hi = hi;
     }
 
     public void of(CharSequence seq, LongList list) throws NumericException, SqlException {
@@ -68,11 +79,6 @@ public class Interval implements Sinkable {
         }
         lo = list.get(0);
         hi = list.get(1);
-    }
-
-    public void of(long lo, long hi) {
-        this.lo = lo;
-        this.hi = hi;
     }
 
     @Override

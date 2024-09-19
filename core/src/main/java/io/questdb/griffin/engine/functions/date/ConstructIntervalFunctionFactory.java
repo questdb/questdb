@@ -27,83 +27,64 @@ package io.questdb.griffin.engine.functions.date;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntervalFunction;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.Timestamps;
 
-public class TodayFunctionFactory implements FunctionFactory {
-    private static final String SIGNATURE = "today()";
 
+public class ConstructIntervalFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return SIGNATURE;
+        return "interval(NN)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new TodayFunction(sqlExecutionContext);
+        return new ConstructIntervalFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class TodayFunction extends IntervalFunction implements Function {
+    private static class ConstructIntervalFunction extends IntervalFunction implements BinaryFunction {
+        private final Function hi;
         private final Interval interval = new Interval();
-        private SqlExecutionContext context;
+        private final Function lo;
 
-        public TodayFunction(SqlExecutionContext context) {
-            this.context = context;
+        public ConstructIntervalFunction(Function lo, Function hi) {
+            this.lo = lo;
+            this.hi = hi;
         }
 
         @Override
         public Interval getInterval(Record rec) {
-            long todayStart = Timestamps.floorDD(context.getNow());
-            long todayEnd = Timestamps.floorDD(Timestamps.addDays(context.getNow(), 1)) - 1;
+            long l = lo.getTimestamp(rec);
+            long r = hi.getTimestamp(rec);
+            if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL) {
+                return Interval.EMPTY;
+            }
             interval.of(
-                    todayStart,
-                    todayEnd
+                    lo.getTimestamp(rec),
+                    hi.getTimestamp(rec)
             );
             return interval;
         }
 
         @Override
         public Function getLeft() {
-            return new TimestampConstant(interval.getLo());
+            return lo;
         }
 
         @Override
         public String getName() {
-            return "today";
+            return "interval";
         }
 
         @Override
         public Function getRight() {
-            return new TimestampConstant(interval.getHi());
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            executionContext.initNow();
-            context = executionContext;
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return true;
-        }
-
-        @Override
-        public boolean isRuntimeConstant() {
-            return true;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(SIGNATURE);
+            return hi;
         }
     }
 }

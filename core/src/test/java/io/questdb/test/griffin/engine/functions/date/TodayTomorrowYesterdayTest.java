@@ -33,6 +33,14 @@ import org.junit.Test;
 public class TodayTomorrowYesterdayTest extends AbstractCairoTest {
 
     @Test
+    public void testIntervalStartEnd() throws Exception {
+        assertSql("column\n" +
+                "true\n", "select interval_start(today()) = date_trunc('day', now()) from long_sequence(1)");
+        assertSql("column\n" +
+                "true\n", "select interval_end(today()) = dateadd('d', 1, date_trunc('day', now()))-1 from long_sequence(1)\n");
+    }
+
+    @Test
     public void testIntrinsics1() throws Exception {
         assertSql("bool\n" +
                         "true\n",
@@ -44,7 +52,6 @@ public class TodayTomorrowYesterdayTest extends AbstractCairoTest {
                         "    Filter filter: now() in [1726704000000000,1726790399999999]\n" +
                         "        long_sequence count: 1\n");
     }
-
 
     @Test
     public void testIntrinsics2() throws Exception {
@@ -95,7 +102,9 @@ public class TodayTomorrowYesterdayTest extends AbstractCairoTest {
 
     @Test
     public void testTodayWithTimezone() throws Exception {
-        assertSql("column\ntrue\n", "select date_trunc('day', to_timezone(now(), 'Antarctica/McMurdo')) = today('Antarctica/McMurdo')");
+        assertSql("column\n" +
+                        "true\n",
+                "select today('Antarctica/McMurdo') = interval(date_trunc('day', to_timezone(now(), 'Antarctica/McMurdo')), date_trunc('day', to_timezone(dateadd('d', 1, now()), 'Antarctica/McMurdo')) - 1)\n");
     }
 
     @Test
@@ -108,7 +117,9 @@ public class TodayTomorrowYesterdayTest extends AbstractCairoTest {
 
     @Test
     public void testTomorrowWithTimezone() throws Exception {
-        assertSql("column\ntrue\n", "select date_trunc('day', to_timezone(dateadd('d', 1, now()), 'Antarctica/McMurdo')) = tomorrow('Antarctica/McMurdo')");
+        assertSql("column\n" +
+                        "true\n",
+                "select tomorrow('Antarctica/McMurdo') = interval(date_trunc('day', to_timezone(dateadd('d', 1, now()), 'Antarctica/McMurdo')), date_trunc('day', to_timezone(dateadd('d', 2, now()), 'Antarctica/McMurdo')) - 1)\n");
     }
 
     @Test
@@ -117,6 +128,13 @@ public class TodayTomorrowYesterdayTest extends AbstractCairoTest {
         long yesterdayEnd = Timestamps.today() - 1;
         final Interval interval = new Interval(yesterdayStart, yesterdayEnd);
         assertSql("yesterday\n" + interval + "\n", "select yesterday()");
+    }
+
+    @Test
+    public void testYesterdayWithTimezone() throws Exception {
+        assertSql("column\n" +
+                        "true\n",
+                "select yesterday('Antarctica/McMurdo') = interval(date_trunc('day', to_timezone(dateadd('d', -1, now()), 'Antarctica/McMurdo')), date_trunc('day', to_timezone(now(), 'Antarctica/McMurdo')) - 1)\n");
     }
 
     private void buildPlan(StringSink sink, long lo, long hi) {
@@ -130,11 +148,6 @@ public class TodayTomorrowYesterdayTest extends AbstractCairoTest {
         sink.put("\",\"");
         sink.putISODate(hi);
         sink.put("\")]\n");
-    }
-
-    @Test
-    public void testYesterdayWithTimezone() throws Exception {
-        assertSql("column\ntrue\n", "select date_trunc('day', to_timezone(dateadd('d', -1, now()), 'Antarctica/McMurdo')) = yesterday('Antarctica/McMurdo')");
     }
 
 }

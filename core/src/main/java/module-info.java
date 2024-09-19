@@ -155,6 +155,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.array.IntArrayDereferenceHackFunctionFactory,
             // '=' operators
             io.questdb.griffin.engine.functions.eq.EqStrFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqIntervalFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqVarcharFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqVarcharStrFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqByteFunctionFactory,
@@ -338,6 +339,9 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.date.TomorrowWithTimezoneFunctionFactory,
             io.questdb.griffin.engine.functions.date.YesterdayFunctionFactory,
             io.questdb.griffin.engine.functions.date.YesterdayWithTimezoneFunctionFactory,
+            io.questdb.griffin.engine.functions.date.ConstructIntervalFunctionFactory,
+            io.questdb.griffin.engine.functions.date.IntervalStartFunctionFactory,
+            io.questdb.griffin.engine.functions.date.IntervalEndFunctionFactory,
 
             io.questdb.griffin.engine.functions.rnd.RndByteCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndBinCCCFunctionFactory,

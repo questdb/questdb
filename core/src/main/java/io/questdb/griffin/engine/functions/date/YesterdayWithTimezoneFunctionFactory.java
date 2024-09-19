@@ -31,8 +31,10 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.IntervalFunction;
+import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
@@ -48,29 +50,48 @@ public class YesterdayWithTimezoneFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new YesterdayWithTimestampFunction(args.getQuick(0));
+        return new YesterdayWithTimezoneFunction(args.getQuick(0), sqlExecutionContext);
     }
 
-    private static class YesterdayWithTimestampFunction extends TimestampFunction implements Function {
+    private static class YesterdayWithTimezoneFunction extends IntervalFunction implements Function {
+        private final Interval interval = new Interval();
         private final Function timezone;
         private SqlExecutionContext context;
 
-        public YesterdayWithTimestampFunction(Function timezone) {
+        public YesterdayWithTimezoneFunction(Function timezone, SqlExecutionContext context) {
             this.timezone = timezone;
+            this.context = context;
+            context.initNow();
         }
 
         @Override
-        public long getTimestamp(Record rec) {
+        public Interval getInterval(Record rec) {
             final CharSequence tz = timezone.getStrA(rec);
             long now = context.getNow();
             if (tz != null) {
                 try {
                     now = Timestamps.toTimezone(now, TimestampFormatUtils.EN_LOCALE, tz);
                 } catch (NumericException e) {
-                    return Long.MIN_VALUE;
+                    return Interval.EMPTY;
                 }
             }
-            return Timestamps.floorDD(Timestamps.addDays(now, -1));
+            long yesterdayStart = Timestamps.floorDD(Timestamps.addDays(now, -1));
+            long yesterdayEnd = Timestamps.floorDD(now) - 1;
+            interval.of(
+                    yesterdayStart,
+                    yesterdayEnd
+            );
+            return interval;
+        }
+
+        @Override
+        public Function getLeft() {
+            return new TimestampConstant(interval.getLo());
+        }
+
+        @Override
+        public Function getRight() {
+            return new TimestampConstant(interval.getHi());
         }
 
         @Override

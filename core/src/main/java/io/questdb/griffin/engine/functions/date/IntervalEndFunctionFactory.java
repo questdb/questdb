@@ -22,49 +22,54 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.eq;
+package io.questdb.griffin.engine.functions.date;
+
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
 
-public class EqTimestampFunctionFactory implements FunctionFactory {
-
+public class IntervalEndFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "=(NN)";
-    }
-
-    @Override
-    public boolean isBoolean() {
-        return true;
+        return "interval_end(Δ)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new EqTimestampFunction(args.getQuick(0), args.getQuick(1));
+        return new IntervalEndFunction(args.getQuick(0));
     }
 
-    private static class EqTimestampFunction extends AbstractEqBinaryFunction {
-        public EqTimestampFunction(Function left, Function right) {
-            super(left, right);
+    private static class IntervalEndFunction extends TimestampFunction implements ScalarFunction {
+        private final Function interval;
+
+        public IntervalEndFunction(Function interval) {
+            this.interval = interval;
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            return negated != (left.getTimestamp(rec) == right.getTimestamp(rec));
+        public String getName() {
+            return "interval_end";
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            Interval i = interval.getInterval(rec);
+            return i.getHi();
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            left.init(symbolTableSource, executionContext);
-            right.init(symbolTableSource, executionContext);
+            interval.init(symbolTableSource, executionContext);
         }
     }
 }

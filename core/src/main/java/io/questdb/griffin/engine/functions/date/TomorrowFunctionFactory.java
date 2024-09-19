@@ -48,12 +48,16 @@ public class TomorrowFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new TomorrowFunction();
+        return new TomorrowFunction(sqlExecutionContext);
     }
 
     private static class TomorrowFunction extends IntervalFunction implements Function {
         private final Interval interval = new Interval();
         private SqlExecutionContext context;
+
+        public TomorrowFunction(SqlExecutionContext context) {
+            this.context = context;
+        }
 
         @Override
         public Interval getInterval(Record rec) {
@@ -69,6 +73,11 @@ public class TomorrowFunctionFactory implements FunctionFactory {
         @Override
         public Function getLeft() {
             return new TimestampConstant(interval.getLo());
+        }
+
+        @Override
+        public String getName() {
+            return "tomorrow";
         }
 
         @Override

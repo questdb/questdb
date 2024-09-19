@@ -54,6 +54,7 @@ io.questdb.griffin.engine.functions.array.IntArrayDereferenceHackFunctionFactory
 # '='
 io.questdb.griffin.engine.functions.eq.EqStrFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqVarcharFunctionFactory
+io.questdb.griffin.engine.functions.eq.EqIntervalFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqVarcharStrFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqByteFunctionFactory
 io.questdb.griffin.engine.functions.eq.EqShortFunctionFactory
@@ -300,6 +301,9 @@ io.questdb.griffin.engine.functions.date.TomorrowFunctionFactory
 io.questdb.griffin.engine.functions.date.TomorrowWithTimezoneFunctionFactory
 io.questdb.griffin.engine.functions.date.YesterdayFunctionFactory
 io.questdb.griffin.engine.functions.date.YesterdayWithTimezoneFunctionFactory
+io.questdb.griffin.engine.functions.date.ConstructIntervalFunctionFactory
+io.questdb.griffin.engine.functions.date.IntervalStartFunctionFactory
+io.questdb.griffin.engine.functions.date.IntervalEndFunctionFactory
 
 # cast functions
 

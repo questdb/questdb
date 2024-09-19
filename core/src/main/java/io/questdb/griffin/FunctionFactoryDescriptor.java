@@ -173,6 +173,10 @@ public class FunctionFactoryDescriptor {
             case 'ø':
                 sigArgType = ColumnType.VARCHAR;
                 break;
+            case 'δ':
+//            case 'Δ':
+                sigArgType = ColumnType.INTERVAL;
+                break;
             default:
                 sigArgType = -1;
                 break;

@@ -32,7 +32,10 @@ import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.model.*;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.FlyweightCharSequence;
 import io.questdb.std.str.Path;
@@ -40,13 +43,14 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.lang.ThreadLocal;
 import java.util.ArrayDeque;
 
 import static io.questdb.griffin.SqlKeywords.isNoneKeyword;
 import static io.questdb.griffin.model.ExpressionNode.*;
 
 public class SqlOptimiser implements Mutable {
-
+    public static final Log LOG = LogFactory.getLog(SqlOptimiser.class);
     private static final int JOIN_OP_AND = 2;
     private static final int JOIN_OP_EQUAL = 1;
     private static final int JOIN_OP_OR = 3;
@@ -6267,24 +6271,43 @@ public class SqlOptimiser implements Mutable {
     }
 
     private static class RewriteTodayTomorrowYesterdayVisitor implements PostOrderTreeTraversalAlgo.Visitor {
+        private static final ThreadLocal<StringSink> sink = ThreadLocal.withInitial(StringSink::new);
 
         @Override
         public void visit(ExpressionNode node) {
-            if (node.type == FUNCTION) {
-                if (Chars.equalsIgnoreCase(node.token, "today")) {
-                    node.type = CONSTANT;
-                    long today = Timestamps.floorDD(Os.currentTimeMicros());
-                    node.token = '\'' + Timestamps.toString(today).substring(0, 10) + '\'';
-                } else if (Chars.equalsIgnoreCase(node.token, "tomorrow")) {
-                    node.type = CONSTANT;
-                    long tomorrow = Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), 1));
-                    node.token = '\'' + Timestamps.toString(tomorrow).substring(0, 10) + '\'';
-                } else if (Chars.equalsIgnoreCase(node.token, "yesterday")) {
-                    node.type = CONSTANT;
-                    long yesterday = Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), -1));
-                    node.token = '\'' + Timestamps.toString(yesterday).substring(0, 10) + '\'';
+            try {
+                if (node.type == FUNCTION) {
+                    if (Chars.equalsIgnoreCase(node.token, "today")) {
+                        node.type = CONSTANT;
+                        long today = adjustTimezoneIfNeeded(Timestamps.today(), node.lhs);
+                        node.token = formatDate(today);
+                    } else if (Chars.equalsIgnoreCase(node.token, "tomorrow")) {
+                        node.type = CONSTANT;
+                        long tomorrow = adjustTimezoneIfNeeded(Timestamps.tomorrow(), node.lhs);
+                        node.token = formatDate(tomorrow);
+                    } else if (Chars.equalsIgnoreCase(node.token, "yesterday")) {
+                        node.type = CONSTANT;
+                        long yesterday = adjustTimezoneIfNeeded(Timestamps.yesterday(), node.lhs);
+                        node.token = formatDate(yesterday);
+                    }
                 }
+            } catch (NumericException nex) {
+                LOG.error().$(nex);
             }
+
+        }
+
+        private long adjustTimezoneIfNeeded(long ts, ExpressionNode tzNode) throws NumericException {
+            return tzNode != null ? Timestamps.toTimezone(ts, TimestampFormatUtils.EN_LOCALE, tzNode.token) : ts;
+        }
+
+        private CharSequence formatDate(long micros) {
+            StringSink localSink = sink.get();
+            localSink.clear();
+            localSink.put('\'');
+            TimestampFormatUtils.formatYYYYMMDD(localSink, micros / 1000);
+            localSink.put('\'');
+            return localSink.toString();
         }
     }
 
