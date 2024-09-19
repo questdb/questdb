@@ -25,49 +25,108 @@
 package io.questdb.cairo.mv;
 
 import io.questdb.cairo.TableToken;
-import io.questdb.std.ConcurrentHashMap;
-import io.questdb.std.ObjList;
-import io.questdb.std.SimpleReadWriteLock;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.*;
+import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.NotNull;
 
 import java.util.concurrent.locks.ReadWriteLock;
 
-public class MatViewGraph {
-    private final ConcurrentHashMap<DependentMatViewList> dependantViewsByTableName = new ConcurrentHashMap<>();
+public class MatViewGraph implements QuietCloseable {
+    private final ConcurrentHashMap<DependentMatViewState> dependantViewsByTableName = new ConcurrentHashMap<>();
 
-    public synchronized void getAffectedViews(TableToken table, AffectedMatViewsSink sink) {
-        DependentMatViewList list = dependantViewsByTableName.get(table.getTableName());
-        if (list != null) {
-            // TODO: lock/unlock instead of sycnronized
+    @Override
+    public void close() {
+        for (DependentMatViewState state : dependantViewsByTableName.values()) {
+            try {
+                state.writeLock();
+                Misc.free(state);
+            } finally {
+                state.unlockWrite();
+            }
+        }
+        dependantViewsByTableName.clear();
+    }
+
+    public void getAffectedViews(TableToken table, AffectedMatViewsSink sink) {
+        DependentMatViewState list = getState(table);
+        try {
+            list.readLock();
             sink.viewsList.addAll(list.matViews);
+        } finally {
+            list.unlockRead();
         }
     }
 
-    public synchronized void getAllParents(ObjList<CharSequence> sink) {
-        for (CharSequence key : dependantViewsByTableName.keySet()) {
-            DependentMatViewList list = dependantViewsByTableName.get(key);
-            if (list.matViews.size() > 0) {
-                sink.add(key);
+    public void getAllBaseTables(ObjList<CharSequence> sink) {
+        for (DependentMatViewState state : dependantViewsByTableName.values()) {
+            try {
+                state.readLock();
+                if (state.matViews.size() > 0) {
+                    sink.add(state.matViews.get(0).getBaseTableName());
+                }
+            } finally {
+                state.unlockRead();
             }
         }
     }
 
-    public synchronized void upsertView(TableToken parent, MaterializedViewDefinition viewDefinition) {
-        DependentMatViewList list = dependantViewsByTableName.get(parent.getTableName());
-        if (list != null) {
-            // TODO: lock/unlock instead of sycnronized
-            for (int i = 0, size = list.matViews.size(); i < size; i++) {
-                MaterializedViewDefinition existingView = list.matViews.get(0);
+    public MaterializedViewRefreshState getViewRefreshState(TableToken tableToken) {
+        DependentMatViewState state = getState(tableToken);
+        return state.getRefreshState();
+    }
+
+    public void upsertView(TableToken base, MaterializedViewDefinition viewDefinition) {
+        DependentMatViewState state = getState(base);
+        try {
+            state.writeLock();
+            for (int i = 0, size = state.matViews.size(); i < size; i++) {
+                MaterializedViewDefinition existingView = state.matViews.get(0);
                 if (existingView.getTableToken().equals(viewDefinition.getTableToken())) {
-                    list.matViews.set(i, viewDefinition);
+                    state.matViews.set(i, viewDefinition);
                     return;
                 }
             }
-            list.matViews.add(viewDefinition);
-        } else {
-            list = new DependentMatViewList();
-            list.matViews.add(viewDefinition);
-            dependantViewsByTableName.put(parent.getTableName(), list);
+            state.matViews.add(viewDefinition);
+        } finally {
+            state.unlockWrite();
         }
+    }
+
+    public void upsertViewRefreshState(TableToken viewTableToken, RecordCursorFactory cursorFactory) {
+        DependentMatViewState state = getState(viewTableToken);
+        try {
+            state.writeLock();
+            state.updateStateSuccess(cursorFactory);
+        } finally {
+            state.unlockWrite();
+        }
+    }
+
+    public void upsertViewRefreshStateError(TableToken viewTableToken, CharSequence updateError) {
+        DependentMatViewState state = getState(viewTableToken);
+        try {
+            state.writeLock();
+            state.updateStateError(updateError);
+        } finally {
+            state.unlockWrite();
+        }
+    }
+
+    @NotNull
+    private DependentMatViewState getState(TableToken tableToken) {
+        return getState(tableToken.getDirName());
+    }
+
+    @NotNull
+    private DependentMatViewState getState(CharSequence tableDirName) {
+        DependentMatViewState state = dependantViewsByTableName.get(tableDirName);
+        if (state == null) {
+            state = new DependentMatViewState();
+            DependentMatViewState existingState = dependantViewsByTableName.putIfAbsent(tableDirName, state);
+            return existingState != null ? existingState : state;
+        }
+        return state;
     }
 
     public static class AffectedMatViewsSink {
@@ -75,11 +134,39 @@ public class MatViewGraph {
 
     }
 
-    private static class DependentMatViewList {
+    private static class DependentMatViewState implements QuietCloseable {
         private final ReadWriteLock lock = new SimpleReadWriteLock();
         ObjList<MaterializedViewDefinition> matViews = new ObjList<>();
+        private final MaterializedViewRefreshState refreshState = new MaterializedViewRefreshState();
+        private RecordCursorFactory cursorFactory;
         private long lastCommitWallClockMicro;
-        private long lastParentTxnSeq;
+        private long lastBaseTxnSeq;
+        private StringSink lastUpdateError;
+
+        @Override
+        public void close() {
+            cursorFactory = Misc.free(cursorFactory);
+        }
+
+        public MaterializedViewRefreshState getRefreshState() {
+            return refreshState;
+        }
+
+        public void updateStateError(CharSequence updateError) {
+            if (lastUpdateError == null) {
+                lastUpdateError = new StringSink();
+            }
+            lastUpdateError.clear();
+            lastUpdateError.put(updateError);
+            this.cursorFactory = Misc.free(cursorFactory);
+        }
+
+        public void updateStateSuccess(RecordCursorFactory cursorFactory) {
+            this.cursorFactory = cursorFactory;
+            if (lastUpdateError != null) {
+                lastUpdateError.clear();
+            }
+        }
 
         void readLock() {
             lock.readLock().lock();

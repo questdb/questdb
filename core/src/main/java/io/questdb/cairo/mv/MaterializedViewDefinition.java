@@ -33,7 +33,7 @@ public class MaterializedViewDefinition {
     private CharSequence viewSql;
     private TableToken tableToken;
 
-    public CharSequence getParentTableName() {
+    public CharSequence getBaseTableName() {
         return parentTableName;
     }
 

@@ -36,16 +36,14 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
 
-import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
-
 public class MaterializedViewRefreshJob extends SynchronizedJob {
     public static final String MAT_VIEW_REFRESH_TABLE_WRITE_REASON = "Mat View refresh";
     private static final Log LOG = LogFactory.getLog(MaterializedViewRefreshJob.class);
+    private final ObjList<CharSequence> baseTables = new ObjList<>();
     private final MatViewGraph.AffectedMatViewsSink childViewSink = new MatViewGraph.AffectedMatViewsSink();
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
     private final CairoEngine engine;
     private final MatViewRefreshExecutionContext matViewRefreshExecutionContext;
-    private final ObjList<CharSequence> parents = new ObjList<>();
     private final WalTxnRangeLoader txnRangeLoader;
 
     public MaterializedViewRefreshJob(CairoEngine engine) {
@@ -102,19 +100,38 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
         return columnFilter;
     }
 
-    private void insertAsSelect(MaterializedViewDefinition viewDef, TableWriterAPI tableWriter) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            CompiledQuery compiledQuery = compiler.compile(viewDef.getViewSql(), matViewRefreshExecutionContext);
-            if (compiledQuery.getType() != CompiledQuery.SELECT) {
-                throw SqlException.$(0, "materialized view query must be a SELECT statement");
-            }
+    private boolean insertAsSelect(MatViewGraph viewGraph, MaterializedViewDefinition viewDef, TableWriterAPI tableWriter) throws SqlException {
+        MaterializedViewRefreshState refreshState = viewGraph.getViewRefreshState(viewDef.getTableToken());
+        RecordCursorFactory factory;
+        RecordToRowCopier copier;
+        long rowCount = 0;
+        if (refreshState.tryLock()) {
+            try {
+                factory = refreshState.getFactory();
+                copier = refreshState.getRecordToRowCopier();
 
-            try (RecordCursorFactory factory = compiledQuery.getRecordCursorFactory()) {
+                if (factory == null) {
+                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                        CompiledQuery compiledQuery = compiler.compile(viewDef.getViewSql(), matViewRefreshExecutionContext);
+                        if (compiledQuery.getType() != CompiledQuery.SELECT) {
+                            throw SqlException.$(0, "materialized view query must be a SELECT statement");
+                        }
+                        factory = compiledQuery.getRecordCursorFactory();
 
-                ColumnFilter entityColumnFilter = generatedColumnFilter(
-                        factory.getMetadata(),
-                        tableWriter.getMetadata()
-                );
+                        ColumnFilter entityColumnFilter = generatedColumnFilter(
+                                factory.getMetadata(),
+                                tableWriter.getMetadata()
+                        );
+                        copier = RecordToRowCopierUtils.generateCopier(
+                                compiler.getAsm(),
+                                factory.getMetadata(),
+                                tableWriter.getMetadata(),
+                                entityColumnFilter
+                        );
+                    } catch (SqlException e) {
+                        refreshState.compilationFail(e);
+                    }
+                }
 
                 int cursorTimestampIndex = factory.getMetadata().getColumnIndex(
                         tableWriter.getMetadata().getColumnName(tableWriter.getMetadata().getTimestampIndex())
@@ -126,13 +143,6 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
                             .put("' not found in view select query");
                 }
 
-                RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(
-                        compiler.getAsm(),
-                        factory.getMetadata(),
-                        tableWriter.getMetadata(),
-                        entityColumnFilter
-                );
-
                 try (RecordCursor cursor = factory.getCursor(matViewRefreshExecutionContext)) {
                     final Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
@@ -141,103 +151,106 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
                         row.append();
                     }
                 }
+                rowCount = tableWriter.getUncommittedRowCount();
                 tableWriter.commit();
+                refreshState.refreshSuccess(factory, copier, rowCount);
+            } catch (Throwable th) {
+                LOG.error().$("error refreshing materialized view [view=").$(viewDef.getTableToken()).$(", error=").$(th).I$();
+                refreshState.refreshFail(th);
+                throw th;
+            } finally {
+                refreshState.unlock();
             }
+        } else {
+            LOG.info().$("skipping mat view refresh, locked by another refresh run").$();
         }
+        return rowCount > 0;
     }
 
-    private void refreshView(TableToken baseToken, SeqTxnTracker viewTxnTracker, TableToken viewToken, MaterializedViewDefinition viewDef, long fromBaseTxn, long toBaseTxn) {
+    private boolean refreshView(MatViewGraph viewGraph, TableToken baseToken, SeqTxnTracker viewTxnTracker, TableToken viewToken, MaterializedViewDefinition viewDef, long fromBaseTxn, long toBaseTxn) {
         // Steps:
         // - compile view and execute with timestamp ranges from the unprocessed commits
         // - write the result set to WAL (or directly to table writer O3 area)
         // - apply resulting commit
         // - update applied to Txn in MatViewGraph
-        try {
-            if (fromBaseTxn < 0) {
-                fromBaseTxn = engine.getTableSequencerAPI().getLastRefreshBaseTxn(viewToken);
-                if (fromBaseTxn >= toBaseTxn) {
-                    // Already refreshed
-                    viewTxnTracker.setLastRefreshBaseTxn(fromBaseTxn);
-                    return;
-                }
+        if (fromBaseTxn < 0) {
+            fromBaseTxn = engine.getTableSequencerAPI().getLastRefreshBaseTxn(viewToken);
+            if (fromBaseTxn >= toBaseTxn) {
+                // Already refreshed
+                viewTxnTracker.setLastRefreshBaseTxn(fromBaseTxn);
+                return false;
             }
-
-            if (viewTxnTracker.shouldBackOffDueToMemoryPressure(MicrosecondClockImpl.INSTANCE.getTicks())) {
-                // rely on another pass of refresh job to re-try
-                return;
-            }
-
-            try (TableReader baseTableReader = engine.getReader(baseToken)) {
-                matViewRefreshExecutionContext.of(baseTableReader);
-                try {
-                    if (findCommitTimestampRanges(matViewRefreshExecutionContext, baseTableReader, fromBaseTxn, viewDef)) {
-                        toBaseTxn = baseTableReader.getSeqTxn();
-                        LOG.info().$("refreshing materialized view [view=").$(viewToken)
-                                .$(", base=").$(baseToken)
-                                .$(", fromSeqTxn=").$(fromBaseTxn)
-                                .$(", toSeqTxn=").$(toBaseTxn).I$();
-
-                        try (TableWriterAPI commitWriter = engine.getTableWriterAPI(viewToken, "Mat View refresh")) {
-                            insertAsSelect(viewDef, commitWriter);
-                            engine.getTableSequencerAPI().setLastRefreshBaseTxn(viewToken, toBaseTxn);
-                            viewTxnTracker.setLastRefreshBaseTxn(toBaseTxn);
-                        }
-                    }
-                } finally {
-                    matViewRefreshExecutionContext.clean();
-                }
-            } catch (SqlException sqlException) {
-                LOG.error().$("error refreshing materialized view [view=").$(viewToken).$(", error=")
-                        .$(sqlException.getFlyweightMessage()).I$();
-            }
-        } catch (EntryUnavailableException tableBusy) {
-            //noinspection StringEquality
-            if (tableBusy.getReason() != NO_LOCK_REASON) {
-                LOG.critical().$("unsolicited table lock [table=").utf8(viewToken.getDirName()).$(", lockReason=").$(tableBusy.getReason()).I$();
-            }
-            // Do not suspend table. Perhaps writer will be unlocked with no transaction applied.
-            // We do not suspend table because of having initial value on lastWriterTxn. It will either be
-            // "ignore" or last txn we applied.
         }
+
+        if (viewTxnTracker.shouldBackOffDueToMemoryPressure(MicrosecondClockImpl.INSTANCE.getTicks())) {
+            // rely on another pass of refresh job to re-try
+            return false;
+        }
+
+        try (TableReader baseTableReader = engine.getReader(baseToken)) {
+            matViewRefreshExecutionContext.of(baseTableReader);
+            try {
+                if (findCommitTimestampRanges(matViewRefreshExecutionContext, baseTableReader, fromBaseTxn, viewDef)) {
+                    toBaseTxn = baseTableReader.getSeqTxn();
+                    LOG.info().$("refreshing materialized view [view=").$(viewToken)
+                            .$(", base=").$(baseToken)
+                            .$(", fromSeqTxn=").$(fromBaseTxn)
+                            .$(", toSeqTxn=").$(toBaseTxn).I$();
+
+                    try (TableWriterAPI commitWriter = engine.getTableWriterAPI(viewToken, "Mat View refresh")) {
+                        boolean changed = insertAsSelect(viewGraph, viewDef, commitWriter);
+                        engine.getTableSequencerAPI().setLastRefreshBaseTxn(viewToken, toBaseTxn);
+                        viewTxnTracker.setLastRefreshBaseTxn(toBaseTxn);
+                        return changed;
+                    }
+                }
+            } finally {
+                matViewRefreshExecutionContext.clean();
+            }
+        } catch (SqlException sqlException) {
+            LOG.error().$("error refreshing materialized view [view=").$(viewToken).$(", error=")
+                    .$(sqlException.getFlyweightMessage()).I$();
+        }
+        return false;
     }
 
     @Override
     protected boolean runSerially() {
-        parents.clear();
+        baseTables.clear();
         MatViewGraph viewGraph = engine.getMaterializedViewGraph();
-        viewGraph.getAllParents(parents);
+        viewGraph.getAllBaseTables(baseTables);
         boolean refreshed = false;
-        for (int i = 0, size = parents.size(); i < size; i++) {
-            CharSequence parentName = parents.get(i);
+        for (int i = 0, size = baseTables.size(); i < size; i++) {
+            CharSequence baseName = baseTables.get(i);
 
-            TableToken parentToken = engine.getTableTokenIfExists(parentName);
-            if (parentToken != null) {
+            TableToken baseToken = engine.getTableTokenIfExists(baseName);
+            if (baseToken != null) {
                 childViewSink.viewsList.clear();
-                viewGraph.getAffectedViews(parentToken, childViewSink);
+                viewGraph.getAffectedViews(baseToken, childViewSink);
 
-                if (!parentToken.isWal() && childViewSink.viewsList.size() > 0) {
+                if (!baseToken.isWal() && childViewSink.viewsList.size() > 0) {
                     // TODO: include more details of the views not to be refreshed
                     LOG.error().$("Found materialized views dependent on non-WAL table that will not be refreshed [parent=")
-                            .$(parentName).I$();
+                            .$(baseName).I$();
                 }
 
-                SeqTxnTracker parentSeqTracker = engine.getTableSequencerAPI().getTxnTracker(parentToken);
-                long lastBaseQueryableTxn = parentSeqTracker.getWriterTxn();
+                SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseToken);
 
                 for (int v = 0, vsize = childViewSink.viewsList.size(); v < vsize; v++) {
                     MaterializedViewDefinition viewDef = childViewSink.viewsList.get(v);
                     TableToken viewToken = viewDef.getTableToken();
                     SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
                     long appliedToParentTxn = viewSeqTracker.getLastRefreshBaseTxn();
+                    long lastBaseQueryableTxn = baseSeqTracker.getWriterTxn();
+
                     if (appliedToParentTxn < 0 || appliedToParentTxn < lastBaseQueryableTxn) {
-                        refreshView(parentToken, viewSeqTracker, viewToken, viewDef, appliedToParentTxn, lastBaseQueryableTxn);
-                        refreshed = true;
+                        refreshed |= refreshView(viewGraph, baseToken, viewSeqTracker, viewToken, viewDef, appliedToParentTxn, lastBaseQueryableTxn);
                     }
                 }
             } else {
                 // TODO: include more details of the views not to be refreshed
-                LOG.error().$("Found materialized views dependent on deleted table that will not be refreshed [parent=")
-                        .$(parentName).I$();
+                LOG.error().$("found materialized views dependent on deleted table that will not be refreshed [parent=")
+                        .$(baseName).I$();
             }
         }
         return refreshed;
