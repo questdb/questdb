@@ -144,15 +144,12 @@ impl TryFrom<i32> for ColumnType {
 
     fn try_from(v: i32) -> Result<Self, Self::Error> {
         if v <= 0 {
-            return Err(fmt_err!(
-                Invalid,
-                "invalid column type code <= 0: {}",
-                v
-            ));
+            return Err(fmt_err!(Invalid, "invalid column type code <= 0: {}", v));
         }
         // Start with removing geohash size bits. See ColumnType#tagOf().
         let col_tag_num = tag_of(v);
-        let _tag: ColumnTypeTag = col_tag_num.try_into()
+        let _tag: ColumnTypeTag = col_tag_num
+            .try_into()
             .with_context(|_| format!("could not parse {v} to a valid ColumnType"))?;
         let code = NonZeroI32::new(v).expect("column type code should never be zero");
         Ok(Self { code })
@@ -171,9 +168,9 @@ impl<'de> Deserialize<'de> for ColumnType {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use crate::parquet::error::{ParquetErrorCause, ParquetResult};
     use super::*;
+    use crate::parquet::error::{ParquetErrorCause, ParquetResult};
+    use std::sync::Arc;
 
     #[test]
     fn test_invalid_value_deserialization() {
@@ -185,8 +182,9 @@ mod tests {
         ];
         for &(code, exp_err_msg) in &scenarios {
             eprintln!("testing invalid code: {}", code);
-            let deserialized: ParquetResult<ColumnType> = serde_json::from_value(serde_json::json!(code))
-                .map_err(|e| ParquetErrorCause::QdbMeta(Arc::new(e)).into_err());
+            let deserialized: ParquetResult<ColumnType> =
+                serde_json::from_value(serde_json::json!(code))
+                    .map_err(|e| ParquetErrorCause::QdbMeta(Arc::new(e)).into_err());
             assert!(deserialized.is_err());
 
             // Stringify error without backtrace.
@@ -195,7 +193,7 @@ mod tests {
                 .to_string()
                 .split("\n   0: std::")
                 .into_iter()
-                .map(|s|s.to_string())
+                .map(|s| s.to_string())
                 .next()
                 .unwrap();
             eprintln!("{}", msg);
