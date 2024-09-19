@@ -102,6 +102,10 @@ impl ParquetError {
     pub fn get_cause(&self) -> &ParquetErrorCause {
         &self.cause
     }
+
+    pub fn add_context(&mut self, context: impl Into<String>) {
+        self.context.push(context.into());
+    }
 }
 
 impl Debug for ParquetError {
@@ -191,7 +195,7 @@ impl<T> ParquetErrorExt<T> for ParquetResult<T> {
         match self {
             Ok(val) => Ok(val),
             Err(mut err) => {
-                err.context.push(context.to_string());
+                err.add_context(context);
                 Err(err)
             }
         }
@@ -206,7 +210,7 @@ impl<T> ParquetErrorExt<T> for ParquetResult<T> {
             Ok(val) => Ok(val),
             Err(mut err) => {
                 let context = context(&mut err);
-                err.context.push(context);
+                err.add_context(context);
                 Err(err)
             }
         }

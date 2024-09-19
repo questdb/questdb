@@ -1856,7 +1856,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                     final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
 
-                    LOG.info()
+                    LOG.debug()
                             .$("JIT enabled for (sub)query [tableName=").utf8(model.getName())
                             .$(", fd=").$(executionContext.getRequestFd())
                             .I$();
@@ -3477,6 +3477,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         if (entity) {
+            model.setSkipped(true);
             return factory;
         }
 
@@ -3943,18 +3944,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 Function filter = null;
                 // Try to steal the filter from the nested factory, if possible.
                 // We aim for simple cases such as select key, avg(value) from t where value > 0
-                if (!supportsParallelism && (factory instanceof StealableFilterRecordCursorFactory)) {
-                    StealableFilterRecordCursorFactory filterFactory = (StealableFilterRecordCursorFactory) factory;
-                    if (filterFactory.supportsFilterStealing()) {
-                        factory = factory.getBaseFactory();
-                        assert factory.supportsPageFrameCursor();
-                        compiledFilter = filterFactory.getCompiledFilter();
-                        bindVarMemory = filterFactory.getBindVarMemory();
-                        bindVarFunctions = filterFactory.getBindVarFunctions();
-                        filter = filterFactory.getFilter();
-                        supportsParallelism = true;
-                        filterFactory.halfClose();
-                    }
+                if (!supportsParallelism && factory.supportsFilterStealing()) {
+                    RecordCursorFactory filterFactory = factory;
+                    factory = factory.getBaseFactory();
+                    assert factory.supportsPageFrameCursor();
+                    compiledFilter = filterFactory.getCompiledFilter();
+                    bindVarMemory = filterFactory.getBindVarMemory();
+                    bindVarFunctions = filterFactory.getBindVarFunctions();
+                    filter = filterFactory.getFilter();
+                    supportsParallelism = true;
+                    filterFactory.halfClose();
                 }
 
                 if (supportsParallelism) {
@@ -3993,7 +3992,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         executionContext,
                                         filter,
                                         executionContext.getSharedWorkerCount(),
-                                        nested.getWhereClause(),
+                                        locatePotentiallyFurtherNestedWhereClause(nested),
                                         factory.getMetadata()
                                 ),
                                 executionContext.getSharedWorkerCount()
@@ -4039,7 +4038,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             executionContext,
                                             filter,
                                             executionContext.getSharedWorkerCount(),
-                                            nested.getWhereClause(),
+                                            locatePotentiallyFurtherNestedWhereClause(nested),
                                             factory.getMetadata()
                                     ),
                                     executionContext.getSharedWorkerCount()
@@ -5672,6 +5671,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private boolean isSameTable(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {
         return masterFactory.getTableToken() != null && masterFactory.getTableToken().equals(slaveFactory.getTableToken());
+    }
+
+    // skips skipped models until finding a WHERE clause
+    private ExpressionNode locatePotentiallyFurtherNestedWhereClause(QueryModel model) {
+        QueryModel curr = model;
+        ExpressionNode expr = curr.getWhereClause();
+
+        while (curr.isSkipped() && expr == null) {
+            expr = curr.getWhereClause();
+            curr = curr.getNestedModel();
+        }
+
+        if (expr == null) {
+            expr = curr.getWhereClause();
+        }
+
+        return expr;
     }
 
     private void lookupColumnIndexes(

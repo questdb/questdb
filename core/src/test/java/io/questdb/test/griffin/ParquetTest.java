@@ -130,6 +130,62 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonWildcardSelect1() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table x as (\n" +
+                            "  select x id, timestamp_sequence(0,1000000000) as ts\n" +
+                            "  from long_sequence(10)\n" +
+                            ") timestamp(ts) partition by hour;"
+            );
+            ddl("alter table x convert partition to parquet where ts >= 0");
+
+            assertSql(
+                    "1\tts\tid\tid2\tts2\n" +
+                            "1\t1970-01-01T00:00:00.000000Z\t1\t1\t1970-01-01T00:00:00.000000Z\n" +
+                            "1\t1970-01-01T00:16:40.000000Z\t2\t2\t1970-01-01T00:16:40.000000Z\n" +
+                            "1\t1970-01-01T00:33:20.000000Z\t3\t3\t1970-01-01T00:33:20.000000Z\n" +
+                            "1\t1970-01-01T00:50:00.000000Z\t4\t4\t1970-01-01T00:50:00.000000Z\n" +
+                            "1\t1970-01-01T01:06:40.000000Z\t5\t5\t1970-01-01T01:06:40.000000Z\n" +
+                            "1\t1970-01-01T01:23:20.000000Z\t6\t6\t1970-01-01T01:23:20.000000Z\n" +
+                            "1\t1970-01-01T01:40:00.000000Z\t7\t7\t1970-01-01T01:40:00.000000Z\n" +
+                            "1\t1970-01-01T01:56:40.000000Z\t8\t8\t1970-01-01T01:56:40.000000Z\n" +
+                            "1\t1970-01-01T02:13:20.000000Z\t9\t9\t1970-01-01T02:13:20.000000Z\n" +
+                            "1\t1970-01-01T02:30:00.000000Z\t10\t10\t1970-01-01T02:30:00.000000Z\n",
+                    "select 1, ts, id, id as id2, ts as ts2 from x"
+            );
+        });
+    }
+
+    @Test
+    public void testNonWildcardSelect2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table x as (\n" +
+                            "  select x id, timestamp_sequence(0,1000000000) as ts\n" +
+                            "  from long_sequence(10)\n" +
+                            ") timestamp(ts) partition by hour;"
+            );
+            //ddl("alter table x convert partition to parquet where ts >= 0");
+
+            assertSql(
+                    "ts\n" +
+                            "1970-01-01T00:00:00.000000Z\n" +
+                            "1970-01-01T00:16:40.000000Z\n" +
+                            "1970-01-01T00:33:20.000000Z\n" +
+                            "1970-01-01T00:50:00.000000Z\n" +
+                            "1970-01-01T01:06:40.000000Z\n" +
+                            "1970-01-01T01:23:20.000000Z\n" +
+                            "1970-01-01T01:40:00.000000Z\n" +
+                            "1970-01-01T01:56:40.000000Z\n" +
+                            "1970-01-01T02:13:20.000000Z\n" +
+                            "1970-01-01T02:30:00.000000Z\n",
+                    "select ts from x"
+            );
+        });
+    }
+
+    @Test
     public void testOrderBy1() throws Exception {
         assertMemoryLeak(() -> {
             ddl(

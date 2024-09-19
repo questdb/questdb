@@ -6,22 +6,54 @@ steps:
   - bash: sudo sysctl -w fs.file-max=500000
     displayName: "Increase file count on Linux"
     condition: eq(variables['os'], 'Linux')
-  - task: Cache@2
-    inputs:
-      key: '"questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"'
-      path: $(MAVEN_CACHE_FOLDER)
 
   - task: Cache@2
+    displayName: "Cache non-default Maven"
     inputs:
       key: '"maven_version" | "$(MAVEN_VERSION)"'
       path: $(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)
       cacheHitVar: MVN_CACHE_RESTORED
     condition: ne(variables['MAVEN_VERSION_OPTION'], 'Default')
-
+  - task: Cache@2
+    displayName: "Cache .m2/repository"
+    inputs:
+      key: '"questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"'
+      path: $(MAVEN_CACHE_FOLDER)
+  - task: Cache@2
+    displayName: "Cache .cargo/registry"
+    inputs:
+      key: '"cargo-registry" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)" | "$(LINUX_GLIBC_VERSION)" | **/Cargo.lock'
+      restoreKeys: |
+        "cargo-registry" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)" | "$(LINUX_GLIBC_VERSION)"
+      path: $(CARGO_HOME)/registry
+    condition: |
+      and(
+        startsWith(variables['testset'], 'coverage'),
+        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
+      )
+  - pwsh: New-Item -Path "$HOME/.m2/repository" -ItemType Directory -Force
+    displayName: "Ensure .m2/repository exists (PowerShell)"
+    condition: eq(variables['os'], 'Windows')
+  - bash: mkdir -p "$HOME/.m2/repository"
+    displayName: "Ensure .m2/repository exists (bash)"
+    condition: ne(variables['os'], 'Windows')
   - script: 'wget https://archive.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip'
-    condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'), ne(variables['os'], 'Windows'))
-  - script: "powershell -Command \"(new-object System.Net.WebClient).DownloadFile('https://www.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip','$(build.sourcesdirectory)\\apache-maven-$(MAVEN_VERSION)-bin.zip')\""
-    condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'), eq(variables['os'], 'Windows'))
+    displayName: "Get non-default Maven (bash)"
+    condition: |
+      and(
+        ne(variables['MAVEN_VERSION_OPTION'], 'Default'), 
+        ne(variables.MVN_CACHE_RESTORED, 'true'), 
+        ne(variables['os'], 'Windows')
+      )
+  - pwsh: |
+      "(new-object System.Net.WebClient).DownloadFile('https://www.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip','$(build.sourcesdirectory)/apache-maven-$(MAVEN_VERSION)-bin.zip')"
+    displayName: "Get non-default Maven (PowerShell)"
+    condition: |
+      and(
+        ne(variables['MAVEN_VERSION_OPTION'], 'Default'), 
+        ne(variables.MVN_CACHE_RESTORED, 'true'), 
+        eq(variables['os'], 'Windows')
+      )
   - task: ExtractFiles@1
     inputs:
       archiveFilePatterns: 'apache-maven-$(MAVEN_VERSION)-bin.zip'
@@ -40,18 +72,6 @@ steps:
   - script: python3 .github/prepare_rust_env.py
     displayName: "Ensure Rust is installed"
     # Note, the `prepare_rust_env.py` script exports a number of variables.
-  - task: Cache@2
-    inputs:
-      key: '"cargo-registry" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)" | "$(LINUX_GLIBC_VERSION)" | **/Cargo.lock'
-      restoreKeys: |
-        "cargo-registry" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)" | "$(LINUX_GLIBC_VERSION)"
-      path: $(CARGO_HOME)/registry
-    displayName: "Cache ~/.cargo/registry"
-    condition: |
-      and(
-        startsWith(variables['testset'], 'coverage'),
-        eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
-      )
 
   - task: Maven@3
     displayName: "Compile with Maven"
@@ -90,9 +110,6 @@ steps:
         eq(variables['testset'], 'all'),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
-  - bash: echo "##vso[task.setvariable variable=LLVM_PROFILE_FILE]questdbr-junit.profraw"
-    displayName: "LLVM_PROFILE_FILE=questdbr-junit.profraw"
-    condition: startsWith(variables['testset'], 'coverage')
   - task: Maven@3
     displayName: "Run tests with Coverage"
     inputs:

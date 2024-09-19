@@ -676,7 +676,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         ) throws SqlException {
             this.frameCursor = frameCursor;
             this.groupBySymbolKey = groupBySymbolKey;
-            frameAddressCache.of(metadata);
+            frameAddressCache.of(metadata, frameCursor.getColumnIndexes());
             toTop();
             parseParams(this, sqlExecutionContext);
             initialized = false;

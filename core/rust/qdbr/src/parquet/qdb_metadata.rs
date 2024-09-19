@@ -94,11 +94,14 @@ pub struct QdbMetaCol {
     pub handling: Option<QdbMetaColHandling>,
 }
 
-pub type ColId = i32;
+/// The id stored in the parquet schema.
+/// I.e. SchemaElement::field_id in
+/// https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift
+pub type ParquetFieldId = i32;
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct QdbMetaSchema {
-    pub(crate) columns: HashMap<ColId, QdbMetaCol>,
+    pub(crate) columns: HashMap<ParquetFieldId, QdbMetaCol>,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]

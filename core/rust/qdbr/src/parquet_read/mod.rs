@@ -96,7 +96,7 @@ mod tests {
         let mut rgb = RowGroupBuffers::new();
         let res = parquet_decoder.decode_row_group(
             &mut rgb,
-            &[Some(ColumnTypeTag::Symbol.into_type())],
+            &[(0, ColumnTypeTag::Symbol.into_type())],
             0,
         );
         let err = res.unwrap_err();

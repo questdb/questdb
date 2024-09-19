@@ -38,6 +38,7 @@ import io.questdb.std.*;
 public class PageFrameAddressCache implements Mutable {
     private final ObjList<LongList> auxPageAddresses = new ObjList<>();
     private final ObjList<LongList> auxPageSizes = new ObjList<>();
+    private final IntList columnIndexes = new IntList();
     private final IntList columnTypes = new IntList();
     private final ByteList frameFormats = new ByteList();
     private final LongList frameSizes = new LongList();
@@ -119,12 +120,6 @@ public class PageFrameAddressCache implements Mutable {
         cacheSize = 0;
     }
 
-    public void copyColumnTypes(DirectIntList columnTypesCopy) {
-        for (int i = 0; i < columnCount; i++) {
-            columnTypesCopy.add(columnTypes.getQuick(i));
-        }
-    }
-
     public LongList getAuxPageAddresses(int frameIndex) {
         return auxPageAddresses.getQuick(frameIndex);
     }
@@ -135,6 +130,11 @@ public class PageFrameAddressCache implements Mutable {
 
     public int getColumnCount() {
         return columnCount;
+    }
+
+    // returns local (query) to table reader index mapping
+    public IntList getColumnIndexes() {
+        return columnIndexes;
     }
 
     public IntList getColumnTypes() {
@@ -188,12 +188,14 @@ public class PageFrameAddressCache implements Mutable {
         return ColumnType.isVarSize(columnTypes.getQuick(columnIndex));
     }
 
-    public void of(@Transient RecordMetadata metadata) {
+    public void of(@Transient RecordMetadata metadata, @Transient IntList columnIndexes) {
         columnCount = metadata.getColumnCount();
         columnTypes.clear();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             columnTypes.add(metadata.getColumnType(columnIndex));
         }
+        this.columnIndexes.clear();
+        this.columnIndexes.addAll(columnIndexes);
         clear();
     }
 }

@@ -51,7 +51,10 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
     private final PageFrameMemoryImpl frameMemory;
     private final ObjList<ParquetBuffers> freeParquetBuffers;
     private final int parquetCacheSize;
-    private final DirectIntList parquetColumnTypes;
+    // Contains table reader to parquet column index mapping.
+    private final IntList parquetColumnIndexes;
+    // Contains [parquet_column_index, column_type] pairs.
+    private final DirectIntList parquetColumns;
     private final PartitionDecoder parquetDecoder;
     private PageFrameAddressCache addressCache;
 
@@ -64,7 +67,8 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
                 freeParquetBuffers.add(new ParquetBuffers());
             }
             frameMemory = new PageFrameMemoryImpl();
-            parquetColumnTypes = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
+            parquetColumnIndexes = new IntList(16);
+            parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
             parquetDecoder = new PartitionDecoder();
         } catch (Throwable th) {
             close();
@@ -74,7 +78,8 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
 
     @Override
     public void clear() {
-        parquetColumnTypes.resetCapacity();
+        parquetColumnIndexes.restoreInitialCapacity();
+        parquetColumns.resetCapacity();
         freeParquetBuffers.addAll(cachedParquetBuffers);
         cachedParquetBuffers.clear();
         Misc.freeObjListAndKeepObjects(freeParquetBuffers);
@@ -85,7 +90,7 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
     @Override
     public void close() {
         Misc.free(parquetDecoder);
-        Misc.free(parquetColumnTypes);
+        Misc.free(parquetColumns);
         freeParquetBuffers.addAll(cachedParquetBuffers);
         cachedParquetBuffers.clear();
         Misc.freeObjListAndKeepObjects(freeParquetBuffers);
@@ -115,10 +120,10 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
                     addressCache.getAuxPageSizes(frameIndex)
             );
         } else if (format == PartitionFormat.PARQUET) {
-            parquetDecoder.of(addressCache.getParquetFd(frameIndex));
+            openParquet(frameIndex);
             final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
-            final ParquetBuffers parquetBuffers = findBuffers(frameIndex, usageBit);
-            parquetBuffers.decode(parquetDecoder, parquetColumnTypes, addressCache.getParquetRowGroup(frameIndex));
+            final ParquetBuffers parquetBuffers = nextFreeBuffers(frameIndex, usageBit);
+            parquetBuffers.decode(parquetDecoder, parquetColumns, addressCache.getParquetRowGroup(frameIndex));
 
             record.init(
                     frameIndex,
@@ -153,9 +158,9 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
             frameMemory.pageSizes = addressCache.getPageSizes(frameIndex);
             frameMemory.auxPageSizes = addressCache.getAuxPageSizes(frameIndex);
         } else if (format == PartitionFormat.PARQUET) {
-            parquetDecoder.of(addressCache.getParquetFd(frameIndex));
-            final ParquetBuffers parquetBuffers = findBuffers(frameIndex, FRAME_MEMORY_MASK);
-            parquetBuffers.decode(parquetDecoder, parquetColumnTypes, addressCache.getParquetRowGroup(frameIndex));
+            openParquet(frameIndex);
+            final ParquetBuffers parquetBuffers = nextFreeBuffers(frameIndex, FRAME_MEMORY_MASK);
+            parquetBuffers.decode(parquetDecoder, parquetColumns, addressCache.getParquetRowGroup(frameIndex));
 
             frameMemory.pageAddresses = parquetBuffers.pageAddresses;
             frameMemory.auxPageAddresses = parquetBuffers.auxPageAddresses;
@@ -170,8 +175,7 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
 
     public void of(PageFrameAddressCache addressCache) {
         this.addressCache = addressCache;
-        parquetColumnTypes.reopen();
-        addressCache.copyColumnTypes(parquetColumnTypes);
+        parquetColumns.reopen();
         for (int i = 0, n = freeParquetBuffers.size(); i < n; i++) {
             freeParquetBuffers.getQuick(i).reopen();
         }
@@ -182,7 +186,7 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
     // such as <frame_index, buffers> hash table. That's because we don't
     // expect the cache size to be large.
     @NotNull
-    private ParquetBuffers findBuffers(int frameIndex, byte usageBit) {
+    private ParquetBuffers nextFreeBuffers(int frameIndex, byte usageBit) {
         // First, clear the usage bit.
         for (int i = 0, n = cachedParquetBuffers.size(); i < n; i++) {
             ParquetBuffers buffers = cachedParquetBuffers.getQuick(i);
@@ -229,6 +233,28 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
                 .put(']');
     }
 
+    private void openParquet(int frameIndex) {
+        final long fd = addressCache.getParquetFd(frameIndex);
+        if (parquetDecoder.getFd() != fd) {
+            parquetDecoder.of(fd);
+        }
+        final PartitionDecoder.Metadata metadata = parquetDecoder.getMetadata();
+        // Prepare table reader to parquet column index mapping.
+        parquetColumnIndexes.clear();
+        for (int i = 0, n = metadata.columnCount(); i < n; i++) {
+            final int columnIndex = metadata.columnId(i);
+            parquetColumnIndexes.extendAndSet(columnIndex, i);
+        }
+        // Now do the final remapping.
+        parquetColumns.clear();
+        for (int i = 0, n = addressCache.getColumnCount(); i < n; i++) {
+            final int columnIndex = addressCache.getColumnIndexes().getQuick(i);
+            final int columnType = addressCache.getColumnTypes().getQuick(i);
+            parquetColumns.add(parquetColumnIndexes.getQuick(columnIndex));
+            parquetColumns.add(columnType);
+        }
+    }
+
     private static class ParquetBuffers implements QuietCloseable, Reopenable {
         private final LongList auxPageAddresses = new LongList();
         private final LongList auxPageSizes = new LongList();
@@ -254,9 +280,8 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
             frameIndex = -1;
         }
 
-        public void decode(PartitionDecoder parquetDecoder, DirectIntList parquetColumnTypes, int rowGroup) {
-            parquetDecoder.decodeRowGroup(rowGroupBuffers, parquetColumnTypes, rowGroup);
-            // TODO(puzpuzpuz): we need to map Parquet columns to what's required by the query
+        public void decode(PartitionDecoder parquetDecoder, DirectIntList parquetColumns, int rowGroup) {
+            parquetDecoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroup);
             clearAddresses();
             for (int i = 0, n = parquetDecoder.getMetadata().columnCount(); i < n; i++) {
                 pageAddresses.add(rowGroupBuffers.getChunkDataPtr(i));

@@ -62,7 +62,7 @@ public class PartitionDecoder implements QuietCloseable {
     // TODO(puzpuzpuz): track native memory
     public long decodeRowGroup(
             RowGroupBuffers rowGroupBuffers,
-            DirectIntList columnTypes, // negative values mean columns to be skipped
+            DirectIntList columns, // contains [parquet_column_index, column_type] pairs
             int rowGroupIndex
     ) {
         assert ptr != 0;
@@ -70,7 +70,8 @@ public class PartitionDecoder implements QuietCloseable {
             return decodeRowGroup(
                     ptr,
                     rowGroupBuffers.ptr(),
-                    columnTypes.getAddress(),
+                    columns.getAddress(),
+                    (int) (columns.size() >>> 1),
                     rowGroupIndex
             );
         } catch (Throwable th) {
@@ -125,7 +126,8 @@ public class PartitionDecoder implements QuietCloseable {
     private static native long decodeRowGroup(
             long decoderPtr,
             long rowGroupBuffersPtr,
-            long columnTypesPtr,
+            long columnsPtr,
+            int columnCount,
             int rowGroup
     );
 

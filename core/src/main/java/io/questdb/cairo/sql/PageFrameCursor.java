@@ -25,12 +25,16 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.std.IntList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
 public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
 
     void calculateSize(RecordCursor.Counter counter);
+
+    // returns local (query) to table reader index mapping
+    IntList getColumnIndexes();
 
     @Override
     StaticSymbolTable getSymbolTable(int columnIndex);

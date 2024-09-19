@@ -1,6 +1,6 @@
 use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
-use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColHandling};
+use crate::parquet::qdb_metadata::{ParquetFieldId, QdbMetaCol, QdbMetaColHandling};
 use crate::parquet_read::column_sink::fixed::{
     FixedBooleanColumnSink, FixedDoubleColumnSink, FixedFloatColumnSink, FixedInt2ByteColumnSink,
     FixedInt2ShortColumnSink, FixedIntColumnSink, FixedLong256ColumnSink, FixedLongColumnSink,
@@ -82,9 +82,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
     pub fn decode_row_group(
         &mut self,
         row_group_bufs: &mut RowGroupBuffers,
-
-        // Columns to skip are encoded as `None`.
-        to_column_types: &[Option<ColumnType>],
+        columns: &[(ParquetFieldId, ColumnType)],
         row_group_index: u32,
     ) -> ParquetResult<usize> {
         if row_group_index > self.row_group_count {
@@ -104,13 +102,9 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         }
 
         let mut row_group_size = 0usize;
-        for (column_idx, &to_column_type) in to_column_types.iter().enumerate() {
-            let Some(to_column_type) = to_column_type else {
-                continue; // skip this column
-            };
-
+        for (i, &(column_idx, to_column_type)) in columns.iter().enumerate() {
+            let column_idx = column_idx as usize;
             let column_type = self.columns[column_idx].column_type;
-
             if column_type != to_column_type {
                 return Err(fmt_err!(
                     Invalid,
@@ -121,7 +115,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                 ));
             }
 
-            let column_chunk_bufs = &mut row_group_bufs.column_bufs[column_idx];
+            let column_chunk_bufs = &mut row_group_bufs.column_bufs[i];
             let column_file_index = self.columns[column_idx].id;
 
             // Get the column's handling from the "questdb" key-value metadata stored in the file.
@@ -214,7 +208,6 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         }
 
         column_chunk_bufs.refresh_ptrs();
-
         Ok(row_count)
     }
 }

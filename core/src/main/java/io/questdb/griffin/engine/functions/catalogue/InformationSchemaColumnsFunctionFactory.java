@@ -25,18 +25,19 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 
+import static io.questdb.griffin.engine.functions.catalogue.TablesFunctionFactory.TablesCursorFactory;
 import static io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory.ShowColumnsCursor;
-import static io.questdb.griffin.engine.functions.catalogue.ShowTablesFunctionFactory.ShowTablesCursorFactory;
 
 public class InformationSchemaColumnsFunctionFactory implements FunctionFactory {
     public static final RecordMetadata METADATA;
@@ -53,16 +54,21 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CursorFunction(new ColumnsCursorFactory(configuration));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new CursorFunction(new ColumnsCursorFactory());
     }
 
     private static class ColumnsCursorFactory extends AbstractRecordCursorFactory {
-        private final ColumnRecordCursor cursor;
+        private final ColumnRecordCursor cursor = new ColumnRecordCursor();
 
-        private ColumnsCursorFactory(CairoConfiguration configuration) {
+        private ColumnsCursorFactory() {
             super(METADATA);
-            cursor = new ColumnRecordCursor(configuration);
         }
 
         @Override
@@ -81,7 +87,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
         }
 
         private static class ColumnRecordCursor implements NoRandomAccessRecordCursor {
-            private final ShowTablesCursorFactory allTables;
+            private final AllTablesFunctionFactory.AllTablesCursorFactory allTablesCursorFactory;
             private final ColumnsRecord record = new ColumnsRecord();
             private final ShowColumnsCursor showColumnsCursor = new ShowColumnsCursor();
             private RecordCursor allTablesCursor;
@@ -89,14 +95,14 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
             private SqlExecutionContext executionContext;
             private CharSequence tableName;
 
-            private ColumnRecordCursor(CairoConfiguration configuration) {
-                allTables = new ShowTablesCursorFactory(configuration, AllTablesFunctionFactory.METADATA, AllTablesFunctionFactory.SIGNATURE);
+            private ColumnRecordCursor() {
+                allTablesCursorFactory = new AllTablesFunctionFactory.AllTablesCursorFactory();
             }
 
             @Override
             public void close() {
-                Misc.free(allTables);
                 Misc.free(allTablesCursor);
+                Misc.free(allTablesCursorFactory);
                 Misc.free(showColumnsCursor);
                 executionContext = null;
                 tableName = null;
@@ -110,13 +116,9 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
             @Override
             public boolean hasNext() {
-                if (allTablesCursor == null) {
-                    allTablesCursor = allTables.getCursor(executionContext);
-                }
-
                 boolean hasNext = false;
                 if (columIdx == -1 && (hasNext = allTablesCursor.hasNext())) {
-                    tableName = allTablesCursor.getRecord().getStrA(0);
+                    tableName = allTablesCursor.getRecord().getStrA(1);
                     showColumnsCursor.of(executionContext, tableName);
                 }
 
@@ -144,12 +146,13 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
             @Override
             public void toTop() {
-                allTablesCursor = Misc.free(allTablesCursor);
                 columIdx = -1;
+                allTablesCursor.toTop();
             }
 
             private ColumnRecordCursor of(SqlExecutionContext sqlExecutionContext) {
                 executionContext = sqlExecutionContext;
+                allTablesCursor = allTablesCursorFactory.getCursor(executionContext);
                 toTop();
                 return this;
             }
@@ -199,10 +202,9 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
         }
     }
 
-
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(ShowTablesCursorFactory.TABLE_NAME_COLUMN_META);
+        metadata.add(TablesCursorFactory.TABLE_NAME_COLUMN_META);
         metadata.add(new TableColumnMetadata("ordinal_position", ColumnType.INT));
         metadata.add(new TableColumnMetadata("column_name", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("data_type", ColumnType.STRING));
