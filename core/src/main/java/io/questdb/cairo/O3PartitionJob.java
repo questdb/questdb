@@ -78,7 +78,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // Number of rows to insert from the O3 segment into this partition.
         final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
         final TableRecordMetadata tableWriterMetadata = tableWriter.getMetadata();
-        Path path = getParquetPartitionPath(Path.getThreadLocal(pathToTable), partitionBy, partitionTimestamp, srcNameTxn);
+        Path path = Path.getThreadLocal(pathToTable);
+        setParquetPartitionPath(path, partitionBy, partitionTimestamp, srcNameTxn);
 
         final int columnCount = tableWriterMetadata.getColumnCount();
 
@@ -1146,16 +1147,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
             }
         }
-    }
-
-    private static Path getParquetPartitionPath(
-            Path path,
-            int partitionBy,
-            long partitionTimestamp,
-            long nameTxn
-    ) {
-        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, nameTxn);
-        return path.put(".parquet");
     }
 
     private static void mergeRowGroup(

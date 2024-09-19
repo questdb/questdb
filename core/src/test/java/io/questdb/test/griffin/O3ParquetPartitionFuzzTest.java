@@ -152,13 +152,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
             String partitionName = stringSink.toString();
 
             Path parquet = Path.getThreadLocal(root).concat(tt.getDirName());
-            TableUtils.setPathForPartition(
-                    parquet,
-                    xw.getPartitionBy(),
-                    partitionTs,
-                    xw.getPartitionNameTxnByPartitionTimestamp(partitionTs)
-            );
-            parquet.put(".parquet");
+            TableUtils.setParquetPartitionPath(parquet, xw.getPartitionBy(), partitionTs, xw.getPartitionNameTxnByPartitionTimestamp(partitionTs));
 
             final long fileSize = Files.length(parquet.$());
             final long checksumBefore = calcChecksum(parquet.toString(), fileSize);
@@ -197,15 +191,8 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
             replayTransactions(rnd1, engine, xw, transactions, -1);
             xw.commit();
 
-
             Path parquet2 = Path.getThreadLocal(root).concat(tt.getDirName());
-            TableUtils.setPathForPartition(
-                    parquet2,
-                    xw.getPartitionBy(),
-                    partitionTs,
-                    xw.getPartitionNameTxnByPartitionTimestamp(partitionTs)
-            );
-            parquet2.put(".parquet");
+            TableUtils.setParquetPartitionPath(parquet2, xw.getPartitionBy(), partitionTs, xw.getPartitionNameTxnByPartitionTimestamp(partitionTs));
 
             final long fileSize2 = Files.length(parquet2.$());
             Assert.assertTrue(fileSize2 >= fileSize);

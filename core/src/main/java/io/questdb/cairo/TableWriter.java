@@ -1137,6 +1137,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw CairoException.nonCritical().put("partition folder does not exist [path=").put(path).put(']');
         }
 
+        // upgrade partition version
+        TableUtils.setPathForPartition(other.trimTo(pathSize), partitionBy, partitionTimestamp, getTxn());
+        TableUtils.createDirsOrFail(ff, other.slash(), configuration.getMkDirMode());
+        final int newPartitionFolderLen = other.size();
+
+        // set parquet file full path
+        TableUtils.setParquetPartitionPath(other.trimTo(pathSize), partitionBy, partitionTimestamp, getTxn());
+
         LOG.info().$("converting partition to parquet [path=").$substr(pathRootSize, path).I$();
         long parquetFileLength;
         try {
@@ -1245,9 +1253,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
 
-                path.trimTo(partitionLen);
-                path.put(".parquet");
-
                 final CairoConfiguration config = this.getConfiguration();
                 final int compressionCodec = config.getPartitionEncoderCompressionCodec();
                 final int compressionLevel = config.getPartitionEncoderCompressionLevel();
@@ -1258,7 +1263,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 PartitionEncoder.encodeWithOptions(
                         partitionDescriptor,
-                        path,
+                        other,
                         ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
                         statisticsEnabled,
                         rowGroupSize,
@@ -1266,12 +1271,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         parquetVersion
 
                 );
-                parquetFileLength = ff.length(path.$());
+                parquetFileLength = ff.length(other.$());
             }
+        } catch (CairoException e) {
+            LOG.error().$("could not convert partition to parquet [table=").utf8(tableToken.getTableName())
+                    .$(", partition=").$ts(partitionTimestamp)
+                    .$(", error=").$(e.getMessage()).I$();
+
+            // rollback
+            if (!ff.rmdir(other.trimTo(newPartitionFolderLen).slash())) {
+                LOG.error().$("could not remove parquet file [path=").$(other).I$();
+            }
+            throw e;
         } finally {
             path.trimTo(pathSize);
+            other.trimTo(pathSize);
         }
-
+        final long originalSize = txWriter.getPartitionSize(partitionIndex);
+        // used to update txn and bump recordStructureVersion
+        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
         txWriter.setPartitionParquetFormat(partitionTimestamp, parquetFileLength);
         txWriter.bumpPartitionTableVersion();
         txWriter.commit(denseSymbolMapWriters);
@@ -1279,7 +1297,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (lastPartitionConverted) {
             closeActivePartition(false);
         }
-        // remove partition folder
+
+        // remove old partition folder
         safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
 
         if (lastPartitionConverted) {
@@ -1659,6 +1678,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getPartitionCount();
     }
 
+    public int getPartitionIndexByTimestamp(long timestamp) {
+        return txWriter.getPartitionIndex(timestamp);
+    }
+
     public long getPartitionNameTxn(int partitionIndex) {
         return txWriter.getPartitionNameTxn(partitionIndex);
     }
@@ -1673,19 +1696,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 (avgRecordSize != 0 ? avgRecordSize : (avgRecordSize = TableUtils.estimateAvgRecordSize(metadata)));
     }
 
+    public long getPartitionParquetFileSize(int partitionIndex) {
+        return txWriter.getPartitionParquetFileSize(partitionIndex);
+    }
+
     public long getPartitionSize(int partitionIndex) {
         if (partitionIndex == txWriter.getPartitionCount() - 1 || !PartitionBy.isPartitioned(partitionBy)) {
             return txWriter.getTransientRowCount();
         }
         return txWriter.getPartitionSize(partitionIndex);
-    }
-
-    public long getPartitionParquetFileSize(int partitionIndex) {
-        return txWriter.getPartitionParquetFileSize(partitionIndex);
-    }
-
-    public int getPartitionIndexByTimestamp(long timestamp) {
-        return txWriter.getPartitionIndex(timestamp);
     }
 
     public long getPartitionTimestamp(int partitionIndex) {

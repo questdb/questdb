@@ -1751,6 +1751,17 @@ public final class TableUtils {
         return metaMem.getStrA(offset);
     }
 
+    public static void setParquetPartitionPath(
+            Path path,
+            int partitionBy,
+            long partitionTimestamp,
+            long nameTxn
+    ) {
+        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, nameTxn);
+        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, nameTxn);
+        path.put(".parquet");
+    }
+
     // Utility method for debugging. This method is not used in production.
     @SuppressWarnings("unused")
     static boolean assertTimestampInOrder(long srcTimestampAddr, long srcDataMax) {
