@@ -6302,12 +6302,7 @@ public class SqlOptimiser implements Mutable {
         }
 
         private CharSequence formatDate(long micros) {
-            StringSink localSink = sink.get();
-            localSink.clear();
-            localSink.put('\'');
-            TimestampFormatUtils.formatYYYYMMDD(localSink, micros / 1000);
-            localSink.put('\'');
-            return localSink.toString();
+            return '\'' + Timestamps.toString(micros).substring(0, 10) + '\'';
         }
     }
 
