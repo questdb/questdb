@@ -111,6 +111,7 @@ public class WalTxnRangeLoader {
                     }
                     if (lastSegmentTxn != segmentTxn) {
                         walEventCursor = openWalEFile(tempPath, eventReader, segmentTxn);
+                        lastSegmentTxn = segmentTxn;
                     }
                 } else {
                     tempPath.trimTo(rootLen).concat(WAL_NAME_BASE).put(walId).slash().put(segmentId);
