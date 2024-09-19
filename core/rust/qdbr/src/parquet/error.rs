@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 use std::backtrace::{Backtrace, BacktraceStatus};
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 
 /// Cause of a parquet error.
@@ -67,7 +67,7 @@ impl ParquetErrorCause {
 }
 
 /// An error reading or writing parquet.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ParquetError {
     /// What caused the error.
     cause: ParquetErrorCause,
@@ -101,6 +101,17 @@ impl ParquetError {
     #[cfg(test)]
     pub fn get_cause(&self) -> &ParquetErrorCause {
         &self.cause
+    }
+}
+
+impl Debug for ParquetError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ParquetError\n    Cause: {:?}\n", self.cause)?;
+        write!(f, "    Context:\n")?;
+        for line in self.context.iter().rev() {
+            write!(f, "        {}\n", line)?;
+        }
+        write!(f, "    Backtrace:\n{}", self.backtrace)
     }
 }
 
