@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.FlyweightCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -107,6 +108,7 @@ public class SqlOptimiser implements Mutable {
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final RewriteSampleByFromToVisitor rewriteSampleByFromToVisitor = new RewriteSampleByFromToVisitor();
+    private final RewriteTodayTomorrowYesterdayVisitor rewriteTodayTomorrowYesterdayVisitor = new RewriteTodayTomorrowYesterdayVisitor();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
@@ -5734,6 +5736,17 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private void rewriteTodayTomorrowYesterday(QueryModel model) throws SqlException {
+        QueryModel curr = model;
+
+        while (curr != null) {
+            if (curr.getWhereClause() != null) {
+                traversalAlgo.traverse(curr.getWhereClause(), rewriteTodayTomorrowYesterdayVisitor);
+            }
+            curr = curr.getNestedModel();
+        }
+    }
+
     // the intent is to either validate top-level columns in select columns or replace them with function calls
     // if columns do not exist
     private void rewriteTopLevelLiteralsToFunctions(QueryModel model) {
@@ -6066,6 +6079,7 @@ public class SqlOptimiser implements Mutable {
             optimiseExpressionModels(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
+            rewriteTodayTomorrowYesterday(rewrittenModel);
             rewriteSampleByFromTo(rewrittenModel);
             rewrittenModel = rewriteSampleBy(rewrittenModel);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
@@ -6249,6 +6263,28 @@ public class SqlOptimiser implements Mutable {
             this.timestamp = timestamp;
             this.timestampAppears = false;
             return this;
+        }
+    }
+
+    private static class RewriteTodayTomorrowYesterdayVisitor implements PostOrderTreeTraversalAlgo.Visitor {
+
+        @Override
+        public void visit(ExpressionNode node) {
+            if (node.type == FUNCTION) {
+                if (Chars.equalsIgnoreCase(node.token, "today")) {
+                    node.type = CONSTANT;
+                    long today = Timestamps.floorDD(Os.currentTimeMicros());
+                    node.token = '\'' + Timestamps.toString(today).substring(0, 10) + '\'';
+                } else if (Chars.equalsIgnoreCase(node.token, "tomorrow")) {
+                    node.type = CONSTANT;
+                    long tomorrow = Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), 1));
+                    node.token = '\'' + Timestamps.toString(tomorrow).substring(0, 10) + '\'';
+                } else if (Chars.equalsIgnoreCase(node.token, "yesterday")) {
+                    node.type = CONSTANT;
+                    long yesterday = Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), -1));
+                    node.token = '\'' + Timestamps.toString(yesterday).substring(0, 10) + '\'';
+                }
+            }
         }
     }
 

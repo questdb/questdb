@@ -25,12 +25,54 @@
 package io.questdb.test.griffin.engine.functions.date;
 
 import io.questdb.std.Interval;
-import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Timestamps;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class TodayTomorrowYesterdayTest extends AbstractCairoTest {
+
+    @Test
+    public void testIntrinsics1() throws Exception {
+        assertSql("bool\n" +
+                        "true\n",
+                "select true as bool from long_sequence(1) where now() in today()");
+        // no interval scan with now()
+        assertPlanNoLeakCheck("select true as bool from long_sequence(1) where now() in today()"
+                , "VirtualRecord\n" +
+                        "  functions: [true]\n" +
+                        "    Filter filter: now() in [1726704000000000,1726790399999999]\n" +
+                        "        long_sequence count: 1\n");
+    }
+
+
+    @Test
+    public void testIntrinsics2() throws Exception {
+
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE x (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY WAL;");
+            drainWalQueue();
+            // should have interval scans despite use of function
+            // due to optimisation step to convert it to a constant
+            long today = Timestamps.today();
+            long tomorrow = Timestamps.tomorrow();
+            long yesterday = Timestamps.yesterday();
+            long tomorrowAndOne = Timestamps.addDays(tomorrow, 1);
+            StringSink sink = new StringSink();
+            buildPlan(sink, today, tomorrow - 1);
+            assertPlanNoLeakCheck("select true as bool from x where ts in today()",
+                    sink.toString());
+            sink.clear();
+            buildPlan(sink, tomorrow, tomorrowAndOne - 1);
+            assertPlanNoLeakCheck("select true as bool from x where ts in tomorrow()",
+                    sink.toString());
+            sink.clear();
+            buildPlan(sink, yesterday, today - 1);
+            assertPlanNoLeakCheck("select true as bool from x where ts in yesterday()",
+                    sink.toString());
+            sink.clear();
+        });
+    }
 
     @Test
     public void testTimestampInInterval() throws Exception {
@@ -45,26 +87,39 @@ public class TodayTomorrowYesterdayTest extends AbstractCairoTest {
 
     @Test
     public void testToday() throws Exception {
-        long todayStart = Timestamps.floorDD(Os.currentTimeMicros());
-        long todayEnd = Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), 1)) - 1;
+        long todayStart = Timestamps.today();
+        long todayEnd = Timestamps.tomorrow() - 1;
         final Interval interval = new Interval(todayStart, todayEnd);
         assertSql("today\n" + interval + "\n", "select today()");
     }
 
     @Test
     public void testTomorrow() throws Exception {
-        long tomorrowStart = Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), 1));
-        long tomorrowEnd = Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), 2)) - 1;
+        long tomorrowStart = Timestamps.tomorrow();
+        long tomorrowEnd = Timestamps.addDays(tomorrowStart, 1) - 1;
         final Interval interval = new Interval(tomorrowStart, tomorrowEnd);
         assertSql("tomorrow\n" + interval + "\n", "select tomorrow()");
     }
 
     @Test
     public void testYesterday() throws Exception {
-        long yesterdayStart = Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), -1));
-        long yesterdayEnd = Timestamps.floorDD(Os.currentTimeMicros()) - 1;
+        long yesterdayStart = Timestamps.yesterday();
+        long yesterdayEnd = Timestamps.today() - 1;
         final Interval interval = new Interval(yesterdayStart, yesterdayEnd);
         assertSql("yesterday\n" + interval + "\n", "select yesterday()");
+    }
+
+    private void buildPlan(StringSink sink, long lo, long hi) {
+        sink.put("VirtualRecord\n" +
+                "  functions: [true]\n" +
+                "    PageFrame\n" +
+                "        Row forward scan\n" +
+                "        Interval forward scan on: x\n" +
+                "          intervals: [(\"");
+        sink.putISODate(lo);
+        sink.put("\",\"");
+        sink.putISODate(hi);
+        sink.put("\")]\n");
     }
 
 }
