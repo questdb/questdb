@@ -513,7 +513,7 @@ public class SqlParser {
                         tok = tok(lexer, "year month day hour");
                         int partitionBy = PartitionBy.fromString(tok);
                         if (partitionBy == -1) {
-                            throw SqlException.$(lexer.getPosition(), "'NONE', 'HOUR', 'DAY', 'MONTH', 'WEEK' or 'YEAR' expected");
+                            throw SqlException.$(lexer.getPosition(), "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
                         }
                         model.setPartitionBy(partitionBy);
                         tok = optTok(lexer);
