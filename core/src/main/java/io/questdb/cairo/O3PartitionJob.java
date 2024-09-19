@@ -961,7 +961,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 final long varMappedAddress = DedupColumnCommitAddresses.getColReserved4(dedupColSinkAddr, i);
                 if (varMappedAddress > 0) {
-                    final long varMappedLength = DedupColumnCommitAddresses.getVarDataLen(dedupColSinkAddr, i);
+                    final long varMappedLength = DedupColumnCommitAddresses.getColVarDataLen(dedupColSinkAddr, i);
                     TableUtils.mapAppendColumnBufferRelease(ff, varMappedAddress, 0, varMappedLength, mapMemTag);
                     final long varFd = DedupColumnCommitAddresses.getColReserved5(dedupColSinkAddr, i);
                     ff.close(varFd);

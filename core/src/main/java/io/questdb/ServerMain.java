@@ -198,7 +198,7 @@ public class ServerMain implements Closeable {
     }
 
     public void awaitTxn(String tableName, long txn) {
-        getEngine().awaitTxn(tableName, txn, 1, TimeUnit.SECONDS);
+        getEngine().awaitTxn(tableName, txn, 15, TimeUnit.SECONDS);
     }
 
     @Override
