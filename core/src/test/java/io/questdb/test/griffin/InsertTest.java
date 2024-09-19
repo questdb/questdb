@@ -115,7 +115,7 @@ public class InsertTest extends AbstractCairoTest {
     @Test
     public void testCannotInsertIntoMatView() throws Exception {
         assertMemoryLeak(() -> {
-            ddl("create table currencies(ccy symbol, id long, ts timestamp) timestamp(ts)");
+            ddl("create table currencies(ccy symbol, id long, ts timestamp) timestamp(ts) partition by day wal");
             insert("insert into currencies values ('USD', 1, '2019-03-10T00:00:00.000000Z')");
             insert("insert into currencies select 'EUR', max(id) + 1, '2019-03-10T01:00:00.000000Z' from currencies");
             insert("insert into currencies select 'GBP', max(id) + 1, '2019-03-10T02:00:00.000000Z' from currencies");
