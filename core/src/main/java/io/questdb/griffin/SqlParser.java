@@ -513,7 +513,7 @@ public class SqlParser {
                         tok = tok(lexer, "year month day hour");
                         int partitionBy = PartitionBy.fromString(tok);
                         if (partitionBy == -1) {
-                            throw SqlException.$(lexer.getPosition(), "'NONE', 'HOUR', 'DAY', 'MONTH' or 'YEAR' expected");
+                            throw SqlException.$(lexer.getPosition(), "'NONE', 'HOUR', 'DAY', 'MONTH', 'WEEK' or 'YEAR' expected");
                         }
                         model.setPartitionBy(partitionBy);
                         tok = optTok(lexer);
@@ -667,7 +667,7 @@ public class SqlParser {
             throw SqlException.position(lexer.getPosition()).put("'partition by' expected");
         }
         if (PartitionBy.fromString(partitionBy.token) == -1) {
-            throw SqlException.$(partitionBy.position, "'NONE', 'HOUR', 'DAY', 'MONTH' or 'YEAR' expected");
+            throw SqlException.$(partitionBy.position, "'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
         }
         viewTableModel.setPartitionBy(partitionBy);
         tok = optTok(lexer);
@@ -882,7 +882,7 @@ public class SqlParser {
                 throw SqlException.$(partitionBy.position, "partitioning is possible only on tables with designated timestamps");
             }
             if (PartitionBy.fromString(partitionBy.token) == -1) {
-                throw SqlException.$(partitionBy.position, "'NONE', 'HOUR', 'DAY', 'MONTH' or 'YEAR' expected");
+                throw SqlException.$(partitionBy.position, "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
             }
             model.setPartitionBy(partitionBy);
             tok = optTok(lexer);

@@ -70,6 +70,20 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewInvalidTimestampTest() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            try {
+                ddl("create materialized view test as (select ts, k, avg(v) from " + TABLE1 + " sample by 30s) timestamp(k) partition by week");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "TIMESTAMP column expected [actual=SYMBOL]");
+            }
+        });
+    }
+
+    @Test
     public void testCreateMatViewKeyedSampleByTest() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -129,6 +143,20 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "'partition by' expected");
+            }
+
+            try {
+                ddl("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by 3d");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
+            }
+
+            try {
+                ddl("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by NONE");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Materialized view has to be partitioned");
             }
         });
     }
@@ -247,6 +275,19 @@ public class CreateMatViewTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "A table already exists with this name");
             }
+
+            ddl("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
+
+            // without IF NOT EXISTS
+            try {
+                ddl("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "A view or a table already exists with this name");
+            }
+
+            // with IF NOT EXISTS
+            ddl("create materialized view if not exists test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
         });
     }
 
