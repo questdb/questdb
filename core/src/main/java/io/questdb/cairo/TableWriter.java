@@ -4618,7 +4618,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     mapAppendColumnBufferRelease(lagAuxAddr, lagAuxMemOffset, mapAuxSize);
 
-                    long mapVarSize = DedupColumnCommitAddresses.getLagVarSize(dedupCommitAddr, i);
+                    long mapVarSize = DedupColumnCommitAddresses.getO3VarDataLen(dedupCommitAddr, i);
                     if (mapVarSize > 0) {
                         long lagVarAddr = DedupColumnCommitAddresses.getColReserved4(dedupCommitAddr, i);
                         long lagVarMemOffset = DedupColumnCommitAddresses.getColReserved5(dedupCommitAddr, i);

@@ -79,12 +79,12 @@ public class DedupColumnCommitAddresses implements Closeable {
         return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + RESERVED5);
     }
 
-    public static long getLagVarSize(long dedupBlockAddress, int keyIndex) {
-        return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + O3_VAR_DATA_LEN_64);
+    public static long getColVarDataLen(long dedupBlockAddress, int keyIndex) {
+        return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + COL_VAR_DATA_LEN_64);
     }
 
-    public static long getVarDataLen(long dedupBlockAddress, int keyIndex) {
-        return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + COL_VAR_DATA_LEN_64);
+    public static long getO3VarDataLen(long dedupBlockAddress, int keyIndex) {
+        return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + O3_VAR_DATA_LEN_64);
     }
 
     public static void setColAddressValues(
