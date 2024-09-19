@@ -295,6 +295,21 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
+    @Ignore("Empty query with comment inside fails")
+    public void testBlockWithEmptyQueriesAndComments() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("select 1;" +
+                    ";" +
+                    "/*multiline comment */;" +
+                    "--single line comment\n;" +
+                    "select 2;");
+
+            assertResults(statement, hasResult, data(row(1)), data(row(2)));
+        });
+    }
+
+    @Test
     public void testCachedPgStatementReturnsDataUsingProperFormatOnRecompilation() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -1100,6 +1115,16 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
+    public void testEmptyCommandReturnsNoResult() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("");
+
+            assertResults(statement, hasResult);
+        });
+    }
+
+    @Test
     public void testPgLockTwice() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
@@ -1374,25 +1399,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
-    public void testRunSETWithSemicolonReturnsNextQueryResultOnly() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute("SET a = 'b'; select 1");
-            assertResults(statement, hasResult, Result.ZERO, data(row(1L)));
-        });
-    }
-
-    @Test
-    public void testRunSETWithoutSemicolonReturnsNoResult() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute("SET a = 'b'");
-            assertResults(statement, hasResult, Result.ZERO);
-        });
-    }
-
-    @Test
-    public void testRunSeveralQueriesInSingleBlockStatementReturnsAllSelectResultsInOrder() throws Exception {
+    public void testRunSeveralQueriesInBlockReturnsAllSelectResultsInOrder() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute(
@@ -1404,181 +1411,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             assertResults(statement, hasResult, Result.ZERO, count(1), count(1),
                     data(row(1L, "a"), row(2L, "b"))
             );
-        });
-    }
-
-    @Test
-    @Ignore("Empty query with comment inside fails")
-    public void testRunSingleBlockStatementExecutesQueriesButIgnoresEmptyStatementsAndComments() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute("select 1;" +
-                    ";" +
-                    "/*multiline comment */;" +
-                    "--single line comment\n;" +
-                    "select 2;");
-
-            assertResults(statement, hasResult, data(row(1)), data(row(2)));
-        });
-    }
-
-    @Test
-    public void testRunSingleCommandWithWhitespaceOnlyProducesNoResult() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute("   \n \t");
-            assertResults(statement, hasResult);
-        });
-    }
-
-    @Test
-    public void testRunSingleEmptyCommandProducesNoResult() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute("");
-
-            assertResults(statement, hasResult);
-        });
-    }
-
-    @Test
-    public void testRunSingleSelectCommandWithMultiLineCommentAtEndReturnsRow() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute("select  'hello11' /* end comment*/");
-            assertResults(statement, hasResult, data(row("hello11")));
-        });
-    }
-
-    @Test
-    public void testRunSingleSelectCommandWithMultiLineCommentAtStartReturnsRow() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute("/* comment here */ select  'hello9'");
-            assertResults(statement, hasResult, data(row("hello9")));
-        });
-    }
-
-    @Test
-    public void testRunSingleSelectCommandWithMultiLineCommentInTheMiddleReturnsRow() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute(" select /* comment here */ 'hello10'");
-            assertResults(statement, hasResult, data(row("hello10")));
-        });
-    }
-
-    @Test
-    public void testRunSingleSelectCommandWithSemicolonAtTheEndReturnsRow() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute("select 'hello2';");
-            assertResults(statement, hasResult, data(row("hello2")));
-        });
-    }
-
-    @Test
-    public void testRunSingleSelectCommandWithSemicolonInAliasReturnsRow() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute("select 'hello3' as \"alias;\" ;");
-            assertResults(statement, hasResult, data(row("hello3")));
-        });
-    }
-
-    @Test
-    public void testRunSingleSelectCommandWithSemicolonInStringReturnsRow() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute("select 'hello4;select this_is_not_a_query()'");
-            assertResults(statement, hasResult, data(row("hello4;select this_is_not_a_query()")));
-        });
-    }
-
-    @Test
-    public void testRunSingleSelectCommandWithSingleLineCommentAtEndReturnsRow() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute("select  'hello7' -- end comment");
-            assertResults(statement, hasResult, data(row("hello7")));
-        });
-    }
-
-    @Test
-    public void testRunSingleSelectCommandWithSingleLineCommentAtStartReturnsRow() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute("-- comment \n select  'hello6'");
-            assertResults(statement, hasResult, data(row("hello6")));
-        });
-    }
-
-    @Test
-    public void testRunSingleSelectCommandWithSingleLineCommentInMiddleReturnsRow() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute("select -- comment \n 'hello5'");
-            assertResults(statement, hasResult, data(row("hello5")));
-        });
-    }
-
-    @Test
-    public void testRunSingleSelectCommandWithoutSemicolonAtTheEndReturnsRow() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute("select 'hello'");
-            assertResults(statement, hasResult, data(row("hello")));
-        });
-    }
-
-    @Test
-    @Ignore("Fails with 'empty query'")
-    public void testRunSingleSelectCommandWrappedInMultiLineCommentReturnsNoResult() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute("/* comment start select  'hello12' */");
-            assertResults(statement, hasResult);
-        });
-    }
-
-    @Test
-    @Ignore("Fails with 'empty query'")
-    public void testRunSingleSelectWrappedInSingleLineCommentAtEndReturnsNoResult() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute("-- commented out command select  'hello8'; ");
-            assertResults(statement, hasResult);
-        });
-    }
-
-    @Test
-    public void testRunUNLISTENWithSemicolonReturnsNextQueryResultOnly() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute("UNLISTEN channel_name; select 8");
-            assertResults(statement, hasResult, Result.ZERO, data(row(8L)));
-
-            hasResult = statement.execute("UNLISTEN *; select 9");
-            assertResults(statement, hasResult, Result.ZERO, data(row(9L)));
-        });
-    }
-
-    @Test
-    public void testRunUNLISTENWithoutSemicolonReturnsNoResult() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-
-            boolean hasResult = statement.execute("UNLISTEN some_channel");
-            assertResults(statement, hasResult, Result.ZERO);
-
-            hasResult = statement.execute("UNLISTEN some_channel;");
-            assertResults(statement, hasResult, Result.ZERO);
-
-            hasResult = statement.execute("UNLISTEN *");
-            assertResults(statement, hasResult, Result.ZERO);
-
-            hasResult = statement.execute("UNLISTEN *;");
-            assertResults(statement, hasResult, Result.ZERO);
         });
     }
 
@@ -1603,7 +1435,126 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
-    public void testShowTableInBlock() throws Exception {
+    public void testSelectWithMultiLineCommentAtEnd() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("select  'hello11' /* end comment*/");
+            assertResults(statement, hasResult, data(row("hello11")));
+        });
+    }
+
+    @Test
+    public void testSelectWithMultiLineCommentAtStart() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("/* comment here */ select  'hello9'");
+            assertResults(statement, hasResult, data(row("hello9")));
+        });
+    }
+
+    @Test
+    public void testSelectWithMultiLineCommentInTheMiddle() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute(" select /* comment here */ 'hello10'");
+            assertResults(statement, hasResult, data(row("hello10")));
+        });
+    }
+
+    @Test
+    public void testSelectWithSemicolonAtTheEnd() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("select 'hello2';");
+            assertResults(statement, hasResult, data(row("hello2")));
+        });
+    }
+
+    @Test
+    public void testSelectWithSemicolonInAlias() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("select 'hello3' as \"alias;\" ;");
+            assertResults(statement, hasResult, data(row("hello3")));
+        });
+    }
+
+    @Test
+    public void testSelectWithSemicolonInString() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("select 'hello4;select this_is_not_a_query()'");
+            assertResults(statement, hasResult, data(row("hello4;select this_is_not_a_query()")));
+        });
+    }
+
+    @Test
+    public void testSelectWithSingleLineCommentAtEnd() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("select  'hello7' -- end comment");
+            assertResults(statement, hasResult, data(row("hello7")));
+        });
+    }
+
+    @Test
+    public void testSelectWithSingleLineCommentAtStart() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("-- comment \n select  'hello6'");
+            assertResults(statement, hasResult, data(row("hello6")));
+        });
+    }
+
+    @Test
+    public void testSelectWithSingleLineCommentInMiddle() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("select -- comment \n 'hello5'");
+            assertResults(statement, hasResult, data(row("hello5")));
+        });
+    }
+
+    @Test
+    @Ignore("Fails with 'empty query'")
+    public void testSelectWrappedInMultiLineCommentReturnsNoResult() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("/* comment start select  'hello12' */");
+            assertResults(statement, hasResult);
+        });
+    }
+
+    @Test
+    @Ignore("Fails with 'empty query'")
+    public void testSelectWrappedInSingleLineCommentAtEndReturnsNoResult() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("-- commented out command select  'hello8'; ");
+            assertResults(statement, hasResult);
+        });
+    }
+
+    @Test
+    public void testSetReturnsZeroResult() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("SET a = 'b'");
+            assertResults(statement, hasResult, Result.ZERO);
+        });
+    }
+
+    @Test
+    public void testSetThenSelectReturnsSelectResult() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("SET a = 'b'; select 1");
+            assertResults(statement, hasResult, Result.ZERO, data(row(1L)));
+        });
+    }
+
+    @Test
+    public void testShowTablesThenSelect() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             engine.ddl("create table test (i int);", sqlExecutionContext);
             Statement statement = connection.createStatement();
@@ -1613,14 +1564,54 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    // TODOs:
-    //test when no earlier transaction nor begin/commit/rollback then block is wrapped in implicit transaction and committed at the end
-    //test when there's rollback/commit in middle and rest is wrapped in transaction
-    //test when there's error in the middle then implicit transaction is rolled back
+    @Test
+    public void testSingleSelectWithoutSemicolonAtTheEnd() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("select 'hello'");
+            assertResults(statement, hasResult, data(row("hello")));
+        });
+    }
 
-    //test when there's earlier transaction then block is not committed at the end
-    //test if there's begin in the middle then this piece of block is not committed
-    //test if there's earlier transaction with commit or rollback then later begin includes lines wrapped in implicit transactions
+    @Test
+    public void testUnlistenReturnsNoResult() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+
+            boolean hasResult = statement.execute("UNLISTEN some_channel");
+            assertResults(statement, hasResult, Result.ZERO);
+
+            hasResult = statement.execute("UNLISTEN some_channel;");
+            assertResults(statement, hasResult, Result.ZERO);
+
+            hasResult = statement.execute("UNLISTEN *");
+            assertResults(statement, hasResult, Result.ZERO);
+
+            hasResult = statement.execute("UNLISTEN *;");
+            assertResults(statement, hasResult, Result.ZERO);
+        });
+    }
+
+    @Test
+    public void testUnlistenThenSelectReturnsSelectResult() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("UNLISTEN channel_name; select 8");
+            assertResults(statement, hasResult, Result.ZERO, data(row(8L)));
+
+            hasResult = statement.execute("UNLISTEN *; select 9");
+            assertResults(statement, hasResult, Result.ZERO, data(row(9L)));
+        });
+    }
+
+    @Test
+    public void testWhitespaceOnlyReturnsNoResult() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("   \n \t");
+            assertResults(statement, hasResult);
+        });
+    }
 
     private static void assertResultSet(Statement s, Row[] rows) throws SQLException {
         ResultSet set = s.getResultSet();
