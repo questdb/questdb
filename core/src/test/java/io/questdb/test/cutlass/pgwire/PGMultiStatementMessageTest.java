@@ -295,9 +295,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
-    @Ignore("Empty query with comment inside fails")
     public void testBlockWithEmptyQueriesAndComments() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("select 1;" +
                     ";" +
@@ -305,7 +304,17 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     "--single line comment\n;" +
                     "select 2;");
 
-            assertResults(statement, hasResult, data(row(1)), data(row(2)));
+            if (mode == SIMPLE || mode == EXTENDED_FOR_PREPARED) {
+                assertResults(statement, hasResult,
+                        data(row(1)),
+                        data(row(2)));
+            } else {
+                assertResults(statement, hasResult,
+                        data(row(1)),
+                        Result.ZERO,
+                        Result.ZERO,
+                        data(row(2)));
+            }
         });
     }
 
@@ -1115,12 +1124,40 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
-    public void testEmptyCommandReturnsNoResult() throws Exception {
+    public void testEmptyQueryAtTheEnd() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("select 1;;");
+
+            assertResults(statement, hasResult, data(row(1)));
+        });
+    }
+
+    @Test
+    public void testEmptyQueryReturnsNoResult() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("");
-
             assertResults(statement, hasResult);
+
+            hasResult = statement.execute(" ");
+            assertResults(statement, hasResult);
+
+            hasResult = statement.execute(";");
+            assertResults(statement, hasResult);
+
+            hasResult = statement.execute(";;");
+            assertResults(statement, hasResult);
+
+            hasResult = statement.execute(" ; ");
+            assertResults(statement, hasResult);
+
+            hasResult = statement.execute(" ; ");
+            assertResults(statement, hasResult);
+
+            hasResult = statement.execute(" ; ;");
+            assertResults(statement, hasResult);
+
         });
     }
 
@@ -1224,6 +1261,24 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     assertResults(stmt, hasResult, data(row(33L, "x")));
                 }
             }
+        });
+    }
+
+    @Test
+    public void testQueryWithJustCommentsReturnsNoResult() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("/* comment */");
+            assertResults(statement, hasResult);
+
+            hasResult = statement.execute("--comment");
+            assertResults(statement, hasResult);
+
+            hasResult = statement.execute(";--comment");
+            assertResults(statement, hasResult);
+
+            hasResult = statement.execute("; /* comment */");
+            assertResults(statement, hasResult);
         });
     }
 
@@ -1345,7 +1400,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
-    @Ignore("Fails with 'empty query'. However, testRunBlockWithEmptyQueryAtTheEnd() passes.")
+    @Ignore("Fails assertion: Update count expected -1, but was 0")
     public void testRunBlockWithCommentAtTheEnd() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
@@ -1385,16 +1440,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             assertResults(statement, hasResult, Result.ZERO, count(1),
                     Result.ZERO, data(row("1"))
             );
-        });
-    }
-
-    @Test
-    public void testRunBlockWithEmptyQueryAtTheEnd() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute("select 1;;");
-
-            assertResults(statement, hasResult, data(row(1)));
         });
     }
 
@@ -1516,7 +1561,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
-    @Ignore("Fails with 'empty query'")
     public void testSelectWrappedInMultiLineCommentReturnsNoResult() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
@@ -1526,7 +1570,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
-    @Ignore("Fails with 'empty query'")
     public void testSelectWrappedInSingleLineCommentAtEndReturnsNoResult() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
@@ -1676,7 +1719,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                         assertResultSet(s, results[i].rows);
                     } else {
                         assertFalse("didn't expect data in result #" + i, s.getMoreResults());
-                        assertEquals("Expected update count", results[i].updateCount, s.getUpdateCount());
+                        assertEquals("Update count", results[i].updateCount, s.getUpdateCount());
                     }
                 } catch (AssertionError ae) {
                     throw new AssertionError("Error asserting result#" + i + ": " + ae.getMessage(), ae);
@@ -1686,7 +1729,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
         //check there are no more results
         assertFalse("No more results expected", s.getMoreResults());
-        assertEquals("No more results expected but got update count", -1, s.getUpdateCount());
+        assertEquals("Update count", -1, s.getUpdateCount());
     }
 
     static Result count(int updatedRows) {
