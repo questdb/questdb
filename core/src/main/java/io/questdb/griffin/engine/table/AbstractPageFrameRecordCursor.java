@@ -37,17 +37,18 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
     protected final PageFrameMemoryPool frameMemoryPool;
     protected final PageFrameMemoryRecord recordA;
     protected final PageFrameMemoryRecord recordB;
+    private final RecordMetadata metadata;
     protected int frameCount = 0;
     protected PageFrameCursor frameCursor;
 
     public AbstractPageFrameRecordCursor(
             @NotNull CairoConfiguration configuration,
-            @NotNull @Transient RecordMetadata metadata
+            @NotNull RecordMetadata metadata
     ) {
+        this.metadata = metadata;
         recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
         recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
         frameAddressCache = new PageFrameAddressCache(configuration);
-        frameAddressCache.of(metadata);
         frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
     }
 
@@ -96,7 +97,7 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
     }
 
     protected void init() {
-        frameAddressCache.clear();
+        frameAddressCache.of(metadata, frameCursor.getColumnIndexes());
         frameMemoryPool.of(frameAddressCache);
         frameCount = 0;
         frameCursor.toTop();

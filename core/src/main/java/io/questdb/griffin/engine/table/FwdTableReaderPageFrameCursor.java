@@ -86,6 +86,11 @@ public class FwdTableReaderPageFrameCursor implements PageFrameCursor {
     }
 
     @Override
+    public IntList getColumnIndexes() {
+        return columnIndexes;
+    }
+
+    @Override
     public StaticSymbolTable getSymbolTable(int columnIndex) {
         return reader.getSymbolTable(columnIndexes.getQuick(columnIndex));
     }

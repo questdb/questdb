@@ -58,7 +58,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _class: JClass,
     decoder: *mut ParquetDecoder,
     row_group_bufs: *mut RowGroupBuffers,
-    to_column_types: *const i32,
+    // Contains [parquet_column_index, column_type] pairs.
+    columns: *const i32,
+    column_count: i32,
     row_group_index: i32,
 ) -> usize {
     assert!(!decoder.is_null(), "decoder pointer is null");
@@ -66,12 +68,12 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
         !row_group_bufs.is_null(),
         "row group buffers pointer is null"
     );
-    assert!(!to_column_types.is_null(), "column type pointer is null");
+    assert!(!columns.is_null(), "columns pointer is null");
 
     let decoder = unsafe { &mut *decoder };
-    let col_count = decoder.col_count as usize;
     let row_group_bufs = unsafe { &mut *row_group_bufs };
-    let to_column_types = unsafe { slice::from_raw_parts(to_column_types, col_count) };
+    let column_count = column_count as usize;
+    let columns = unsafe { slice::from_raw_parts(columns, 2 * column_count) };
 
     if row_group_index >= decoder.row_group_count {
         return throw_java_ex(
@@ -85,31 +87,30 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
         );
     }
 
-    if row_group_bufs.column_bufs.len() < col_count {
+    if row_group_bufs.column_bufs.len() < column_count {
         row_group_bufs
             .column_bufs
-            .resize_with(col_count, ColumnChunkBuffers::new);
+            .resize_with(column_count, ColumnChunkBuffers::new);
     }
 
     let mut row_group_size = 0;
-    for (column_idx, &to_column_type) in to_column_types.iter().enumerate() {
-        if to_column_type < 0 {
-            continue; // skip this column
-        }
-        let column_type = decoder.columns[column_idx].typ;
+    for i in 0..column_count {
+        let parquet_column_idx = columns[2 * i] as usize;
+        let to_column_type = columns[2 * i + 1];
+        let column_type = decoder.columns[parquet_column_idx].typ;
         if Ok(column_type) != ColumnType::try_from(to_column_type) {
             return throw_java_ex(
                 &mut env,
                 "decodeRowGroup",
                 &format!(
                     "requested column type {} does not match file column type {:?}, column index: {}",
-                    to_column_type, column_type, column_idx
+                    to_column_type, column_type, parquet_column_idx
                 ),
                 0,
             );
         } else {
-            let column_chunk_bufs = &mut row_group_bufs.column_bufs[column_idx];
-            let column_file_index = decoder.columns[column_idx].id;
+            let column_chunk_bufs = &mut row_group_bufs.column_bufs[i];
+            let column_file_index = decoder.columns[parquet_column_idx].id;
 
             match decoder.decode_column_chunk(
                 column_chunk_bufs,

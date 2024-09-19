@@ -259,6 +259,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public IntList getColumnIndexes() {
+            return baseCursor.getColumnIndexes();
+        }
+
+        @Override
         public StaticSymbolTable getSymbolTable(int columnIndex) {
             return baseCursor.getSymbolTable(columnCrossIndex.getQuick(columnIndex));
         }
