@@ -1259,6 +1259,24 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainCreateMatView() throws Exception {
+        assertPlan(
+                "create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day",
+                "create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day",
+                "Create materialized table: test\n" +
+                        "    Radix sort light\n" +
+                        "      keys: [ts]\n" +
+                        "        Async Group By workers: 1\n" +
+                        "          keys: [ts,k]\n" +
+                        "          values: [avg(v)]\n" +
+                        "          filter: null\n" +
+                        "            PageFrame\n" +
+                        "                Row forward scan\n" +
+                        "                Frame forward scan on: tab\n"
+        );
+    }
+
+    @Test
     public void testExplainCreateTable() throws Exception {
         assertSql("QUERY PLAN\n" +
                 "Create table: a\n", "explain create table a ( l long, d double)"
