@@ -156,7 +156,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     @Test
     public void testDedupWithRandomShiftAndStepAndVarcharKeyAndColumnTops() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = generateRandom(LOG, 1675744587249333L, 1725382495801L);
+            Rnd rnd = generateRandom(LOG);
 
             String tableName = testName.getMethodName();
             compile(
