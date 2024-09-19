@@ -1623,6 +1623,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             for (int colnum = 0; colnum < row.length(); colnum++) {
                 Object col = row.get(colnum);
                 try {
+                    assertEquals("Number of columns in result set",
+                            row.length(), set.getMetaData().getColumnCount());
                     if (col instanceof String) {
                         assertEquals(col, set.getString(colnum + 1));
                     } else if (col instanceof Long) {
@@ -1647,7 +1649,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             rowsLeft++;
         }
 
-        assertEquals("No more rows expected!", 0, rowsLeft);
+        assertEquals("Number of rows in result set", rows.length, rows.length + rowsLeft);
     }
 
     private static void assertResults(Statement s, boolean hasFirstResult, Result... results) throws SQLException {
@@ -1663,7 +1665,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                         assertEquals(results[0].updateCount, s.getUpdateCount());
                     }
                 } catch (AssertionError ae) {
-                    throw new AssertionError("Error asserting result#0 " + ae.getMessage(), ae);
+                    throw new AssertionError("Error asserting result#0: " + ae.getMessage(), ae);
                 }
             }
 
@@ -1677,7 +1679,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                         assertEquals("Expected update count", results[i].updateCount, s.getUpdateCount());
                     }
                 } catch (AssertionError ae) {
-                    throw new AssertionError("Error asserting result#" + i + " " + ae.getMessage(), ae);
+                    throw new AssertionError("Error asserting result#" + i + ": " + ae.getMessage(), ae);
                 }
             }
         }
