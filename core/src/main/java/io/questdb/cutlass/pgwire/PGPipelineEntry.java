@@ -571,11 +571,6 @@ public class PGPipelineEntry implements QuietCloseable {
                             }
                             break;
                     }
-                    stateSync = 3;
-                case 3:
-                    if (stateClosed) {
-                        outSimpleMsg(utf8Sink, MESSAGE_TYPE_CLOSE_COMPLETE);
-                    }
                     stateSync = 4;
                 case 4:
                 case 5:
@@ -631,7 +626,6 @@ public class PGPipelineEntry implements QuietCloseable {
                             }
                         }
                     }
-                    break;
                 case 20:
                 case 30:
                     // ignore these, they are set by outCursor() call and should be processed outside of this
@@ -651,7 +645,16 @@ public class PGPipelineEntry implements QuietCloseable {
                     break;
                 case 30:
                     outPortalSuspended(utf8Sink);
+                    if (!portal) {
+//                      if this is not a named portal
+//                      then we have to close the cursor even if we didn't fully exhaust it
+                        cursor = Misc.free(cursor);
+                    }
                     break;
+            }
+
+            if (stateClosed) {
+                outSimpleMsg(utf8Sink, MESSAGE_TYPE_CLOSE_COMPLETE);
             }
 
             if (isError()) {
@@ -1451,10 +1454,7 @@ public class PGPipelineEntry implements QuietCloseable {
         // either way, the result set was sent out as intended. The difference is in what we
         // send as the suffix.
 
-        if (sqlReturnRowCount < sqlReturnRowCountToBeSent || !isPortal()) {
-            // the limit does not tell is if it came from "fetchSize" or "maxRows". The former is
-            // used for portals and effectively prescribes us to keep the cursor open and primed to continue the
-            // fetch. The latter is acting like SQL limit query. E.g. we return top X rows and dispose of the cursor.
+        if (sqlReturnRowCount < sqlReturnRowCountToBeSent) {
             stateSync = 20;
         } else {
             // we sent as many rows as was requested, but we have more to send

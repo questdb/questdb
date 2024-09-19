@@ -9249,6 +9249,11 @@ create table tab as (
 
             Ok(())
         }
+
+        [dependencies]
+        tokio = { version = "1", features = ["full"] }
+        anyhow = "1.0.89"
+        sqlx = { version = "0.7", features = [ "postgres", "runtime-tokio" ] }
      */
     public void testSyncAfterLoginSendsRNQ() throws Exception {
         skipOnWalRun();
@@ -9262,7 +9267,7 @@ create table tab as (
                         ">500000003373716c785f735f310053454c4543542024312066726f6d206c6f6e675f73657175656e636528322900000100000017440000000e5373716c785f735f31005300000004\n" +
                         "<3100000004740000000a000100000017540000001b0001243100000000000001000000170004ffffffff00005a0000000549\n" +
                         ">42000000200073716c785f735f310000010001000100000004000000010001000145000000090000000000430000000650005300000004\n" +
-                        "<32000000043300000004440000000e00010000000400000001440000000e00010000000400000001430000000d53454c4543542032005a0000000549\n";
+                        "<3200000004440000000e00010000000400000001440000000e00010000000400000001430000000d53454c45435420320033000000045a0000000549\n";
 
         assertHexScript(NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration());
     }
@@ -10418,7 +10423,6 @@ create table tab as (
         sqlx = { version = "0.7", features = [ "runtime-async-std", "postgres" ] }
     */
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testVarcharBinaryType() throws Exception {
         skipOnWalRun();
         engine.ddl("create table x (id varchar)", sqlExecutionContext);
