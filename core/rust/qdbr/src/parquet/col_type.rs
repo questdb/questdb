@@ -23,7 +23,7 @@
  ******************************************************************************/
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt};
 use serde::{Deserialize, Deserializer, Serialize};
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::num::NonZeroI32;
 
 #[repr(u8)]
@@ -105,7 +105,7 @@ fn tag_of(col_type: i32) -> u8 {
 }
 
 #[repr(transparent)]
-#[derive(Debug, Copy, Clone, PartialEq, Serialize)]
+#[derive(Copy, Clone, PartialEq, Serialize)]
 #[serde(transparent)]
 pub struct ColumnType {
     // Optimization so `Option<ColumnType>` is the same size as `ColumnType`.
@@ -136,6 +136,12 @@ impl ColumnType {
 impl Display for ColumnType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} ({:?})", self.code, self.tag())
+    }
+}
+
+impl Debug for ColumnType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ColumnType({}/{:?})", self.code, self.tag())
     }
 }
 
