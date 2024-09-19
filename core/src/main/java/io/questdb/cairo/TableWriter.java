@@ -1818,6 +1818,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         switch (rowAction) {
             case ROW_ACTION_OPEN_PARTITION:
 
+                if (timestamp == Numbers.LONG_NULL) {
+                    throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
+                }
+
                 if (timestamp < Timestamps.O3_MIN_TS) {
                     throw CairoException.nonCritical().put("timestamp before 1970-01-01 is not allowed");
                 }

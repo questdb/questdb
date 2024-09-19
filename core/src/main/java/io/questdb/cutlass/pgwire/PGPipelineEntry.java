@@ -726,6 +726,50 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
+    // defines bind variable from statement description types we sent to client.
+    // that is a combination of types we received in the PARSE message and types the compiler inferred
+    // unknown types are defined as strings
+    private void bindDefineBindVariableType(BindVariableService bindVariableService, int j) throws SqlException {
+        switch (outTypeDescriptionTypes.getQuick(j)) {
+            case X_PG_INT4:
+                bindVariableService.define(j, ColumnType.INT, 0);
+                break;
+            case X_PG_INT8:
+                bindVariableService.define(j, ColumnType.LONG, 0);
+                break;
+            case X_PG_TIMESTAMP:
+                bindVariableService.define(j, ColumnType.TIMESTAMP, 0);
+                break;
+            case X_PG_INT2:
+                bindVariableService.define(j, ColumnType.SHORT, 0);
+                break;
+            case X_PG_FLOAT8:
+                bindVariableService.define(j, ColumnType.DOUBLE, 0);
+                break;
+            case X_PG_FLOAT4:
+                bindVariableService.define(j, ColumnType.FLOAT, 0);
+                break;
+            case X_PG_CHAR:
+                bindVariableService.define(j, ColumnType.CHAR, 0);
+                break;
+            case X_PG_DATE:
+                bindVariableService.define(j, ColumnType.DATE, 0);
+                break;
+            case X_PG_BOOL:
+                bindVariableService.define(j, ColumnType.BOOLEAN, 0);
+                break;
+            case X_PG_BYTEA:
+                bindVariableService.define(j, ColumnType.BINARY, 0);
+                break;
+            case X_PG_UUID:
+                bindVariableService.define(j, ColumnType.UUID, 0);
+                break;
+            default:
+                bindVariableService.define(j, ColumnType.STRING, 0);
+                break;
+        }
+    }
+
     private void buildResultSetColumnTypes() {
         if (factory != null) {
             final RecordMetadata m = factory.getMetadata();
@@ -740,6 +784,7 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
+    // unknown types are not defined so the compiler can infer the best possible type
     private void defineBindVariableType(BindVariableService bindVariableService, int j) throws SqlException {
         switch (msgParseParameterTypes.getQuick(j)) {
             case X_PG_INT4:
@@ -774,6 +819,10 @@ public class PGPipelineEntry implements QuietCloseable {
                 break;
             case X_PG_UUID:
                 bindVariableService.define(j, ColumnType.UUID, 0);
+                break;
+            case 0:
+                // unknown types, we are not defining them for now - this gives
+                // the compiler a chance to infer the best possible type
                 break;
             default:
                 bindVariableService.define(j, ColumnType.STRING, 0);
@@ -923,7 +972,7 @@ public class PGPipelineEntry implements QuietCloseable {
                 lo += Integer.BYTES;
                 if (valueSize == -1) {
                     // undefined function?
-                    defineBindVariableType(bindVariableService, j);
+                    bindDefineBindVariableType(bindVariableService, j);
                 } else if (lo + valueSize <= msgLimit) {
                     switch (outTypeDescriptionTypes.getQuick(j)) {
                         case X_B_PG_INT4:
@@ -1027,7 +1076,11 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
+    // defines bind variables we receive in the parse message.
+    // this is used before parsing SQL text received in the PARSE message (or Q)
+    // unknown types are not defined so the compiler can infer the best possible type
     private void msgParseDefineBindVariableTypes(BindVariableService bindVariableService) throws SqlException {
+        bindVariableService.clear();
         for (int i = 0, n = msgParseParameterTypes.size(); i < n; i++) {
             defineBindVariableType(bindVariableService, i);
         }

@@ -4366,7 +4366,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testInsertExtendedBinaryAndCommit() throws Exception {
         assertMemoryLeak(() -> {
             String expectedAll = "count[BIGINT]\n" +
