@@ -107,9 +107,9 @@ impl ParquetError {
 impl Debug for ParquetError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "ParquetError\n    Cause: {:?}\n", self.cause)?;
-        write!(f, "    Context:\n")?;
+        writeln!(f, "    Context:")?;
         for line in self.context.iter().rev() {
-            write!(f, "        {}\n", line)?;
+            writeln!(f, "        {}", line)?;
         }
         write!(f, "    Backtrace:\n{}", self.backtrace)
     }
