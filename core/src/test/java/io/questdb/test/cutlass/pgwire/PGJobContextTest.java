@@ -4136,13 +4136,11 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testInsertAllTypesBinary() throws Exception {
         testInsertAllTypes(true);
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testInsertAllTypesText() throws Exception {
         testInsertAllTypes(false);
     }

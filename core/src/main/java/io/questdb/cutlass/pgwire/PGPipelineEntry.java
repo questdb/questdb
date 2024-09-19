@@ -730,6 +730,7 @@ public class PGPipelineEntry implements QuietCloseable {
     // that is a combination of types we received in the PARSE message and types the compiler inferred
     // unknown types are defined as strings
     private void bindDefineBindVariableType(BindVariableService bindVariableService, int j) throws SqlException {
+        // todo: shouldn't we mask the FORMAT flag?
         switch (outTypeDescriptionTypes.getQuick(j)) {
             case X_PG_INT4:
                 bindVariableService.define(j, ColumnType.INT, 0);
@@ -1009,6 +1010,9 @@ public class PGPipelineEntry implements QuietCloseable {
                             setUuidBindVariable(j, lo, valueSize, bindVariableService);
                             break;
                         default:
+                            // before we bind a string, we need to define the type of the variable
+                            // so the binding process can cast the string as required
+                            bindDefineBindVariableType(bindVariableService, j);
                             setBindVariableAsStr(j, lo, valueSize, bindVariableService, characterStore, utf8String);
                             break;
                     }
