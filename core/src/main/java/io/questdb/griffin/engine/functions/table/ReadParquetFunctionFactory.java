@@ -73,7 +73,8 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
             try (PartitionDecoder decoder = new PartitionDecoder()) {
                 decoder.of(fd);
                 // TODO(puzpuzpuz): we must read Parquet metadata on each read_parquet function call
-                //                  instead of reading it once and caching it.
+                //                  instead of reading it once and caching it;
+                //                  alternatively we could make this factory non-cacheable
                 GenericRecordMetadata metadata = new GenericRecordMetadata();
                 decoder.getMetadata().copyTo(metadata);
                 return new CursorFunction(new ReadParquetRecordCursorFactory(path, metadata, config.getFilesFacade()));
@@ -100,14 +101,18 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
         }
 
         // Absolute path allowed
-        if (filePath.length() > sqlCopyInputRoot.length() &&
-                (Chars.startsWith(filePath, sqlCopyInputRoot)
+        if (
+                filePath.length() > sqlCopyInputRoot.length()
+                        && (Chars.startsWith(filePath, sqlCopyInputRoot)
                         // Path is not case-sensitive on Windows and OSX
-                        || ((Os.isWindows() || Os.isOSX()) && Chars.startsWithIgnoreCase(filePath, sqlCopyInputRoot)))) {
-
-            if (sqlCopyInputRoot.charAt(sqlCopyInputRoot.length() - 1) == Files.SEPARATOR || filePath.charAt(sqlCopyInputRoot.length()) == Files.SEPARATOR
-                    // On Windows, it's acceptable to use / as a separator
-                    || (Os.isWindows() && filePath.charAt(sqlCopyInputRoot.length()) == '/')) {
+                        || ((Os.isWindows() || Os.isOSX()) && Chars.startsWithIgnoreCase(filePath, sqlCopyInputRoot)))
+        ) {
+            if (
+                    sqlCopyInputRoot.charAt(sqlCopyInputRoot.length() - 1) == Files.SEPARATOR
+                            || filePath.charAt(sqlCopyInputRoot.length()) == Files.SEPARATOR
+                            // On Windows, it's acceptable to use / as a separator
+                            || (Os.isWindows() && filePath.charAt(sqlCopyInputRoot.length()) == '/')
+            ) {
                 path.of(filePath);
                 return;
             }

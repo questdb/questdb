@@ -55,7 +55,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final FillRangeRecordCursor cursor = new FillRangeRecordCursor();
     private final Function fromFunc;
-    private final RecordMetadata metadata;
     private final CharSequence stride;
     private final int timestampIndex;
     private final Function toFunc;
@@ -77,7 +76,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         this.stride = stride;
         this.timestampIndex = timestampIndex;
         this.valueFuncs = fillValues;
-        this.metadata = metadata;
     }
 
     @Override
@@ -87,9 +85,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        if (metadata.getColumnCount() > valueFuncs.size() + 1) {
+        if (getMetadata().getColumnCount() > valueFuncs.size() + 1) {
             if (valueFuncs.size() == 1 && valueFuncs.getQuick(0).isNullConstant()) {
-                final int diff = (metadata.getColumnCount() - 1);
+                final int diff = (getMetadata().getColumnCount() - 1);
                 // skip one entry as it should be the designated timestamp
                 for (int i = 1; i < diff; i++) {
                     valueFuncs.add(NullConstant.NULL);
@@ -107,11 +105,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             cursor.close();
             throw th;
         }
-    }
-
-    @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
     }
 
     @Override

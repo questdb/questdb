@@ -44,7 +44,7 @@ import org.jetbrains.annotations.Nullable;
 public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private static final Log LOG = LogFactory.getLog(ReadParquetRecordCursor.class);
     private final LongList auxPtrs = new LongList();
-    private final DirectIntList columnTypes;
+    private final DirectIntList columns;
     private final LongList dataPtrs = new LongList();
     private final PartitionDecoder decoder;
     private final FilesFacade ff;
@@ -62,7 +62,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             this.metadata = metadata;
             this.decoder = new PartitionDecoder();
             this.rowGroupBuffers = new RowGroupBuffers();
-            this.columnTypes = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
+            this.columns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
             this.record = new ParquetRecord();
         } catch (Throwable th) {
             close();
@@ -74,7 +74,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     public void close() {
         Misc.free(decoder);
         Misc.free(rowGroupBuffers);
-        Misc.free(columnTypes);
+        Misc.free(columns);
         if (fd != -1) {
             ff.close(fd);
             fd = -1;
@@ -106,9 +106,10 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             decoder.of(fd);
             assertMetadataSame(metadata, decoder);
             rowGroupBuffers.reopen();
-            columnTypes.reopen();
+            columns.reopen();
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                columnTypes.add(metadata.getColumnType(i));
+                columns.add(i);
+                columns.add(metadata.getColumnType(i));
             }
             toTop();
         } catch (DataUnavailableException e) {
@@ -151,7 +152,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         dataPtrs.clear();
         auxPtrs.clear();
         if (++rowGroupIndex < decoder.getMetadata().rowGroupCount()) {
-            rowGroupRowCount = decoder.decodeRowGroup(rowGroupBuffers, columnTypes, rowGroupIndex);
+            rowGroupRowCount = decoder.decodeRowGroup(rowGroupBuffers, columns, rowGroupIndex);
 
             for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
                 dataPtrs.add(rowGroupBuffers.getChunkDataPtr(columnIndex));
