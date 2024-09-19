@@ -171,7 +171,7 @@ impl<W: Write> ParquetWriter<W> {
         let encodings = to_encodings(&partition);
         let mut chunked = self.chunked(schema, encodings)?;
         chunked.write_chunk(partition)?;
-        chunked.finish(additional_meta)
+        chunked.finish(Some(additional_meta))
     }
 }
 
@@ -218,7 +218,7 @@ impl<W: Write> ChunkedWriter<W> {
     }
 
     /// Write the footer of the parquet file. Returns the total size of the file.
-    pub fn finish(&mut self, additional_meta: Vec<KeyValue>) -> ParquetResult<u64> {
+    pub fn finish(&mut self, additional_meta: Option<Vec<KeyValue>>) -> ParquetResult<u64> {
         let size = self.writer.end(additional_meta)?;
         Ok(size)
     }
