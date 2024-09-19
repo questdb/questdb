@@ -333,8 +333,11 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.date.TimestampCeilFunctionFactory,
             io.questdb.griffin.engine.functions.date.DateTruncFunctionFactory,
             io.questdb.griffin.engine.functions.date.TodayFunctionFactory,
+            io.questdb.griffin.engine.functions.date.TodayWithTimezoneFunctionFactory,
             io.questdb.griffin.engine.functions.date.TomorrowFunctionFactory,
+            io.questdb.griffin.engine.functions.date.TomorrowWithTimezoneFunctionFactory,
             io.questdb.griffin.engine.functions.date.YesterdayFunctionFactory,
+            io.questdb.griffin.engine.functions.date.YesterdayWithTimezoneFunctionFactory,
 
             io.questdb.griffin.engine.functions.rnd.RndByteCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndBinCCCFunctionFactory,

@@ -94,11 +94,21 @@ public class TodayTomorrowYesterdayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTodayWithTimezone() throws Exception {
+        assertSql("column\ntrue\n", "select date_trunc('day', to_timezone(now(), 'Antarctica/McMurdo')) = today('Antarctica/McMurdo')");
+    }
+
+    @Test
     public void testTomorrow() throws Exception {
         long tomorrowStart = Timestamps.tomorrow();
         long tomorrowEnd = Timestamps.addDays(tomorrowStart, 1) - 1;
         final Interval interval = new Interval(tomorrowStart, tomorrowEnd);
         assertSql("tomorrow\n" + interval + "\n", "select tomorrow()");
+    }
+
+    @Test
+    public void testTomorrowWithTimezone() throws Exception {
+        assertSql("column\ntrue\n", "select date_trunc('day', to_timezone(dateadd('d', 1, now()), 'Antarctica/McMurdo')) = tomorrow('Antarctica/McMurdo')");
     }
 
     @Test
@@ -120,6 +130,11 @@ public class TodayTomorrowYesterdayTest extends AbstractCairoTest {
         sink.put("\",\"");
         sink.putISODate(hi);
         sink.put("\")]\n");
+    }
+
+    @Test
+    public void testYesterdayWithTimezone() throws Exception {
+        assertSql("column\ntrue\n", "select date_trunc('day', to_timezone(dateadd('d', -1, now()), 'Antarctica/McMurdo')) = yesterday('Antarctica/McMurdo')");
     }
 
 }
