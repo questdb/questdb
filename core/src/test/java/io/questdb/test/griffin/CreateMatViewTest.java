@@ -24,12 +24,13 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
-import static org.junit.Assert.fail;
+import static org.junit.Assert.*;
 
 public class CreateMatViewTest extends AbstractCairoTest {
     private static final String TABLE1 = "table1";
@@ -41,20 +42,9 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            ddl("create materialized view test as select timestamp_floor('30s', ts) as ts, avg(v) from " + TABLE1 + " order by ts");
+            ddl("create materialized view test as (select timestamp_floor('30s', ts) as ts, avg(v) from " + TABLE1 + " order by ts) partition by day");
 
-            final String expected = "ts\tavg\n" +
-                    "1970-01-01T00:00:00.000000Z\t1.0\n" +
-                    "1970-01-01T00:00:30.000000Z\t4.0\n" +
-                    "1970-01-01T00:01:00.000000Z\t7.0\n";
-
-            assertQuery(
-                    expected,
-                    "test",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("ts\tavg\n", "test", "ts", true, true);
         });
     }
 
@@ -64,17 +54,34 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE1);
 
             try {
-                ddl("create materialized view test as select ts, avg(v) from " + TABLE1 + " sample by 3M");
+                ddl("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 3M) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Materialized view query with invalid sampling interval, 'M' and 'y' intervals are not supported");
             }
 
             try {
-                ddl("create materialized view test as select ts, avg(v) from " + TABLE1 + " sample by 1y");
+                ddl("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 1y) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Materialized view query with invalid sampling interval, 'M' and 'y' intervals are not supported");
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewKeyedSampleByTest() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            ddl("create materialized view test as (select ts, k, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
+
+            assertQuery("ts\tk\tavg\n", "test", "ts", true, true);
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
+                assertFalse(metadata.isDedupKey(0));
+                assertTrue(metadata.isDedupKey(1));
+                assertFalse(metadata.isDedupKey(2));
             }
         });
     }
@@ -87,14 +94,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE3);
 
             try {
-                ddl("create materialized view test as select t1.ts, avg(t1.v) from " + TABLE1 + " as t1 join " + TABLE2 + " as t2 on v sample by 30s");
-                fail("Expected SqlException missing");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "More than one table used in query, base table has to be set using 'WITH BASE'");
-            }
-
-            try {
-                ddl("create materialized view test as (select t1.ts, avg(t1.v) from " + TABLE1 + " as t1 join " + TABLE2 + " as t2 on v sample by 30s)");
+                ddl("create materialized view test as (select t1.ts, avg(t1.v) from " + TABLE1 + " as t1 " +
+                        "join " + TABLE2 + " as t2 on v sample by 30s) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "More than one table used in query, base table has to be set using 'WITH BASE'");
@@ -102,10 +103,32 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
             try {
                 ddl("create materialized view test as (select ts, avg(v) from " + TABLE3 + " sample by 30s " +
-                        "union select t1.ts, avg(t1.v) from " + TABLE1 + " as t1 join " + TABLE2 + " as t2 on v sample by 30s)");
+                        "union select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "More than one table used in query, base table has to be set using 'WITH BASE'");
+            }
+
+            try {
+                ddl("create materialized view test as (select ts, avg(v) from " + TABLE3 + " sample by 30s " +
+                        "union select t1.ts, avg(t1.v) from " + TABLE1 + " as t1 join " + TABLE2 + " as t2 on v sample by 30s) partition by day");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "More than one table used in query, base table has to be set using 'WITH BASE'");
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewNoPartitionByTest() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            try {
+                ddl("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s)");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "'partition by' expected");
             }
         });
     }
@@ -116,10 +139,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE1);
 
             try {
-                ddl("create materialized view test as select * from " + TABLE1 + " where v % 2 = 0");
+                ddl("create materialized view test as (select * from " + TABLE1 + " where v % 2 = 0) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Materialized view query without a sampling interval");
+                TestUtils.assertContains(e.getFlyweightMessage(), "Materialized view query requires a sampling interval");
             }
         });
     }
@@ -130,7 +153,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE1);
 
             try {
-                ddl("create materialized view test as select ts, rnd_boolean(), avg(v) from " + TABLE1 + " sample by 30s");
+                ddl("create materialized view test as (select ts, rnd_boolean(), avg(v) from " + TABLE1 + " sample by 30s) partition by month");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "Non-deterministic column: rnd_boolean");
@@ -139,24 +162,44 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewNonOptimizedSampleByMultipleTimestampsTest() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            try {
+                ddl("create materialized view test as (select ts, 1L::timestamp as ts2, avg(v) from (" +
+                        "select ts, k, v+10 as v from " + TABLE1 + ") sample by 30s) partition by week");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Designated timestamp should be set explicitly");
+            }
+
+            ddl("create materialized view test as (select ts, 1L::timestamp as ts2, avg(v) from (" +
+                    "select ts, k, v+10 as v from " + TABLE1 + ") sample by 30s) timestamp(ts) partition by week");
+
+            assertQuery("ts\tts2\tavg\n", "test", "ts", true, true);
+        });
+    }
+
+    @Test
     public void testCreateMatViewNonOptimizedSampleByTest() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            ddl("create materialized view test as select ts, avg(v) from (select ts, k, v+10 as v from " + TABLE1 + ") sample by 30s");
+            ddl("create materialized view test as (select ts, avg(v) from (select ts, k, v+10 as v from " + TABLE1 + ") sample by 30s) partition by week");
 
-            final String expected = "ts\tavg\n" +
-                    "1970-01-01T00:00:00.000000Z\t11.0\n" +
-                    "1970-01-01T00:00:30.000000Z\t14.0\n" +
-                    "1970-01-01T00:01:00.000000Z\t17.0\n";
+            assertQuery("ts\tavg\n", "test", "ts", true, true);
+        });
+    }
 
-            assertQuery(
-                    expected,
-                    "test",
-                    "ts",
-                    true,
-                    true
-            );
+    @Test
+    public void testCreateMatViewRewrittenSampleByMultipleTimestampsTest() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            ddl("create materialized view test as (select ts, 1L::timestamp as ts2, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
+
+            assertQuery("ts\tts2\tavg\n", "test", "ts", true, true);
         });
     }
 
@@ -165,20 +208,9 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            ddl("create materialized view test as select ts, avg(v) from " + TABLE1 + " sample by 30s");
+            ddl("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
 
-            final String expected = "ts\tavg\n" +
-                    "1970-01-01T00:00:00.000000Z\t1.0\n" +
-                    "1970-01-01T00:00:30.000000Z\t4.0\n" +
-                    "1970-01-01T00:01:00.000000Z\t7.0\n";
-
-            assertQuery(
-                    expected,
-                    "test",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("ts\tavg\n", "test", "ts", true, true);
         });
     }
 
@@ -189,19 +221,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE2);
 
             ddl("create materialized view test with base " + TABLE1
-                    + " as select t1.ts, avg(t1.v) from " + TABLE1 + " as t1 join " + TABLE2 + " as t2 on v sample by 60s");
+                    + " as (select t1.ts, avg(t1.v) from " + TABLE1 + " as t1 join " + TABLE2 + " as t2 on v sample by 60s)"
+                    + " partition by day");
 
-            final String expected = "ts\tavg\n" +
-                    "1970-01-01T00:00:00.000000Z\t2.5\n" +
-                    "1970-01-01T00:01:00.000000Z\t7.0\n";
-
-            assertQuery(
-                    expected,
-                    "test",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("ts\tavg\n", "test", "ts", true, true);
         });
     }
 
@@ -212,17 +235,34 @@ public class CreateMatViewTest extends AbstractCairoTest {
             createTable(TABLE2);
 
             try {
-                ddl("create materialized view " + TABLE2 + " as select ts, rnd_boolean(), avg(v) from " + TABLE1 + " sample by 30s");
+                ddl("create materialized view " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "A view or a table already exists with this name");
             }
 
             try {
-                ddl("create materialized view if not exists " + TABLE2 + " as select ts, rnd_boolean(), avg(v) from " + TABLE1 + " sample by 30s");
+                ddl("create materialized view if not exists " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "A table already exists with this name");
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewWithIndexTest() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            ddl("create materialized view test as (select ts, k, avg(v) from " + TABLE1 + " sample by 30s), index (k) partition by day");
+
+            assertQuery("ts\tk\tavg\n", "test", "ts", true, true);
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.getTableTokenIfExists("test"))) {
+                assertFalse(metadata.isDedupKey(0));
+                assertTrue(metadata.isDedupKey(1));
+                assertFalse(metadata.isDedupKey(2));
             }
         });
     }
@@ -232,26 +272,9 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
-            ddl("create materialized view test as select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s");
+            ddl("create materialized view test as (select ts, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
 
-            final String expected = "ts\tdoubleV\tavg\n" +
-                    "1970-01-01T00:00:00.000000Z\t0\t0.0\n" +
-                    "1970-01-01T00:00:00.000000Z\t2\t1.0\n" +
-                    "1970-01-01T00:00:00.000000Z\t4\t2.0\n" +
-                    "1970-01-01T00:00:30.000000Z\t6\t3.0\n" +
-                    "1970-01-01T00:00:30.000000Z\t8\t4.0\n" +
-                    "1970-01-01T00:00:30.000000Z\t10\t5.0\n" +
-                    "1970-01-01T00:01:00.000000Z\t12\t6.0\n" +
-                    "1970-01-01T00:01:00.000000Z\t14\t7.0\n" +
-                    "1970-01-01T00:01:00.000000Z\t16\t8.0\n";
-
-            assertQuery(
-                    expected,
-                    "test",
-                    "ts",
-                    true,
-                    true
-            );
+            assertQuery("ts\tdoubleV\tavg\n", "test", "ts", true, true);
         });
     }
 

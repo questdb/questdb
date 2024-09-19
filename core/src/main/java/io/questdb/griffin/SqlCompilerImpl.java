@@ -2058,12 +2058,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void createMatView(final ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
-        final CreateMatViewModel createMatViewModel = (CreateMatViewModel) model;
-        final ExpressionNode name = createMatViewModel.getName();
+        final CreateMatViewModel matViewModel = (CreateMatViewModel) model;
+        final CreateTableModel viewTableModel = matViewModel.getTableModel();
 
-        // Fast path for CREATE MATERIALIZED VIEW IF NOT EXISTS in scenario when the view already exists
+        final ExpressionNode name = viewTableModel.getName();
         final int status = executionContext.getTableStatus(path, name.token);
-        if (createMatViewModel.isIgnoreIfExists() && status == TableUtils.TABLE_EXISTS) {
+        if (viewTableModel.isIgnoreIfExists() && status == TableUtils.TABLE_EXISTS) {
             final TableToken tt = engine.getTableTokenIfExists(name.token);
             if (!tt.isMatView()) {
                 throw SqlException.$(name.position, "A table already exists with this name");
@@ -2074,14 +2074,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } else {
             final TableToken matViewToken;
             this.insertCount = -1;
-            if (createMatViewModel.getQueryModel() != null) {
-                matViewToken = createMatViewFromCursorExecutor(createMatViewModel, executionContext, name.position);
-                createMatViewModel.setTableToken(matViewToken);
-            } else {
-                throw SqlException.position(0).put("cannot create materialized view without a query");
-            }
+            assert matViewModel.getQueryModel() != null;
+            matViewToken = createMatViewFromCursorExecutor(viewTableModel, executionContext);
+            matViewModel.setTableToken(matViewToken);
 
-            final MaterializedViewDefinition matViewDefinition = createMatViewModel.generateDefinition();
+            final MaterializedViewDefinition matViewDefinition = matViewModel.generateDefinition();
 
             // TODO: persist view definition, i.e. save mat view metadata
             //  load them back on startup
@@ -2093,61 +2090,26 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private TableToken createMatViewFromCursorExecutor(
-            CreateMatViewModel model,
-            SqlExecutionContext executionContext,
-            int position
-    ) throws SqlException {
-        executionContext.setUseSimpleCircuitBreaker(true);
+    private TableToken createMatViewFromCursorExecutor(CreateTableModel model, SqlExecutionContext executionContext) throws SqlException {
         try (
                 final RecordCursorFactory factory = generate(model.getQueryModel(), executionContext);
                 final RecordCursor cursor = factory.getCursor(executionContext)
         ) {
-            typeCast.clear();
             final RecordMetadata metadata = factory.getMetadata();
-            validateMatViewModelAndCreateTypeCast(model, metadata, typeCast);
-            boolean keepLock = !model.isWalEnabled();
+            validateMatViewModel(model, metadata);
 
-            final TableToken tableToken = engine.createTable(
+            // at the time of view creation we do not insert any data, just validate that the query works
+            cursor.hasNext();
+
+            return engine.createTable(
                     executionContext.getSecurityContext(),
                     mem,
                     path,
                     false,
-                    matViewStructureAdapter.of(model, metadata, typeCast),
-                    keepLock
+                    matViewStructureAdapter.of(model, metadata),
+                    false,
+                    model.getVolumeAlias() != null
             );
-
-            final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-            try {
-                copyTableDataAndUnlock(
-                        executionContext.getSecurityContext(),
-                        tableToken,
-                        model.isWalEnabled(),
-                        cursor,
-                        metadata,
-                        model.getBatchSize(),
-                        model.getBatchO3MaxLag(),
-                        circuitBreaker
-                );
-            } catch (CairoException e) {
-                e.position(position);
-                LogRecord record = LOG.error()
-                        .$("could not create view [model=`").$(model)
-                        .$("`, message=[")
-                        .$(e.getFlyweightMessage());
-                if (!e.isCancellation()) {
-                    record.$(", errno=").$(e.getErrno());
-                } else {
-                    record.$(']'); // we are closing bracket for the underlying message
-                }
-                record.I$();
-                engine.drop(path, tableToken);
-                engine.unlockTableName(tableToken);
-                throw e;
-            }
-            return tableToken;
-        } finally {
-            executionContext.setUseSimpleCircuitBreaker(false);
         }
     }
 
@@ -2190,25 +2152,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     if (createTableModel.getLikeTableName() != null) {
                         copyTableReaderMetadataToCreateTableModel(executionContext, createTableModel);
                     }
-                    if (volumeAlias == null) {
-                        tableToken = engine.createTable(
-                                executionContext.getSecurityContext(),
-                                mem,
-                                path,
-                                createTableModel.isIgnoreIfExists(),
-                                createTableModel,
-                                false
-                        );
-                    } else {
-                        tableToken = engine.createTableInVolume(
-                                executionContext.getSecurityContext(),
-                                mem,
-                                path,
-                                createTableModel.isIgnoreIfExists(),
-                                createTableModel,
-                                false
-                        );
-                    }
+                    tableToken = engine.createTable(
+                            executionContext.getSecurityContext(),
+                            mem,
+                            path,
+                            createTableModel.isIgnoreIfExists(),
+                            createTableModel,
+                            false,
+                            volumeAlias != null
+                    );
                 } catch (EntryUnavailableException e) {
                     throw SqlException.$(name.position, "table already exists");
                 } catch (CairoException e) {
@@ -2251,27 +2203,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             validateTableModelAndCreateTypeCast(model, metadata, typeCast);
             boolean keepLock = !model.isWalEnabled();
 
-            final TableToken tableToken;
-
-            if (volumeAlias == null) {
-                tableToken = engine.createTable(
-                        executionContext.getSecurityContext(),
-                        mem,
-                        path,
-                        false,
-                        tableStructureAdapter.of(model, metadata, typeCast),
-                        keepLock
-                );
-            } else {
-                tableToken = engine.createTableInVolume(
-                        executionContext.getSecurityContext(),
-                        mem,
-                        path,
-                        false,
-                        tableStructureAdapter.of(model, metadata, typeCast),
-                        keepLock
-                );
-            }
+            final TableToken tableToken = engine.createTable(
+                    executionContext.getSecurityContext(),
+                    mem,
+                    path,
+                    false,
+                    tableStructureAdapter.of(model, metadata, typeCast),
+                    keepLock,
+                    volumeAlias != null
+            );
 
             SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
             try {
@@ -3081,46 +3021,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         model.setQueryModel(queryModel);
     }
 
-    private void validateMatViewModelAndCreateTypeCast(
-            @Transient CreateMatViewModel model,
-            @Transient RecordMetadata metadata,
-            @Transient IntIntHashMap typeCast
-    ) throws SqlException {
-        CharSequenceObjHashMap<ColumnCastModel> castModels = model.getColumnCastModels();
-        ObjList<CharSequence> castColumnNames = castModels.keys();
-
-        for (int i = 0, n = castColumnNames.size(); i < n; i++) {
-            CharSequence columnName = castColumnNames.getQuick(i);
-            int index = metadata.getColumnIndexQuiet(columnName);
-            ColumnCastModel ccm = castModels.get(columnName);
-            // the only reason why columns cannot be found at this stage is
-            // concurrent table modification of table structure
-            if (index == -1) {
-                // Cast isn't going to go away when we reparse SQL. We must make this
-                // permanent error
-                throw SqlException.invalidColumn(ccm.getColumnNamePos(), columnName);
-            }
-            int from = metadata.getColumnType(index);
-            int to = ccm.getColumnType();
-            if (isCompatibleCase(from, to)) {
-                int modelColumnIndex = model.getColumnIndex(columnName);
-                if (!ColumnType.isSymbol(to) && model.isIndexed(modelColumnIndex)) {
-                    throw SqlException.$(ccm.getColumnTypePos(), "indexes are supported only for SYMBOL columns: ").put(columnName);
-                }
-                typeCast.put(index, to);
-            } else {
-                throw SqlException.unsupportedCast(ccm.getColumnTypePos(), columnName, from, to);
-            }
-        }
-
+    private void validateMatViewModel(@Transient CreateTableModel model, @Transient RecordMetadata metadata) throws SqlException {
         // validate that all indexes are specified only on columns with symbol type
         for (int i = 0, n = model.getColumnCount(); i < n; i++) {
             CharSequence columnName = model.getColumnName(i);
-            ColumnCastModel ccm = castModels.get(columnName);
-            if (ccm != null) {
-                // We already checked this column when validating casts.
-                continue;
-            }
             int index = metadata.getColumnIndexQuiet(columnName);
             assert index > -1 : "wtf? " + columnName;
             if (!ColumnType.isSymbol(metadata.getColumnType(index)) && model.isIndexed(i)) {
@@ -3135,12 +3039,25 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // validate type of timestamp column
         // no need to worry that column will not resolve
         ExpressionNode timestamp = model.getTimestamp();
-        if (timestamp != null && metadata.getColumnType(timestamp.token) != ColumnType.TIMESTAMP) {
+        if (timestamp == null) {
+            for (int i = 0, n = model.getColumnCount(); i < n; i++) {
+                if (ColumnType.isTimestamp(metadata.getColumnType(model.getColumnName(i)))) {
+                    if (timestamp != null) {
+                        throw SqlException.position(0).put("Designated timestamp should be set explicitly");
+                    }
+                    timestamp = model.getQueryModel().getBottomUpColumns().get(i).getAst();
+                }
+            }
+            if (timestamp == null) {
+                throw SqlException.position(0).put("Designated timestamp required");
+            }
+        }
+        if (metadata.getColumnType(timestamp.token) != ColumnType.TIMESTAMP) {
             throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(metadata.getColumnType(timestamp.token))).put(']');
         }
 
-        if (PartitionBy.isPartitioned(model.getPartitionBy()) && model.getTimestampIndex() == -1 && metadata.getTimestampIndex() == -1) {
-            throw SqlException.position(0).put("timestamp is not defined");
+        if (!PartitionBy.isPartitioned(model.getPartitionBy())) {
+            throw SqlException.position(0).put("Materialized view has to be partitioned");
         }
     }
 
@@ -3399,9 +3316,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private static class MatViewStructureAdapter implements TableStructure {
         private RecordMetadata metadata;
-        private CreateMatViewModel model;
+        private CreateTableModel model;
         private int timestampIndex;
-        private IntIntHashMap typeCast;
 
         @Override
         public int getColumnCount() {
@@ -3415,10 +3331,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         @Override
         public int getColumnType(int columnIndex) {
-            int castIndex = typeCast.keyIndex(columnIndex);
-            if (castIndex < 0) {
-                return typeCast.valueAt(castIndex);
-            }
             return metadata.getColumnType(columnIndex);
         }
 
@@ -3444,21 +3356,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         @Override
         public boolean getSymbolCacheFlag(int columnIndex) {
-            final ColumnCastModel ccm = model.getColumnCastModels().get(metadata.getColumnName(columnIndex));
-            if (ccm != null) {
-                return ccm.getSymbolCacheFlag();
-            }
             return model.getSymbolCacheFlag(columnIndex);
         }
 
         @Override
         public int getSymbolCapacity(int columnIndex) {
-            final ColumnCastModel ccm = model.getColumnCastModels().get(metadata.getColumnName(columnIndex));
-            if (ccm != null) {
-                return ccm.getSymbolCapacity();
-            } else {
-                return model.getSymbolCapacity(columnIndex);
-            }
+            return model.getSymbolCapacity(columnIndex);
         }
 
         @Override
@@ -3496,7 +3399,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return model.isWalEnabled();
         }
 
-        MatViewStructureAdapter of(CreateMatViewModel model, RecordMetadata metadata, IntIntHashMap typeCast) {
+        MatViewStructureAdapter of(CreateTableModel model, RecordMetadata metadata) {
             if (model.getTimestampIndex() != -1) {
                 timestampIndex = model.getTimestampIndex();
             } else {
@@ -3504,7 +3407,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             this.model = model;
             this.metadata = metadata;
-            this.typeCast = typeCast;
             return this;
         }
     }

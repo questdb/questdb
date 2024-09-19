@@ -120,7 +120,7 @@ public class InsertTest extends AbstractCairoTest {
             insert("insert into currencies select 'EUR', max(id) + 1, '2019-03-10T01:00:00.000000Z' from currencies");
             insert("insert into currencies select 'GBP', max(id) + 1, '2019-03-10T02:00:00.000000Z' from currencies");
 
-            ddl("create materialized view curr_view as select ts, max(id) as id from currencies sample by 1h");
+            ddl("create materialized view curr_view as (select ts, max(id) as id from currencies sample by 1h) partition by day");
             try {
                 insert("insert into curr_view values ('SEK', 3, '2019-03-10T03:00:00.000000Z')");
                 Assert.fail("INSERT should fail");
