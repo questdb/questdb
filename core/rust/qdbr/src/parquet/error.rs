@@ -123,7 +123,7 @@ impl Display for ParquetError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         // Print the context first in reverse order.
         let source = self.cause.source();
-        let last_index = self.context.len() - 1;
+        let last_index = self.context.len().saturating_sub(1);
         for (index, context) in self.context.iter().rev().enumerate() {
             if index == last_index {
                 write!(f, "{}", context)?;
@@ -140,7 +140,7 @@ impl Display for ParquetError {
         }
 
         if let BacktraceStatus::Captured = &self.backtrace.status() {
-            write!(f, "\n{:?}", self.backtrace)?;
+            write!(f, "\n{}", self.backtrace)?;
         }
         Ok(())
     }

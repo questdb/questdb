@@ -21,7 +21,7 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-use crate::parquet::error::{fmt_err, ParquetError};
+use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt::{Display, Formatter};
 use std::num::NonZeroI32;
@@ -143,9 +143,17 @@ impl TryFrom<i32> for ColumnType {
     type Error = ParquetError;
 
     fn try_from(v: i32) -> Result<Self, Self::Error> {
+        if v <= 0 {
+            return Err(fmt_err!(
+                Invalid,
+                "invalid column type code <= 0: {}",
+                v
+            ));
+        }
         // Start with removing geohash size bits. See ColumnType#tagOf().
         let col_tag_num = tag_of(v);
-        let _tag: ColumnTypeTag = col_tag_num.try_into()?; // just validate
+        let _tag: ColumnTypeTag = col_tag_num.try_into()
+            .with_context(|_| format!("could not parse {v} to a valid ColumnType"))?;
         let code = NonZeroI32::new(v).expect("column type code should never be zero");
         Ok(Self { code })
     }
@@ -158,5 +166,40 @@ impl<'de> Deserialize<'de> for ColumnType {
     {
         let code = i32::deserialize(deserializer)?;
         ColumnType::try_from(code).map_err(serde::de::Error::custom)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use crate::parquet::error::{ParquetErrorCause, ParquetResult};
+    use super::*;
+
+    #[test]
+    fn test_invalid_value_deserialization() {
+        let scenarios = [
+            (0i32, "invalid column type code <= 0: 0"),
+            (-20, "invalid column type code <= 0: -20"),
+            (244, "could not parse 244 to a valid ColumnType: unknown QuestDB column tag code: 244"),
+            (100073, "could not parse 100073 to a valid ColumnType: unknown QuestDB column tag code: 233"),
+        ];
+        for &(code, exp_err_msg) in &scenarios {
+            eprintln!("testing invalid code: {}", code);
+            let deserialized: ParquetResult<ColumnType> = serde_json::from_value(serde_json::json!(code))
+                .map_err(|e| ParquetErrorCause::QdbMeta(Arc::new(e)).into_err());
+            assert!(deserialized.is_err());
+
+            // Stringify error without backtrace.
+            let msg = deserialized
+                .unwrap_err()
+                .to_string()
+                .split("\n   0: std::")
+                .into_iter()
+                .map(|s|s.to_string())
+                .next()
+                .unwrap();
+            eprintln!("{}", msg);
+            assert_eq!(msg, exp_err_msg);
+        }
     }
 }
