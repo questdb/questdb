@@ -221,6 +221,20 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewNonWalBaseTableTest() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1, false);
+
+            try {
+                ddl("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "The base table has to be WAL enabled");
+            }
+        });
+    }
+
+    @Test
     public void testCreateMatViewRewrittenSampleByMultipleTimestampsTest() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -320,7 +334,11 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     private void createTable(String tableName) throws SqlException {
-        ddl("create table " + tableName + " (ts timestamp, k symbol, v long) timestamp(ts) partition by day");
+        createTable(tableName, true);
+    }
+
+    private void createTable(String tableName, boolean walEnabled) throws SqlException {
+        ddl("create table " + tableName + " (ts timestamp, k symbol, v long) timestamp(ts) partition by day" + (walEnabled ? "" : " bypass") + " wal");
         for (int i = 0; i < 9; i++) {
             insert("insert into " + tableName + " values (" + (i * 10000000) + ", 'k" + i + "', " + i + ")");
         }
