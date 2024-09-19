@@ -65,30 +65,31 @@ pub struct ColumnChunkBuffers {
 
 #[cfg(test)]
 mod tests {
+    use crate::parquet::col_type::ColumnTypeTag;
     use crate::parquet::error::ParquetResult;
+    use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol};
     use crate::parquet_read::{ParquetDecoder, RowGroupBuffers};
     use arrow::array::StringArray;
     use arrow::datatypes::{Field, Schema};
     use arrow::record_batch::RecordBatch;
     use parquet::arrow::ArrowWriter;
     use parquet::file::properties::{WriterProperties, WriterVersion};
+    use parquet::format::KeyValue;
     use std::io::Cursor;
     use std::sync::Arc;
-    use parquet::format::KeyValue;
-    use crate::parquet::col_type::ColumnTypeTag;
-    use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol};
 
     #[test]
     fn fn_load_symbol_without_local_is_global_handling_meta() -> ParquetResult<()> {
         let mut qdb_meta = QdbMeta::new();
-        qdb_meta.schema.columns.insert(0, QdbMetaCol {
-            column_type: ColumnTypeTag::Symbol.into_type(),
-            handling: None,   // It should error because this is missing.
-        });
+        qdb_meta.schema.columns.insert(
+            0,
+            QdbMetaCol {
+                column_type: ColumnTypeTag::Symbol.into_type(),
+                handling: None, // It should error because this is missing.
+            },
+        );
 
-        let buf = gen_test_symbol_parquet(Some(
-            qdb_meta.serialize()?
-        ))?;
+        let buf = gen_test_symbol_parquet(Some(qdb_meta.serialize()?))?;
 
         eprintln!("buf: {:?}", buf);
         let reader = Cursor::new(buf);
@@ -97,7 +98,7 @@ mod tests {
         parquet_decoder.decode_row_group(
             &mut rgb,
             &[Some(ColumnTypeTag::Symbol.into_type())],
-            0
+            0,
         )?;
 
         Ok(())
@@ -124,10 +125,8 @@ mod tests {
 
         let batch = RecordBatch::try_new(Arc::new(schema), vec![Arc::new(symbol_col_data)])?;
 
-        let kv_metadata = qdb_metadata.map(
-            |qdb_meta_string| {
-                vec![KeyValue::new("questdb".to_string(), qdb_meta_string)]
-            });
+        let kv_metadata = qdb_metadata
+            .map(|qdb_meta_string| vec![KeyValue::new("questdb".to_string(), qdb_meta_string)]);
 
         let props = WriterProperties::builder()
             .set_dictionary_enabled(true)

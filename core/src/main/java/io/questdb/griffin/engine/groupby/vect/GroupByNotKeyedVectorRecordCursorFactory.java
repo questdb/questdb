@@ -225,7 +225,7 @@ public class GroupByNotKeyedVectorRecordCursorFactory extends AbstractRecordCurs
             this.frameCursor = frameCursor;
             this.bus = bus;
             this.circuitBreaker = circuitBreaker;
-            frameAddressCache.of(metadata);
+            frameAddressCache.of(metadata, frameCursor.getColumnIndexes());
             for (int i = 0; i < workerCount; i++) {
                 frameMemoryPools.getQuick(i).of(frameAddressCache);
             }

@@ -684,6 +684,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             String longMaxValue = Long.toString(Long.MAX_VALUE);
             final String[] maxVals = {"127", Short.toString(Short.MAX_VALUE), Integer.toString(Integer.MAX_VALUE), longMaxValue, Float.MAX_VALUE + "f", Double.toString(Double.MAX_VALUE), longMaxValue, "true", longMaxValue};
 
+            drop("drop table if exists y", sqlExecutionContext);
+
             for (int i = 0, n = types.length; i < n; i++) {
                 for (int j = 0, m = types.length; j < m; j++) {
                     // skip unsupported noop conversion

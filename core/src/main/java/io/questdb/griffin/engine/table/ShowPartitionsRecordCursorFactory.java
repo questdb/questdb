@@ -74,7 +74,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("show_partitions").meta("of").val(tableToken);
+        sink.type("show_partitions").meta("of").val(tableToken.getTableName());
     }
 
     @Override

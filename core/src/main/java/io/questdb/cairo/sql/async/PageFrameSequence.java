@@ -350,13 +350,14 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
 
         final Rnd rnd = executionContext.getAsyncRandom();
         try {
+            assert frameCursor == null;
+            frameCursor = base.getPageFrameCursor(executionContext, order);
+
             // pass one to cache page addresses
             // this has to be separate pass to ensure there no cache reads
             // while cache might be resizing
-            frameAddressCache.of(base.getMetadata());
+            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnIndexes());
 
-            assert frameCursor == null;
-            frameCursor = base.getPageFrameCursor(executionContext, order);
             this.collectSubSeq = collectSubSeq;
             id = ID_SEQ.incrementAndGet();
             done = false;

@@ -50,11 +50,13 @@ public class TableReaderReloadBenchmark {
 
     private static final CairoConfiguration configuration = new DefaultCairoConfiguration(System.getProperty("java.io.tmpdir"));
     private static final long ts;
+    private static CairoEngine cairoEngine;
     private static TableReader reader;
     private static TableWriter writer;
 
     public static void main(String[] args) throws RunnerException {
         try (CairoEngine engine = new CairoEngine(configuration)) {
+            cairoEngine = engine;
             SqlExecutionContext sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)
                     .with(
                             configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
@@ -94,7 +96,8 @@ public class TableReaderReloadBenchmark {
                 configuration.getRoot(),
                 DefaultDdlListener.INSTANCE,
                 () -> Numbers.LONG_NULL,
-                Metrics.disabled()
+                Metrics.disabled(),
+                cairoEngine
         );
         writer.truncate();
         // create 10 partitions

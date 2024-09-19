@@ -206,6 +206,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean lineUdpUnicast;
     private final DateLocale locale;
     private final Log log;
+    private final boolean logSqlQueryProgressExe;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
     private final double maxRequiredDelimiterStdDev;
@@ -525,6 +526,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitUsBeforeReload;
 
+
     public PropServerConfiguration(
             String root,
             Properties properties,
@@ -580,6 +582,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             boolean loadAdditionalConfigurations
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
+        this.logSqlQueryProgressExe = getBoolean(properties, env, PropertyKey.LOG_SQL_QUERY_PROGRESS_EXE, true);
+
         this.filesFacade = filesFacade;
         this.fpf = fpf;
         this.microsecondClock = microsecondClock;
@@ -641,7 +645,8 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
         String tmpRoot;
-        if (new File(this.dbDirectory).isAbsolute()) {
+        boolean absDbDir = new File(this.dbDirectory).isAbsolute();
+        if (absDbDir) {
             this.root = this.dbDirectory;
             this.confRoot = rootSubdir(this.root, CONFIG_DIRECTORY); // ../conf
             this.checkpointRoot = rootSubdir(this.root, TableUtils.CHECKPOINT_DIRECTORY); // ../.checkpoint
@@ -653,6 +658,30 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.checkpointRoot = new File(root, TableUtils.CHECKPOINT_DIRECTORY).getAbsolutePath();
             this.legacyCheckpointRoot = new File(root, TableUtils.LEGACY_CHECKPOINT_DIRECTORY).getAbsolutePath();
             tmpRoot = new File(root, TMP_DIRECTORY).getAbsolutePath();
+        }
+
+        String configuredCairoSqlCopyRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, "import");
+        if (!Chars.empty(configuredCairoSqlCopyRoot)) {
+            if (new File(configuredCairoSqlCopyRoot).isAbsolute()) {
+                this.cairoSqlCopyRoot = configuredCairoSqlCopyRoot;
+            } else {
+                if (absDbDir) {
+                    this.cairoSqlCopyRoot = rootSubdir(this.root, configuredCairoSqlCopyRoot); // ../import
+                } else {
+                    this.cairoSqlCopyRoot = new File(root, configuredCairoSqlCopyRoot).getAbsolutePath();
+                }
+            }
+            String cairoSqlCopyWorkRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, tmpRoot);
+            this.cairoSqlCopyWorkRoot = getCanonicalPath(cairoSqlCopyWorkRoot);
+            if (pathEquals(root, this.cairoSqlCopyWorkRoot)
+                    || pathEquals(this.root, this.cairoSqlCopyWorkRoot)
+                    || pathEquals(this.confRoot, this.cairoSqlCopyWorkRoot)
+                    || pathEquals(this.checkpointRoot, this.cairoSqlCopyWorkRoot)) {
+                throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + " can't point to root, data, conf or snapshot dirs. ");
+            }
+        } else {
+            this.cairoSqlCopyRoot = null;
+            this.cairoSqlCopyWorkRoot = null;
         }
 
         this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, TableUtils.ATTACHABLE_DIR_MARKER);
@@ -1094,21 +1123,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
                 inputFormatConfiguration.parseConfiguration(PropServerConfiguration.class, lexer, confRoot, sqlCopyFormatsFile);
-            }
-
-            this.cairoSqlCopyRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, null);
-            String cairoSqlCopyWorkRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, tmpRoot);
-            if (cairoSqlCopyRoot != null) {
-                this.cairoSqlCopyWorkRoot = getCanonicalPath(cairoSqlCopyWorkRoot);
-            } else {
-                this.cairoSqlCopyWorkRoot = null;
-            }
-
-            if (pathEquals(root, this.cairoSqlCopyWorkRoot)
-                    || pathEquals(this.root, this.cairoSqlCopyWorkRoot)
-                    || pathEquals(this.confRoot, this.cairoSqlCopyWorkRoot)
-                    || pathEquals(this.checkpointRoot, this.cairoSqlCopyWorkRoot)) {
-                throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + " can't point to root, data, conf or snapshot dirs. ");
             }
 
             String cairoSQLCopyIdSupplier = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ID_SUPPLIER, "random");
@@ -2345,6 +2359,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull CharSequence getLegacyCheckpointRoot() {
             return legacyCheckpointRoot;
+        }
+
+        @Override
+        public boolean getLogSqlQueryProgressExe() {
+            return logSqlQueryProgressExe;
         }
 
         @Override

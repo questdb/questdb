@@ -159,6 +159,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(2_000_000, configuration.getCairoConfiguration().getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getCircuitBreakerConfiguration().getBufferSize());
 
+        Assert.assertTrue(configuration.getCairoConfiguration().getLogSqlQueryProgressExe());
+
         Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
         Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
@@ -708,7 +710,7 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
 
         PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
-        Assert.assertNull(configuration.getCairoConfiguration().getSqlCopyInputWorkRoot());
+        Assert.assertTrue(Chars.endsWith(configuration.getCairoConfiguration().getSqlCopyInputWorkRoot(), "tmp"));
 
         //direct cases
         assertInputWorkRootCantBeSetTo(properties, root);
@@ -730,7 +732,8 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
 
         PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
-        Assert.assertNull(configuration.getCairoConfiguration().getSqlCopyInputWorkRoot());
+        Assert.assertTrue(Chars.endsWith(configuration.getCairoConfiguration().getSqlCopyInputWorkRoot(), "tmp"));
+
         assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getRoot().toUpperCase());
         assertInputWorkRootCantBeSetTo(properties, configuration.getCairoConfiguration().getRoot().toLowerCase());
     }

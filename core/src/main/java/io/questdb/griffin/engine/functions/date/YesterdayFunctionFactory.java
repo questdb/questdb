@@ -22,24 +22,22 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.table;
+package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.Timestamps;
 
-import static io.questdb.griffin.engine.functions.catalogue.ShowTablesFunctionFactory.ShowTablesCursorFactory;
-
-public class AllTablesFunctionFactory implements FunctionFactory {
-
-    public static final RecordMetadata METADATA;
-    public static final String SIGNATURE = "all_tables()";
+public class YesterdayFunctionFactory implements FunctionFactory {
+    private static final String SIGNATURE = "yesterday()";
 
     @Override
     public String getSignature() {
@@ -47,23 +45,37 @@ public class AllTablesFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public boolean isRuntimeConstant() {
-        return true;
-    }
-
-    @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CursorFunction(new ShowTablesCursorFactory(configuration, AllTablesFunctionFactory.METADATA, AllTablesFunctionFactory.SIGNATURE)) {
-            @Override
-            public boolean isRuntimeConstant() {
-                return true;
-            }
-        };
+        return new YesterdayFunction();
     }
 
-    static {
-        GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(ShowTablesCursorFactory.TABLE_NAME_COLUMN_META);
-        METADATA = metadata;
+    private static class YesterdayFunction extends TimestampFunction implements Function {
+        private SqlExecutionContext context;
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return Timestamps.floorDD(Timestamps.addDays(context.getNow(), -1));
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            executionContext.initNow();
+            context = executionContext;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return true;
+        }
+
+        @Override
+        public boolean isRuntimeConstant() {
+            return true;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
+        }
     }
 }

@@ -5,8 +5,6 @@ use std::slice;
 use jni::objects::JClass;
 use jni::JNIEnv;
 
-use crate::parquet::col_type::ColumnType;
-use crate::parquet::error::ParquetResult;
 use crate::parquet_read::io::NonOwningFile;
 use crate::parquet_read::{ColumnChunkBuffers, ColumnMeta, ParquetDecoder, RowGroupBuffers};
 
@@ -36,30 +34,15 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     drop(unsafe { Box::from_raw(decoder) });
 }
 
-fn map_column_types_from_ints(
-    to_column_types: *const i32,
-    col_count: usize,
-) -> ParquetResult<Vec<Option<ColumnType>>> {
-    let to_column_types_ints = unsafe { slice::from_raw_parts(to_column_types, col_count) };
-    let mut to_column_types = Vec::with_capacity(col_count);
-    for &v in to_column_types_ints.iter() {
-        if v <= 0 {
-            to_column_types.push(None);
-        } else {
-            let column_type: ColumnType = v.try_into()?;
-            to_column_types.push(Some(column_type));
-        }
-    }
-    Ok(to_column_types)
-}
-
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_decodeRowGroup(
     mut env: JNIEnv,
     _class: JClass,
     decoder: *mut ParquetDecoder<NonOwningFile>,
     row_group_bufs: *mut RowGroupBuffers,
-    to_column_types: *const i32, // negative numbers for columns to skip
+    // Contains [parquet_column_index, column_type] pairs.
+    columns: *const i32,
+    column_count: u32,
     row_group_index: u32,
 ) -> usize {
     assert!(!decoder.is_null(), "decoder pointer is null");
@@ -67,19 +50,13 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
         !row_group_bufs.is_null(),
         "row group buffers pointer is null"
     );
-    assert!(!to_column_types.is_null(), "column type pointer is null");
+    assert!(!columns.is_null(), "columns pointer is null");
 
     let decoder = unsafe { &mut *decoder };
-    let col_count = decoder.col_count as usize;
     let row_group_bufs = unsafe { &mut *row_group_bufs };
-    let to_column_types = match map_column_types_from_ints(to_column_types, col_count) {
-        Ok(v) => v,
-        Err(err) => {
-            return throw_java_ex(&mut env, "decodeRowGroup", &err, 0);
-        }
-    };
+    let columns = unsafe { slice::from_raw_parts(columns, 2 * column_count as usize) };
 
-    match decoder.decode_row_group(row_group_bufs, &to_column_types, row_group_index) {
+    match decoder.decode_row_group(row_group_bufs, columns, row_group_index) {
         Ok(row_count) => row_count,
         Err(err) => throw_java_ex(&mut env, "decodeRowGroup", &err, 0),
     }

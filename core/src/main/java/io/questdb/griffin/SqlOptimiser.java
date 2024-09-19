@@ -29,7 +29,6 @@ import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.catalogue.*;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
-import io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.model.*;
@@ -1178,10 +1177,10 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void copyColumnsFromMetadata(QueryModel model, RecordMetadata m, boolean nonLiteral) throws SqlException {
+    private void copyColumnsFromMetadata(QueryModel model, RecordMetadata m) throws SqlException {
         // column names are not allowed to have a dot
         for (int i = 0, k = m.getColumnCount(); i < k; i++) {
-            CharSequence columnName = createColumnAlias(m.getColumnName(i), model, nonLiteral);
+            CharSequence columnName = createColumnAlias(m.getColumnName(i), model, false);
             QueryColumn column = queryColumnPool.next().of(
                     columnName,
                     expressionNodePool.next().of(
@@ -2002,7 +2001,7 @@ public class SqlOptimiser implements Mutable {
     private void enumerateColumns(QueryModel model, TableRecordMetadata metadata) throws SqlException {
         model.setMetadataVersion(metadata.getMetadataVersion());
         model.setTableId(metadata.getTableId());
-        copyColumnsFromMetadata(model, metadata, false);
+        copyColumnsFromMetadata(model, metadata);
         if (model.isUpdate()) {
             copyColumnTypesFromMetadata(model, metadata);
         }
@@ -2391,6 +2390,7 @@ public class SqlOptimiser implements Mutable {
         return node;
     }
 
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     private boolean matchesWithOrWithoutTablePrefix(@NotNull CharSequence name, @NotNull CharSequence table, CharSequence target) {
         if (target == null) {
             return false;
@@ -3164,7 +3164,7 @@ public class SqlOptimiser implements Mutable {
         if (model.getSelectModelType() == QueryModel.SELECT_MODEL_SHOW) {
             switch (model.getShowKind()) {
                 case QueryModel.SHOW_TABLES:
-                    tableFactory = new ShowTablesFunctionFactory.ShowTablesCursorFactory(configuration, AllTablesFunctionFactory.METADATA, AllTablesFunctionFactory.SIGNATURE);
+                    tableFactory = new AllTablesFunctionFactory.AllTablesCursorFactory();
                     break;
                 case QueryModel.SHOW_COLUMNS:
                     tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
@@ -3219,7 +3219,7 @@ public class SqlOptimiser implements Mutable {
             model.setTableNameFunction(tableFactory);
             tableFactoriesInFlight.add(tableFactory);
         }
-        copyColumnsFromMetadata(model, tableFactory.getMetadata(), false);
+        copyColumnsFromMetadata(model, tableFactory.getMetadata());
     }
 
     private void processEmittedJoinClauses(QueryModel model) {

@@ -82,9 +82,8 @@ impl<R: Read + Seek> ParquetDecoder<R> {
     pub fn decode_row_group(
         &mut self,
         row_group_bufs: &mut RowGroupBuffers,
-
-        // Columns to skip are encoded as `None`.
-        to_column_types: &[Option<ColumnType>],
+        // Contains [parquet_column_index, column_type] pairs.
+        columns: &[i32],
         row_group_index: u32,
     ) -> ParquetResult<usize> {
         if row_group_index > self.row_group_count {
@@ -104,10 +103,9 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         }
 
         let mut row_group_size = 0usize;
-        for (column_idx, &to_column_type) in to_column_types.iter().enumerate() {
-            let Some(to_column_type) = to_column_type else {
-                continue; // skip this column
-            };
+        for i in 0..columns.len() / 2 {
+            let column_idx = columns[2 * i] as usize;
+            let to_column_type: ColumnType = columns[2 * i + 1].try_into()?;
 
             let column_type = self.columns[column_idx].column_type;
 
@@ -117,10 +115,11 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                     "requested column type {} does not match file column type {}, column index: {}",
                     to_column_type,
                     column_type,
-                    column_idx));
+                    column_idx
+                ));
             }
 
-            let column_chunk_bufs = &mut row_group_bufs.column_bufs[column_idx];
+            let column_chunk_bufs = &mut row_group_bufs.column_bufs[i];
             let column_file_index = self.columns[column_idx].id;
 
             // Get the column's handling from the "questdb" key-value metadata stored in the file.
@@ -213,7 +212,6 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         }
 
         column_chunk_bufs.refresh_ptrs();
-
         Ok(row_count)
     }
 }

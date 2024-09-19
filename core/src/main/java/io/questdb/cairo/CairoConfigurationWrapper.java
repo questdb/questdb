@@ -381,6 +381,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getLogSqlQueryProgressExe() {
+        return getDelegate().getLogSqlQueryProgressExe();
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return getDelegate().getMaxCrashFiles();
     }
