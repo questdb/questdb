@@ -117,7 +117,8 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                     "requested column type {} does not match file column type {}, column index: {}",
                     to_column_type,
                     column_type,
-                    column_idx));
+                    column_idx
+                ));
             }
 
             let column_chunk_bufs = &mut row_group_bufs.column_bufs[column_idx];
@@ -199,7 +200,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                         decoder_page(version, &page, dict.as_ref(), column_chunk_bufs, col_info)
                             .with_context(|_| {
                                 format!(
-                                    "could not decode page for column {} in row group {}",
+                                    "could not decode page for column {:?} in row group {}",
                                     self.metadata.schema_descr.columns()[file_column_index]
                                         .descriptor
                                         .primitive_type

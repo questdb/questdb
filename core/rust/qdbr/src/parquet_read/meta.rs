@@ -23,7 +23,8 @@ fn extract_qdb_meta(file_metadata: &FileMetaData) -> ParquetResult<Option<QdbMet
     let Some(json) = questdb_key_value.value.as_deref() else {
         return Ok(None);
     };
-    Ok(Some(QdbMeta::deserialize(json)?))
+    let qdb_meta = QdbMeta::deserialize(json)?;
+    Ok(Some(qdb_meta))
 }
 
 impl<R: Read + Seek> ParquetDecoder<R> {

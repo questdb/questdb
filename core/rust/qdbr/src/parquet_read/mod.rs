@@ -65,111 +65,99 @@ pub struct ColumnChunkBuffers {
 
 #[cfg(test)]
 mod tests {
+    use crate::parquet::col_type::ColumnTypeTag;
     use crate::parquet::error::ParquetResult;
+    use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol};
     use crate::parquet_read::{ParquetDecoder, RowGroupBuffers};
-    use arrow::array::StringArray;
-    use arrow::datatypes::{Field, Schema};
-    use arrow::record_batch::RecordBatch;
-    use parquet::arrow::ArrowWriter;
+    use parquet::basic::{ConvertedType, LogicalType, Type as PhysicalType};
+    use parquet::data_type::{ByteArray, ByteArrayType};
     use parquet::file::properties::{WriterProperties, WriterVersion};
+    use parquet::file::writer::SerializedFileWriter;
+    use parquet::format::KeyValue;
+    use parquet::schema::types::Type;
     use std::io::Cursor;
     use std::sync::Arc;
-    use parquet::format::KeyValue;
-    use crate::parquet::col_type::ColumnTypeTag;
-    use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol};
 
     #[test]
     fn fn_load_symbol_without_local_is_global_handling_meta() -> ParquetResult<()> {
         let mut qdb_meta = QdbMeta::new();
-        qdb_meta.schema.columns.insert(0, QdbMetaCol {
-            column_type: ColumnTypeTag::Symbol.into_type(),
-            handling: None,   // It should error because this is missing.
-        });
+        qdb_meta.schema.columns.insert(
+            0,
+            QdbMetaCol {
+                column_type: ColumnTypeTag::Symbol.into_type(),
+                handling: None, // It should error because this is missing.
+            },
+        );
 
-        let buf = gen_test_symbol_parquet(Some(
-            qdb_meta.serialize()?
-        ))?;
+        let buf = gen_test_symbol_parquet(Some(qdb_meta.serialize()?))?;
 
-        eprintln!("buf: {:?}", buf);
         let reader = Cursor::new(buf);
         let mut parquet_decoder = ParquetDecoder::read(reader)?;
         let mut rgb = RowGroupBuffers::new();
-        parquet_decoder.decode_row_group(
+        let res = parquet_decoder.decode_row_group(
             &mut rgb,
             &[Some(ColumnTypeTag::Symbol.into_type())],
-            0
-        )?;
+            0,
+        );
+        let err = res.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("could not decode page for column \"sym\" in row group 0"));
+        assert!(msg.contains("only special LocalKeyIsGlobal-encoded symbol columns are supported"));
 
         Ok(())
     }
 
     fn gen_test_symbol_parquet(qdb_metadata: Option<String>) -> ParquetResult<Vec<u8>> {
-        let symbol_col_data = StringArray::from(vec![
-            Some("abc"),
-            None,
-            Some("defg"),
-            Some("hijkl"),
-            None,
-            None,
-            Some("mn"),
-            Some(""),
-            Some("o"),
-        ]);
+        let symbol_col_data: Vec<ByteArray> = vec![
+            ByteArray::from("abc"),
+            ByteArray::from("defg"),
+            ByteArray::from("hijkl"),
+            ByteArray::from("mn"),
+            ByteArray::from(""),
+            ByteArray::from("o"),
+        ];
 
-        let schema = Schema::new(vec![Field::new(
-            "sym",
-            arrow::datatypes::DataType::Utf8,
-            true,
-        )]);
+        let def_levels = vec![1, 1, 0, 0, 1, 1, 0, 1, 0, 1];
 
-        let batch = RecordBatch::try_new(Arc::new(schema), vec![Arc::new(symbol_col_data)])?;
+        let col_type = Arc::new(
+            Type::primitive_type_builder("sym", PhysicalType::BYTE_ARRAY)
+                // We need parquet fields to have an assigned ID
+                // This gets matched up against the QuestDB column type in the JSON metadata.
+                .with_id(Some(0))
+                .with_converted_type(ConvertedType::UTF8)
+                .with_logical_type(Some(LogicalType::String))
+                .build()?,
+        );
 
-        let kv_metadata = qdb_metadata.map(
-            |qdb_meta_string| {
-                vec![KeyValue::new("questdb".to_string(), qdb_meta_string)]
-            });
+        let schema_type = Arc::new(
+            Type::group_type_builder("schema")
+                .with_fields(vec![col_type])
+                .build()?,
+        );
 
-        let props = WriterProperties::builder()
-            .set_dictionary_enabled(true)
-            .set_writer_version(WriterVersion::PARQUET_1_0)
-            .set_key_value_metadata(kv_metadata)
-            .build();
+        let kv_metadata = qdb_metadata
+            .map(|qdb_meta_string| vec![KeyValue::new("questdb".to_string(), qdb_meta_string)]);
 
-        let mut buf: Vec<u8> = Vec::new();
-        let mut writer = ArrowWriter::try_new(&mut buf, batch.schema(), Some(props))?;
+        let props = Arc::new(
+            WriterProperties::builder()
+                .set_dictionary_enabled(true)
+                .set_writer_version(WriterVersion::PARQUET_1_0)
+                .set_key_value_metadata(kv_metadata)
+                .build(),
+        );
 
-        writer.write(&batch)?;
-        writer.close()?;
-        Ok(buf)
+        let mut cursor = Cursor::new(Vec::new());
+        let mut file_writer = SerializedFileWriter::new(&mut cursor, schema_type, props)?;
+
+        let mut row_group_writer = file_writer.next_row_group()?;
+        if let Some(mut col_writer) = row_group_writer.next_column()? {
+            let typed_writer = col_writer.typed::<ByteArrayType>();
+            typed_writer.write_batch(&symbol_col_data, Some(&def_levels), None)?;
+            col_writer.close()?;
+        }
+        row_group_writer.close()?;
+        file_writer.close()?;
+
+        Ok(cursor.into_inner())
     }
-    // #[test]
-    // fn test_write_parquet_with_symbol_column() {
-    //     let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
-    //     let col1 = vec![0, 1, i32::MIN, 2, 4];
-    //     let (col_chars, offsets) =
-    //         crate::parquet_write::tests::serialize_as_symbols(vec!["foo", "bar", "baz", "notused", "plus"]);
-    //
-    //     crate::parquet_write::tests::serialize_to_parquet(&mut buf, col1, col_chars, offsets);
-    //     let expected = vec![Some("foo"), Some("bar"), None, Some("baz"), Some("plus")];
-    //
-    //     buf.set_position(0);
-    //     let bytes: Bytes = buf.into_inner().into();
-    //     let parquet_reader = ParquetRecordBatchReaderBuilder::try_new(bytes.clone())
-    //         .expect("reader")
-    //         .with_batch_size(8192)
-    //         .build()
-    //         .expect("builder");
-    //
-    //     for batch in parquet_reader.flatten() {
-    //         let symbol_array = batch
-    //             .column(0)
-    //             .as_any()
-    //             .downcast_ref::<arrow::array::StringArray>()
-    //             .expect("Failed to downcast");
-    //         let collected: Vec<_> = symbol_array.iter().collect();
-    //         assert_eq!(collected, expected);
-    //     }
-    //
-    //     crate::parquet_write::tests::save_to_file(bytes);
-    // }
 }

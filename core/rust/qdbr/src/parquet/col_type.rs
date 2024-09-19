@@ -21,9 +21,9 @@
  *  limitations under the License.
  *
  ******************************************************************************/
-use std::fmt::{Display, Formatter};
 use crate::parquet::error::{fmt_err, ParquetError};
 use serde::{Deserialize, Deserializer, Serialize};
+use std::fmt::{Display, Formatter};
 use std::num::NonZeroI32;
 
 #[repr(u8)]
