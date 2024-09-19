@@ -61,7 +61,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     PartitionEncoder.encodeWithOptions(partitionDescriptor, path, 42, false, 0, 0, PartitionEncoder.PARQUET_VERSION_V1);
                     Assert.fail();
                 } catch (Exception e) {
-                    Assert.assertTrue(Chars.contains(e.getMessage(), "Invalid value for CompressionCodec"));
+                    Assert.assertTrue(Chars.contains(e.getMessage(), "unsupported compression codec id: 42"));
                 }
             }
         });
@@ -86,7 +86,8 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     PartitionEncoder.encodeWithOptions(partitionDescriptor, path, COMPRESSION_UNCOMPRESSED, false, 0, 0, 42);
                     Assert.fail();
                 } catch (Exception e) {
-                    Assert.assertTrue(Chars.contains(e.getMessage(), "Invalid value for Version"));
+                    System.err.println(e.getMessage());
+                    Assert.assertTrue(Chars.contains(e.getMessage(), "unsupported parquet version 42"));
                 }
             }
         });

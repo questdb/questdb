@@ -230,10 +230,10 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
 fn throw_java_ex<T>(
     env: &mut JNIEnv,
     method_name: &str,
-    err: &impl std::fmt::Debug,
+    err: &impl std::fmt::Display,
     default_value: T,
 ) -> T {
-    let msg = format!("error in {}: {:?}", method_name, err);
+    let msg = format!("error in {}: {}", method_name, err);
     env.throw_new("java/lang/RuntimeException", msg)
         .expect("failed to throw exception");
     default_value

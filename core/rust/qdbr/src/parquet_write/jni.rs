@@ -182,7 +182,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     match encode() {
         Ok(_) => (),
         Err(err) => {
-            let msg = format!("Failed to encode partition: {:?}", err);
+            let msg = format!("Failed to encode partition: {}", err);
             env.throw_new("java/lang/RuntimeException", msg)
                 .expect("failed to throw exception");
         }
