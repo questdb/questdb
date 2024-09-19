@@ -103,11 +103,12 @@ public class MaterializedViewFuzzTest extends AbstractFuzzTest {
             drainWalQueue();
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                TestUtils.assertEquals(
+                TestUtils.assertSqlCursors(
                         compiler,
                         sqlExecutionContext,
                         viewSql,
-                        mvName
+                        mvName,
+                        LOG
                 );
             }
         });

@@ -52,7 +52,12 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
         this.txnRangeLoader = new WalTxnRangeLoader(engine.getConfiguration().getFilesFacade());
     }
 
-    private boolean findCommitTimestampRanges(MatViewRefreshExecutionContext executionContext, TableReader baseTableReader, long lastRefreshTxn, MaterializedViewDefinition viewDefinition) throws SqlException {
+    private boolean findCommitTimestampRanges(
+            MatViewRefreshExecutionContext executionContext,
+            TableReader baseTableReader,
+            long lastRefreshTxn,
+            MaterializedViewDefinition viewDefinition
+    ) throws SqlException {
         long lastTxn = baseTableReader.getSeqTxn();
 
         if (lastRefreshTxn > 0) {
@@ -69,7 +74,16 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
 
                 executionContext.getBindVariableService().setTimestamp("from", minTs);
                 executionContext.getBindVariableService().setTimestamp("to", maxTs);
-                return txnRangeLoader.getMinTimestamp() <= txnRangeLoader.getMaxTimestamp();
+
+                LOG.info().$("refreshing materialized view [view=").$(viewDefinition.getTableToken())
+                        .$(", base=").$(baseTableReader.getTableToken())
+                        .$(", fromTxn=").$(lastRefreshTxn)
+                        .$(", toTxn=").$(lastTxn)
+                        .$(", from=").$ts(minTs)
+                        .$(", to=").$ts(maxTs)
+                        .I$();
+
+                return true;
             }
         } else {
             executionContext.getBindVariableService().setTimestamp("from", Long.MIN_VALUE + 1);
@@ -192,10 +206,6 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
             try {
                 if (findCommitTimestampRanges(matViewRefreshExecutionContext, baseTableReader, fromBaseTxn, viewDef)) {
                     toBaseTxn = baseTableReader.getSeqTxn();
-                    LOG.info().$("refreshing materialized view [view=").$(viewToken)
-                            .$(", base=").$(baseToken)
-                            .$(", fromSeqTxn=").$(fromBaseTxn)
-                            .$(", toSeqTxn=").$(toBaseTxn).I$();
 
                     try (TableWriterAPI commitWriter = engine.getTableWriterAPI(viewToken, "Mat View refresh")) {
                         boolean changed = insertAsSelect(viewGraph, viewDef, commitWriter);

@@ -106,7 +106,7 @@ public class WalTxnRangeLoader {
 
                 if (lastWalId == walId && segmentId == lastSegmentId) {
                     assert segmentTxn > lastSegmentTxn;
-                    while (++lastSegmentTxn < segmentTxn && walEventCursor.hasNext()) {
+                    while (lastSegmentTxn++ < segmentTxn && walEventCursor.hasNext()) {
                         // Skip uncommitted yet transactions
                     }
                     if (lastSegmentTxn != segmentTxn) {
