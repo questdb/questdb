@@ -2,7 +2,7 @@ use std::slice;
 
 use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
 use crate::parquet::error::ParquetResult;
-use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol, QdbMetaColHandling, QDB_META_KEY};
+use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol, QdbMetaColFormat, QDB_META_KEY};
 use parquet2::encoding::Encoding;
 use parquet2::metadata::KeyValue;
 use parquet2::metadata::SchemaDescriptor;
@@ -277,19 +277,17 @@ pub fn to_parquet_schema(
         .collect::<ParquetResult<Vec<_>>>()?;
 
     let mut qdb_meta = QdbMeta::new();
-    qdb_meta.schema.columns = partition
+    qdb_meta.schema = partition
         .columns
         .iter()
         .map(|c| {
-            let handling = if c.data_type.tag() == ColumnTypeTag::Symbol {
-                Some(QdbMetaColHandling::LocalKeyIsGlobal)
+            let format = if c.data_type.tag() == ColumnTypeTag::Symbol {
+                Some(QdbMetaColFormat::LocalKeyIsGlobal)
             } else {
                 None
             };
 
-            let col = QdbMetaCol { column_type: c.data_type, handling };
-
-            (c.id, col)
+            QdbMetaCol { column_type: c.data_type, format }
         })
         .collect();
 

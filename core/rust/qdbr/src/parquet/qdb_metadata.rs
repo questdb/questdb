@@ -26,7 +26,6 @@
 use crate::parquet::col_type::ColumnType;
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorCause, ParquetResult};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fmt::Debug;
 
 pub const QDB_META_KEY: &str = "questdb";
@@ -78,12 +77,38 @@ struct VersionMeta {
 
 /// Special instructions on how to handle the column data,
 /// beyond the basic column type.
-#[derive(Debug, PartialEq, Serialize, Deserialize, Copy, Clone)]
-pub enum QdbMetaColHandling {
+#[derive(Debug, PartialEq, Copy, Clone)]
+#[repr(u8)]
+pub enum QdbMetaColFormat {
     /// For dict-encoded columns, the row-range local dict key
     /// is the same as the QuestDB's global dict key.
     /// Used for symbol columns.
-    LocalKeyIsGlobal,
+    LocalKeyIsGlobal = 1,
+}
+
+impl Serialize for QdbMetaColFormat {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        (*self as u8).serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for QdbMetaColFormat {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let format = u8::deserialize(deserializer)?;
+        match format {
+            1 => Ok(QdbMetaColFormat::LocalKeyIsGlobal),
+            _ => Err(serde::de::Error::custom(format!(
+                "unsupported format: {}",
+                format
+            ))),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Copy, Clone)]
@@ -91,7 +116,7 @@ pub struct QdbMetaCol {
     pub column_type: ColumnType,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub handling: Option<QdbMetaColHandling>,
+    pub format: Option<QdbMetaColFormat>,
 }
 
 /// The id stored in the parquet schema.
@@ -99,10 +124,7 @@ pub struct QdbMetaCol {
 /// https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift
 pub type ParquetFieldId = i32;
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct QdbMetaSchema {
-    pub(crate) columns: HashMap<ParquetFieldId, QdbMetaCol>,
-}
+pub type QdbMetaSchema = Vec<QdbMetaCol>;
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct QdbMetaV1 {
@@ -112,10 +134,7 @@ pub struct QdbMetaV1 {
 
 impl QdbMetaV1 {
     pub fn new() -> Self {
-        Self {
-            version: U32Const,
-            schema: QdbMetaSchema { columns: HashMap::new() },
-        }
+        Self { version: U32Const, schema: QdbMetaSchema::new() }
     }
 }
 
@@ -154,39 +173,29 @@ mod tests {
     fn test_serialize() -> ParquetResult<()> {
         let metadata = QdbMeta {
             version: U32Const,
-            schema: QdbMetaSchema {
-                columns: HashMap::from([
-                    (
-                        0,
-                        QdbMetaCol {
-                            column_type: ColumnType::new(ColumnTypeTag::Symbol, 0),
-                            handling: Some(QdbMetaColHandling::LocalKeyIsGlobal),
-                        },
-                    ),
-                    (
-                        1,
-                        QdbMetaCol {
-                            column_type: ColumnType::new(ColumnTypeTag::Int, 0),
-                            handling: None,
-                        },
-                    ),
-                ]),
-            },
+            schema: vec![
+                QdbMetaCol {
+                    column_type: ColumnTypeTag::Symbol.into_type(),
+                    format: Some(QdbMetaColFormat::LocalKeyIsGlobal),
+                },
+                QdbMetaCol {
+                    column_type: ColumnType::new(ColumnTypeTag::Int, 0),
+                    format: None,
+                },
+            ],
         };
 
         let expected = json!({
             "version": 1,
-            "schema": {
-                "columns": {
-                    "0": {
-                        "column_type": 12,
-                        "handling": "LocalKeyIsGlobal"
-                    },
-                    "1": {
-                        "column_type": 5
-                    }
+            "schema": [
+                {
+                    "column_type": 12,
+                    "format": 1
+                },
+                {
+                    "column_type": 5
                 }
-            }
+            ]
         });
 
         let serialized_str = metadata.serialize()?;

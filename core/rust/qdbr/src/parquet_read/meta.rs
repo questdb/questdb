@@ -42,7 +42,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         for (column_id, f) in metadata.schema_descr.columns().iter().enumerate() {
             // Some types are not supported, this will skip them.
             if let Some(column_type) =
-                Self::descriptor_to_column_type(&f.descriptor, qdb_meta.as_ref())
+                Self::descriptor_to_column_type(&f.descriptor, column_id, qdb_meta.as_ref())
             {
                 let name_str = &f.descriptor.primitive_type.field_info.name;
                 let name: Vec<u16> = name_str.encode_utf16().collect();
@@ -75,20 +75,19 @@ impl<R: Read + Seek> ParquetDecoder<R> {
 
     fn extract_column_type_from_qdb_meta(
         qdb_meta: Option<&QdbMeta>,
-        col_id: i32,
+        column_id: usize,
     ) -> Option<ColumnType> {
-        let col_meta = qdb_meta?.schema.columns.get(&col_id)?;
+        let col_meta = qdb_meta?.schema.get(column_id)?;
         Some(col_meta.column_type)
     }
 
     fn descriptor_to_column_type(
         des: &Descriptor,
+        column_id: usize,
         qdb_meta: Option<&QdbMeta>,
     ) -> Option<ColumnType> {
-        if let Some(col_id) = des.primitive_type.field_info.id {
-            if let Some(col_type) = Self::extract_column_type_from_qdb_meta(qdb_meta, col_id) {
-                return Some(col_type);
-            }
+        if let Some(col_type) = Self::extract_column_type_from_qdb_meta(qdb_meta, column_id) {
+            return Some(col_type);
         }
 
         let column_type_tag = match (

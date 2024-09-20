@@ -194,9 +194,7 @@ mod tests {
             assert!(deserialized.is_err());
 
             // Stringify error without backtrace.
-            let msg = deserialized
-                .unwrap_err()
-                .to_string();
+            let msg = deserialized.unwrap_err().to_string();
             assert_eq!(msg, exp_err_msg);
         }
     }

@@ -5,6 +5,7 @@ use std::slice;
 use crate::parquet::col_type::ColumnType;
 use crate::parquet::error::{ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::ParquetFieldId;
+use crate::parquet_read::decode::ParquetColumnIndex;
 use crate::parquet_read::io::NonOwningFile;
 use crate::parquet_read::{ColumnChunkBuffers, ColumnMeta, ParquetDecoder, RowGroupBuffers};
 use jni::objects::JClass;
@@ -19,7 +20,12 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     let reader = NonOwningFile::from_raw_fd(raw_fd);
     match ParquetDecoder::read(reader) {
         Ok(decoder) => Box::into_raw(Box::new(decoder)),
-        Err(err) => throw_java_ex(&mut env, "PartitionDecoder.create", &err.display_with_backtrace(), ptr::null_mut()),
+        Err(err) => throw_java_ex(
+            &mut env,
+            "PartitionDecoder.create",
+            &err.display_with_backtrace(),
+            ptr::null_mut(),
+        ),
     }
 }
 
@@ -51,7 +57,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     _class: JClass,
     decoder: *mut ParquetDecoder<NonOwningFile>,
     row_group_bufs: *mut RowGroupBuffers,
-    columns: *const (ParquetFieldId, ColumnType),
+    columns: *const (ParquetColumnIndex, ColumnType),
     column_count: u32,
     row_group_index: u32,
 ) -> usize {

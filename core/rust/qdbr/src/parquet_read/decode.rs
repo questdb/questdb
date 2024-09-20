@@ -1,6 +1,6 @@
 use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
-use crate::parquet::qdb_metadata::{ParquetFieldId, QdbMetaCol, QdbMetaColHandling};
+use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
 use crate::parquet_read::column_sink::fixed::{
     FixedBooleanColumnSink, FixedDoubleColumnSink, FixedFloatColumnSink, FixedInt2ByteColumnSink,
     FixedInt2ShortColumnSink, FixedIntColumnSink, FixedLong256ColumnSink, FixedLongColumnSink,
@@ -78,11 +78,15 @@ const DOUBLE_NULL: [u8; 8] = unsafe { std::mem::transmute([f64::NAN]) };
 const FLOAT_NULL: [u8; 4] = unsafe { std::mem::transmute([f32::NAN]) };
 const TIMESTAMP_96_EMPTY: [u8; 12] = [0; 12];
 
+/// The local positional index as it is stored in parquet.
+/// Not to be confused with the field_id in the parquet metadata.
+pub type ParquetColumnIndex = i32;
+
 impl<R: Read + Seek> ParquetDecoder<R> {
     pub fn decode_row_group(
         &mut self,
         row_group_bufs: &mut RowGroupBuffers,
-        columns: &[(ParquetFieldId, ColumnType)],
+        columns: &[(ParquetColumnIndex, ColumnType)],
         row_group_index: u32,
     ) -> ParquetResult<usize> {
         if row_group_index > self.row_group_count {
@@ -102,7 +106,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         }
 
         let mut row_group_size = 0usize;
-        for (i, &(column_idx, to_column_type)) in columns.iter().enumerate() {
+        for (dest_col_idx, &(column_idx, to_column_type)) in columns.iter().enumerate() {
             let column_idx = column_idx as usize;
             let column_type = self.columns[column_idx].column_type;
             if column_type != to_column_type {
@@ -115,21 +119,20 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                 ));
             }
 
-            let column_chunk_bufs = &mut row_group_bufs.column_bufs[i];
-            let column_file_index = self.columns[column_idx].id;
+            let column_chunk_bufs = &mut row_group_bufs.column_bufs[dest_col_idx];
 
-            // Get the column's handling from the "questdb" key-value metadata stored in the file.
-            let handling = self
+            // Get the column's format from the "questdb" key-value metadata stored in the file.
+            let format = self
                 .qdb_meta
                 .as_ref()
-                .and_then(|m| m.schema.columns.get(&column_file_index))
-                .and_then(|c| c.handling);
+                .and_then(|m| m.schema.get(column_idx))
+                .and_then(|c| c.format);
 
-            let col_info = QdbMetaCol { column_type, handling };
+            let col_info = QdbMetaCol { column_type, format };
             match self.decode_column_chunk(
                 column_chunk_bufs,
                 row_group_index as usize,
-                column_file_index as usize,
+                column_idx,
                 col_info,
             ) {
                 Ok(column_chunk_size) => {
@@ -157,11 +160,11 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         &mut self,
         column_chunk_bufs: &mut ColumnChunkBuffers,
         row_group_index: usize,
-        file_column_index: usize,
+        column_index: usize,
         col_info: QdbMetaCol,
     ) -> ParquetResult<usize> {
         let columns = self.metadata.row_groups[row_group_index].columns();
-        let column_metadata = &columns[file_column_index];
+        let column_metadata = &columns[column_index];
 
         let chunk_size = column_metadata.compressed_size();
         let chunk_size = chunk_size
@@ -195,7 +198,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                             .with_context(|_| {
                                 format!(
                                     "could not decode page for column {:?} in row group {}",
-                                    self.metadata.schema_descr.columns()[file_column_index]
+                                    self.metadata.schema_descr.columns()[column_index]
                                         .descriptor
                                         .primitive_type
                                         .field_info
@@ -680,7 +683,7 @@ pub fn decoder_page(
                 }
 
                 (Encoding::RleDictionary, Some(_dict_page), ColumnTypeTag::Symbol) => {
-                    if col_info.handling != Some(QdbMetaColHandling::LocalKeyIsGlobal) {
+                    if col_info.format != Some(QdbMetaColFormat::LocalKeyIsGlobal) {
                         return Err(fmt_err!(
                             Unsupported,
                             "only special LocalKeyIsGlobal-encoded symbol columns are supported",
@@ -981,7 +984,7 @@ pub fn get_selected_rows(page: &DataPage) -> VecDeque<Interval> {
 #[cfg(test)]
 mod tests {
     use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
-    use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColHandling};
+    use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
     use crate::parquet_read::decode::{INT_NULL, LONG_NULL, UUID_NULL};
     use crate::parquet_read::{ColumnChunkBuffers, ParquetDecoder};
     use crate::parquet_write::file::ParquetWriter;
@@ -1023,7 +1026,7 @@ mod tests {
 
         for column_index in 0..column_count {
             let column_type = decoder.columns[column_index].column_type;
-            let col_info = QdbMetaCol { column_type, handling: None };
+            let col_info = QdbMetaCol { column_type, format: None };
             for row_group_index in 0..row_group_count {
                 decoder
                     .decode_column_chunk(bufs, row_group_index, column_index, col_info)
@@ -1222,8 +1225,8 @@ mod tests {
 
         for (column_index, (column_buffs, column_type)) in expected_buffs.iter().enumerate() {
             let column_type = *column_type;
-            let handling = if column_type.tag() == ColumnTypeTag::Symbol {
-                Some(QdbMetaColHandling::LocalKeyIsGlobal)
+            let format = if column_type.tag() == ColumnTypeTag::Symbol {
+                Some(QdbMetaColFormat::LocalKeyIsGlobal)
             } else {
                 None
             };
@@ -1244,7 +1247,7 @@ mod tests {
                         bufs,
                         row_group_index,
                         column_index,
-                        QdbMetaCol { column_type, handling },
+                        QdbMetaCol { column_type, format },
                     )
                     .unwrap();
 

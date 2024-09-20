@@ -79,13 +79,13 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn fn_load_symbol_without_local_is_global_handling_meta() -> ParquetResult<()> {
+    fn fn_load_symbol_without_local_is_global_format_meta() -> ParquetResult<()> {
         let mut qdb_meta = QdbMeta::new();
-        qdb_meta.schema.columns.insert(
+        qdb_meta.schema.insert(
             0,
             QdbMetaCol {
                 column_type: ColumnTypeTag::Symbol.into_type(),
-                handling: None, // It should error because this is missing.
+                format: None, // It should error because this is missing.
             },
         );
 
