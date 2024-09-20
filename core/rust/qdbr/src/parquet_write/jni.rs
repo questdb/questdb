@@ -258,48 +258,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_appendRowGroup(
-    env: JNIEnv,
-    _class: JClass,
-    parquet_updater: *mut ParquetUpdater,
-    col_count: jint,
-    col_names: *const u8,
-    col_names_len: i32,
-    col_name_sizes_ptr: *const i32,
-    col_types_ptr: *const i32,
-    col_ids_ptr: *const i32,
-    col_tops_ptr: *const i64,
-    primary_col_addrs_ptr: *const *const u8,
-    primary_col_sizes_ptr: *const i64,
-    secondary_col_addrs_ptr: *const *const u8,
-    secondary_col_sizes_ptr: *const i64,
-    symbol_offsets_addrs_ptr: *const *const u64,
-    symbol_offsets_sizes_ptr: *const i64,
-    row_count: jlong,
-) {
-    update_partition(
-        env,
-        _class,
-        parquet_updater,
-        None,
-        col_count,
-        col_names,
-        col_names_len,
-        col_name_sizes_ptr,
-        col_types_ptr,
-        col_ids_ptr,
-        col_tops_ptr,
-        primary_col_addrs_ptr,
-        primary_col_sizes_ptr,
-        secondary_col_addrs_ptr,
-        secondary_col_sizes_ptr,
-        symbol_offsets_addrs_ptr,
-        symbol_offsets_sizes_ptr,
-        row_count,
-    );
-}
-
-#[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEncoder_encodePartition(
     mut env: JNIEnv,
     _class: JClass,

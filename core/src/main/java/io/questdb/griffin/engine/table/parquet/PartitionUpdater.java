@@ -41,38 +41,6 @@ public class PartitionUpdater implements QuietCloseable {
         this.ff = ff;
     }
 
-    // Currently unused; will be used for optimisation in the future.
-    public void appendRowGroup(PartitionDescriptor descriptor) {
-        final int columnCount = descriptor.getColumnCount();
-        final long rowCount = descriptor.getPartitionRowCount();
-        try {
-            appendRowGroup(
-                    ptr,
-                    columnCount,
-                    descriptor.getColumnNamesPtr(),
-                    descriptor.getColumnNamesSize(),
-                    descriptor.getColumnNameLengthsPtr(),
-                    descriptor.getColumnTypesPtr(),
-                    descriptor.getColumnIdsPtr(),
-                    descriptor.getColumnTopsPtr(),
-                    descriptor.getColumnAddressesPtr(),
-                    descriptor.getColumnSizesPtr(),
-                    descriptor.getColumnSecondaryAddressesPtr(),
-                    descriptor.getColumnSecondarySizesPtr(),
-                    descriptor.getSymbolOffsetsAddressesPtr(),
-                    descriptor.getSymbolOffsetsSizesPtr(),
-                    rowCount
-            );
-        } catch (Throwable th) {
-            throw CairoException.critical(0).put("Could not append new rowGroup: [table=").put(descriptor.getTableName())
-                    .put(", exception=").put(th.getClass().getSimpleName())
-                    .put(", msg=").put(th.getMessage())
-                    .put(']');
-        } finally {
-            descriptor.clear();
-        }
-    }
-
     @Override
     public void close() {
         destroy();
@@ -140,24 +108,6 @@ public class PartitionUpdater implements QuietCloseable {
             descriptor.clear();
         }
     }
-
-    private static native void appendRowGroup(
-            long impl,
-            int columnCount,
-            long columnNamesPtr,
-            int columnNamesLength,
-            long columnNameLengthsPtr,
-            long columnTypesPtr,
-            long columnIdsPtr,
-            long columnTopsPtr,
-            long columnAddrsPtr,
-            long columnSizesPtr,
-            long columnSecondaryAddrsPtr,
-            long columnSecondarySizesPtr,
-            long symbolOffsetsAddrsPtr,
-            long symbolOffsetsSizesPtr,
-            long rowCount
-    );
 
     private static native long create(
             int fd,

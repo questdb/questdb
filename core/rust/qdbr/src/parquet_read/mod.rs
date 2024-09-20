@@ -47,25 +47,14 @@ pub struct ColumnChunkBuffers {
 }
 #[repr(C)]
 pub struct ColumnChunkStats {
-    pub file_offset: i64,
-    pub null_count: i64,
-    pub distinct_count: i64,
-    pub max_value_ptr: *mut u8,
-    pub max_value_size: usize,
-    pub max_value: Vec<u8>,
     pub min_value_ptr: *mut u8,
     pub min_value_size: usize,
     pub min_value: Vec<u8>,
 }
+
 impl ColumnChunkStats {
     pub fn new() -> Self {
         Self {
-            file_offset: -1,
-            null_count: -1,
-            distinct_count: -1,
-            max_value_ptr: ptr::null_mut(),
-            max_value_size: 0,
-            max_value: Vec::new(),
             min_value_ptr: ptr::null_mut(),
             min_value_size: 0,
             min_value: Vec::new(),

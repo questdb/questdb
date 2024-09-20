@@ -205,43 +205,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_chunkStatFileOffsetOffset(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    offset_of!(ColumnChunkStats, file_offset)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_chunkStatNullCountOffset(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    offset_of!(ColumnChunkStats, null_count)
-}
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_chunkStatDistinctCountOffset(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    offset_of!(ColumnChunkStats, distinct_count)
-}
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_chunkStatMaxValuePtrOffset(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    offset_of!(ColumnChunkStats, max_value_ptr)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_chunkStatMaxValueSizeOffset(
-    _env: JNIEnv,
-    _class: JClass,
-) -> usize {
-    offset_of!(ColumnChunkStats, max_value_size)
-}
-#[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_chunkStatMinValuePtrOffset(
     _env: JNIEnv,
     _class: JClass,
