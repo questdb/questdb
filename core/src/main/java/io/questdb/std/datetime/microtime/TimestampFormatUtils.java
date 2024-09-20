@@ -361,7 +361,6 @@ public class TimestampFormatUtils {
         append0(sink, Timestamps.getDayOfMonth(micros, y, m, l));
     }
     
-
     public static long getReferenceYear() {
         return referenceYear;
     }
