@@ -21,8 +21,9 @@ use std::collections::HashSet;
 ///   * The local keys, which are the indexes into the dictionary buffer.
 ///   * The largest key value used, or 0 if no keys were used.
 ///
-/// The first argument returned (parquet dict buffer) is encoded in a specific way to be compatible
-/// with QuestDB with zero-read overhead during queries. See `encode_symbols_dict` for details.
+/// The first element of the first tuple argument returned (parquet dict buffer) is encoded in a
+/// specific way to be compatible with QuestDB with zero-read overhead during queries.
+/// See `encode_dict_buffer` for details.
 fn encode_symbols_dict(
     column_vals: &[i32], // The QuestDB symbol column indices (i.e. numeric values).
     offsets: &[u64],     // Memory-mapped offsets into the QuestDB global symbol table.
