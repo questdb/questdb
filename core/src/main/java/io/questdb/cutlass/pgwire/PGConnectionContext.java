@@ -1096,7 +1096,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    //replace column formats in activeSelectColumnTypes with those from latest bind call
+    // replace column formats in activeSelectColumnTypes with those from latest bind call
     private void applyLatestBindColumnFormats() {
         for (int i = 0; i < bindSelectColumnFormats.size(); i++) {
             int newValue = toColumnBinaryType((short) bindSelectColumnFormats.get(i), toColumnType(activeSelectColumnTypes.getQuick(2 * i)));
@@ -2130,7 +2130,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
             short columnFormatCodeCount = getShort(lo, msgLimit, "could not read result set column format codes");
             if (columnFormatCodeCount > 0) {
-
                 final RecordMetadata m = typesAndSelect.getFactory().getMetadata();
                 final int columnCount = m.getColumnCount();
                 // apply format codes to the cursor column types

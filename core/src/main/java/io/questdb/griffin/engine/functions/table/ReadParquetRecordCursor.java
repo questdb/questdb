@@ -31,6 +31,7 @@ import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
@@ -104,7 +105,10 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             // Reopen the file, it could have changed
             this.fd = TableUtils.openRO(ff, path, LOG);
             decoder.of(fd);
-            assertMetadataSame(metadata, decoder);
+            if (metadataHasChanged(metadata, decoder)) {
+                // We need to recompile the factory as the Parquet metadata has changed.
+                throw TableReferenceOutOfDateException.of(path);
+            }
             rowGroupBuffers.reopen();
             columns.reopen();
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
@@ -129,23 +133,28 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         currentRowInRowGroup = -1;
     }
 
-    private void assertMetadataSame(RecordMetadata metadata, PartitionDecoder decoder) throws SqlException {
-        if (metadata.getColumnCount() != decoder.getMetadata().columnCount()) {
-            throw SqlException.$(0, "parquet file mismatch vs. the schema read earlier");
-        }
-
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            if (metadata.getColumnType(i) != decoder.getMetadata().getColumnType(i)) {
-                throw SqlException.$(0, "parquet file mismatch vs. the schema read earlier");
-            }
-        }
-    }
-
     private long getStrAddr(int col) {
         long auxPtr = auxPtrs.get(col);
         long dataPtr = dataPtrs.get(col);
         long dataOffset = Unsafe.getUnsafe().getLong(auxPtr + currentRowInRowGroup * 8L);
         return dataPtr + dataOffset;
+    }
+
+    private boolean metadataHasChanged(RecordMetadata metadata, PartitionDecoder decoder) {
+        if (metadata.getColumnCount() != decoder.getMetadata().columnCount()) {
+            return true;
+        }
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getColumnType(i) != decoder.getMetadata().getColumnType(i)) {
+                return true;
+            }
+        }
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (!Chars.equals(metadata.getColumnName(i), decoder.getMetadata().columnName(i))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean switchToNextRowGroup() {

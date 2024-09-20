@@ -59,7 +59,7 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
             CairoConfiguration config,
             SqlExecutionContext context
     ) throws SqlException {
-        CharSequence filePath;
+        final CharSequence filePath;
         try {
             filePath = args.getQuick(0).getStrA(null);
         } catch (CairoException e) {
@@ -67,15 +67,12 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
         }
 
         try {
-            Path path = Path.getThreadLocal2("");
+            final Path path = Path.getThreadLocal2("");
             checkPathIsSafeToRead(path, filePath, argPos.getQuick(0), config);
             long fd = TableUtils.openRO(config.getFilesFacade(), path.$(), LOG);
             try (PartitionDecoder decoder = new PartitionDecoder()) {
                 decoder.of(fd);
-                // TODO(puzpuzpuz): we must read Parquet metadata on each read_parquet function call
-                //                  instead of reading it once and caching it;
-                //                  alternatively we could make this factory non-cacheable
-                GenericRecordMetadata metadata = new GenericRecordMetadata();
+                final GenericRecordMetadata metadata = new GenericRecordMetadata();
                 decoder.getMetadata().copyTo(metadata);
                 return new CursorFunction(new ReadParquetRecordCursorFactory(path, metadata, config.getFilesFacade()));
             } finally {
