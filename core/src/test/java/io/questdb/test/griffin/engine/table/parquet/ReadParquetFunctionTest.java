@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
@@ -168,9 +169,9 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 sink.put("select * from read_parquet('x.parquet')");
 
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    try (RecordCursorFactory factory2 = compiler.compile(sink, sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursorFactory factory = compiler.compile(sink, sqlExecutionContext).getRecordCursorFactory()) {
                         engine.getConfiguration().getFilesFacade().remove(path.$());
-                        try (RecordCursor cursor2 = factory2.getCursor(sqlExecutionContext)) {
+                        try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
                             Assert.fail();
                         } catch (CairoException e) {
                             TestUtils.assertContains(e.getMessage(), "could not open, file does not exist");
@@ -193,6 +194,57 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     Assert.fail();
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getMessage(), "could not open, file does not exist");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFileSchemaChanged() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select" +
+                    " x id," +
+                    " timestamp_sequence(0,10000) as ts" +
+                    " from long_sequence(1))");
+            ddl("create table y as (select" +
+                    " x id," +
+                    " 'foobar' str," +
+                    " timestamp_sequence(0,10000) as ts" +
+                    " from long_sequence(1))");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader readerX = engine.getReader("x");
+                    TableReader readerY = engine.getReader("y")
+            ) {
+                path.of(root).concat("table.parquet").$();
+                PartitionEncoder.populateFromTableReader(readerX, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+
+                sink.clear();
+                sink.put("select * from read_parquet('table.parquet')");
+
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    try (RecordCursorFactory factory = compiler.compile(sink, sqlExecutionContext).getRecordCursorFactory()) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            Assert.assertTrue(cursor.hasNext());
+                        }
+
+                        // delete the file and populate from y table
+                        engine.getConfiguration().getFilesFacade().remove(path.$());
+                        PartitionEncoder.populateFromTableReader(readerY, partitionDescriptor, 0);
+                        PartitionEncoder.encode(partitionDescriptor, path);
+
+                        // Query the data once again - this time the Parquet schema is different.
+                        try {
+                            try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                                Assert.fail();
+                            }
+                        } catch (TableReferenceOutOfDateException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), path.asAsciiCharSequence());
+                        }
+                    }
                 }
             }
         });
