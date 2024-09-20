@@ -169,6 +169,7 @@ pub fn symbol_to_pages(
     let num_rows = column_top + column_values.len();
     let mut null_count = 0;
 
+    // TODO(amunra): Optimize if there's no column top.
     let deflevels_iter = (0..num_rows).map(|i| {
         if i < column_top {
             false
