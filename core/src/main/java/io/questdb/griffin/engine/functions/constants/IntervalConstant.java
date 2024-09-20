@@ -31,7 +31,7 @@ import io.questdb.griffin.engine.functions.IntervalFunction;
 import io.questdb.std.Interval;
 
 public class IntervalConstant extends IntervalFunction implements ConstantFunction {
-    private static final IntervalConstant NULL = new IntervalConstant(Long.MIN_VALUE, Long.MIN_VALUE);
+    public static final IntervalConstant NULL = new IntervalConstant(Long.MIN_VALUE, Long.MIN_VALUE);
 
     private final Interval interval = new Interval();
 
@@ -77,7 +77,7 @@ public class IntervalConstant extends IntervalFunction implements ConstantFuncti
 
     @Override
     public boolean isNullConstant() {
-        return interval == Interval.EMPTY;
+        return interval.equals(Interval.EMPTY);
     }
 
     @Override

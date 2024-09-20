@@ -46,10 +46,12 @@ public class TodayTomorrowYesterdayTest extends AbstractCairoTest {
                         "true\n",
                 "select true as bool from long_sequence(1) where now() in today()");
         // no interval scan with now()
+        long todayStart = Timestamps.today();
+        long todayEnd = Timestamps.tomorrow() - 1;
         assertPlanNoLeakCheck("select true as bool from long_sequence(1) where now() in today()"
                 , "VirtualRecord\n" +
                         "  functions: [true]\n" +
-                        "    Filter filter: now() in [1726704000000000,1726790399999999]\n" +
+                        "    Filter filter: now() in [" + todayStart + "," + todayEnd + "]\n" +
                         "        long_sequence count: 1\n");
     }
 

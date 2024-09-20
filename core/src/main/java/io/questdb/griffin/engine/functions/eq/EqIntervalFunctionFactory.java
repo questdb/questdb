@@ -79,7 +79,7 @@ public class EqIntervalFunctionFactory implements FunctionFactory {
 
     private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
         Interval constValue = constFunc.getInterval(null);
-        if (constValue == Interval.EMPTY) {
+        if (constValue.equals(Interval.EMPTY)) {
             return new NullCheckFunc(varFunc);
         }
         return new ConstCheckFunc(varFunc, constValue);

@@ -2235,6 +2235,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             constFuncs.put(ColumnType.LONG128, list(new Long128Constant(0, 1)));
             constFuncs.put(ColumnType.UUID, list(new UuidConstant(0, 1)));
             constFuncs.put(ColumnType.NULL, list(NullConstant.NULL));
+            constFuncs.put(ColumnType.INTERVAL, list(IntervalConstant.NULL));
 
             GenericRecordMetadata metadata = new GenericRecordMetadata();
             metadata.add(new TableColumnMetadata("bbb", ColumnType.INT));
@@ -2374,6 +2375,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     args.add(new IntConstant(2));
                                     args.add(new StrConstant("a"));
                                     args.add(new StrConstant("b"));
+                                } else if ((factory instanceof EqIntervalFunctionFactory)) {
+                                    args.add(IntervalConstant.NULL);
                                 } else if (factory instanceof CoalesceFunctionFactory) {
                                     args.add(new FloatColumn(1));
                                     args.add(new FloatColumn(2));
