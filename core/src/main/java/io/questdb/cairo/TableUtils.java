@@ -1758,8 +1758,7 @@ public final class TableUtils {
             long nameTxn
     ) {
         TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, nameTxn);
-        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, nameTxn);
-        path.put(".parquet");
+        path.put("data.parquet");
     }
 
     // Utility method for debugging. This method is not used in production.

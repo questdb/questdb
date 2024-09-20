@@ -225,7 +225,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         int tablePathLen = path.size();
 
         path.trimTo(tablePathLen);
-        path.concat(partition).concat(partition).put(".parquet");
+        path.concat(partition).put("data.parquet");
+
         if (rev) {
             Assert.assertFalse(ff.exists(path.$()));
         } else {
