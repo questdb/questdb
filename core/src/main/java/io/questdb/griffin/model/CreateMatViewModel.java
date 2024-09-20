@@ -37,11 +37,16 @@ import org.jetbrains.annotations.NotNull;
 public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
     public static final ObjectFactory<CreateMatViewModel> FACTORY = CreateMatViewModel::new;
     private final CreateTableModel tableModel;
+    private boolean alignToFirstObservation;
     private CharSequence baseTableName;
-    private long intervalMicros = -1;
+    private long fromMicros;
+    private char intervalQualifier;
+    private int intervalValue = -1;
     private TableToken matViewToken;
     private CharSequence query;
-    private long startEpochMicros = -1;
+    private CharSequence timeZone;
+    private CharSequence timeZoneOffset;
+    private long toMicros;
 
     private CreateMatViewModel() {
         tableModel = CreateTableModel.FACTORY.newInstance();
@@ -50,15 +55,22 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
     @Override
     public void clear() {
         tableModel.clear();
-        baseTableName = null;
-        query = null;
-        intervalMicros = -1;
-        startEpochMicros = -1;
         matViewToken = null;
+        query = null;
+        baseTableName = null;
+        intervalValue = -1;
+        intervalQualifier = '\0';
+        fromMicros = -1;
+        toMicros = -1;
+        alignToFirstObservation = false;
+        timeZone = null;
+        timeZoneOffset = null;
     }
 
     public MaterializedViewDefinition generateDefinition() {
-        return new MaterializedViewDefinition(baseTableName, startEpochMicros, intervalMicros, query, matViewToken);
+        return new MaterializedViewDefinition(matViewToken, query, baseTableName, intervalValue, intervalQualifier,
+                fromMicros, toMicros, alignToFirstObservation, timeZone, timeZoneOffset
+        );
     }
 
     @Override
@@ -79,24 +91,44 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
         return tableModel.getTableName();
     }
 
+    public void setAlignToFirstObservation(boolean alignToFirstObservation) {
+        this.alignToFirstObservation = alignToFirstObservation;
+    }
+
     public void setBaseTableName(CharSequence baseTableName) {
         this.baseTableName = baseTableName;
     }
 
-    public void setIntervalMicros(long intervalMicros) {
-        this.intervalMicros = intervalMicros;
+    public void setFromMicros(long fromMicros) {
+        this.fromMicros = fromMicros;
+    }
+
+    public void setIntervalQualifier(char intervalQualifier) {
+        this.intervalQualifier = intervalQualifier;
+    }
+
+    public void setIntervalValue(int intervalValue) {
+        this.intervalValue = intervalValue;
     }
 
     public void setQuery(CharSequence query) {
         this.query = query;
     }
 
-    public void setStartEpochMicros(long startEpochMicros) {
-        this.startEpochMicros = startEpochMicros;
-    }
-
     public void setTableToken(TableToken matViewToken) {
         this.matViewToken = matViewToken;
+    }
+
+    public void setTimeZone(CharSequence timeZone) {
+        this.timeZone = timeZone;
+    }
+
+    public void setTimeZoneOffset(CharSequence timeZoneOffset) {
+        this.timeZoneOffset = timeZoneOffset;
+    }
+
+    public void setToMicros(long toMicros) {
+        this.toMicros = toMicros;
     }
 
     @Override

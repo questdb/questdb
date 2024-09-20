@@ -30,9 +30,6 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
-import io.questdb.griffin.engine.groupby.MicroTimestampSampler;
-import io.questdb.griffin.engine.groupby.TimestampSampler;
-import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -41,6 +38,8 @@ import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.SqlWalMode.*;
 import static io.questdb.griffin.SqlKeywords.*;
+import static io.questdb.griffin.engine.groupby.SampleByIntervalExpressionParser.parseIntervalQualifier;
+import static io.questdb.griffin.engine.groupby.SampleByIntervalExpressionParser.parseIntervalValue;
 import static io.questdb.std.GenericLexer.*;
 
 public class SqlParser {
@@ -623,7 +622,7 @@ public class SqlParser {
             queryModel.setIsMatView(true);
 
             // find mat view query
-            final String matViewSql = Chars.toString(lexer.getContent(), queryStartPos, lexer.getPosition());
+            final String matViewSql = Chars.toString(lexer.getContent(), queryStartPos, lexer.getPosition() - 1);
             matViewModel.setQuery(matViewSql);
 
             // create view columns based on query
@@ -704,19 +703,19 @@ public class SqlParser {
         matViewModel.setBaseTableName(baseTableName.toString());
 
         // find sampling interval
-        CharSequence intervalConst = null;
+        CharSequence intervalExpr = null;
         final ExpressionNode sampleBy = queryModel.getSampleBy();
         if (sampleBy != null && sampleBy.type == ExpressionNode.CONSTANT) {
-            intervalConst = sampleBy.token;
+            intervalExpr = sampleBy.token;
         }
         // GROUP BY timestamp_floor(ts) (optimized SAMPLE BY)
-        if (intervalConst == null) {
+        if (intervalExpr == null) {
             final ObjList<QueryColumn> queryColumns = queryModel.getBottomUpColumns();
             for (int i = 0, n = queryColumns.size(); i < n; i++) {
                 final QueryColumn queryColumn = queryColumns.getQuick(i);
                 final ExpressionNode ast = queryColumn.getAst();
                 if (ast.type == ExpressionNode.FUNCTION && Chars.equalsIgnoreCase("timestamp_floor", ast.token)) {
-                    intervalConst = ast.paramCount == 3 ? ast.args.getQuick(2).token : ast.lhs.token;
+                    intervalExpr = ast.paramCount == 3 ? ast.args.getQuick(2).token : ast.lhs.token;
                     if (timestamp == null) {
                         viewTableModel.setTimestamp(nextLiteral(queryColumn.getName(), ast.position));
                     }
@@ -724,21 +723,16 @@ public class SqlParser {
                 }
             }
         }
-        if (intervalConst == null) {
+        if (intervalExpr == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "Materialized view query requires a sampling interval");
         }
 
-        // parse sampling interval const expression
-        final long interval;
-        // TODO: refactor TimestampSamplerFactory to do this without creating an actual TimestampSampler object
-        final TimestampSampler timestampSampler = TimestampSamplerFactory.getInstance(unquote(intervalConst), lexer.lastTokenPosition());
-        if (timestampSampler instanceof MicroTimestampSampler) {
-            interval = timestampSampler.getBucketSize();
-        } else {
-            // TODO: check what could be done for M and y intervals, this also depends on how the view refresh job works
-            throw SqlException.$(lexer.lastTokenPosition(), "Materialized view query with invalid sampling interval, 'M' and 'y' intervals are not supported");
-        }
-        matViewModel.setIntervalMicros(interval);
+        // parse sampling interval expression
+        intervalExpr = unquote(intervalExpr);
+        final int intervalValue = parseIntervalValue(intervalExpr, lexer.lastTokenPosition());
+        matViewModel.setIntervalValue(intervalValue);
+        final char intervalQualifier = parseIntervalQualifier(intervalExpr, lexer.lastTokenPosition());
+        matViewModel.setIntervalQualifier(intervalQualifier);
 
         final ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
