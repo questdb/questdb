@@ -29,10 +29,10 @@ import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QuestDBTestNode;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -61,7 +61,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     PartitionEncoder.encodeWithOptions(partitionDescriptor, path, 42, false, 0, 0, PartitionEncoder.PARQUET_VERSION_V1);
                     Assert.fail();
                 } catch (Exception e) {
-                    Assert.assertTrue(Chars.contains(e.getMessage(), "unsupported compression codec id: 42"));
+                    TestUtils.assertContains(e.getMessage(), "unsupported compression codec id: 42");
                 }
             }
         });
@@ -86,8 +86,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     PartitionEncoder.encodeWithOptions(partitionDescriptor, path, COMPRESSION_UNCOMPRESSED, false, 0, 0, 42);
                     Assert.fail();
                 } catch (Exception e) {
-                    System.err.println(e.getMessage());
-                    Assert.assertTrue(Chars.contains(e.getMessage(), "unsupported parquet version 42"));
+                    TestUtils.assertContains(e.getMessage(), "unsupported parquet version 42");
                 }
             }
         });
