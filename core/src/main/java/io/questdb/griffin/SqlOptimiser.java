@@ -6294,7 +6294,6 @@ public class SqlOptimiser implements Mutable {
             } catch (NumericException nex) {
                 LOG.error().$(nex);
             }
-
         }
 
         private long adjustTimezoneIfNeeded(long ts, ExpressionNode tzNode) throws NumericException {

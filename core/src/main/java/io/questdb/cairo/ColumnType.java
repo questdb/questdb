@@ -92,8 +92,8 @@ public final class ColumnType {
     public static final short REGPROCEDURE = REGCLASS + 1;      // = 28;
     public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 29;
     public static final short PARAMETER = ARRAY_STRING + 1;     // = 30;
-    public static final short INTERVAL = PARAMETER + 1;           // = 31
-    public static final short NULL = INTERVAL + 1;             // = 32; ALWAYS the last
+    public static final short INTERVAL = PARAMETER + 1;         // = 31
+    public static final short NULL = INTERVAL + 1;              // = 32; ALWAYS the last
     private static final short[] TYPE_SIZE = new short[NULL + 1];
     private static final short[] TYPE_SIZE_POW2 = new short[TYPE_SIZE.length];
     // slightly bigger than needed to make it a power of 2

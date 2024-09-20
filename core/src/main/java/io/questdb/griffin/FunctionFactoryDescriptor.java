@@ -174,7 +174,6 @@ public class FunctionFactoryDescriptor {
                 sigArgType = ColumnType.VARCHAR;
                 break;
             case 'δ':
-//            case 'Δ':
                 sigArgType = ColumnType.INTERVAL;
                 break;
             default:
