@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 use std::backtrace::{Backtrace, BacktraceStatus};
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Debug, Display, Formatter, Write};
 use std::sync::Arc;
 
 /// Cause of a parquet error.
@@ -80,6 +80,43 @@ pub struct ParquetError {
 }
 
 impl ParquetError {
+    fn fmt_msg<W: Write>(&self, f: &mut W) -> std::fmt::Result {
+        // Print the context first in reverse order.
+        let source = self.cause.source();
+        let last_index = self.context.len().saturating_sub(1);
+        for (index, context) in self.context.iter().rev().enumerate() {
+            if index == last_index {
+                write!(f, "{}", context)?;
+            } else {
+                write!(f, "{}: ", context)?;
+            }
+        }
+
+        // Then the source's cause, if there is one.
+        if let Some(source) = source {
+            if self.context.is_empty() {
+                write!(f, "{}", source)?;
+            } else {
+                write!(f, ": {}", source)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn fmt_msg_with_backtrace<W: Write>(&self, f: &mut W) -> std::fmt::Result {
+        self.fmt_msg(f)?;
+        if self.backtrace.status() == BacktraceStatus::Captured {
+            write!(f, "\n{}", self.backtrace)?;
+        }
+        Ok(())
+    }
+
+    pub fn display_with_backtrace(&self) -> ParquetErrorWithBacktraceDisplay {
+        ParquetErrorWithBacktraceDisplay(self)
+    }
+}
+
+impl ParquetError {
     #[track_caller]
     pub fn new(cause: ParquetErrorCause) -> Self {
         Self {
@@ -115,33 +152,25 @@ impl Debug for ParquetError {
         for line in self.context.iter().rev() {
             writeln!(f, "        {}", line)?;
         }
-        writeln!(f, "    Backtrace:\n{}", self.backtrace)
+        if self.backtrace.status() == BacktraceStatus::Captured {
+            writeln!(f, "    Backtrace:\n{}", self.backtrace)?;
+        }
+        Ok(())
     }
 }
 
 impl Display for ParquetError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        // Print the context first in reverse order.
-        let source = self.cause.source();
-        let last_index = self.context.len().saturating_sub(1);
-        for (index, context) in self.context.iter().rev().enumerate() {
-            if index == last_index {
-                write!(f, "{}", context)?;
-            } else {
-                write!(f, "{}: ", context)?;
-            }
-        }
-        if let Some(source) = source {
-            if self.context.is_empty() {
-                write!(f, "{}", source)?;
-            } else {
-                write!(f, ": {}", source)?;
-            }
-        }
+        self.fmt_msg(f)?;
+        Ok(())
+    }
+}
 
-        if let BacktraceStatus::Captured = &self.backtrace.status() {
-            write!(f, "\n{}", self.backtrace)?;
-        }
+pub struct ParquetErrorWithBacktraceDisplay<'a>(&'a ParquetError);
+
+impl Display for ParquetErrorWithBacktraceDisplay<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt_msg_with_backtrace(f)?;
         Ok(())
     }
 }

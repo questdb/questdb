@@ -196,13 +196,7 @@ mod tests {
             // Stringify error without backtrace.
             let msg = deserialized
                 .unwrap_err()
-                .to_string()
-                .split("\n   0: std::")
-                .into_iter()
-                .map(|s| s.to_string())
-                .next()
-                .unwrap();
-            eprintln!("{}", msg);
+                .to_string();
             assert_eq!(msg, exp_err_msg);
         }
     }

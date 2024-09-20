@@ -19,7 +19,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     let reader = NonOwningFile::from_raw_fd(raw_fd);
     match ParquetDecoder::read(reader) {
         Ok(decoder) => Box::into_raw(Box::new(decoder)),
-        Err(err) => throw_java_ex(&mut env, "PartitionDecoder.create", &err, ptr::null_mut()),
+        Err(err) => throw_java_ex(&mut env, "PartitionDecoder.create", &err.display_with_backtrace(), ptr::null_mut()),
     }
 }
 
@@ -72,7 +72,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 
     match res {
         Ok(row_count) => row_count,
-        Err(err) => throw_java_ex(&mut env, "decodeRowGroup", &err, 0),
+        Err(err) => throw_java_ex(&mut env, "decodeRowGroup", &err.display_with_backtrace(), 0),
     }
 }
 

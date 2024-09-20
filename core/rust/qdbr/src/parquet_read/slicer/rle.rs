@@ -156,7 +156,7 @@ impl<'a, 'b, T: DictDecoder> RleDictionarySlicer<'a, 'b, T> {
 /// A decoder for a symbol column where the local dictionary keys,
 /// i.e. the numeric keys in the parquet data page, match the global keys in the `.o` file
 /// of the global `SymbolMapReader`.
-/// This is an optimisation for specially-encode columns that skips mapping the parquet
+/// This is an optimisation for specially-encoded columns that skips mapping the parquet
 /// symbol keys to the global keys.
 pub struct RleLocalIsGlobalSymbolDecoder<'a, 'b> {
     decoder: Option<Decoder<'a>>,

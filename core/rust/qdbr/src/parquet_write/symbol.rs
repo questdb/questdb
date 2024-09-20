@@ -23,27 +23,6 @@ use std::collections::HashSet;
 ///
 /// The first element of the first tuple argument returned (parquet dict buffer) is encoded in a
 /// specific way to be compatible with QuestDB with zero-read overhead during queries.
-/// See `encode_dict_buffer` for details.
-fn encode_symbols_dict(
-    column_vals: &[i32], // The QuestDB symbol column indices (i.e. numeric values).
-    offsets: &[u64],     // Memory-mapped offsets into the QuestDB global symbol table.
-    chars: &[u8], // Memory-mapped global symbol table. Sequence of 4-code-unit-len-prefixed utf16 strings.
-    stats: &mut BinaryMaxMin,
-) -> ParquetResult<(Vec<u8>, Vec<u32>, u32)> {
-    let mut local_keys = Vec::with_capacity(column_vals.len());
-    let mut max_key = 0;
-    for &v in column_vals {
-        if v >= 0 {
-            local_keys.push(v as u32);
-            max_key = max_key.max(v as u32);
-        }
-    }
-
-    let dict_buffer = encode_dict_buffer(&local_keys, offsets, &chars, stats)?;
-    Ok((dict_buffer, local_keys, max_key))
-}
-
-/// Encode the parquet dict buffer from the QuestDB symbols + usages.
 ///
 /// The aim is to preserve the same numeric values in the column as the original QuestDB column.
 /// In other words, the "local" keys will always match the "global" symbol keys.
@@ -86,19 +65,27 @@ fn encode_symbols_dict(
 ///   * This is a reasonable tradeoff if most row groups end use a large subset of the global symbols.
 ///   * This trades faster query performance for slightly higher memory usage during ingestion.
 ///
-fn encode_dict_buffer(
-    local_keys: &[u32],
-    offsets: &[u64],
-    chars: &&[u8],
-    stats: &mut BinaryMaxMin,
-) -> ParquetResult<Vec<u8>> {
-    // Collect the set of unique values in the column.
-    // TODO(amunra): Reuse (cache allocation of) the `values_set` across multiple calls.
-    let mut end_value = None;
-    let values_set: HashSet<u32> = local_keys
+fn encode_symbols_dict<'a>(
+    column_vals: &'a [i32], // The QuestDB symbol column indices (i.e. numeric values).
+    offsets: &'a [u64],     // Memory-mapped offsets into the QuestDB global symbol table.
+    chars: &'a [u8], // Memory-mapped global symbol table. Sequence of 4-code-unit-len-prefixed utf16 strings.
+    stats: &'a mut BinaryMaxMin,
+) -> ParquetResult<(Vec<u8>, impl Iterator<Item = u32> + 'a, u32)> {
+    let local_keys = column_vals
         .iter()
-        .cloned()
-        .inspect(|n| end_value = max(end_value, Some(*n + 1)))
+        .filter_map(|&v| if v >= 0 { Some(v as u32) } else { None });
+
+    let local_keys2 = local_keys.clone(); // returned later
+
+    let mut max_key = 0;
+    let mut end_value = None;
+    // TODO(amunra): Reuse (cache allocation of) the `values_set` across multiple calls.
+    // Collect the set of unique values in the column.
+    let values_set: HashSet<u32> = local_keys
+        .inspect(|&n| {
+            max_key = max(max_key, n);
+            end_value = max(end_value, Some(n + 1));
+        })
         .collect();
     let end_value = end_value.unwrap_or(0);
 
@@ -156,7 +143,7 @@ fn encode_dict_buffer(
             dict_buffer[key_index..(key_index + 4)].copy_from_slice(&utf8_len_bytes);
         }
     }
-    Ok(dict_buffer)
+    Ok((dict_buffer, local_keys2, max_key))
 }
 
 fn write_utf8_from_utf16(dest: &mut Vec<u8>, src: &[u16]) -> Result<usize, DecodeUtf16Error> {
@@ -207,7 +194,7 @@ pub fn symbol_to_pages(
     let bits_per_key = util::get_bit_width(max_key as u64);
 
     let non_null_len = column_values.len() - null_count;
-    let keys = ExactSizedIter::new(keys.into_iter(), non_null_len);
+    let keys = ExactSizedIter::new(keys, non_null_len);
     // bits_per_key as a single byte...
     data_buffer.push(bits_per_key);
     // followed by the encoded keys.
