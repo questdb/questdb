@@ -475,8 +475,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         });
     }
 
-    @Test // example taken from https://www.postgresql.org/docs/current/protocol-flow.html#id-1.10.5.7.4
-    @Ignore("QuestDB does not support implicit transactions")
+    @Test
     public void testCreateBeginInsertCommitInsertErrorRetainsOnlyCommittedData() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
@@ -493,7 +492,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 assertEquals("ERROR: unexpected token [FROM]\n  Position: " + expectedPos, e.getMessage());
             }
             boolean hasResult = statement.execute("select * from mytable;");
-            assertResults(statement, hasResult, data(row(1L)));
+            assertResults(statement, hasResult, data(row(1L),  row(2L)));
         });
     }
 

@@ -1123,21 +1123,21 @@ public class PGPipelineEntry implements QuietCloseable {
 
     private void outColBinDouble(PGResponseSink utf8Sink, Record record, int columnIndex) {
         final double value = record.getDouble(columnIndex);
-        if (value == value) {
+        if (Double.isNaN(value)) {
+            utf8Sink.setNullValue();
+        } else {
             utf8Sink.putNetworkInt(Double.BYTES);
             utf8Sink.putNetworkDouble(value);
-        } else {
-            utf8Sink.setNullValue();
         }
     }
 
     private void outColBinFloat(PGResponseSink utf8Sink, Record record, int columnIndex) {
         final float value = record.getFloat(columnIndex);
-        if (value == value) {
+        if (Float.isNaN(value)) {
+            utf8Sink.setNullValue();
+        } else {
             utf8Sink.putNetworkInt(Float.BYTES);
             utf8Sink.putNetworkFloat(value);
-        } else {
-            utf8Sink.setNullValue();
         }
     }
 
@@ -1279,23 +1279,23 @@ public class PGPipelineEntry implements QuietCloseable {
 
     private void outColTxtDouble(PGResponseSink utf8Sink, Record record, int columnIndex) {
         final double doubleValue = record.getDouble(columnIndex);
-        if (doubleValue == doubleValue) {
+        if (Double.isNaN(doubleValue)) {
+            utf8Sink.setNullValue();
+        } else {
             final long a = utf8Sink.skipInt();
             utf8Sink.put(doubleValue);
             utf8Sink.putLenEx(a);
-        } else {
-            utf8Sink.setNullValue();
         }
     }
 
     private void outColTxtFloat(PGResponseSink responseUtf8Sink, Record record, int columnIndex) {
         final float floatValue = record.getFloat(columnIndex);
-        if (floatValue == floatValue) {
+        if (Float.isNaN(floatValue)) {
+            responseUtf8Sink.setNullValue();
+        } else {
             final long a = responseUtf8Sink.skipInt();
             responseUtf8Sink.put(floatValue, 3);
             responseUtf8Sink.putLenEx(a);
-        } else {
-            responseUtf8Sink.setNullValue();
         }
     }
 
@@ -1879,8 +1879,11 @@ public class PGPipelineEntry implements QuietCloseable {
                     default:
                         throw kaput().put("invalid varchar bind variable type [variableIndex=").put(variableIndex).put(']');
                 }
-                // todo: copy value of bind variable into the arena so that the receive buffer can
-                //     remain to be dynamic
+                // varchar value is sourced from the send-receive buffer (which is volatile, e.g. will be wiped
+                // without warning). It seems to be "ok" for all situations, of which there are only two:
+                // 1. the target type is "varchar", in which case the source value is "sank" into the buffer of
+                //    the bind variable
+                // 2. the target is not a varchar, in which case varchar is parsed on-the-fly
                 bindVariableService.setVarchar(variableIndex, utf8String.of(valueAddr, valueAddr + valueSize, ascii));
             } else {
                 if (Utf8s.utf8ToUtf16(valueAddr, valueAddr + valueSize, e)) {

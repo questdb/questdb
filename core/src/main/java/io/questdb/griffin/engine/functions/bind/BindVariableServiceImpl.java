@@ -745,7 +745,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
-    public void setVarchar(int index, Utf8Sequence value) throws SqlException {
+    public void setVarchar(int index, @Transient Utf8Sequence value) throws SqlException {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
@@ -1226,7 +1226,12 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
-    private static void setVarchar0(Function function, Utf8Sequence value, int index, @Nullable CharSequence name) throws SqlException {
+    private static void setVarchar0(
+            Function function,
+            @Transient Utf8Sequence value,
+            int index,
+            @Nullable CharSequence name
+    ) throws SqlException {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.BOOLEAN:

@@ -25,10 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Long256;
-import io.questdb.std.Mutable;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.str.Utf8Sequence;
 
 /**
@@ -510,7 +507,7 @@ public interface BindVariableService extends Mutable {
      * @throws SqlException is throw when variable has already been defined with type
      *                      that is not compatible with UTF8 encoded String
      */
-    void setVarchar(int index, Utf8Sequence value) throws SqlException;
+    void setVarchar(int index, @Transient Utf8Sequence value) throws SqlException;
 
     /**
      * Set type of bind variable by name as varchar and provide a value
