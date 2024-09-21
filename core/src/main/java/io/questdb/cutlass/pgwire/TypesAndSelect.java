@@ -101,7 +101,7 @@ public class TypesAndSelect implements QuietCloseable, TypeContainer {
 
     @Override
     public void defineBindVariables(BindVariableService bindVariableService) throws SqlException {
-        AbstractTypeContainer.defineBindVariables(pgParameterTypes, bindVariableService);
+        TypesAndInsert.defineBindVariables(pgParameterTypes, bindVariableService);
     }
 
     public RecordCursorFactory getFactory() {

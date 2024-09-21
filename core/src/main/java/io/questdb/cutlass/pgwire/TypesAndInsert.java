@@ -24,11 +24,18 @@
 
 package io.questdb.cutlass.pgwire;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.WeakSelfReturningObjectPool;
 
-public class TypesAndInsert extends AbstractTypeContainer<TypesAndInsert> {
+public class TypesAndInsert extends io.questdb.std.AbstractSelfReturningObject<TypesAndInsert> implements TypeContainer {
+    private final IntList types = new IntList();
+    private boolean closing;
     private boolean hasBindVariables;
     private InsertOperation insert;
     private String sqlTag;
@@ -38,8 +45,36 @@ public class TypesAndInsert extends AbstractTypeContainer<TypesAndInsert> {
         super(parentPool);
     }
 
+    @Override
+    public void close() {
+        if (!closing) {
+            closing = true;
+            super.close();
+            types.clear();
+            closing = false;
+        }
+    }
+
+    public void copyOutTypeDescriptionTypesTo(IntList outTypeDescriptionTypes) {
+        for (int i = 0, n = types.size(); i < n; i++) {
+            int nativeType = types.getQuick(i);
+            int pgType = Numbers.bswap(PGOids.getTypeOid(nativeType));
+            outTypeDescriptionTypes.add(pgType);
+        }
+    }
+
+    @Override
+    public void defineBindVariables(BindVariableService bindVariableService) throws SqlException {
+        defineBindVariables(types, bindVariableService);
+    }
+
     public InsertOperation getInsert() {
         return insert;
+    }
+
+    @Override
+    public IntList getPgParameterTypes() {
+        return types;
     }
 
     public String getSqlTag() {
@@ -60,5 +95,29 @@ public class TypesAndInsert extends AbstractTypeContainer<TypesAndInsert> {
         this.hasBindVariables = bindVariableService.getIndexedVariableCount() > 0;
         this.sqlType = sqlType;
         this.sqlTag = sqlTag;
+    }
+
+    static void copyTypes(BindVariableService fromBindVariableService, IntList toTypes) {
+        for (int i = 0, n = fromBindVariableService.getIndexedVariableCount(); i < n; i++) {
+            Function func = fromBindVariableService.getFunction(i);
+            // For bind variable find in vararg parameters functions are not
+            // created upfront. This is due to the type being unknown. On PG
+            // wire bind variable type and value are provided *after* the compilation.
+            if (func != null) {
+                toTypes.add(func.getType());
+            } else {
+                toTypes.add(ColumnType.UNDEFINED);
+            }
+        }
+    }
+
+    static void defineBindVariables(IntList types, BindVariableService bindVariableService) throws SqlException {
+        for (int i = 0, n = types.size(); i < n; i++) {
+            bindVariableService.define(i, types.getQuick(i), 0);
+        }
+    }
+
+    protected void copyTypesFrom(BindVariableService bindVariableService) {
+        copyTypes(bindVariableService, types);
     }
 }

@@ -141,7 +141,7 @@ public class PGConnectionContextLegacy extends IOContext<PGConnectionContextLega
     private final IntList syncActions = new IntList(4);
     private final SCSequence tempSequence = new SCSequence();
     private final WeakSelfReturningObjectPool<TypesAndInsertLegacy> typesAndInsertPool;
-    private final WeakSelfReturningObjectPool<TypesAndUpdate> typesAndUpdatePool;
+    private final WeakSelfReturningObjectPool<TypesAndUpdateLegacy> typesAndUpdatePool;
     private final DirectUtf8String utf8String = new DirectUtf8String();
     // this is a reference to types either from the context or named statement, where it is provided
     private IntList activeBindVariableTypes;
@@ -199,8 +199,8 @@ public class PGConnectionContextLegacy extends IOContext<PGConnectionContextLega
     private TypesAndSelectLegacy typesAndSelect = null;
     private AssociativeCache<TypesAndSelectLegacy> typesAndSelectCache;
     private boolean typesAndSelectIsCached = true;
-    private TypesAndUpdate typesAndUpdate = null;
-    private SimpleAssociativeCache<TypesAndUpdate> typesAndUpdateCache;
+    private TypesAndUpdateLegacy typesAndUpdate = null;
+    private SimpleAssociativeCache<TypesAndUpdateLegacy> typesAndUpdateCache;
     private boolean typesAndUpdateIsCached = false;
     private final PGResumeProcessor resumeCursorQueryRef = this::resumeCursorQuery;
     private final PGResumeProcessor resumeComputeCursorSizeQueryRef = this::resumeComputeCursorSizeQuery;
@@ -252,7 +252,7 @@ public class PGConnectionContextLegacy extends IOContext<PGConnectionContextLega
             final int updateBlockCount = enabledUpdateCache ? configuration.getUpdateCacheBlockCount() : 1;
             final int updateRowCount = enabledUpdateCache ? configuration.getUpdateCacheRowCount() : 1;
             this.typesAndUpdateCache = new SimpleAssociativeCache<>(updateBlockCount, updateRowCount, metrics.pgWire().cachedUpdatesGauge());
-            this.typesAndUpdatePool = new WeakSelfReturningObjectPool<>(parent -> new TypesAndUpdate(parent, engine), updateBlockCount * updateRowCount);
+            this.typesAndUpdatePool = new WeakSelfReturningObjectPool<>(parent -> new TypesAndUpdateLegacy(parent, engine), updateBlockCount * updateRowCount);
 
             final boolean enableInsertCache = configuration.isInsertCacheEnabled();
             final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1;

@@ -126,7 +126,6 @@ import static org.junit.Assert.*;
     7. Run the test
  */
 
-@Ignore
 @RunWith(Parameterized.class)
 @SuppressWarnings("SqlNoDataSourceInspection")
 public class PGJobContextTest extends BasePGTest {
@@ -1211,11 +1210,13 @@ public class PGJobContextTest extends BasePGTest {
     }
 
     @Test
+    // todo: this test randomly hangs
     public void testAllTypesSelectExtended() throws Exception {
         testAllTypesSelect(false);
     }
 
     @Test
+    // todo: this test randomly hangs
     public void testAllTypesSelectSimple() throws Exception {
         testAllTypesSelect(true);
     }
@@ -8804,7 +8805,7 @@ create table tab as (
     @Test
     public void testSingleInClauseNonDedicatedTimestamp() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement(
                     "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + "))")) {
                 statement.execute();
@@ -9046,6 +9047,46 @@ create table tab as (
                     } catch (SQLException e) {
                         TestUtils.assertContains(e.getMessage(), "not enough space in send buffer for row data");
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    @Ignore("this is where we execute cached SQL against changed table")
+    public void testTableSchemaChangeExtended() throws Exception {
+        skipOnWalRun(); // non-partitioned table
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+            connection.prepareStatement(
+                    "create table x as (select 2 id, 'foobar' str, timestamp_sequence(1,10000) as ts from long_sequence(1))"
+            ).execute();
+
+            try (PreparedStatement ps = connection.prepareStatement("x")) {
+                try (ResultSet resultSet = ps.executeQuery()) {
+                    sink.clear();
+                    assertResultSet(
+                            "id[INTEGER],str[VARCHAR],ts[TIMESTAMP]\n" +
+                                    "2,foobar,1970-01-01 00:00:00.000001\n",
+                            sink,
+                            resultSet
+                    );
+                }
+
+                connection.prepareStatement("alter table x drop column str;").execute();
+
+                drainWalQueue();
+
+                // Query the data once again - this time the schema is different,
+                // so the query should get recompiled.
+                // !!! The bug is here
+                try (ResultSet resultSet = ps.executeQuery()) {
+                    sink.clear();
+                    assertResultSet(
+                            "id[INTEGER],ts[TIMESTAMP]\n" +
+                                    "2,1970-01-01 00:00:00.000001\n",
+                            sink,
+                            resultSet
+                    );
                 }
             }
         });

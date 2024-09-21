@@ -1043,7 +1043,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    // processes one or more queries (batch/script). "Simple Query" in PostgreSQL docs.
+    // processes one or more queries (batch/script). "Simple Query" in PostgresSQL docs.
     private void msgQuery(long lo, long limit) throws BadProtocolException, PeerIsSlowToReadException, QueryPausedException, PeerDisconnectedException {
         CharacterStoreEntry e = characterStore.newEntry();
         if (Utf8s.utf8ToUtf16(lo, limit - 1, e)) {

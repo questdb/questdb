@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
+package io.questdb.cutlass.pgwire.legacy;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.BindVariableService;
@@ -32,11 +32,11 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.std.Misc;
 import io.questdb.std.WeakSelfReturningObjectPool;
 
-public class TypesAndUpdate extends AbstractTypeContainer<TypesAndUpdate> {
+public class TypesAndUpdateLegacy extends AbstractTypeContainerLegacy<TypesAndUpdateLegacy> {
     private final CompiledQueryImpl compiledQuery;
     private boolean hasBindVariables;
 
-    public TypesAndUpdate(WeakSelfReturningObjectPool<TypesAndUpdate> parentPool, CairoEngine engine) {
+    public TypesAndUpdateLegacy(WeakSelfReturningObjectPool<TypesAndUpdateLegacy> parentPool, CairoEngine engine) {
         super(parentPool);
         compiledQuery = new CompiledQueryImpl(engine);
     }

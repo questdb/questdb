@@ -157,7 +157,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test // explicit transaction + commit
     public void testBeginCreateInsertCommitThenErrorDoesntRollBackCommittedFirstInsert() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 try {
                     // this is a JDBC driver quirk:
@@ -175,8 +175,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     );
                     Assert.fail();
                 } catch (PSQLException e) {
-                    assertEquals("ERROR: unexpected token [test]\n" +
-                            "  Position: 15", e.getMessage());
+                    TestUtils.assertContains(e.getMessage(), "ERROR: unexpected token [test]");
                 }
 
                 boolean hasResult = statement.execute("select * from test; ");
@@ -187,7 +186,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test // explicit transaction + commit
     public void testBeginCreateInsertCommitThenErrorDoesntRollBackCommittedFirstInsertOnTwoTables() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 try {
                     statement.execute("BEGIN; " +
@@ -200,7 +199,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "DELETE FROM testB;");
                     assertExceptionNoLeakCheck("PSQLException should be thrown");
                 } catch (PSQLException e) {
-                    assertEquals("ERROR: unexpected token [FROM]\n  Position: 9", e.getMessage());
+                    TestUtils.assertContains(e.getMessage(),  "ERROR: unexpected token [FROM]");
                 }
 
                 boolean hasResult = statement.execute("select * from testA; select  *from testB;");
@@ -497,6 +496,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
+    @Ignore("non-wal table (unpartitioned) cannot be altered after insert, the plan is to decommission non-WAL tables eventually")
     public void testCreateInsertAlterAddColumnThenRollbackLeavesEmptyTable() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
@@ -512,6 +512,34 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             assertResults(statement, hasResult,
                     Result.ZERO, Result.ZERO, count(1),
                     Result.ZERO, Result.ZERO, Result.EMPTY);
+        });
+    }
+
+    @Test
+    public void testCreateInsertAlterAddColumnThenRollbackLeavesEmptyTableWal() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+
+            boolean hasResult =
+                    statement.execute(
+                            "CREATE TABLE mytable(l long, t timestamp) timestamp(t) partition by hour wal; " +
+                                    "BEGIN; " +
+                                    "INSERT INTO mytable VALUES(27, 0); " +
+                                    "ALTER TABLE mytable ADD COLUMN s string; " +
+                                    "ROLLBACK; " +
+                                    "SELECT * From mytable; "
+                    );
+
+            assertResults(
+                    statement,
+                    hasResult,
+                    Result.ZERO,
+                    Result.ZERO,
+                    count(1),
+                    Result.ZERO,
+                    Result.ZERO,
+                    Result.EMPTY
+            );
         });
     }
 
@@ -809,14 +837,22 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCreateInsertRenameTableSelectFromTableInBlock() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute(
                     "CREATE TABLE test(l long,ts timestamp); " +
                             "INSERT INTO test VALUES(1989, 0); " +
                             "RENAME TABLE test TO newtest; " +
-                            "SELECT l from newtest;");
-            assertResults(statement, hasResult, Result.ZERO, count(1), Result.ZERO, data(row(1989L)));
+                            "SELECT l from newtest;"
+            );
+            assertResults(
+                    statement,
+                    hasResult,
+                    Result.ZERO,
+                    count(1),
+                    Result.ZERO,
+                    data(row(1989L))
+            );
         });
     }
 

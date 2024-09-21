@@ -1762,6 +1762,8 @@ public class PGPipelineEntry implements QuietCloseable {
                 // future-proofing ALTER execution
                 compiledQuery.ofAlter(cq.getAlterOperation());
                 compiledQuery.withSqlText(cq.getSqlText());
+                sqlTag = TAG_OK;
+                break;
                 // fall through
             default:
                 // DDL
