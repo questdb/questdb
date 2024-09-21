@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.model;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MaterializedViewDefinition;
@@ -39,14 +38,14 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
     private final CreateTableModel tableModel;
     private boolean alignToFirstObservation;
     private CharSequence baseTableName;
-    private long fromMicros;
+    private long fromMicros = -1;
     private char intervalQualifier;
     private int intervalValue = -1;
     private TableToken matViewToken;
     private CharSequence query;
     private CharSequence timeZone;
     private CharSequence timeZoneOffset;
-    private long toMicros;
+    private long toMicros = -1;
 
     private CreateMatViewModel() {
         tableModel = CreateTableModel.FACTORY.newInstance();
@@ -137,46 +136,17 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
         sink.put(tableModel.getName().token);
         sink.putAscii(" with base ");
         sink.put(baseTableName);
-        if (getQueryModel() != null) {
-            sink.putAscii(" as (");
-            getQueryModel().toSink(sink);
-            sink.putAscii(')');
-            for (int i = 0, n = tableModel.getColumnCount(); i < n; i++) {
-                if (tableModel.isIndexed(i)) {
-                    sink.putAscii(", index(");
-                    sink.put(tableModel.getColumnName(i));
-                    sink.putAscii(" capacity ");
-                    sink.put(tableModel.getIndexBlockCapacity(i));
-                    sink.putAscii(')');
-                }
-            }
-        } else {
-            sink.putAscii(" (");
-            int count = tableModel.getColumnCount();
-            for (int i = 0; i < count; i++) {
-                if (i > 0) {
-                    sink.putAscii(", ");
-                }
+        sink.putAscii(" as (");
+        sink.put(query);
+        sink.putAscii(')');
+        for (int i = 0, n = tableModel.getColumnCount(); i < n; i++) {
+            if (tableModel.isIndexed(i)) {
+                sink.putAscii(", index(");
                 sink.put(tableModel.getColumnName(i));
-                sink.putAscii(' ');
-                sink.put(ColumnType.nameOf(tableModel.getColumnType(i)));
-
-                if (ColumnType.isSymbol(tableModel.getColumnType(i))) {
-                    sink.putAscii(" capacity ");
-                    sink.put(tableModel.getSymbolCapacity(i));
-                    if (tableModel.getSymbolCacheFlag(i)) {
-                        sink.putAscii(" cache");
-                    } else {
-                        sink.putAscii(" nocache");
-                    }
-                }
-
-                if (tableModel.isIndexed(i)) {
-                    sink.putAscii(" index capacity ");
-                    sink.put(tableModel.getIndexBlockCapacity(i));
-                }
+                sink.putAscii(" capacity ");
+                sink.put(tableModel.getIndexBlockCapacity(i));
+                sink.putAscii(')');
             }
-            sink.putAscii(')');
         }
 
         sink.putAscii(" timestamp(");

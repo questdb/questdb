@@ -26,7 +26,10 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.mv.MaterializedViewDefinition;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.std.str.Sinkable;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
@@ -46,7 +49,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewGroupByTimestampTest() throws Exception {
+    public void testCreateMatViewGroupByTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
@@ -59,7 +62,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewInvalidTimestampTest() throws Exception {
+    public void testCreateMatViewInvalidTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
@@ -75,7 +78,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewKeyedSampleByTest() throws Exception {
+    public void testCreateMatViewKeyedSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
@@ -94,7 +97,26 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewMultipleTablesTest() throws Exception {
+    public void testCreateMatViewModelToSink() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query = "select ts, k, avg(v) from " + TABLE1 + " sample by 30s";
+            final String sql = "create materialized view test as (" + query + "), index (k capacity 1024) partition by day in volume vol1";
+
+            sink.clear();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final ExecutionModel model = compiler.testCompileModel(sql, sqlExecutionContext);
+                assertEquals(model.getModelType(), ExecutionModel.CREATE_MAT_VIEW);
+                ((Sinkable) model).toSink(sink);
+                TestUtils.assertEquals("create materialized view test with base table1 as (" + query +
+                        "), index(k capacity 1024) timestamp(ts) partition by DAY in volume 'vol1'", sink);
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewMultipleTables() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
             createTable(TABLE2);
@@ -128,7 +150,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewNoPartitionByTest() throws Exception {
+    public void testCreateMatViewNoPartitionBy() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
@@ -157,7 +179,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewNoSampleByTest() throws Exception {
+    public void testCreateMatViewNoSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
@@ -172,7 +194,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewNonDeterministicSampleByTest() throws Exception {
+    public void testCreateMatViewNonDeterministicFunction() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
@@ -187,7 +209,20 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewNonOptimizedSampleByMultipleTimestampsTest() throws Exception {
+    public void testCreateMatViewNonOptimizedSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query = "select ts, avg(v) from (select ts, k, v+10 as v from " + TABLE1 + ") sample by 30s";
+            ddl("create materialized view test as (" + query + ") partition by week");
+
+            assertQuery("ts\tavg\n", "test", "ts", true, true);
+            assertMaterializedViewDefinition("test", query, TABLE1, 30, 's');
+        });
+    }
+
+    @Test
+    public void testCreateMatViewNonOptimizedSampleByMultipleTimestamps() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
@@ -208,20 +243,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewNonOptimizedSampleByTest() throws Exception {
-        assertMemoryLeak(() -> {
-            createTable(TABLE1);
-
-            final String query = "select ts, avg(v) from (select ts, k, v+10 as v from " + TABLE1 + ") sample by 30s";
-            ddl("create materialized view test as (" + query + ") partition by week");
-
-            assertQuery("ts\tavg\n", "test", "ts", true, true);
-            assertMaterializedViewDefinition("test", query, TABLE1, 30, 's');
-        });
-    }
-
-    @Test
-    public void testCreateMatViewNonWalBaseTableTest() throws Exception {
+    public void testCreateMatViewNonWalBaseTable() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1, false);
 
@@ -236,20 +258,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewRewrittenSampleByMultipleTimestampsTest() throws Exception {
-        assertMemoryLeak(() -> {
-            createTable(TABLE3);
-
-            final String query = "select ts, 1L::timestamp as ts2, avg(v) from " + TABLE3 + " sample by 30s";
-            ddl("create materialized view test_view as (" + query + ") partition by day");
-
-            assertQuery("ts\tts2\tavg\n", "test_view", "ts", true, true);
-            assertMaterializedViewDefinition("test_view", query, TABLE3, 30, 's');
-        });
-    }
-
-    @Test
-    public void testCreateMatViewRewrittenSampleByTest() throws Exception {
+    public void testCreateMatViewRewrittenSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
@@ -262,7 +271,20 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewWithBaseTest() throws Exception {
+    public void testCreateMatViewRewrittenSampleByMultipleTimestamps() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE3);
+
+            final String query = "select ts, 1L::timestamp as ts2, avg(v) from " + TABLE3 + " sample by 30s";
+            ddl("create materialized view test_view as (" + query + ") partition by day");
+
+            assertQuery("ts\tts2\tavg\n", "test_view", "ts", true, true);
+            assertMaterializedViewDefinition("test_view", query, TABLE3, 30, 's');
+        });
+    }
+
+    @Test
+    public void testCreateMatViewWithBase() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
             createTable(TABLE2);
@@ -276,7 +298,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewWithExistingTableNameTest() throws Exception {
+    public void testCreateMatViewWithExistingTableName() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
             createTable(TABLE2);
@@ -313,7 +335,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewWithIndexTest() throws Exception {
+    public void testCreateMatViewWithIndex() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
@@ -336,7 +358,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewWithOperatorTest() throws Exception {
+    public void testCreateMatViewWithOperator() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
