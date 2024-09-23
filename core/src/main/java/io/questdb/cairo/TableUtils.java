@@ -1154,6 +1154,15 @@ public final class TableUtils {
         throw CairoException.critical(errno).put("could not open read-only [file=").put(path).put(']');
     }
 
+    public static long mapRO(FilesFacade ff, LPSZ path, Log log, long size, int memoryTag) {
+        final long fd = openRO(ff, path, log);
+        try {
+            return mapRO(ff, fd, size, memoryTag);
+        } finally {
+            ff.close(fd);
+        }
+    }
+
     public static long openRW(FilesFacade ff, LPSZ path, Log log, long opts) {
         final long fd = ff.openRW(path, opts);
         if (fd > -1) {
@@ -1740,6 +1749,16 @@ public final class TableUtils {
             throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + storageLength);
         }
         return metaMem.getStrA(offset);
+    }
+
+    public static void setParquetPartitionPath(
+            Path path,
+            int partitionBy,
+            long partitionTimestamp,
+            long nameTxn
+    ) {
+        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, nameTxn);
+        path.concat("data.parquet");
     }
 
     // Utility method for debugging. This method is not used in production.

@@ -24,27 +24,34 @@
 
 package io.questdb.griffin.engine.table.parquet;
 
-import io.questdb.cairo.SymbolMapWriter;
-import io.questdb.std.*;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
 
+// This class manages memory for Parquet partition data.
+// It handles memory with a different lifetime than the PartitionDescriptor.
 public class PartitionDescriptor implements QuietCloseable {
-    private DirectLongList columnAddrs = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-    private DirectIntList columnIds = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
-    private DirectIntList columnNameLengths = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
-    private DirectUtf8Sink columnNames = new DirectUtf8Sink(32);
-    private DirectLongList columnSecondaryAddrs = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-    private DirectLongList columnSecondarySizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-    private DirectLongList columnSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-    private DirectLongList columnTops = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-    private DirectIntList columnTypes = new DirectIntList(16, MemoryTag.NATIVE_DEFAULT);
-    private boolean memoryOwner;
-    private long partitionRowCount;
-    private DirectLongList symbolOffsetsAddrs = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-    private DirectLongList symbolOffsetsSizes = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
-    private DirectUtf8Sink tableName = new DirectUtf8Sink(16);
-    private int timestampIndex = -1;
+    public static final int COLUMN_ADDR_OFFSET = 3;
+    public static final int COLUMN_ENTRY_SIZE = 9;
+    public static final int COLUMN_ID_AND_TYPE_OFFSET = 1; // two 4-byte integers packed into a single 8-byte long
+    //    The following constants are used to document the column data layout in the columnData DirectLongList
+    public static final int COLUMN_NAME_SIZE_OFFSET = 0;
+    public static final int COLUMN_SECONDARY_ADDR_OFFSET = 5;
+    public static final int COLUMN_SECONDARY_SIZE_OFFSET = 6;
+    public static final int COLUMN_SIZE_OFFSET = 4;
+    public static final int COLUMN_TOP_OFFSET = 2;
+    public static final int SYMBOL_OFFSET_ADDR_OFFSET = 7;
+    public static final int SYMBOL_OFFSET_SIZE_OFFSET = 8;
+    // A single DirectLongList to store all the column-related data
+    protected DirectLongList columnData = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT);
+    // A single DirectUtf8Sink to store all the column names
+    protected DirectUtf8Sink columnNames = new DirectUtf8Sink(32);
+    protected long partitionRowCount;
+    protected DirectUtf8Sink tableName = new DirectUtf8Sink(16);
+    protected int timestampIndex = -1;
 
     public void addColumn(
             final CharSequence columnName,
@@ -60,44 +67,22 @@ public class PartitionDescriptor implements QuietCloseable {
     ) {
         final int startSize = columnNames.size();
         columnNames.put(columnName);
-        columnNameLengths.add(columnNames.size() - startSize);
-        columnIds.add(columnId);
-        columnTops.add(columnTop);
-        columnTypes.add(columnType);
-        columnAddrs.add(columnAddr);
-        columnSizes.add(columnSize);
-        columnSecondaryAddrs.add(columnSecondaryAddr);
-        columnSecondarySizes.add(columnSecondarySize);
-        symbolOffsetsAddrs.add(symbolOffsetsAddr);
-        symbolOffsetsSizes.add(symbolOffsetsSize);
+        final int columnNameSize = columnNames.size() - startSize;
+        columnData.add(columnNameSize);
+        columnData.add((long) columnId << 32 | columnType);
+        columnData.add(columnTop);
+        columnData.add(columnAddr);
+        columnData.add(columnSize);
+        columnData.add(columnSecondaryAddr);
+        columnData.add(columnSecondarySize);
+        columnData.add(symbolOffsetsAddr);
+        columnData.add(symbolOffsetsSize);
     }
 
     public void clear() {
-        if (memoryOwner) {
-            for (long i = 0, n = columnAddrs.size(); i < n; i++) {
-                Files.munmap(columnAddrs.get(i), columnSizes.get(i), MemoryTag.MMAP_PARTITION_CONVERTER);
-            }
-            for (long i = 0, n = columnSecondaryAddrs.size(); i < n; i++) {
-                Files.munmap(columnSecondaryAddrs.get(i), columnSecondarySizes.get(i), MemoryTag.MMAP_PARTITION_CONVERTER);
-            }
-            for (long i = 0, n = symbolOffsetsAddrs.size(); i < n; i++) {
-                final long offsetsMemSize = SymbolMapWriter.keyToOffset((int) symbolOffsetsSizes.get(i) + 1);
-                Files.munmap(symbolOffsetsAddrs.get(i) - SymbolMapWriter.HEADER_SIZE, offsetsMemSize, MemoryTag.MMAP_PARTITION_CONVERTER);
-            }
-        }
-
         tableName.clear();
         columnNames.clear();
-        columnNameLengths.clear();
-        columnIds.clear();
-        columnTops.clear();
-        columnTypes.clear();
-        columnAddrs.clear();
-        columnSizes.clear();
-        columnSecondaryAddrs.clear();
-        columnSecondarySizes.clear();
-        symbolOffsetsAddrs.clear();
-        symbolOffsetsSizes.clear();
+        columnData.clear();
     }
 
     @Override
@@ -105,72 +90,31 @@ public class PartitionDescriptor implements QuietCloseable {
         clear();
         tableName = Misc.free(tableName);
         columnNames = Misc.free(columnNames);
-        columnNameLengths = Misc.free(columnNameLengths);
-        columnTypes = Misc.free(columnTypes);
-        columnIds = Misc.free(columnIds);
-        columnTops = Misc.free(columnTops);
-        columnAddrs = Misc.free(columnAddrs);
-        columnSizes = Misc.free(columnSizes);
-        columnSecondaryAddrs = Misc.free(columnSecondaryAddrs);
-        columnSecondarySizes = Misc.free(columnSecondarySizes);
-        symbolOffsetsAddrs = Misc.free(symbolOffsetsAddrs);
-        symbolOffsetsSizes = Misc.free(symbolOffsetsSizes);
-    }
-
-    public long getColumnAddressesPtr() {
-        return columnAddrs.getAddress();
+        columnData = Misc.free(columnData);
     }
 
     public int getColumnCount() {
-        return (int) columnAddrs.size();
+        return (int) (getColumnDataLen() / COLUMN_ENTRY_SIZE);
     }
 
-    public long getColumnIdsPtr() {
-        return columnIds.getAddress();
+    public long getColumnDataPtr() {
+        return columnData.getAddress();
     }
 
-    public long getColumnNameLengthsPtr() {
-        return columnNameLengths.getAddress();
+    public long getColumnDataLen() {
+        return columnData.size();
     }
 
     public long getColumnNamesPtr() {
         return columnNames.ptr();
     }
 
-    public int getColumnNamesSize() {
+    public int getColumnNamesLen() {
         return columnNames.size();
-    }
-
-    public long getColumnSecondaryAddressesPtr() {
-        return columnSecondaryAddrs.getAddress();
-    }
-
-    public long getColumnSecondarySizesPtr() {
-        return columnSecondarySizes.getAddress();
-    }
-
-    public long getColumnSizesPtr() {
-        return columnSizes.getAddress();
-    }
-
-    public long getColumnTopsPtr() {
-        return columnTops.getAddress();
-    }
-
-    public long getColumnTypesPtr() {
-        return columnTypes.getAddress();
     }
 
     public long getPartitionRowCount() {
         return partitionRowCount;
-    }
-
-    public long getSymbolOffsetsAddressesPtr() {
-        return symbolOffsetsAddrs.getAddress();
-    }
-
-    public long getSymbolOffsetsSizesPtr() {
-        return symbolOffsetsSizes.getAddress();
     }
 
     public Utf8Sequence getTableName() {
@@ -181,13 +125,11 @@ public class PartitionDescriptor implements QuietCloseable {
         return timestampIndex;
     }
 
-    public PartitionDescriptor of(final CharSequence tableName, long partitionRowCount, int timestampIndex, boolean memoryOwner) {
+    public PartitionDescriptor of(final CharSequence tableName, long partitionRowCount, int timestampIndex) {
         this.clear();
         this.tableName.put(tableName);
-        this.memoryOwner = memoryOwner;
         this.partitionRowCount = partitionRowCount;
         this.timestampIndex = timestampIndex;
         return this;
     }
-
 }
