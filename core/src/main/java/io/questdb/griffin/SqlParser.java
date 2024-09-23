@@ -41,6 +41,7 @@ import static io.questdb.griffin.SqlKeywords.*;
 import static io.questdb.griffin.engine.groupby.SampleByIntervalExpressionParser.parseIntervalQualifier;
 import static io.questdb.griffin.engine.groupby.SampleByIntervalExpressionParser.parseIntervalValue;
 import static io.questdb.std.GenericLexer.*;
+import static io.questdb.std.datetime.microtime.TimestampFormatUtils.DAY_FORMAT;
 
 public class SqlParser {
     public static final int MAX_ORDER_BY_COLUMNS = 1560;
@@ -613,12 +614,32 @@ public class SqlParser {
 
             final int queryStartPos = lexer.getPosition();
 
-            // parse and optimize mat view query
-            queryModel = optimiser.optimise(
-                    parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback),
-                    executionContext,
-                    sqlParserCallback
-            );
+            // parse mat view query
+            final QueryModel qm = parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback);
+            final QueryModel nestedModel = qm.getNestedModel();
+            if (nestedModel.getSampleByFrom() != null) {
+                try {
+                    matViewModel.setFromMicros(DAY_FORMAT.parse(unquote(nestedModel.getSampleByFrom().token), configuration.getDefaultDateLocale()));
+                } catch (NumericException e) {
+                    throw SqlException.position(lexer.getPosition()).put("cannot parse sample by FROM date");
+                }
+            }
+            if (nestedModel.getSampleByTo() != null) {
+                try {
+                    matViewModel.setToMicros(DAY_FORMAT.parse(unquote(nestedModel.getSampleByTo().token), configuration.getDefaultDateLocale()));
+                } catch (NumericException e) {
+                    throw SqlException.position(lexer.getPosition()).put("cannot parse sample by TO date");
+                }
+            }
+            if (nestedModel.getSampleByTimezoneName() != null) {
+                matViewModel.setTimeZone(unquote(nestedModel.getSampleByTimezoneName().token));
+            }
+            if (nestedModel.getSampleByOffset() != null) {
+                matViewModel.setTimeZoneOffset(unquote(nestedModel.getSampleByOffset().token));
+            }
+
+            // optimize mat view query
+            queryModel = optimiser.optimise(qm, executionContext, sqlParserCallback);
             queryModel.setIsMatView(true);
 
             // find mat view query

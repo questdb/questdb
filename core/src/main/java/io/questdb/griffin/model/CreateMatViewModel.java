@@ -36,7 +36,6 @@ import org.jetbrains.annotations.NotNull;
 public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
     public static final ObjectFactory<CreateMatViewModel> FACTORY = CreateMatViewModel::new;
     private final CreateTableModel tableModel;
-    private boolean alignToFirstObservation;
     private CharSequence baseTableName;
     private long fromMicros = -1;
     private char intervalQualifier;
@@ -61,14 +60,13 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
         intervalQualifier = '\0';
         fromMicros = -1;
         toMicros = -1;
-        alignToFirstObservation = false;
         timeZone = null;
         timeZoneOffset = null;
     }
 
     public MaterializedViewDefinition generateDefinition() {
         return new MaterializedViewDefinition(matViewToken, query, baseTableName, intervalValue, intervalQualifier,
-                fromMicros, toMicros, alignToFirstObservation, timeZone, timeZoneOffset
+                fromMicros, toMicros, timeZone, timeZoneOffset
         );
     }
 
@@ -88,10 +86,6 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
     @Override
     public CharSequence getTableName() {
         return tableModel.getTableName();
-    }
-
-    public void setAlignToFirstObservation(boolean alignToFirstObservation) {
-        this.alignToFirstObservation = alignToFirstObservation;
     }
 
     public void setBaseTableName(CharSequence baseTableName) {

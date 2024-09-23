@@ -3,7 +3,6 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.TableToken;
 
 public class MaterializedViewDefinition {
-    private final boolean alignToFirstObservation;
     private final CharSequence baseTableName;
     private final long fromMicros;
     private final char intervalQualifier;
@@ -17,7 +16,7 @@ public class MaterializedViewDefinition {
     public MaterializedViewDefinition(
             TableToken matViewToken, CharSequence query, CharSequence baseTableName,
             int intervalValue, char intervalQualifier, long fromMicros, long toMicros,
-            boolean alignToFirstObservation, CharSequence timeZone, CharSequence timeZoneOffset
+            CharSequence timeZone, CharSequence timeZoneOffset
     ) {
         this.matViewToken = matViewToken;
         this.query = query;
@@ -26,7 +25,6 @@ public class MaterializedViewDefinition {
         this.intervalQualifier = intervalQualifier;
         this.fromMicros = fromMicros;
         this.toMicros = toMicros;
-        this.alignToFirstObservation = alignToFirstObservation;
         this.timeZone = timeZone;
         this.timeZoneOffset = timeZoneOffset;
     }
@@ -65,9 +63,5 @@ public class MaterializedViewDefinition {
 
     public long getToMicros() {
         return toMicros;
-    }
-
-    public boolean isAlignToFirstObservation() {
-        return alignToFirstObservation;
     }
 }
