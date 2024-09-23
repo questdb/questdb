@@ -29,12 +29,16 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
-import io.questdb.std.WeakSelfReturningObjectPool;
+import io.questdb.std.*;
 
-public class TypesAndInsert extends io.questdb.std.AbstractSelfReturningObject<TypesAndInsert> implements TypeContainer {
-    private final IntList types = new IntList();
+public class TypesAndInsert extends AbstractSelfReturningObject<TypesAndInsert> implements TypeContainer {
+    // Parameter types as received via "P" message. The client is liable to send
+    // arbitrary number of parameters, which does not have to match the number of actual
+    // bind variable used in the INSERT SQL. These are PostgresSQL OIDs in BigEndian.
+    private final IntList pgParameterTypeOIDs = new IntList();
+    // Bind variable columns types, typically scraped from BindVariableService after SQL is parsed. These are
+    // our column types and are LittleEndian.
+    private final IntList bindVariableColumnTypes = new IntList();
     private boolean closing;
     private boolean hasBindVariables;
     private InsertOperation insert;
@@ -50,22 +54,16 @@ public class TypesAndInsert extends io.questdb.std.AbstractSelfReturningObject<T
         if (!closing) {
             closing = true;
             super.close();
-            types.clear();
+            pgParameterTypeOIDs.clear();
+            bindVariableColumnTypes.clear();
             closing = false;
         }
     }
 
-    public void copyOutTypeDescriptionTypesTo(IntList outTypeDescriptionTypes) {
-        for (int i = 0, n = types.size(); i < n; i++) {
-            int nativeType = types.getQuick(i);
-            int pgType = Numbers.bswap(PGOids.getTypeOid(nativeType));
-            outTypeDescriptionTypes.add(pgType);
+    public void copyOutTypeDescriptionTypeOIDsTo(IntList outTypeDescriptionTypeOIDs) {
+        for (int i = 0, n = bindVariableColumnTypes.size(); i < n; i++) {
+            outTypeDescriptionTypeOIDs.add(Numbers.bswap(PGOids.getTypeOid(bindVariableColumnTypes.getQuick(i))));
         }
-    }
-
-    @Override
-    public void defineBindVariables(BindVariableService bindVariableService) throws SqlException {
-        defineBindVariables(types, bindVariableService);
     }
 
     public InsertOperation getInsert() {
@@ -73,8 +71,8 @@ public class TypesAndInsert extends io.questdb.std.AbstractSelfReturningObject<T
     }
 
     @Override
-    public IntList getPgParameterTypes() {
-        return types;
+    public IntList getPgParameterTypeOIDs() {
+        return pgParameterTypeOIDs;
     }
 
     public String getSqlTag() {
@@ -89,25 +87,32 @@ public class TypesAndInsert extends io.questdb.std.AbstractSelfReturningObject<T
         return hasBindVariables;
     }
 
-    public void of(InsertOperation insert, BindVariableService bindVariableService, short sqlType, String sqlTag) {
+    public void of(
+            InsertOperation insert,
+            short sqlType,
+            String sqlTag,
+            @Transient BindVariableService bindVariableService,
+            @Transient IntList pgParameterTypeOIDs
+    ) {
         this.insert = insert;
-        copyTypesFrom(bindVariableService);
-        this.hasBindVariables = bindVariableService.getIndexedVariableCount() > 0;
         this.sqlType = sqlType;
         this.sqlTag = sqlTag;
-    }
-
-    static void copyTypes(BindVariableService fromBindVariableService, IntList toTypes) {
-        for (int i = 0, n = fromBindVariableService.getIndexedVariableCount(); i < n; i++) {
-            Function func = fromBindVariableService.getFunction(i);
+        final int n = bindVariableService.getIndexedVariableCount();
+        this.hasBindVariables = n > 0;
+        for (int i = 0; i < n; i++) {
+            Function func = bindVariableService.getFunction(i);
             // For bind variable find in vararg parameters functions are not
             // created upfront. This is due to the type being unknown. On PG
             // wire bind variable type and value are provided *after* the compilation.
             if (func != null) {
-                toTypes.add(func.getType());
+                this.bindVariableColumnTypes.add(func.getType());
             } else {
-                toTypes.add(ColumnType.UNDEFINED);
+                this.bindVariableColumnTypes.add(ColumnType.UNDEFINED);
             }
+        }
+
+        for (int i = 0, m = pgParameterTypeOIDs.size(); i < m; i++) {
+            this.pgParameterTypeOIDs.add(pgParameterTypeOIDs.getQuick(i));
         }
     }
 
@@ -117,7 +122,4 @@ public class TypesAndInsert extends io.questdb.std.AbstractSelfReturningObject<T
         }
     }
 
-    protected void copyTypesFrom(BindVariableService bindVariableService) {
-        copyTypes(bindVariableService, types);
-    }
 }

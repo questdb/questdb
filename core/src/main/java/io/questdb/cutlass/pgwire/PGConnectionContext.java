@@ -666,10 +666,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             pipelineCurrentEntry = null;
         }
 
-        short parameterValueCount;
-
-        LOG.debug().$("bind").$();
-
         // portal name
         long hi = getUtf8StrSize(lo, msgLimit, "bad portal name length (bind)", pipelineCurrentEntry);
         CharSequence portalName = getUtf16Str(lo, hi, "invalid UTF8 bytes in portal name (bind)");
@@ -709,7 +705,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         // the pipeline is named, and we must not attempt to reuse it
                         // as the portal, so we are making a new entry
                         PGPipelineEntry pe = new PGPipelineEntry(engine);
-                        pe.parseNewSql(
+                        pe.compileNewSQL(
                                 pipelineCurrentEntry.getSqlText(),
                                 engine,
                                 sqlExecutionContext,
@@ -740,36 +736,39 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
         }
 
-        // parameter format count
+        // Parameter format count. These formats are BigEndian "short" values of 0 or 1,
+        // 0 = text, 1 = binary. Meaning that parameter values in the bind message are
+        // provided either as text or binary.
         lo = hi + 1;
-        final short parameterFormatCodeCount = pipelineCurrentEntry.getShort(lo, msgLimit, "could not read parameter format code count");
+        final short parameterFormatCodeCount = pipelineCurrentEntry.getShort(
+                lo,
+                msgLimit,
+                "could not read parameter format code count"
+        );
         lo += Short.BYTES;
+
+        final short parameterValueCount = pipelineCurrentEntry.getShort(
+                lo + parameterFormatCodeCount * Short.BYTES,
+                msgLimit,
+                "could not read parameter value count"
+        );
+
         pipelineCurrentEntry.msgBindCopyParameterFormatCodes(
                 lo,
                 msgLimit,
-                parameterFormatCodeCount
+                parameterFormatCodeCount,
+                parameterValueCount
         );
 
-        // parameter value count
         lo += parameterFormatCodeCount * Short.BYTES;
-        parameterValueCount = pipelineCurrentEntry.getShort(lo, msgLimit, "could not read parameter value count");
-
-        LOG.debug().$("binding [parameterValueCount=").$(parameterValueCount).$(", thread=").$(Thread.currentThread().getId()).I$();
-
-        // we now have all parameter counts, validate them
-        pipelineCurrentEntry.msgBindSetParameterValueCount(parameterValueCount);
-
         lo += Short.BYTES;
 
-        lo = pipelineCurrentEntry.msgBindDefineBindVariableTypes(
-                lo,
-                msgLimit,
-                bindVariableService,
-                // below are some reusable, transient pools
-                characterStore,
-                utf8String,
-                binarySequenceParamsPool
-        );
+        // Copy parameter values to the pipeline's arena. The value area size of the
+        // bind message is variable, and is dependent on storage method of parameter values.
+        // Before we copy value, we have to compute size of the area.
+
+        long valueAreaSize = pipelineCurrentEntry.msgBindComputeParameterValueAreaSize(lo, msgLimit);
+        pipelineCurrentEntry.msgBindCopyParameterValuesArea(lo, valueAreaSize, msgLimit);
 
         short columnFormatCodeCount = pipelineCurrentEntry.getShort(lo, msgLimit, "could not read result set column format codes");
         lo += Short.BYTES;
@@ -957,7 +956,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         // read parameter types before we are able to compile SQL text
         // parameter values are not provided here, but we do not need them to be able to
-        // parse/compile the SQL
+        // parse/compile the SQL.
+        // It is possible that the number of parameter types provided here is
+        // different from the number of bind variables in the SQL. At this point
+        // we will copy into the pipeline entry whatever was provided
         short parameterTypeCount = pipelineCurrentEntry.getShort(lo, msgLimit, "could not read parameter type count");
 
         // process parameter types
@@ -1023,7 +1025,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // When parameter types are not supplied we will assume that the types are STRING
             // this is done by default, when CairoEngine compiles the SQL text. Assuming we're
             // compiling the SQL from scratch.
-            pipelineCurrentEntry.parseNewSql(utf16SqlText, engine, sqlExecutionContext, taiPool);
+            pipelineCurrentEntry.compileNewSQL(utf16SqlText, engine, sqlExecutionContext, taiPool);
         }
         msgParseCreateTargetStatement(targetStatementName);
     }

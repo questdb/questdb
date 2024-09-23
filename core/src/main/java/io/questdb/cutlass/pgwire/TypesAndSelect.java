@@ -28,7 +28,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.std.*;
 
 /**
@@ -93,15 +92,8 @@ public class TypesAndSelect implements QuietCloseable, TypeContainer {
 
     public void copyOutTypeDescriptionTypesTo(IntList outTypeDescriptionTypes) {
         for (int i = 0, n = bindVariableTypes.size(); i < n; i++) {
-            int nativeType = bindVariableTypes.getQuick(i);
-            int pgType = Numbers.bswap(PGOids.getTypeOid(nativeType));
-            outTypeDescriptionTypes.add(pgType);
+            outTypeDescriptionTypes.add(Numbers.bswap(PGOids.getTypeOid(bindVariableTypes.getQuick(i))));
         }
-    }
-
-    @Override
-    public void defineBindVariables(BindVariableService bindVariableService) throws SqlException {
-        TypesAndInsert.defineBindVariables(pgParameterTypes, bindVariableService);
     }
 
     public RecordCursorFactory getFactory() {
@@ -109,7 +101,7 @@ public class TypesAndSelect implements QuietCloseable, TypeContainer {
     }
 
     @Override
-    public IntList getPgParameterTypes() {
+    public IntList getPgParameterTypeOIDs() {
         return pgParameterTypes;
     }
 

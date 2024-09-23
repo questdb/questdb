@@ -52,9 +52,9 @@ public class PGPipelineEntry implements QuietCloseable {
     // we need it in case cursor gets invalidated and bind used non-default binary format for some column(s)
     // pg clients (like asyncpg) fail when format sent by server is not the same as requested in bind message
     private final IntList msgBindSelectFormatCodes = new IntList();
+    private final BitSet msgBindParameterFormatCodes = new BitSet();
     // types are sent to us via "parse" message
-    private final IntList msgParseParameterTypes = new IntList();
-    private final IntList outTypeDescriptionTypes = new IntList();
+    private final IntList msgParseParameterTypeOIDs = new IntList();
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes = new IntList();
     private final ObjList<CharSequence> portalNames = new ObjList<>();
@@ -68,6 +68,7 @@ public class PGPipelineEntry implements QuietCloseable {
     private RecordCursorFactory factory = null;
     private InsertOperation insertOp = null;
     private int msgBindParameterFormatCodeCount;
+    private final IntList outTypeDescriptionTypeOIDs = new IntList();
     private int msgBindParameterValueCount;
     private boolean outResendCursorRecord = false;
     private PGPipelineEntry parentPreparedStatementPipelineEntry;
@@ -276,18 +277,70 @@ public class PGPipelineEntry implements QuietCloseable {
     public boolean isStateExec() {
         return stateExec;
     }
+    private long parameterValueArenaHi;
+    private long parameterValueArenaLo;
+    private long parameterValueArenaPtr = 0;
 
-    public void msgBindCopyParameterFormatCodes(long lo, long msgLimit, short formatCodeCount) throws BadProtocolException {
-        this.msgBindParameterFormatCodeCount = formatCodeCount;
-        if (formatCodeCount > 0) {
-            if (formatCodeCount == 1) {
-                // same format applies to all parameters
-                msgBindMergeParameterTypesAndFormatCodesOneForAll(lo, msgLimit);
-            } else if (outTypeDescriptionTypes.size() > 0) {
-                //client doesn't need to specify types in Parse message and can use those returned in ParameterDescription
-                msgBindMergeParameterTypesAndFormatCodes(lo, msgLimit, formatCodeCount);
+    public void compileNewSQL(
+            CharSequence sqlText,
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            WeakSelfReturningObjectPool<TypesAndInsert> taiPool
+    ) throws BadProtocolException {
+        // pipeline entries begin life as anonymous, typical pipeline length is 1-3 entries
+        // we do not need to create new objects until we know we're caching the entry
+        this.sqlText = sqlText;
+        this.empty = sqlText == null || sqlText.length() == 0;
+        cacheHit = true;
+        if (!empty) {
+            // try insert, peek because this is our private cache,
+            // and we do not want to remove statement from it
+            try {
+                cacheHit = false;
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    // Define the provided PostgresSQL types on the BindVariableService. The compilation
+                    // below will use these types to build the plan, and it will also define any missing bind
+                    // variables.
+                    msgParseDefineBindVariableTypes(sqlExecutionContext.getBindVariableService());
+                    CompiledQuery cq = compiler.compile(this.sqlText, sqlExecutionContext);
+                    // copy actual bind variable types as supplied by the client + defined by the SQL
+                    // compiler
+                    msgParseCopyOutTypeDescriptionTypeOIDs(sqlExecutionContext.getBindVariableService());
+                    setupEntryAfterSQLCompilation(sqlExecutionContext, taiPool, cq);
+                }
+                copyPgResultSetColumnTypes();
+            } catch (SqlException e) {
+                if (e.getMessage().equals("[0] empty query")) {
+                    this.empty = true;
+                } else {
+                    throw kaput().put((Throwable) e);
+                }
+            } catch (Throwable e) {
+                throw kaput().put(e);
             }
         }
+    }
+
+    public BitSet getMsgBindParameterFormatCodes() {
+        return msgBindParameterFormatCodes;
+    }
+
+    public long msgBindComputeParameterValueAreaSize(
+            long lo,
+            long msgLimit
+    ) throws BadProtocolException {
+        if (msgBindParameterValueCount > 0) {
+            long l = lo;
+            for (int j = 0; j < msgBindParameterValueCount; j++) {
+                final int valueSize = getInt(lo, msgLimit, "malformed bind variable");
+                lo += Integer.BYTES;
+                if (valueSize > 0) {
+                    lo += valueSize;
+                }
+            }
+            return lo - l;
+        }
+        return 0;
     }
 
     public void msgBindCopySelectFormatCodes(long lo, long msgLimit, short selectFormatCodeCount) throws BadProtocolException {
@@ -333,7 +386,73 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
-    public long msgBindDefineBindVariableTypes(
+    public void msgBindCopyParameterFormatCodes(
+            long lo,
+            long msgLimit,
+            short parameterFormatCodeCount,
+            short parameterValueCount
+    ) throws BadProtocolException {
+        this.msgBindParameterFormatCodeCount = parameterFormatCodeCount;
+        this.msgBindParameterValueCount = parameterValueCount;
+
+        // Format codes pertain the parameter values sent in the same "bind" message.
+        // When parameterFormatCodeCount is 1, it means all values are sent either all text or all binary. Any other
+        // value for the parameterFormatCodeCount assumes that format is defined per value (doh). When
+        // we have more formats than values - we ignore extra formats quietly. On other hand,
+        // when we receive fewer formats than values - we assume that remaining values are
+        // send by the client as string.
+
+        // this would set all codes to 0 (in the bitset)
+        this.msgBindParameterFormatCodes.clear();
+        if (parameterFormatCodeCount > 0) {
+            if (parameterFormatCodeCount == 1) {
+                // all are the same
+                short code = getShort(lo, msgLimit, "could not read parameter formats");
+                // all binary? when string (0) - leave the bitset unset
+                if (code == 1) {
+                    // set all bits, indicating binary
+                    for (int i = 0; i < parameterValueCount; i++) {
+                        this.msgBindParameterFormatCodes.set(i);
+                    }
+                }
+            } else {
+                // Process all formats provided by the client. Should the client provide fewer
+                // formats than the value count, we will assume the rest is string.
+                if (lo + Short.BYTES * parameterFormatCodeCount <= msgLimit) {
+                    for (int i = 0; i < parameterFormatCodeCount; i++) {
+                        if (getShortUnsafe(lo + i * Short.BYTES) == 1) {
+                            this.msgBindParameterFormatCodes.set(i);
+                        }
+                    }
+                } else {
+                    throw kaput().put("invalid format code count [value=").put(parameterFormatCodeCount).put(']');
+                }
+            }
+        }
+    }
+
+    public void msgBindCopyParameterValuesArea(long lo, long valueAreaSize, long msgLimit) throws BadProtocolException {
+        long sz = Numbers.ceilPow2(valueAreaSize);
+        if (parameterValueArenaPtr == 0) {
+            parameterValueArenaPtr = Unsafe.malloc(sz, MemoryTag.NATIVE_PGW_CONN);
+            parameterValueArenaLo = parameterValueArenaPtr;
+            parameterValueArenaHi = parameterValueArenaPtr + sz;
+        } else if (parameterValueArenaHi - parameterValueArenaPtr < valueAreaSize) {
+            parameterValueArenaPtr = Unsafe.realloc(parameterValueArenaPtr, parameterValueArenaHi - parameterValueArenaPtr, sz, MemoryTag.NATIVE_PGW_CONN);
+            parameterValueArenaLo = parameterValueArenaPtr;
+            parameterValueArenaHi = parameterValueArenaPtr + sz;
+        }
+        long len = Math.min(valueAreaSize, msgLimit);
+        Vect.memcpy(parameterValueArenaLo, lo, len);
+        parameterValueArenaLo += len;
+        if (len < valueAreaSize) {
+            // todo: create "receive" state machine in the context, so that client messages can be split
+            //       across multiple recv buffers
+            throw BadProtocolException.INSTANCE;
+        }
+    }
+
+    public long msgBindCopyParameterValuesToBindVariableService(
             long lo,
             long msgLimit,
             BindVariableService bindVariableService,
@@ -342,8 +461,8 @@ public class PGPipelineEntry implements QuietCloseable {
             ObjectPool<DirectBinarySequence> binarySequenceParamsPool
     ) throws BadProtocolException {
         if (msgBindParameterValueCount > 0) {
-            // client doesn't need to specify any type in Parse message and can just use types returned in ParameterDescription message
-            if (this.outTypeDescriptionTypes.size() > 0) {
+            // there are some parameters, that are passed as "binary"
+            if (this.msgBindSelectFormatCodes.size() > 0) {
                 return msgBindDefineBindVariablesFromValues(
                         lo,
                         msgLimit,
@@ -365,22 +484,10 @@ public class PGPipelineEntry implements QuietCloseable {
         return lo;
     }
 
-    public void msgBindSetParameterValueCount(short valueCount) throws BadProtocolException {
-        this.msgBindParameterValueCount = valueCount;
-        if (valueCount > 0) {
-            if (valueCount < getMsgParseParameterTypeCount()) {
-                throw kaput().put("parameter type count must be less or equals to number of parameters values");
-            }
-            if (msgBindParameterFormatCodeCount > 1 && msgBindParameterFormatCodeCount != valueCount) {
-                throw kaput().put("parameter format count and parameter value count must match");
-            }
-        }
-    }
-
     public void msgParseCopyParameterTypesFromMsg(long lo, short parameterTypeCount) {
-        msgParseParameterTypes.setPos(parameterTypeCount);
+        msgParseParameterTypeOIDs.setPos(parameterTypeCount);
         for (int i = 0; i < parameterTypeCount; i++) {
-            msgParseParameterTypes.setQuick(i, Unsafe.getUnsafe().getInt(lo + i * 4L));
+            msgParseParameterTypeOIDs.setQuick(i, Unsafe.getUnsafe().getInt(lo + i * 4L));
         }
     }
 
@@ -391,7 +498,7 @@ public class PGPipelineEntry implements QuietCloseable {
         this.sqlType = tai.getSqlType();
         this.cacheHit = true;
         this.tai = tai;
-        tai.copyOutTypeDescriptionTypesTo(outTypeDescriptionTypes);
+        tai.copyOutTypeDescriptionTypeOIDsTo(outTypeDescriptionTypeOIDs);
     }
 
     public void ofSelect(CharSequence utf16SqlText, TypesAndSelect tas) {
@@ -401,8 +508,8 @@ public class PGPipelineEntry implements QuietCloseable {
         this.sqlType = tas.getSqlType();
         this.tas = tas;
         this.cacheHit = true;
-        buildResultSetColumnTypes();
-        tas.copyOutTypeDescriptionTypesTo(outTypeDescriptionTypes);
+        copyPgResultSetColumnTypes();
+        tas.copyOutTypeDescriptionTypesTo(outTypeDescriptionTypeOIDs);
     }
 
     public void ofSimpleQuery(
@@ -425,42 +532,8 @@ public class PGPipelineEntry implements QuietCloseable {
             // try insert, peek because this is our private cache,
             // and we do not want to remove statement from it
             try {
-                resolveSqlType(sqlExecutionContext, taiPool, cq);
-                buildResultSetColumnTypes();
-            } catch (Throwable e) {
-                throw kaput().put(e);
-            }
-        }
-    }
-
-    public void parseNewSql(
-            CharSequence sqlText,
-            CairoEngine engine,
-            SqlExecutionContext sqlExecutionContext,
-            WeakSelfReturningObjectPool<TypesAndInsert> taiPool
-    ) throws BadProtocolException {
-        // pipeline entries begin life as anonymous, typical pipeline length is 1-3 entries
-        // we do not need to create new objects until we know we're caching the entry
-        this.sqlText = sqlText;
-        this.empty = sqlText == null || sqlText.length() == 0;
-        cacheHit = true;
-        if (!empty) {
-            // try insert, peek because this is our private cache,
-            // and we do not want to remove statement from it
-            try {
-                cacheHit = false;
-                parseNew(
-                        engine,
-                        sqlExecutionContext,
-                        taiPool
-                );
-                buildResultSetColumnTypes();
-            } catch (SqlException e) {
-                if (e.getMessage().equals("[0] empty query")) {
-                    this.empty = true;
-                } else {
-                    throw kaput().put((Throwable) e);
-                }
+                setupEntryAfterSQLCompilation(sqlExecutionContext, taiPool, cq);
+                copyPgResultSetColumnTypes();
             } catch (Throwable e) {
                 throw kaput().put(e);
             }
@@ -728,19 +801,11 @@ public class PGPipelineEntry implements QuietCloseable {
         bindVariableService.setBoolean(variableIndex, valueSize == 4);
     }
 
-    private void applyBindSelectFormatCodes() {
-        for (int i = 0; i < msgBindSelectFormatCodes.size(); i++) {
-            int newValue = toColumnBinaryType((short) msgBindSelectFormatCodes.get(i), toColumnType(pgResultSetColumnTypes.getQuick(2 * i)));
-            pgResultSetColumnTypes.setQuick(2 * i, newValue);
-        }
-    }
-
     // defines bind variable from statement description types we sent to client.
     // that is a combination of types we received in the PARSE message and types the compiler inferred
     // unknown types are defined as strings
     private void bindDefineBindVariableType(BindVariableService bindVariableService, int j) throws SqlException {
-        // todo: shouldn't we mask the FORMAT flag?
-        switch (outTypeDescriptionTypes.getQuick(j)) {
+        switch (outTypeDescriptionTypeOIDs.getQuick(j)) {
             case X_PG_INT4:
                 bindVariableService.define(j, ColumnType.INT, 0);
                 break;
@@ -780,7 +845,7 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
-    private void buildResultSetColumnTypes() {
+    private void copyPgResultSetColumnTypes() {
         if (factory != null) {
             final RecordMetadata m = factory.getMetadata();
             final int columnCount = m.getColumnCount();
@@ -796,7 +861,7 @@ public class PGPipelineEntry implements QuietCloseable {
 
     // unknown types are not defined so the compiler can infer the best possible type
     private void defineBindVariableType(BindVariableService bindVariableService, int j) throws SqlException {
-        switch (msgParseParameterTypes.getQuick(j)) {
+        switch (msgParseParameterTypeOIDs.getQuick(j)) {
             case X_PG_INT4:
                 bindVariableService.define(j, ColumnType.INT, 0);
                 break;
@@ -909,8 +974,12 @@ public class PGPipelineEntry implements QuietCloseable {
             sqlExecutionContext.setCacheHit(cacheHit);
             try {
                 cursor = factory.getCursor(sqlExecutionContext);
+
                 // move binary/text flags, which we received from the "bind" onto the result set column types
-                applyBindSelectFormatCodes();
+                for (int i = 0; i < msgBindSelectFormatCodes.size(); i++) {
+                    int newValue = toColumnBinaryType((short) msgBindSelectFormatCodes.get(i), toColumnType(pgResultSetColumnTypes.getQuick(2 * i)));
+                    pgResultSetColumnTypes.setQuick(2 * i, newValue);
+                }
             } catch (Throwable e) {
                 // un-cache the erroneous SQL
                 tas = Misc.free(tas);
@@ -937,7 +1006,7 @@ public class PGPipelineEntry implements QuietCloseable {
     }
 
     private int getMsgParseParameterTypeCount() {
-        return msgParseParameterTypes.size();
+        return msgParseParameterTypeOIDs.size();
     }
 
     private BadProtocolException kaput() {
@@ -977,45 +1046,46 @@ public class PGPipelineEntry implements QuietCloseable {
             ObjectPool<DirectBinarySequence> binarySequenceParamsPool
     ) throws BadProtocolException {
         try {
-            for (int j = 0; j < outTypeDescriptionTypes.size(); j++) {
+            // the j can become larger than the number of parameter values in the "bind" message
+            for (int j = 0; j < outTypeDescriptionTypeOIDs.size(); j++) {
                 final int valueSize = getInt(lo, msgLimit, "malformed bind variable");
                 lo += Integer.BYTES;
                 if (valueSize == -1) {
-                    // undefined function?
+                    // value is not provided, assume NULL
                     bindDefineBindVariableType(bindVariableService, j);
                 } else if (lo + valueSize <= msgLimit) {
-                    switch (outTypeDescriptionTypes.getQuick(j)) {
-                        case X_B_PG_INT4:
+                    switch (outTypeDescriptionTypeOIDs.getQuick(j)) {
+                        case X_PG_INT4:
                             setBindVariableAsInt(j, lo, valueSize, bindVariableService);
                             break;
-                        case X_B_PG_INT8:
+                        case X_PG_INT8:
                             setBindVariableAsLong(j, lo, valueSize, bindVariableService);
                             break;
-                        case X_B_PG_TIMESTAMP:
+                        case X_PG_TIMESTAMP:
                             setBindVariableAsTimestamp(j, lo, valueSize, bindVariableService);
                             break;
-                        case X_B_PG_INT2:
+                        case X_PG_INT2:
                             setBindVariableAsShort(j, lo, valueSize, bindVariableService);
                             break;
-                        case X_B_PG_FLOAT8:
+                        case X_PG_FLOAT8:
                             setBindVariableAsDouble(j, lo, valueSize, bindVariableService);
                             break;
-                        case X_B_PG_FLOAT4:
+                        case X_PG_FLOAT4:
                             setBindVariableAsFloat(j, lo, valueSize, bindVariableService);
                             break;
-                        case X_B_PG_CHAR:
+                        case X_PG_CHAR:
                             setBindVariableAsChar(j, lo, valueSize, bindVariableService, characterStore);
                             break;
-                        case X_B_PG_DATE:
+                        case X_PG_DATE:
                             setBindVariableAsDate(j, lo, valueSize, bindVariableService, characterStore);
                             break;
-                        case X_B_PG_BOOL:
+                        case X_PG_BOOL:
                             setBindVariableAsBoolean(j, valueSize, bindVariableService);
                             break;
-                        case X_B_PG_BYTEA:
+                        case X_PG_BYTEA:
                             setBindVariableAsBin(j, lo, valueSize, bindVariableService, binarySequenceParamsPool);
                             break;
-                        case X_B_PG_UUID:
+                        case X_PG_UUID:
                             setUuidBindVariable(j, lo, valueSize, bindVariableService);
                             break;
                         default:
@@ -1040,49 +1110,14 @@ public class PGPipelineEntry implements QuietCloseable {
         return lo;
     }
 
-    private void msgBindMergeParameterTypesAndFormatCodes(long lo, long msgLimit, short parameterFormatCount) throws BadProtocolException {
-        if (lo + Short.BYTES * parameterFormatCount <= msgLimit) {
-            for (int i = 0; i < parameterFormatCount; i++) {
-                final short code = getShortUnsafe(lo + i * Short.BYTES);
-                outTypeDescriptionTypes.setQuick(i, toParamBinaryType(code, outTypeDescriptionTypes.getQuick(i)));
-            }
-        } else {
-            getErrorMessageSink().put("invalid format code count [value=").put(parameterFormatCount).put(']');
-            throw BadProtocolException.INSTANCE;
-        }
-    }
-
-    private void msgBindMergeParameterTypesAndFormatCodesOneForAll(long lo, long msgLimit) throws BadProtocolException {
-        short code = getShort(lo, msgLimit, "could not read parameter formats");
-        for (int i = 0, n = outTypeDescriptionTypes.size(); i < n; i++) {
-            outTypeDescriptionTypes.setQuick(i, toParamBinaryType(code, outTypeDescriptionTypes.getQuick(i)));
-        }
-    }
-
-    private void msgParseCacheSelectSQL(SqlExecutionContext sqlExecutionContext, CompiledQuery cq, String sqlTag, boolean cache) {
-        this.sqlTag = sqlTag;
-        this.factory = cq.getRecordCursorFactory();
-        if (cache) {
-            tas = new TypesAndSelect(
-                    this.factory,
-                    sqlType,
-                    sqlTag,
-                    sqlExecutionContext.getBindVariableService(),
-                    msgParseParameterTypes
-            );
-        }
-        // copy actual bind variable types as supplied by the client + defined by the SQL
-        // compiler
-        msgParseCopyOutTypeDescriptionTypesFromService(sqlExecutionContext.getBindVariableService());
-    }
-
-    private void msgParseCopyOutTypeDescriptionTypesFromService(BindVariableService bindVariableService) {
+    private void msgParseCopyOutTypeDescriptionTypeOIDs(BindVariableService bindVariableService) {
         final int n = bindVariableService.getIndexedVariableCount();
+        outTypeDescriptionTypeOIDs.clear();
         if (n > 0) {
-            outTypeDescriptionTypes.setPos(n);
+            outTypeDescriptionTypeOIDs.setPos(n);
             for (int i = 0; i < n; i++) {
                 final Function f = bindVariableService.getFunction(i);
-                outTypeDescriptionTypes.setQuick(i, Numbers.bswap(PGOids.getTypeOid(
+                outTypeDescriptionTypeOIDs.setQuick(i, Numbers.bswap(PGOids.getTypeOid(
                         f != null ? f.getType() : ColumnType.UNDEFINED
                 )));
             }
@@ -1094,7 +1129,7 @@ public class PGPipelineEntry implements QuietCloseable {
     // unknown types are not defined so the compiler can infer the best possible type
     private void msgParseDefineBindVariableTypes(BindVariableService bindVariableService) throws SqlException {
         bindVariableService.clear();
-        for (int i = 0, n = msgParseParameterTypes.size(); i < n; i++) {
+        for (int i = 0, n = msgParseParameterTypeOIDs.size(); i < n; i++) {
             defineBindVariableType(bindVariableService, i);
         }
     }
@@ -1507,11 +1542,11 @@ public class PGPipelineEntry implements QuietCloseable {
     private void outParameterTypeDescription(PGResponseSink utf8Sink) {
         utf8Sink.put(MESSAGE_TYPE_PARAMETER_DESCRIPTION);
         final long offset = utf8Sink.skipInt();
-        final int n = outTypeDescriptionTypes.size();
+        final int n = outTypeDescriptionTypeOIDs.size();
         utf8Sink.putNetworkShort((short) n);
         if (n > 0) {
             for (int i = 0; i < n; i++) {
-                utf8Sink.putIntDirect(toParamType(outTypeDescriptionTypes.getQuick(i)));
+                utf8Sink.putIntDirect(toParamType(outTypeDescriptionTypeOIDs.getQuick(i)));
             }
         }
         utf8Sink.putLen(offset);
@@ -1673,28 +1708,12 @@ public class PGPipelineEntry implements QuietCloseable {
         utf8Sink.bookmark();
     }
 
-    private void parseNew(
-            CairoEngine engine,
-            SqlExecutionContext sqlExecutionContext,
-            WeakSelfReturningObjectPool<TypesAndInsert> taiPool
-    ) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            // Define the provided PostgresSQL types on the BindVariableService. The compilation
-            // below will use these types to build the plan, and it will also define any missing bind
-            // variables.
-            msgParseDefineBindVariableTypes(sqlExecutionContext.getBindVariableService());
-            CompiledQuery cq = compiler.compile(sqlText, sqlExecutionContext);
-            resolveSqlType(sqlExecutionContext, taiPool, cq);
-        }
-    }
-
-    private void resolveSqlType(
+    private void setupEntryAfterSQLCompilation(
             SqlExecutionContext sqlExecutionContext,
             WeakSelfReturningObjectPool<TypesAndInsert> taiPool,
             CompiledQuery cq
     ) {
         sqlExecutionContext.storeTelemetry(cq.getType(), TelemetryOrigin.POSTGRES);
-
         this.sqlType = cq.getType();
         switch (sqlType) {
             case CompiledQuery.CREATE_TABLE_AS_SELECT:
@@ -1703,31 +1722,51 @@ public class PGPipelineEntry implements QuietCloseable {
                 stateParseExecuted = true;
                 break;
             case CompiledQuery.EXPLAIN:
-                msgParseCacheSelectSQL(sqlExecutionContext, cq, TAG_EXPLAIN, true);
+                this.sqlTag = TAG_EXPLAIN;
+                this.factory = cq.getRecordCursorFactory();
+                tas = new TypesAndSelect(
+                        this.factory,
+                        sqlType,
+                        TAG_EXPLAIN,
+                        sqlExecutionContext.getBindVariableService(),
+                        msgParseParameterTypeOIDs
+                );
                 break;
             case CompiledQuery.SELECT:
-                msgParseCacheSelectSQL(sqlExecutionContext, cq, TAG_SELECT, true);
+                this.sqlTag = TAG_SELECT;
+                this.factory = cq.getRecordCursorFactory();
+                tas = new TypesAndSelect(
+                        factory,
+                        sqlType,
+                        sqlTag,
+                        sqlExecutionContext.getBindVariableService(),
+                        msgParseParameterTypeOIDs
+                );
                 break;
             case CompiledQuery.PSEUDO_SELECT:
                 // the PSEUDO_SELECT comes from a "copy" SQL, which is why
                 // we do not intend to cache it. The fact we don't have
                 // TypesAndSelect instance here should be enough to tell the
                 // system not to cache.
-                msgParseCacheSelectSQL(sqlExecutionContext, cq, TAG_PSEUDO_SELECT, false);
+                this.sqlTag = TAG_PSEUDO_SELECT;
+                this.factory = cq.getRecordCursorFactory();
                 break;
             case CompiledQuery.INSERT:
                 this.insertOp = cq.getInsertOperation();
                 tai = taiPool.pop();
                 sqlTag = TAG_INSERT;
-                // todo: check why TypeAndSelect has separate method for copying types from BindVariableService
-                tai.of(insertOp, sqlExecutionContext.getBindVariableService(), sqlType, sqlTag);
-                msgParseCopyOutTypeDescriptionTypesFromService(sqlExecutionContext.getBindVariableService());
+                tai.of(
+                        insertOp,
+                        sqlType,
+                        sqlTag,
+                        sqlExecutionContext.getBindVariableService(),
+                        msgParseParameterTypeOIDs
+                );
                 break;
             case CompiledQuery.UPDATE:
                 // copy contents of the mutable CompiledQuery into our cache
                 compiledQuery.ofUpdate(cq.getUpdateOperation());
                 compiledQuery.withSqlText(cq.getSqlText());
-                msgParseCopyOutTypeDescriptionTypesFromService(sqlExecutionContext.getBindVariableService());
                 sqlTag = TAG_UPDATE;
                 break;
             case CompiledQuery.INSERT_AS_SELECT:
@@ -1953,12 +1992,12 @@ public class PGPipelineEntry implements QuietCloseable {
             // we have to allow the possibility that parameter types between the
             // cache and the "parse" message could be different. If they are,
             // we have to discard the cache and re-compile the SQL text
-            IntList cachedTypes = typeContainer.getPgParameterTypes();
+            IntList cachedTypes = typeContainer.getPgParameterTypeOIDs();
             int cachedTypeCount = cachedTypes.size();
-            int clientTypeCount = msgParseParameterTypes.size();
+            int clientTypeCount = msgParseParameterTypeOIDs.size();
             if (cachedTypeCount == clientTypeCount) {
                 for (int i = 0; i < cachedTypeCount; i++) {
-                    if (cachedTypes.getQuick(i) != msgParseParameterTypes.getQuick(i)) {
+                    if (cachedTypes.getQuick(i) != msgParseParameterTypeOIDs.getQuick(i)) {
                         return false;
                     }
                 }

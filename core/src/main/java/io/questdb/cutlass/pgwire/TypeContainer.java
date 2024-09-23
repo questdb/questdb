@@ -24,12 +24,8 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.griffin.SqlException;
 import io.questdb.std.IntList;
 
 public interface TypeContainer {
-    void defineBindVariables(BindVariableService bindVariableService) throws SqlException;
-
-    IntList getPgParameterTypes();
+    IntList getPgParameterTypeOIDs();
 }
