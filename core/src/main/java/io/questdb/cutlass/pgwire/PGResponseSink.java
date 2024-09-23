@@ -66,7 +66,7 @@ public interface PGResponseSink extends Utf8Sink {
 
     void setNullValue();
 
-    void sendBufferAndReset() throws PeerDisconnectedException, PeerIsSlowToReadException;
+    int sendBufferAndReset() throws PeerDisconnectedException, PeerIsSlowToReadException;
 
     long getSendBufferSize();
 

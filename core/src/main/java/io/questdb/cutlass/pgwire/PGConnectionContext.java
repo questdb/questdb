@@ -1178,19 +1178,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void syncPipeline() throws PeerIsSlowToReadException, QueryPausedException, BadProtocolException, PeerDisconnectedException {
         while (pipelineCurrentEntry != null || (pipelineCurrentEntry = pipeline.poll()) != null) {
             // with the sync call the existing pipeline entry will assign its own completion hooks (resume callbacks)
-            try {
-                transactionState = pipelineCurrentEntry.sync(
-                        sqlExecutionContext,
-                        transactionState,
-                        taiCache,
-                        pendingWriters,
-                        this,
-                        namedStatements,
-                        responseUtf8Sink
-                );
-            } catch (NoSpaceLeftInResponseBufferException e) {
-                responseUtf8Sink.resetToBookmark();
-                responseUtf8Sink.sendBufferAndReset();
+            do {
                 try {
                     transactionState = pipelineCurrentEntry.sync(
                             sqlExecutionContext,
@@ -1201,13 +1189,28 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                             namedStatements,
                             responseUtf8Sink
                     );
-                } catch (NoSpaceLeftInResponseBufferException e1) {
-                    // oopsie, buffer is too small for single record
-                    responseUtf8Sink.reset();
-                    throw msgKaput()
-                            .put("not enough space in send buffer [sendBufferSize=").put(responseUtf8Sink.getSendBufferSize()).put(']');
+                    break;
+                } catch (NoSpaceLeftInResponseBufferException e) {
+                    responseUtf8Sink.resetToBookmark();
+                    if (responseUtf8Sink.sendBufferAndReset() == 0) {
+                        // we did not send anything, the sync is stuck
+                        responseUtf8Sink.reset();
+                        pipelineCurrentEntry.getErrorMessageSink()
+                                .put("not enough space in send buffer [sendBufferSize=").put(responseUtf8Sink.getSendBufferSize())
+                                .put(']');
+                        pipelineCurrentEntry.sync(
+                                sqlExecutionContext,
+                                transactionState,
+                                taiCache,
+                                pendingWriters,
+                                this,
+                                namedStatements,
+                                responseUtf8Sink
+                        );
+                        break;
+                    }
                 }
-            }
+            } while (true);
             pipelineCurrentEntry.cacheIfPossible(tasCache, taiCache);
             freeIfAbandoned(pipelineCurrentEntry);
             pipelineCurrentEntry = null;
@@ -1536,9 +1539,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         @Override
-        public void sendBufferAndReset() throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendBuffer(bufferRemainingOffset, (int) (sendBufferPtr - sendBuffer - bufferRemainingOffset));
+        public int sendBufferAndReset() throws PeerDisconnectedException, PeerIsSlowToReadException {
+            int sendSize = (int) (sendBufferPtr - sendBuffer - bufferRemainingOffset);
+            sendBuffer(bufferRemainingOffset, sendSize);
             responseUtf8Sink.reset();
+            return sendSize;
         }
 
         @Override
