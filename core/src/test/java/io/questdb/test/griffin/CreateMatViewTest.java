@@ -447,13 +447,13 @@ public class CreateMatViewTest extends AbstractCairoTest {
         assertTrue(matViewDefinition.getMatViewToken().isMatView());
         assertTrue(matViewDefinition.getMatViewToken().isWal());
         assertEquals(query, matViewDefinition.getQuery());
-        assertEquals(baseTableName, matViewDefinition.getBaseTableName().toString());
+        assertEquals(baseTableName, matViewDefinition.getBaseTableName());
         assertEquals(intervalValue, matViewDefinition.getIntervalValue());
         assertEquals(intervalQualifier, matViewDefinition.getIntervalQualifier());
         assertEquals(fromMicros, matViewDefinition.getFromMicros());
         assertEquals(toMicros, matViewDefinition.getToMicros());
-        assertEquals(timeZone, timeZone != null ? matViewDefinition.getTimeZone().toString() : null);
-        assertEquals(timeZoneOffset != null ? timeZoneOffset : "00:00", matViewDefinition.getTimeZoneOffset().toString());
+        assertEquals(timeZone, timeZone != null ? matViewDefinition.getTimeZone() : null);
+        assertEquals(timeZoneOffset != null ? timeZoneOffset : "00:00", matViewDefinition.getTimeZoneOffset());
     }
 
     private void createTable(String tableName) throws SqlException {

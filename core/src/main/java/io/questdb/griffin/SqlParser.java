@@ -632,10 +632,10 @@ public class SqlParser {
                 }
             }
             if (nestedModel.getSampleByTimezoneName() != null) {
-                matViewModel.setTimeZone(unquote(nestedModel.getSampleByTimezoneName().token));
+                matViewModel.setTimeZone(unquote(nestedModel.getSampleByTimezoneName().token).toString());
             }
             if (nestedModel.getSampleByOffset() != null) {
-                matViewModel.setTimeZoneOffset(unquote(nestedModel.getSampleByOffset().token));
+                matViewModel.setTimeZoneOffset(unquote(nestedModel.getSampleByOffset().token).toString());
             }
 
             // optimize mat view query

@@ -36,14 +36,14 @@ import org.jetbrains.annotations.NotNull;
 public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
     public static final ObjectFactory<CreateMatViewModel> FACTORY = CreateMatViewModel::new;
     private final CreateTableModel tableModel;
-    private CharSequence baseTableName;
+    private String baseTableName;
     private long fromMicros = -1;
     private char intervalQualifier;
     private int intervalValue = -1;
     private TableToken matViewToken;
-    private CharSequence query;
-    private CharSequence timeZone;
-    private CharSequence timeZoneOffset;
+    private String query;
+    private String timeZone;
+    private String timeZoneOffset;
     private long toMicros = -1;
 
     private CreateMatViewModel() {
@@ -88,7 +88,7 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
         return tableModel.getTableName();
     }
 
-    public void setBaseTableName(CharSequence baseTableName) {
+    public void setBaseTableName(String baseTableName) {
         this.baseTableName = baseTableName;
     }
 
@@ -104,7 +104,7 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
         this.intervalValue = intervalValue;
     }
 
-    public void setQuery(CharSequence query) {
+    public void setQuery(String query) {
         this.query = query;
     }
 
@@ -112,11 +112,11 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
         this.matViewToken = matViewToken;
     }
 
-    public void setTimeZone(CharSequence timeZone) {
+    public void setTimeZone(String timeZone) {
         this.timeZone = timeZone;
     }
 
-    public void setTimeZoneOffset(CharSequence timeZoneOffset) {
+    public void setTimeZoneOffset(String timeZoneOffset) {
         this.timeZoneOffset = timeZoneOffset;
     }
 
