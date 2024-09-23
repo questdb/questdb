@@ -24,32 +24,46 @@
 
 package io.questdb.cairo.mv;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.Sequence;
 import io.questdb.std.*;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class MatViewGraph implements QuietCloseable {
-    private final ConcurrentHashMap<DependentMatViewState> dependantViewsByTableName = new ConcurrentHashMap<>();
+    private static final Log LOG = LogFactory.getLog(MatViewGraph.class);
+    private final ConcurrentHashMap<BaseTableMatViewRefreshState> dependantViewsByTableName = new ConcurrentHashMap<>();
+    private final AtomicInteger queueFullCounter = new AtomicInteger();
+    private final ConcurrentHashMap<MaterializedViewRefreshState> refreshStateByTableDirName = new ConcurrentHashMap<>();
+    private final RingQueue<MvRefreshTask> refreshTaskQueue;
+    private final MCSequence refreshTaskSubSequence;
+    private final MPSequence updateTaskPubSequence;
+
+    public MatViewGraph(CairoConfiguration configuration) {
+        refreshTaskQueue = new RingQueue<>(MvRefreshTask::new, configuration.getMaterializedViewUpdateQueueCapacity());
+        updateTaskPubSequence = new MPSequence(refreshTaskQueue.getCycle());
+        refreshTaskSubSequence = new MCSequence(refreshTaskQueue.getCycle());
+        updateTaskPubSequence.then(refreshTaskSubSequence).then(updateTaskPubSequence);
+    }
 
     @Override
     public void close() {
-        for (DependentMatViewState state : dependantViewsByTableName.values()) {
-            try {
-                state.writeLock();
-                Misc.free(state);
-            } finally {
-                state.unlockWrite();
-            }
+        for (MaterializedViewRefreshState state : refreshStateByTableDirName.values()) {
+            Misc.free(state);
         }
         dependantViewsByTableName.clear();
+        refreshStateByTableDirName.clear();
     }
 
     public void getAffectedViews(TableToken table, AffectedMatViewsSink sink) {
-        DependentMatViewState list = getState(table);
+        BaseTableMatViewRefreshState list = getDependencyList(table);
         try {
             list.readLock();
             sink.viewsList.addAll(list.matViews);
@@ -59,7 +73,7 @@ public class MatViewGraph implements QuietCloseable {
     }
 
     public void getAllBaseTables(ObjList<CharSequence> sink) {
-        for (DependentMatViewState state : dependantViewsByTableName.values()) {
+        for (BaseTableMatViewRefreshState state : dependantViewsByTableName.values()) {
             try {
                 state.readLock();
                 if (state.matViews.size() > 0) {
@@ -71,13 +85,45 @@ public class MatViewGraph implements QuietCloseable {
         }
     }
 
+    public RingQueue<MvRefreshTask> getMvUpdateTaskQueue() {
+        return refreshTaskQueue;
+    }
+
+    public Sequence getMvUpdateTaskSubSequence() {
+        return refreshTaskSubSequence;
+    }
+
+    public int getQueueFullCount() {
+        return queueFullCounter.get();
+    }
+
     public MaterializedViewRefreshState getViewRefreshState(TableToken tableToken) {
-        DependentMatViewState state = getState(tableToken);
-        return state.getRefreshState();
+        return getRefreshState(tableToken.getDirName());
+    }
+
+    public void notifyBaseRefreshed(TableToken tableToken, long seqTxn) {
+        BaseTableMatViewRefreshState state = dependantViewsByTableName.get(tableToken.getTableName());
+        if (state != null) {
+            if (state.notifyOnBaseTableRefreshedNoLock(seqTxn)) {
+                // While refreshing more txn were committed. Refresh will need to re-run.
+                addToRefreshQueue(tableToken);
+            }
+        }
+    }
+
+    public void notifyTxnApplied(TableToken tableToken, long seqTxn) {
+        BaseTableMatViewRefreshState state = dependantViewsByTableName.get(tableToken.getTableName());
+        if (state != null) {
+            if (state.notifyOnBaseTableCommitNoLock(seqTxn)) {
+                addToRefreshQueue(tableToken);
+            } else {
+                LOG.info().$("no need to refresh table=").$(tableToken.getTableName()).$();
+            }
+        }
     }
 
     public void upsertView(TableToken base, MaterializedViewDefinition viewDefinition) {
-        DependentMatViewState state = getState(base);
+        BaseTableMatViewRefreshState state = getDependencyList(base);
         try {
             state.writeLock();
             for (int i = 0, size = state.matViews.size(); i < size; i++) {
@@ -93,37 +139,48 @@ public class MatViewGraph implements QuietCloseable {
         }
     }
 
-    public void upsertViewRefreshState(TableToken viewTableToken, RecordCursorFactory cursorFactory) {
-        DependentMatViewState state = getState(viewTableToken);
-        try {
-            state.writeLock();
-            state.updateStateSuccess(cursorFactory);
-        } finally {
-            state.unlockWrite();
-        }
-    }
+    private void addToRefreshQueue(TableToken tableToken) {
+        long cycle;
+        do {
+            cycle = updateTaskPubSequence.next();
+            if (cycle > -1) {
+                try {
+                    MvRefreshTask task = refreshTaskQueue.get(cycle);
+                    task.baseTable = tableToken;
+                } finally {
+                    updateTaskPubSequence.done(cycle);
+                }
+                return;
+            }
+        } while (cycle != -1);
 
-    public void upsertViewRefreshStateError(TableToken viewTableToken, CharSequence updateError) {
-        DependentMatViewState state = getState(viewTableToken);
-        try {
-            state.writeLock();
-            state.updateStateError(updateError);
-        } finally {
-            state.unlockWrite();
+        if (cycle == -1) {
+            queueFullCounter.incrementAndGet();
         }
     }
 
     @NotNull
-    private DependentMatViewState getState(TableToken tableToken) {
-        return getState(tableToken.getDirName());
+    private BaseTableMatViewRefreshState getDependencyList(TableToken tableToken) {
+        return getDependencyList(tableToken.getTableName());
     }
 
     @NotNull
-    private DependentMatViewState getState(CharSequence tableDirName) {
-        DependentMatViewState state = dependantViewsByTableName.get(tableDirName);
+    private BaseTableMatViewRefreshState getDependencyList(CharSequence tableName) {
+        BaseTableMatViewRefreshState state = dependantViewsByTableName.get(tableName);
         if (state == null) {
-            state = new DependentMatViewState();
-            DependentMatViewState existingState = dependantViewsByTableName.putIfAbsent(tableDirName, state);
+            state = new BaseTableMatViewRefreshState();
+            BaseTableMatViewRefreshState existingState = dependantViewsByTableName.putIfAbsent(tableName, state);
+            return existingState != null ? existingState : state;
+        }
+        return state;
+    }
+
+    @NotNull
+    private MaterializedViewRefreshState getRefreshState(CharSequence tableDirName) {
+        MaterializedViewRefreshState state = refreshStateByTableDirName.get(tableDirName);
+        if (state == null) {
+            state = new MaterializedViewRefreshState();
+            MaterializedViewRefreshState existingState = refreshStateByTableDirName.putIfAbsent(tableDirName, state);
             return existingState != null ? existingState : state;
         }
         return state;
@@ -131,57 +188,5 @@ public class MatViewGraph implements QuietCloseable {
 
     public static class AffectedMatViewsSink {
         public ObjList<MaterializedViewDefinition> viewsList = new ObjList<>();
-
-    }
-
-    private static class DependentMatViewState implements QuietCloseable {
-        private final ReadWriteLock lock = new SimpleReadWriteLock();
-        ObjList<MaterializedViewDefinition> matViews = new ObjList<>();
-        private final MaterializedViewRefreshState refreshState = new MaterializedViewRefreshState();
-        private RecordCursorFactory cursorFactory;
-        private long lastCommitWallClockMicro;
-        private long lastBaseTxnSeq;
-        private StringSink lastUpdateError;
-
-        @Override
-        public void close() {
-            cursorFactory = Misc.free(cursorFactory);
-        }
-
-        public MaterializedViewRefreshState getRefreshState() {
-            return refreshState;
-        }
-
-        public void updateStateError(CharSequence updateError) {
-            if (lastUpdateError == null) {
-                lastUpdateError = new StringSink();
-            }
-            lastUpdateError.clear();
-            lastUpdateError.put(updateError);
-            this.cursorFactory = Misc.free(cursorFactory);
-        }
-
-        public void updateStateSuccess(RecordCursorFactory cursorFactory) {
-            this.cursorFactory = cursorFactory;
-            if (lastUpdateError != null) {
-                lastUpdateError.clear();
-            }
-        }
-
-        void readLock() {
-            lock.readLock().lock();
-        }
-
-        void unlockRead() {
-            lock.readLock().unlock();
-        }
-
-        void unlockWrite() {
-            lock.writeLock().unlock();
-        }
-
-        void writeLock() {
-            lock.writeLock().lock();
-        }
     }
 }

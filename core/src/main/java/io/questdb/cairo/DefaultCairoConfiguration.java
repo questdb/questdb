@@ -391,6 +391,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getMaterializedViewUpdateQueueCapacity() {
+        return 256;
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return 1;
     }

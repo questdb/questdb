@@ -43,10 +43,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class MaterializedViewFuzzTest extends AbstractFuzzTest {
     @Test
-    public void testFuzz() throws Exception {
+    public void test2LevelDependencyViewFuzz() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             String mvName = testName.getMethodName() + "_mv";
+            String mv2Name = testName.getMethodName() + "_mv2";
             TableToken baseToken = fuzzer.createInitialTable(tableName, true);
             Rnd rnd = fuzzer.generateRandom(LOG);
 
@@ -54,11 +55,105 @@ public class MaterializedViewFuzzTest extends AbstractFuzzTest {
             createMatView(
                     baseToken,
                     viewSql,
-                    mvName, "ts"
+                    mvName,
+                    "ts",
+                    Timestamps.HOUR_MICROS
+            );
+
+            TableToken mvToken = engine.verifyTableName(mvName);
+            String view2Sql = "select min(min), max(max), ts from  " + mvName + " sample by 2h";
+            createMatView(
+                    mvToken,
+                    view2Sql,
+                    mv2Name,
+                    "ts",
+                    2 * Timestamps.HOUR_MICROS
             );
 
             AtomicBoolean stop = new AtomicBoolean();
-            Thread refreshJob = startRefreshJob(stop, rnd);
+            Thread refreshJob = startRefreshJob(stop, rnd, 2);
+
+            fuzzer.setFuzzCounts(
+                    rnd.nextBoolean(),
+                    rnd.nextInt(2_000_000),
+                    rnd.nextInt(1000),
+                    rnd.nextInt(3),
+                    rnd.nextInt(5),
+                    rnd.nextInt(1000),
+                    rnd.nextInt(1_000_000),
+                    5 + rnd.nextInt(10)
+            );
+
+            // Easy, not column manupulations
+            fuzzer.setFuzzProbabilities(
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0.5,
+                    0,
+                    0.5,
+                    0,
+                    0
+            );
+
+            ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableName, rnd);
+            ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
+            fuzzTransactions.add(transactions);
+            fuzzer.applyManyWalParallel(
+                    fuzzTransactions,
+                    rnd,
+                    tableName,
+                    false,
+                    true
+            );
+
+            stop.set(true);
+            refreshJob.join();
+            drainWalQueue();
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertSqlCursors(
+                        compiler,
+                        sqlExecutionContext,
+                        viewSql,
+                        mvName,
+                        LOG
+                );
+
+                TestUtils.assertSqlCursors(
+                        compiler,
+                        sqlExecutionContext,
+                        view2Sql,
+                        mv2Name,
+                        LOG
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testOneViewFuzz() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            String mvName = testName.getMethodName() + "_mv";
+            TableToken baseToken = fuzzer.createInitialTable(tableName, true);
+            Rnd rnd = fuzzer.generateRandom(LOG);
+
+            int mins = 1 + rnd.nextInt(300);
+            String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by " + mins + "m";
+            createMatView(
+                    baseToken,
+                    viewSql,
+                    mvName, "ts",
+                    mins * Timestamps.MINUTE_MICROS
+            );
+
+            AtomicBoolean stop = new AtomicBoolean();
+            Thread refreshJob = startRefreshJob(stop, rnd, 1);
 
             fuzzer.setFuzzCounts(
                     rnd.nextBoolean(),
@@ -114,22 +209,23 @@ public class MaterializedViewFuzzTest extends AbstractFuzzTest {
         });
     }
 
-    private static void createMatView(TableToken baseToken, String viewSql, String mvName, String upsertKeys) throws SqlException {
-        ddl("create table " + mvName + " as (" +
-                "SELECT * FROM (" + viewSql + ") WHERE 1 = 2" +
-                ") timestamp(ts) partition by DAY WAL dedup upsert keys(" + upsertKeys + ")"
+    private static void createMatView(TableToken baseToken, String viewSql, String mvName, String upsertKeys, long sampleByPeriod) throws SqlException {
+        ddl("create table " + mvName + " as ("
+                + "SELECT * FROM (" + viewSql + ") WHERE 1 = 2"
+                + ") timestamp(ts) partition by DAY WAL"
+                + " dedup upsert keys(" + upsertKeys + ")"
         );
 
         MaterializedViewDefinition viewDefinition = new MaterializedViewDefinition();
 
         viewDefinition.setParentTableName(baseToken.getTableName());
         viewDefinition.setViewSql(viewSql);
-        viewDefinition.setSampleByPeriodMicros(Timestamps.HOUR_MICROS);
+        viewDefinition.setSampleByPeriodMicros(sampleByPeriod);
         viewDefinition.setTableToken(engine.verifyTableName(mvName));
         engine.getMaterializedViewGraph().upsertView(baseToken, viewDefinition);
     }
 
-    private Thread startRefreshJob(AtomicBoolean stop, Rnd outsideRnd) {
+    private Thread startRefreshJob(AtomicBoolean stop, Rnd outsideRnd, int finalRuns) {
         Rnd rnd = new Rnd(outsideRnd.nextLong(), outsideRnd.nextLong());
         Thread th = new Thread(() -> {
             try {
@@ -139,8 +235,11 @@ public class MaterializedViewFuzzTest extends AbstractFuzzTest {
                     Os.sleep(rnd.nextInt(1000));
                 }
 
-                // Run one final time before stopping
-                refreshJob.run(0);
+                for (int i = 0; i < finalRuns; i++) {
+                    drainWalQueue();
+                    // Run one final time before stopping
+                    refreshJob.run(0);
+                }
             } finally {
                 Path.clearThreadLocals();
                 LOG.info().$("Refresh job stopped").$();

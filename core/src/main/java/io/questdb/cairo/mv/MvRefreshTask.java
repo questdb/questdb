@@ -24,5 +24,9 @@
 
 package io.questdb.cairo.mv;
 
-public class MaterializedViewRefreshRunner {
+import io.questdb.cairo.TableToken;
+
+public class MvRefreshTask {
+    public TableToken baseTable;
+//    public TableToken viewTable;
 }

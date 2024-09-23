@@ -28,17 +28,26 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Misc;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.StringSink;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
-public class MaterializedViewRefreshState {
+public class MaterializedViewRefreshState implements QuietCloseable {
     private final AtomicBoolean locked = new AtomicBoolean(false);
     private RecordCursorFactory cursorFactory;
     private StringSink error;
     private int errorCode;
     private long lastRefreshRowCount;
     private RecordToRowCopier recordToRowCopier;
+    private final AtomicBoolean newNotification = new AtomicBoolean();
+
+    @Override
+    public void close() {
+        Misc.free(cursorFactory);
+    }
 
     public void compilationFail(SqlException e) {
         getSink().put(e.getFlyweightMessage());
@@ -51,6 +60,10 @@ public class MaterializedViewRefreshState {
 
     public RecordToRowCopier getRecordToRowCopier() {
         return recordToRowCopier;
+    }
+
+    public boolean notifyTxnApplied(long seqTxn) {
+        return newNotification.compareAndSet(false, true);
     }
 
     public void refreshFail(Throwable th) {

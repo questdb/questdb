@@ -475,6 +475,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineUdpBindIPV4Address;
     private int lineUdpDefaultPartitionBy;
     private int lineUdpPort;
+    private final int materializedViewUpdateQueueCapacity;
     private MimeTypesCache mimeTypesCache;
     private long minIdleMsBeforeWriterRelease;
     private int netTestConnectionBufferSize;
@@ -1367,6 +1368,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.posthogEnabled = getBoolean(properties, env, PropertyKey.POSTHOG_ENABLED, false);
         this.posthogApiKey = getString(properties, env, PropertyKey.POSTHOG_API_KEY, null);
         this.configReloadEnabled = getBoolean(properties, env, PropertyKey.CONFIG_RELOAD_ENABLED, true);
+        this.materializedViewUpdateQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_MATERIALIZED_VIEW_UPDATE_QUEUE_CAPACITY, 256));
     }
 
     public static String rootSubdir(CharSequence dbRoot, CharSequence subdir) {
@@ -2352,6 +2354,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public @NotNull CharSequence getLegacyCheckpointRoot() {
             return legacyCheckpointRoot;
+        }
+
+        @Override
+        public int getMaterializedViewUpdateQueueCapacity() {
+            return materializedViewUpdateQueueCapacity;
         }
 
         @Override

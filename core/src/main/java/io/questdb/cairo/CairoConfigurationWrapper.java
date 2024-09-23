@@ -381,6 +381,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getMaterializedViewUpdateQueueCapacity() {
+        return getDelegate().getMaterializedViewUpdateQueueCapacity();
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return getDelegate().getMaxCrashFiles();
     }

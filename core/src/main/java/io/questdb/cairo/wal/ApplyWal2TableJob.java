@@ -232,6 +232,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         final TableSequencerAPI tableSequencerAPI = engine.getTableSequencerAPI();
         boolean isTerminating;
         boolean finishedAll = true;
+        long initialSeqTxn = writer.getSeqTxn();
 
         try (TransactionLogCursor transactionLogCursor = tableSequencerAPI.getCursor(tableToken, writer.getAppliedSeqTxn())) {
             TableMetadataChangeLog structuralChangeCursor = null;
@@ -383,6 +384,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             .$("ms, rate=").$(rowsAdded * 1000000L / Math.max(1, insertTimespan))
                             .$("rows/s, physicalWrittenRowsMultiplier=").$(Math.round(100.0 * physicalRowsAdded / rowsAdded) / 100.0)
                             .I$();
+                }
+
+                if (initialSeqTxn < writer.getAppliedSeqTxn()) {
+                    engine.notifyMaterializedViewBaseCommit(writer.getTableToken(), writer.getSeqTxn());
                 }
             } finally {
                 Misc.free(structuralChangeCursor);

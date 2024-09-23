@@ -2701,6 +2701,22 @@ if __name__ == "__main__":
     }
 
     @Test
+    public void testJdbcIsValid() throws Exception {
+        skipOnWalRun(); // non-wal specific
+        AtomicReference<Connection> connectionRef = new AtomicReference<>();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            Assert.assertTrue(connection.isValid(5));
+            final Connection connection2 = getConnection(mode, port, binary, 1);
+            connectionRef.set(connection2);
+            Assert.assertTrue(connection.isValid(5));
+            Assert.assertTrue(connection2.isValid(5));
+        });
+
+        Assert.assertFalse(connectionRef.get().isValid(5));
+        connectionRef.get().close();
+    }
+
+    @Test
     public void testCreateTableDuplicateColumnName() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {

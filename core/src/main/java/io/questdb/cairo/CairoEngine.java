@@ -35,6 +35,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.*;
+import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cutlass.text.CopyContext;
 import io.questdb.griffin.*;
@@ -97,7 +98,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
     private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
-    private final MatViewGraph matViewGraph = new MatViewGraph();
+    private final MatViewGraph matViewGraph;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
 
@@ -113,6 +114,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     configuration,
                     ServiceLoader.load(FunctionFactory.class, FunctionFactory.class.getClassLoader())
             );
+            this.matViewGraph = new MatViewGraph(configuration);
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
             this.copyContext = new CopyContext(configuration);
@@ -505,7 +507,7 @@ public class CairoEngine implements Closeable, WriterSource {
      *
      * @param tableToken     table token
      * @param desiredVersion version of table metadata used previously if consistent metadata reads are required
-     * @return returns {@link io.questdb.cairo.wal.seq.SequencerMetadata} for WAL tables and {@link TableMetadata}
+     * @return returns {@link SequencerMetadata} for WAL tables and {@link TableMetadata}
      * for non-WAL, which would be metadata of the {@link TableReader}
      */
     public TableMetadata getLegacyMetadata(TableToken tableToken, long desiredVersion) {
@@ -920,6 +922,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void notifyDropped(TableToken tableToken) {
         tableNameRegistry.dropTable(tableToken);
+    }
+
+    public void notifyMaterializedViewBaseCommit(TableToken tableToken, long seqTxn) {
+        matViewGraph.notifyTxnApplied(tableToken, seqTxn);
     }
 
     /**

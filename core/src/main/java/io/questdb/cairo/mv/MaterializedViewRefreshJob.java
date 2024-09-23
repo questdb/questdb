@@ -31,6 +31,8 @@ import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.Sequence;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -45,6 +47,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
     private final CairoEngine engine;
     private final MatViewRefreshExecutionContext matViewRefreshExecutionContext;
     private final WalTxnRangeLoader txnRangeLoader;
+    private int queueFullCount;
 
     public MaterializedViewRefreshJob(CairoEngine engine) {
         this.engine = engine;
@@ -88,6 +91,11 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
         } else {
             executionContext.getBindVariableService().setTimestamp("from", Long.MIN_VALUE + 1);
             executionContext.getBindVariableService().setTimestamp("to", Long.MAX_VALUE - 1);
+
+            LOG.info().$("refreshing materialized view, full refresh [view=").$(viewDefinition.getTableToken())
+                    .$(", base=").$(baseTableReader.getTableToken())
+                    .$(", toTxn=").$(lastTxn)
+                    .I$();
             return true;
         }
 
@@ -181,7 +189,89 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
         return rowCount > 0;
     }
 
-    private boolean refreshView(MatViewGraph viewGraph, TableToken baseToken, SeqTxnTracker viewTxnTracker, TableToken viewToken, MaterializedViewDefinition viewDef, long fromBaseTxn, long toBaseTxn) {
+    private boolean refreshAll() {
+        baseTables.clear();
+        MatViewGraph viewGraph = engine.getMaterializedViewGraph();
+        viewGraph.getAllBaseTables(baseTables);
+        boolean refreshed = false;
+        for (int i = 0, size = baseTables.size(); i < size; i++) {
+            CharSequence baseName = baseTables.get(i);
+
+            TableToken baseToken = engine.getTableTokenIfExists(baseName);
+            if (baseToken != null) {
+                refreshed |= refreshDependentViews(baseToken, viewGraph);
+            } else {
+                // TODO: include more details of the views not to be refreshed
+                LOG.error().$("found materialized views dependent on deleted table that will not be refreshed [parent=")
+                        .$(baseName).I$();
+            }
+        }
+        return refreshed;
+    }
+
+    private boolean refreshDependentViews(TableToken baseToken, MatViewGraph viewGraph) {
+        childViewSink.viewsList.clear();
+        CharSequence baseName = baseToken.getTableName();
+        boolean refreshed = false;
+
+        if (!baseToken.isWal()) {
+            // TODO: include more details of the views not to be refreshed
+            LOG.error().$("Found materialized views dependent on non-WAL table that will not be refreshed [parent=")
+                    .$(baseName).I$();
+        }
+
+        viewGraph.getAffectedViews(baseToken, childViewSink);
+        SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseToken);
+        long minRefreshToTxn = baseSeqTracker.getWriterTxn();
+
+        for (int v = 0, vsize = childViewSink.viewsList.size(); v < vsize; v++) {
+            MaterializedViewDefinition viewDef = childViewSink.viewsList.get(v);
+            TableToken viewToken = viewDef.getTableToken();
+            SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
+            long appliedToParentTxn = viewSeqTracker.getLastRefreshBaseTxn();
+            long lastBaseQueryableTxn = baseSeqTracker.getWriterTxn();
+
+            if (appliedToParentTxn < 0 || appliedToParentTxn < lastBaseQueryableTxn) {
+                refreshed = refreshView(viewGraph, baseToken, viewSeqTracker, viewToken, viewDef, appliedToParentTxn, lastBaseQueryableTxn);
+            }
+        }
+        viewGraph.notifyBaseRefreshed(baseToken, minRefreshToTxn);
+        return refreshed;
+    }
+
+    private boolean refreshNotifiedViews() {
+        MatViewGraph materializedViewGraph = engine.getMaterializedViewGraph();
+        Sequence subSequence = materializedViewGraph.getMvUpdateTaskSubSequence();
+        RingQueue<MvRefreshTask> refreshTaskQueue = materializedViewGraph.getMvUpdateTaskQueue();
+        long cursor;
+        boolean refreshed = false;
+        do {
+            cursor = subSequence.next();
+            if (cursor > 0) {
+                TableToken baseTable, viewTable;
+                try {
+                    MvRefreshTask refreshTask = refreshTaskQueue.get(cursor);
+                    baseTable = refreshTask.baseTable;
+                    refreshed = true;
+                } finally {
+                    subSequence.done(cursor);
+                }
+
+                refreshed |= refreshDependentViews(baseTable, materializedViewGraph);
+            }
+        } while (cursor != -1);
+        return refreshed;
+    }
+
+    private boolean refreshView(
+            MatViewGraph viewGraph,
+            TableToken baseToken,
+            SeqTxnTracker viewTxnTracker,
+            TableToken viewToken,
+            MaterializedViewDefinition viewDef,
+            long fromBaseTxn,
+            long toBaseTxn
+    ) {
         // Steps:
         // - compile view and execute with timestamp ranges from the unprocessed commits
         // - write the result set to WAL (or directly to table writer O3 area)
@@ -226,42 +316,11 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
 
     @Override
     protected boolean runSerially() {
-        baseTables.clear();
-        MatViewGraph viewGraph = engine.getMaterializedViewGraph();
-        viewGraph.getAllBaseTables(baseTables);
-        boolean refreshed = false;
-        for (int i = 0, size = baseTables.size(); i < size; i++) {
-            CharSequence baseName = baseTables.get(i);
-
-            TableToken baseToken = engine.getTableTokenIfExists(baseName);
-            if (baseToken != null) {
-                childViewSink.viewsList.clear();
-                viewGraph.getAffectedViews(baseToken, childViewSink);
-
-                if (!baseToken.isWal() && childViewSink.viewsList.size() > 0) {
-                    // TODO: include more details of the views not to be refreshed
-                    LOG.error().$("Found materialized views dependent on non-WAL table that will not be refreshed [parent=")
-                            .$(baseName).I$();
-                }
-
-                SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseToken);
-
-                for (int v = 0, vsize = childViewSink.viewsList.size(); v < vsize; v++) {
-                    MaterializedViewDefinition viewDef = childViewSink.viewsList.get(v);
-                    TableToken viewToken = viewDef.getTableToken();
-                    SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
-                    long appliedToParentTxn = viewSeqTracker.getLastRefreshBaseTxn();
-                    long lastBaseQueryableTxn = baseSeqTracker.getWriterTxn();
-
-                    if (appliedToParentTxn < 0 || appliedToParentTxn < lastBaseQueryableTxn) {
-                        refreshed |= refreshView(viewGraph, baseToken, viewSeqTracker, viewToken, viewDef, appliedToParentTxn, lastBaseQueryableTxn);
-                    }
-                }
-            } else {
-                // TODO: include more details of the views not to be refreshed
-                LOG.error().$("found materialized views dependent on deleted table that will not be refreshed [parent=")
-                        .$(baseName).I$();
-            }
+        boolean refreshed = refreshNotifiedViews();
+        int queueFullCount = engine.getMaterializedViewGraph().getQueueFullCount();
+        if (queueFullCount > this.queueFullCount) {
+            refreshed |= refreshAll();
+            this.queueFullCount = queueFullCount;
         }
         return refreshed;
     }

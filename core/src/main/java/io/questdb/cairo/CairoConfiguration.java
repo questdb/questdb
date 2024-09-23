@@ -626,4 +626,6 @@ public interface CairoConfiguration {
     }
 
     boolean useFastAsOfJoin();
+
+    int getMaterializedViewUpdateQueueCapacity();
 }
