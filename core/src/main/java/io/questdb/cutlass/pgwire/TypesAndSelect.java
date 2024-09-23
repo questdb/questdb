@@ -28,8 +28,10 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Transient;
 
 /**
  * Unlike other TypesAnd* classes, this one doesn't self-return to a pool. That's because
@@ -44,7 +46,7 @@ public class TypesAndSelect implements QuietCloseable, TypeContainer {
     // one-to-one map between them. The pgParameterTypes uses PostgresSQL type identifiers
     // and bindVariableTypes uses ours. bindVariableTypes may have more values, in case
     // the client did not define types any times or did not define enough.
-    private final IntList bindVariableTypes = new IntList();
+    private final IntList bindVariableColumnTypes = new IntList();
     // The client parameter types as they sent it to us when SQL was cached
     // this could be 0 or more parameter types. These types are used
     // to validate cache entries against client requests. For example, when
@@ -75,9 +77,9 @@ public class TypesAndSelect implements QuietCloseable, TypeContainer {
             // For bind variable find in vararg parameters functions are not
             // created upfront. This is due to the type being unknown.
             if (func != null) {
-                bindVariableTypes.add(func.getType());
+                bindVariableColumnTypes.add(func.getType());
             } else {
-                bindVariableTypes.add(ColumnType.UNDEFINED);
+                bindVariableColumnTypes.add(ColumnType.UNDEFINED);
             }
         }
 
@@ -91,17 +93,8 @@ public class TypesAndSelect implements QuietCloseable, TypeContainer {
         factory = Misc.free(factory);
     }
 
-    public void copyOutTypeDescriptionTypesTo(IntList outTypeDescriptionTypes) {
-        for (int i = 0, n = bindVariableTypes.size(); i < n; i++) {
-            int nativeType = bindVariableTypes.getQuick(i);
-            int pgType = Numbers.bswap(PGOids.getTypeOid(nativeType));
-            outTypeDescriptionTypes.add(pgType);
-        }
-    }
-
-    @Override
-    public void defineBindVariables(BindVariableService bindVariableService) throws SqlException {
-        AbstractTypeContainer.defineBindVariables(pgParameterTypes, bindVariableService);
+    public IntList getBindVariableColumnTypes() {
+        return bindVariableColumnTypes;
     }
 
     public RecordCursorFactory getFactory() {
@@ -109,7 +102,7 @@ public class TypesAndSelect implements QuietCloseable, TypeContainer {
     }
 
     @Override
-    public IntList getPgParameterTypes() {
+    public IntList getPgParameterTypeOIDs() {
         return pgParameterTypes;
     }
 

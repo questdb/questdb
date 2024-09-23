@@ -176,7 +176,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             this.binarySequenceParamsPool = new ObjectPool<>(DirectBinarySequence::new, configuration.getBinParamCountCapacity());
             this.metrics = engine.getMetrics();
             this.tasCache = tasCache;
-            final boolean enabledUpdateCache = configuration.isUpdateCacheEnabled();
             final boolean enableInsertCache = configuration.isInsertCacheEnabled();
             final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1;
             final int insertRowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1;
@@ -274,7 +273,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     public void clearWriters() {
         if (pendingWriters != null) {
-            closePendingWriters(false);
+            rollbackAndClosePendingWriters();
             pendingWriters.clear();
         }
     }
@@ -335,58 +334,49 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             throw th;
         }
 
-        try {
-            flushRemainingBuffer();
-            if (resumeCallback != null) {
-                resumeCallback.resume();
-            }
+        flushRemainingBuffer();
+        if (resumeCallback != null) {
+            resumeCallback.resume();
+        }
 
-            long readOffsetBeforeParse = -1;
-            // exit from this loop is via exception when either need wait to read / write from socket
-            // or disconnection is detected / requested
-            //noinspection InfiniteLoopStatement
-            while (true) {
-                // Read more from socket or throw when
-                if (
-                    // - parsing stalls, e.g. readOffsetBeforeParse == recvBufferReadOffset
-                        readOffsetBeforeParse == recvBufferReadOffset
-                                // - recv buffer is empty
-                                || recvBufferReadOffset == recvBufferWriteOffset
-                                // - socket is signalled ready to read at the first iteration of this loop
-                                || (operation == IOOperation.READ && readOffsetBeforeParse == -1)) {
-                    // free up recv buffer
-                    if (!freezeRecvBuffer) {
-                        if (recvBufferReadOffset == recvBufferWriteOffset) {
-                            clearRecvBuffer();
-                        } else if (recvBufferReadOffset > 0) {
-                            // nothing changed?
-                            // shift to start
-                            shiftReceiveBuffer(recvBufferReadOffset);
-                        }
+        long readOffsetBeforeParse = -1;
+        // exit from this loop is via exception when either need wait to read / write from socket
+        // or disconnection is detected / requested
+        //noinspection InfiniteLoopStatement
+        while (true) {
+            // Read more from socket or throw when
+            if (
+                // - parsing stalls, e.g. readOffsetBeforeParse == recvBufferReadOffset
+                    readOffsetBeforeParse == recvBufferReadOffset
+                            // - recv buffer is empty
+                            || recvBufferReadOffset == recvBufferWriteOffset
+                            // - socket is signalled ready to read at the first iteration of this loop
+                            || (operation == IOOperation.READ && readOffsetBeforeParse == -1)) {
+                // free up recv buffer
+                if (!freezeRecvBuffer) {
+                    if (recvBufferReadOffset == recvBufferWriteOffset) {
+                        clearRecvBuffer();
+                    } else if (recvBufferReadOffset > 0) {
+                        // nothing changed?
+                        // shift to start
+                        shiftReceiveBuffer(recvBufferReadOffset);
                     }
-                    recv();
                 }
-
-                // Parse will update the value of recvBufferOffset upon completion of
-                // logical block. We cannot count on return value because 'parse' may try to
-                // respond to client and fail with exception. When it does fail we would have
-                // to retry 'send' but not parse the same input again
-                readOffsetBeforeParse = recvBufferReadOffset;
-                totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
-                try {
-                    parseMessage(recvBuffer + recvBufferReadOffset, (int) (recvBufferWriteOffset - recvBufferReadOffset));
-                } catch (BadProtocolException e) {
-                    // ignore, we are interrupting the current message processing, but have to continue processing other
-                    // messages
-                }
+                recv();
             }
-        } catch (
-                PeerDisconnectedException | PeerIsSlowToReadException | PeerIsSlowToWriteException |
-                QueryPausedException e) {
-            throw e;
-        } catch (Throwable th) {
-            th.printStackTrace();
-            handleException(-1, th.getMessage(), true, -1, true);
+
+            // Parse will update the value of recvBufferOffset upon completion of
+            // logical block. We cannot count on return value because 'parse' may try to
+            // respond to client and fail with exception. When it does fail we would have
+            // to retry 'send' but not parse the same input again
+            readOffsetBeforeParse = recvBufferReadOffset;
+            totalReceived += (recvBufferWriteOffset - recvBufferReadOffset);
+            try {
+                parseMessage(recvBuffer + recvBufferReadOffset, (int) (recvBufferWriteOffset - recvBufferReadOffset));
+            } catch (BadProtocolException e) {
+                // ignore, we are interrupting the current message processing, but have to continue processing other
+                // messages
+            }
         }
     }
 
@@ -443,18 +433,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         recvBufferReadOffset = 0;
     }
 
-    private void closePendingWriters(boolean commit) {
-        for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
-            final TableWriterAPI m = pendingWriter.value;
-            if (commit) {
-                m.commit();
-            } else {
-                m.rollback();
-            }
-            Misc.free(m);
-        }
-    }
-
     private void doSendWithRetries(int bufferOffset, int bufferSize) throws PeerDisconnectedException, PeerIsSlowToReadException {
         int offset = bufferOffset;
         int remaining = bufferSize;
@@ -498,14 +476,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             Misc.free(pe);
         }
         cache.clear();
-    }
-
-    @Nullable
-    private CharSequence getPortalName(long lo, long hi) throws BadProtocolException {
-        if (hi - lo > 0) {
-            return getString(lo, hi, "invalid UTF8 bytes in portal name");
-        }
-        return null;
     }
 
     private CharSequence getString(long lo, long hi, CharSequence errorMessage) throws BadProtocolException {
@@ -571,25 +541,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // authenticator may have some non-auth data left in the buffer - make sure we don't overwrite it
         recvBufferWriteOffset = authenticator.getRecvBufPos() - recvBuffer;
         recvBufferReadOffset = authenticator.getRecvBufPseudoStart() - recvBuffer;
-    }
-
-    private void handleException(int position, CharSequence message, boolean critical, int errno, boolean interruption) throws PeerDisconnectedException, PeerIsSlowToReadException {
-/*
-        metrics.pgWire().getErrorCounter().inc();
-        clearCursorAndFactory();
-        if (interruption) {
-            prepareErrorResponse(position, message);
-        } else {
-            prepareError(position, message, critical, errno);
-        }
-        resumeCallback = null;
-        errorSkipToSync = lastMsgType != 'S' && lastMsgType != 'X' && lastMsgType != 'H' && lastMsgType != 'Q';
-        if (errorSkipToSync) {
-            throw PeerIsSlowToReadException.INSTANCE;
-        } else {
-            replyAndContinue();
-        }
-*/
     }
 
     private void handleTlsRequest() throws PeerIsSlowToWriteException, PeerIsSlowToReadException, BadProtocolException, PeerDisconnectedException {
@@ -666,10 +617,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             pipelineCurrentEntry = null;
         }
 
-        short parameterValueCount;
-
-        LOG.debug().$("bind").$();
-
         // portal name
         long hi = getUtf8StrSize(lo, msgLimit, "bad portal name length (bind)", pipelineCurrentEntry);
         CharSequence portalName = getUtf16Str(lo, hi, "invalid UTF8 bytes in portal name (bind)");
@@ -709,7 +656,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         // the pipeline is named, and we must not attempt to reuse it
                         // as the portal, so we are making a new entry
                         PGPipelineEntry pe = new PGPipelineEntry(engine);
-                        pe.parseNewSql(
+                        pe.compileNewSQL(
                                 pipelineCurrentEntry.getSqlText(),
                                 engine,
                                 sqlExecutionContext,
@@ -740,40 +687,40 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
         }
 
-        // parameter format count
+        // Parameter format count. These formats are BigEndian "short" values of 0 or 1,
+        // 0 = text, 1 = binary. Meaning that parameter values in the bind message are
+        // provided either as text or binary.
         lo = hi + 1;
-        final short parameterFormatCodeCount = pipelineCurrentEntry.getShort(lo, msgLimit, "could not read parameter format code count");
+        final short parameterFormatCodeCount = pipelineCurrentEntry.getShort(
+                lo,
+                msgLimit,
+                "could not read parameter format code count"
+        );
         lo += Short.BYTES;
+
+        final short parameterValueCount = pipelineCurrentEntry.getShort(
+                lo + parameterFormatCodeCount * Short.BYTES,
+                msgLimit,
+                "could not read parameter value count"
+        );
+
         pipelineCurrentEntry.msgBindCopyParameterFormatCodes(
                 lo,
                 msgLimit,
-                parameterFormatCodeCount
+                parameterFormatCodeCount,
+                parameterValueCount
         );
 
-        // parameter value count
         lo += parameterFormatCodeCount * Short.BYTES;
-        parameterValueCount = pipelineCurrentEntry.getShort(lo, msgLimit, "could not read parameter value count");
-
-        LOG.debug().$("binding [parameterValueCount=").$(parameterValueCount).$(", thread=").$(Thread.currentThread().getId()).I$();
-
-        // we now have all parameter counts, validate them
-        pipelineCurrentEntry.msgBindSetParameterValueCount(parameterValueCount);
-
         lo += Short.BYTES;
 
-        lo = pipelineCurrentEntry.msgBindDefineBindVariableTypes(
-                lo,
-                msgLimit,
-                bindVariableService,
-                // below are some reusable, transient pools
-                characterStore,
-                utf8String,
-                binarySequenceParamsPool
-        );
-
+        // Copy parameter values to the pipeline's arena. The value area size of the
+        // bind message is variable, and is dependent on storage method of parameter values.
+        // Before we copy value, we have to compute size of the area.
+        lo = pipelineCurrentEntry.msgBindCopyParameterValuesArea(lo, msgLimit);
         short columnFormatCodeCount = pipelineCurrentEntry.getShort(lo, msgLimit, "could not read result set column format codes");
         lo += Short.BYTES;
-        pipelineCurrentEntry.msgBindCopySelectFormatCodes(lo, msgLimit, columnFormatCodeCount);
+        pipelineCurrentEntry.msgBindCopySelectFormatCodes(lo, columnFormatCodeCount);
     }
 
     private void msgClose(long lo, long msgLimit) throws BadProtocolException {
@@ -881,7 +828,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 taiCache,
                 pendingWriters,
                 this,
-                namedStatements
+                characterStore,
+                utf8String,
+                binarySequenceParamsPool
         );
     }
 
@@ -957,7 +906,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         // read parameter types before we are able to compile SQL text
         // parameter values are not provided here, but we do not need them to be able to
-        // parse/compile the SQL
+        // parse/compile the SQL.
+        // It is possible that the number of parameter types provided here is
+        // different from the number of bind variables in the SQL. At this point
+        // we will copy into the pipeline entry whatever was provided
         short parameterTypeCount = pipelineCurrentEntry.getShort(lo, msgLimit, "could not read parameter type count");
 
         // process parameter types
@@ -1023,7 +975,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // When parameter types are not supplied we will assume that the types are STRING
             // this is done by default, when CairoEngine compiles the SQL text. Assuming we're
             // compiling the SQL from scratch.
-            pipelineCurrentEntry.parseNewSql(utf16SqlText, engine, sqlExecutionContext, taiPool);
+            pipelineCurrentEntry.compileNewSQL(utf16SqlText, engine, sqlExecutionContext, taiPool);
         }
         msgParseCreateTargetStatement(targetStatementName);
     }
@@ -1043,7 +995,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    // processes one or more queries (batch/script). "Simple Query" in PostgreSQL docs.
+    // processes one or more queries (batch/script). "Simple Query" in PostgresSQL docs.
     private void msgQuery(long lo, long limit) throws BadProtocolException, PeerIsSlowToReadException, QueryPausedException, PeerDisconnectedException {
         CharacterStoreEntry e = characterStore.newEntry();
         if (Utf8s.utf8ToUtf16(lo, limit - 1, e)) {
@@ -1180,47 +1132,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void prepareBindCompleteResponse() {
-        responseUtf8Sink.put(MESSAGE_TYPE_BIND_COMPLETE);
-        responseUtf8Sink.putIntDirect(INT_BYTES_X);
-    }
-
-    private void prepareCloseComplete() {
-        responseUtf8Sink.put(MESSAGE_TYPE_CLOSE_COMPLETE);
-        responseUtf8Sink.putIntDirect(INT_BYTES_X);
-    }
-
-    private void prepareEmptyQueryResponse() {
-        LOG.debug().$("empty").$();
-        responseUtf8Sink.put(MESSAGE_TYPE_EMPTY_QUERY);
-        responseUtf8Sink.putIntDirect(INT_BYTES_X);
-    }
-
-    private void prepareError(int position, CharSequence message, boolean critical, int errno) {
-        prepareErrorResponse(position, message);
-        if (critical) {
-            LOG.critical().$("error [msg=`").utf8(message).$("`, errno=").$(errno).I$();
-        } else {
-            LOG.error().$("error [msg=`").utf8(message).$("`, errno=").$(errno).I$();
-        }
-    }
-
-    private void prepareErrorResponse(int position, CharSequence message) {
-        responseUtf8Sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
-        long addr = responseUtf8Sink.skipInt();
-        responseUtf8Sink.putAscii('C');
-        responseUtf8Sink.putZ("00000");
-        responseUtf8Sink.putAscii('M');
-        responseUtf8Sink.putZ(message);
-        responseUtf8Sink.putAscii('S');
-        responseUtf8Sink.putZ("ERROR");
-        if (position > -1) {
-            responseUtf8Sink.putAscii('P').put(position + 1).put((byte) 0);
-        }
-        responseUtf8Sink.put((byte) 0);
-        responseUtf8Sink.putLen(addr);
-    }
-
     // clears whole state except for characterStore because top-level batch text is using it
     private void prepareForNewBatchQuery() {
         LOG.debug().$("prepare for new query").$();
@@ -1235,11 +1146,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         Misc.clear(characterStore);
     }
 
-    private void prepareNonCriticalError(int position, CharSequence message) {
-        prepareErrorResponse(position, message);
-        LOG.error().$("error [pos=").$(position).$(", msg=`").utf8(message).$('`').I$();
-    }
-
     private void replaceCurrentPipelineEntry(PGPipelineEntry newEntry) {
         if (newEntry != pipelineCurrentEntry) {
             // Alright, the client wants to use the named statement. What if they just
@@ -1251,32 +1157,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    private void sendBufferAndResetBlocking() throws PeerDisconnectedException {
-        if (sendBufferLimit - sendBufferPtr < PROTOCOL_TAIL_COMMAND_LENGTH) {
-            sendBufferAndResetBlocking0();
+    private void rollbackAndClosePendingWriters() {
+        for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
+            final TableWriterAPI m = pendingWriter.value;
+            m.rollback();
+            Misc.free(m);
         }
-    }
-
-    private void sendBufferAndResetBlocking0() throws PeerDisconnectedException {
-        // This is simplified waited send for very limited use cases where introducing another state is an overkill.
-        // This method busy waits to send buffer.
-        while (true) {
-            try {
-                sendBuffer(bufferRemainingOffset, (int) (sendBufferPtr - sendBuffer - bufferRemainingOffset));
-                break;
-            } catch (PeerIsSlowToReadException e) {
-                Os.sleep(1);
-                circuitBreaker.statefulThrowExceptionIfTimeout();
-            }
-        }
-        responseUtf8Sink.reset();
-    }
-
-    private void sendReadyForNewQuery() throws PeerDisconnectedException {
-        LOG.debug().$("RNQ sent").$();
-        sendBufferAndResetBlocking();
-
-        outReadForNewQuery();
     }
 
     private void shiftReceiveBuffer(long readOffsetBeforeParse) {
@@ -1292,19 +1178,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void syncPipeline() throws PeerIsSlowToReadException, QueryPausedException, BadProtocolException, PeerDisconnectedException {
         while (pipelineCurrentEntry != null || (pipelineCurrentEntry = pipeline.poll()) != null) {
             // with the sync call the existing pipeline entry will assign its own completion hooks (resume callbacks)
-            try {
-                transactionState = pipelineCurrentEntry.sync(
-                        sqlExecutionContext,
-                        transactionState,
-                        taiCache,
-                        pendingWriters,
-                        this,
-                        namedStatements,
-                        responseUtf8Sink
-                );
-            } catch (NoSpaceLeftInResponseBufferException e) {
-                responseUtf8Sink.resetToBookmark();
-                responseUtf8Sink.sendBufferAndReset();
+            do {
                 try {
                     transactionState = pipelineCurrentEntry.sync(
                             sqlExecutionContext,
@@ -1315,13 +1189,28 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                             namedStatements,
                             responseUtf8Sink
                     );
-                } catch (NoSpaceLeftInResponseBufferException e1) {
-                    // oopsie, buffer is too small for single record
-                    responseUtf8Sink.reset();
-                    throw msgKaput()
-                            .put("not enough space in send buffer [sendBufferSize=").put(responseUtf8Sink.getSendBufferSize()).put(']');
+                    break;
+                } catch (NoSpaceLeftInResponseBufferException e) {
+                    responseUtf8Sink.resetToBookmark();
+                    if (responseUtf8Sink.sendBufferAndReset() == 0) {
+                        // we did not send anything, the sync is stuck
+                        responseUtf8Sink.reset();
+                        pipelineCurrentEntry.getErrorMessageSink()
+                                .put("not enough space in send buffer [sendBufferSize=").put(responseUtf8Sink.getSendBufferSize())
+                                .put(']');
+                        pipelineCurrentEntry.sync(
+                                sqlExecutionContext,
+                                transactionState,
+                                taiCache,
+                                pendingWriters,
+                                this,
+                                namedStatements,
+                                responseUtf8Sink
+                        );
+                        break;
+                    }
                 }
-            }
+            } while (true);
             pipelineCurrentEntry.cacheIfPossible(tasCache, taiCache);
             freeIfAbandoned(pipelineCurrentEntry);
             pipelineCurrentEntry = null;
@@ -1469,7 +1358,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     taiCache,
                     pendingWriters,
                     PGConnectionContext.this,
-                    namedStatements
+                    characterStore,
+                    utf8String,
+                    binarySequenceParamsPool
             );
             pipelineCurrentEntry.setStateExec(true);
         }
@@ -1648,9 +1539,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         @Override
-        public void sendBufferAndReset() throws PeerDisconnectedException, PeerIsSlowToReadException {
-            sendBuffer(bufferRemainingOffset, (int) (sendBufferPtr - sendBuffer - bufferRemainingOffset));
+        public int sendBufferAndReset() throws PeerDisconnectedException, PeerIsSlowToReadException {
+            int sendSize = (int) (sendBufferPtr - sendBuffer - bufferRemainingOffset);
+            sendBuffer(bufferRemainingOffset, sendSize);
             responseUtf8Sink.reset();
+            return sendSize;
         }
 
         @Override
