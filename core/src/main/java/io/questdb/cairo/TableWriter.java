@@ -87,7 +87,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // 3, oldPartitionSize
     // 4, flags (partitionMutates INT, isLastWrittenPartition INT)
     // 5. o3SplitPartitionSize size of "split" partition, new partition that branches out of the old one
-    // 6. ...
+    // 6. original partition timestamp (before the split)
     // 7. parquet partition file size
     // ... column top for every column
     public static final int PARTITION_SINK_SIZE_LONGS = 8;
@@ -1254,12 +1254,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 final CairoConfiguration config = this.getConfiguration();
-                final int compressionCodec = config.getPartitionEncoderCompressionCodec();
-                final int compressionLevel = config.getPartitionEncoderCompressionLevel();
-                final int rowGroupSize = config.getPartitionEncoderRowGroupSize();
-                final int dataPageSize = config.getPartitionEncoderDataPageSize();
-                final boolean statisticsEnabled = config.isPartitionEncoderStatisticsEnabled();
-                final int parquetVersion = config.getPartitionEncoderVersion();
+                final int compressionCodec = config.getPartitionEncoderParquetCompressionCodec();
+                final int compressionLevel = config.getPartitionEncoderParquetCompressionLevel();
+                final int rowGroupSize = config.getPartitionEncoderParquetRowGroupSize();
+                final int dataPageSize = config.getPartitionEncoderParquetDataPageSize();
+                final boolean statisticsEnabled = config.isPartitionEncoderParquetStatisticsEnabled();
+                final int parquetVersion = config.getPartitionEncoderParquetVersion();
 
                 PartitionEncoder.encodeWithOptions(
                         partitionDescriptor,

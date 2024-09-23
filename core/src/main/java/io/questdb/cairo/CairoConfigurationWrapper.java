@@ -1165,33 +1165,33 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public int getPartitionEncoderVersion() {
-        return getDelegate().getPartitionEncoderVersion();
+    public int getPartitionEncoderParquetVersion() {
+        return getDelegate().getPartitionEncoderParquetVersion();
     }
 
     @Override
-    public boolean isPartitionEncoderStatisticsEnabled() {
-        return getDelegate().isPartitionEncoderStatisticsEnabled();
+    public boolean isPartitionEncoderParquetStatisticsEnabled() {
+        return getDelegate().isPartitionEncoderParquetStatisticsEnabled();
     }
 
     @Override
-    public int getPartitionEncoderCompressionCodec() {
-        return getDelegate().getPartitionEncoderCompressionCodec();
+    public int getPartitionEncoderParquetCompressionCodec() {
+        return getDelegate().getPartitionEncoderParquetCompressionCodec();
     }
 
     @Override
-    public int getPartitionEncoderCompressionLevel() {
-        return getDelegate().getPartitionEncoderCompressionLevel();
+    public int getPartitionEncoderParquetCompressionLevel() {
+        return getDelegate().getPartitionEncoderParquetCompressionLevel();
     }
 
     @Override
-    public int getPartitionEncoderRowGroupSize() {
-        return getDelegate().getPartitionEncoderRowGroupSize();
+    public int getPartitionEncoderParquetRowGroupSize() {
+        return getDelegate().getPartitionEncoderParquetRowGroupSize();
     }
 
     @Override
-    public int getPartitionEncoderDataPageSize() {
-        return getDelegate().getPartitionEncoderDataPageSize();
+    public int getPartitionEncoderParquetDataPageSize() {
+        return getDelegate().getPartitionEncoderParquetDataPageSize();
     }
 
     protected CairoConfiguration getDelegate() {

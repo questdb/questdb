@@ -32,16 +32,25 @@ import io.questdb.std.MemoryTag;
 public class MappedMemoryPartitionDescriptor extends PartitionDescriptor {
     @Override
     public void clear() {
-        for (long i = 0, n = columnAddrs.size(); i < n; i++) {
-            Files.munmap(columnAddrs.get(i), columnSizes.get(i), MemoryTag.MMAP_PARTITION_CONVERTER);
+        final int columnCount = getColumnCount();
+        for (long columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            final long rawIndex = columnIndex * COLUMN_ENTRY_SIZE;
+
+            final long columnAddr = columnData.get(rawIndex + COLUMN_ADDR_OFFSET);
+            final long columnSize = columnData.get(rawIndex + COLUMN_SIZE_OFFSET);
+            Files.munmap(columnAddr, columnSize, MemoryTag.MMAP_PARTITION_CONVERTER);
+
+            final long columnSecondaryAddr = columnData.get(rawIndex + COLUMN_SECONDARY_ADDR_OFFSET);
+            final long columnSecondarySize = columnData.get(rawIndex + COLUMN_SECONDARY_SIZE_OFFSET);
+            Files.munmap(columnSecondaryAddr, columnSecondarySize, MemoryTag.MMAP_PARTITION_CONVERTER);
+
+            final long symbolOffsetsAddr = columnData.get(rawIndex + SYMBOL_OFFSET_ADDR_OFFSET);
+            final long symbolOffsetsSize = columnData.get(rawIndex + SYMBOL_OFFSET_SIZE_OFFSET);
+            final long offsetsMemSize = SymbolMapWriter.keyToOffset((int) symbolOffsetsSize + 1);
+            Files.munmap(symbolOffsetsAddr - SymbolMapWriter.HEADER_SIZE, offsetsMemSize, MemoryTag.MMAP_PARTITION_CONVERTER);
+
         }
-        for (long i = 0, n = columnSecondaryAddrs.size(); i < n; i++) {
-            Files.munmap(columnSecondaryAddrs.get(i), columnSecondarySizes.get(i), MemoryTag.MMAP_PARTITION_CONVERTER);
-        }
-        for (long i = 0, n = symbolOffsetsAddrs.size(); i < n; i++) {
-            final long offsetsMemSize = SymbolMapWriter.keyToOffset((int) symbolOffsetsSizes.get(i) + 1);
-            Files.munmap(symbolOffsetsAddrs.get(i) - SymbolMapWriter.HEADER_SIZE, offsetsMemSize, MemoryTag.MMAP_PARTITION_CONVERTER);
-        }
+
         super.clear();
     }
 }

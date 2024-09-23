@@ -106,11 +106,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             assert ColumnType.isTimestamp(timestampColumnType);
 
             // for API completeness, we'll use the same configuration as the initial partition partitionDecoder.
-            final int compressionCodec = cairoConfiguration.getPartitionEncoderCompressionCodec();
-            final int compressionLevel = cairoConfiguration.getPartitionEncoderCompressionLevel();
-            final int rowGroupSize = cairoConfiguration.getPartitionEncoderRowGroupSize();
-            final int dataPageSize = cairoConfiguration.getPartitionEncoderDataPageSize();
-            final boolean statisticsEnabled = cairoConfiguration.isPartitionEncoderStatisticsEnabled();
+            final int compressionCodec = cairoConfiguration.getPartitionEncoderParquetCompressionCodec();
+            final int compressionLevel = cairoConfiguration.getPartitionEncoderParquetCompressionLevel();
+            final int rowGroupSize = cairoConfiguration.getPartitionEncoderParquetRowGroupSize();
+            final int dataPageSize = cairoConfiguration.getPartitionEncoderParquetDataPageSize();
+            final boolean statisticsEnabled = cairoConfiguration.isPartitionEncoderParquetStatisticsEnabled();
 
             // partitionUpdater is the owner of the partitionDecoder descriptor
             final long opts = cairoConfiguration.getWriterFileOpenOpts();
@@ -126,6 +126,61 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
             // The O3 range [srcOooLo, srcOooHi] has been split into intervals between row group minimums: [rowGroupN-1.min, rowGroupN.min].
             // Each of these intervals is merged into the previous row group (rowGroupN-1).
+            //   +------+          <- rg0.min
+            //   | rg0  |  +-----+ <- srcOooLo
+            //   |      |  | OOO |
+            //   +------+  |     |
+            //             |     |
+            //   +------+  |     | <- rg1.min
+            //   | rg1  |  |     |
+            //   |      |  |     |
+            //   +------+  |     |
+            //             |     |
+            //   +------+  |     | <- rg2.min
+            //   | rg2  |  |     |
+            //   |      |  |     |
+            //   +------+  |     |
+            //             |     |
+            //             +-----+ <- srcOooHi
+
+            // on the first iteration, ooo range [srcOooLo, rg1.min]
+            // is merged into row group 0.
+            // on the second iteration, ooo range [rg1.min, rg2.min]
+            // is merged into row group 1.
+            // as a tail case, ooo range [rg2.min, srcOooHi]
+            // is merged into row group 2.
+
+            //   +------+          <- rg0.min
+            //   | rg0  |  +-----+ <- srcOooLo
+            //   |      |  | OOO |
+            //   +------+  |     |
+            //             +-----+
+            //   +------+         <- rg1.min
+            //   | rg1  |
+            //   |      |
+            //   +------+
+            //
+            //   +------+         <- rg2.min
+            //   | rg2  |
+            //   |      |
+            //   +------+
+            //
+            //   +------+         <- rg3.min
+            //   | rg3  |  +-----+ <- mergeRangeLo
+            //   |      |  | OOO |
+            //   +------+  |     |
+            //             |     |
+            //             +-----+ <- srcOooHi
+
+            // on the first iteration, ooo range [srcOooLo, rg1.min]
+            // is merged into row group 0.
+            // on the second iteration, ooo range [rg1.min, rg2.min]
+            // has no data, continue to the next row group.
+            // on the third iteration, ooo range [rg2.min, rg3.min]
+            // has no data, continue to the next row group.
+            // as a tail case, ooo range [mergeRangeLo, srcOooHi]
+            // is merged into row group 3.
+
             long mergeRangeLo = srcOooLo;
             for (int rowGroup = 1; rowGroup < rowGroupCount; rowGroup++) {
                 final long min = partitionDecoder.getColumnChunkMinTimestamp(rowGroup, timestampIndex);
@@ -136,10 +191,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         srcOooHi,
                         BinarySearch.SCAN_DOWN
                 );
-                // no data in the O3 segment for this row group
+
+                // has no data to merge, continue to the next row group
                 if (mergeRangeHi < mergeRangeLo) {
                     continue;
                 }
+
                 mergeRowGroup(
                         partitionDescriptor,
                         partitionUpdater,
@@ -199,7 +256,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, oldPartitionSize);
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, 1); // partitionMutates
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
-            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, 0); // unused
             Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, fileSize); // update parquet partition file size
 
             tableWriter.o3CountDownDoneLatch();

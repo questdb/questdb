@@ -33,7 +33,6 @@ import io.questdb.std.str.LPSZ;
 
 public class PartitionUpdater implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(PartitionUpdater.class);
-    private long fd;
     private long ptr;
     private final FilesFacade ff;
 
@@ -44,7 +43,6 @@ public class PartitionUpdater implements QuietCloseable {
     @Override
     public void close() {
         destroy();
-        fd = -1;
     }
 
     public void of(
@@ -58,10 +56,9 @@ public class PartitionUpdater implements QuietCloseable {
             long dataPageSize
     ) {
         destroy();
-        this.fd = TableUtils.openRW(ff, srcPath, LOG, fileOpenOpts);
         try {
             ptr = create(
-                    Files.detach(fd),
+                    Files.detach(TableUtils.openRW(ff, srcPath, LOG, fileOpenOpts)),
                     fileSize,
                     timestampIndex,
                     compressionCodec,
@@ -80,22 +77,15 @@ public class PartitionUpdater implements QuietCloseable {
         final int columnCount = descriptor.getColumnCount();
         final long rowCount = descriptor.getPartitionRowCount();
         try {
+            assert ptr != 0;
             updateRowGroup(
                     ptr,
                     rowGroupId,
                     columnCount,
                     descriptor.getColumnNamesPtr(),
-                    descriptor.getColumnNamesSize(),
-                    descriptor.getColumnNameLengthsPtr(),
-                    descriptor.getColumnTypesPtr(),
-                    descriptor.getColumnIdsPtr(),
-                    descriptor.getColumnTopsPtr(),
-                    descriptor.getColumnAddressesPtr(),
-                    descriptor.getColumnSizesPtr(),
-                    descriptor.getColumnSecondaryAddressesPtr(),
-                    descriptor.getColumnSecondarySizesPtr(),
-                    descriptor.getSymbolOffsetsAddressesPtr(),
-                    descriptor.getSymbolOffsetsSizesPtr(),
+                    descriptor.getColumnNamesLen(),
+                    descriptor.getColumnDataPtr(),
+                    descriptor.getColumnDataLen(),
                     rowCount
             );
         } catch (Throwable th) {
@@ -128,17 +118,9 @@ public class PartitionUpdater implements QuietCloseable {
             short rowGroupId,
             int columnCount,
             long columnNamesPtr,
-            int columnNamesLength,
-            long columnNameLengthsPtr,
-            long columnTypesPtr,
-            long columnIdsPtr,
-            long columnTopsPtr,
-            long columnAddrsPtr,
-            long columnSizesPtr,
-            long columnSecondaryAddrsPtr,
-            long columnSecondarySizesPtr,
-            long symbolOffsetsAddrsPtr,
-            long symbolOffsetsSizesPtr,
+            int columnNamesSize,
+            long columnDataPtr,
+            long columnDataSize,
             long rowCount
     );
 

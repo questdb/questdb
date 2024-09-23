@@ -1165,32 +1165,32 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getPartitionEncoderVersion() {
+    public int getPartitionEncoderParquetVersion() {
         return ParquetVersion.PARQUET_VERSION_V1;
     }
 
     @Override
-    public boolean isPartitionEncoderStatisticsEnabled() {
+    public boolean isPartitionEncoderParquetStatisticsEnabled() {
         return true;
     }
 
     @Override
-    public int getPartitionEncoderCompressionCodec() {
+    public int getPartitionEncoderParquetCompressionCodec() {
         return ParquetCompression.COMPRESSION_UNCOMPRESSED;
     }
 
     @Override
-    public int getPartitionEncoderCompressionLevel() {
+    public int getPartitionEncoderParquetCompressionLevel() {
         return 0;
     }
 
     @Override
-    public int getPartitionEncoderRowGroupSize() {
+    public int getPartitionEncoderParquetRowGroupSize() {
         return 0; // use default (512*512) rows
     }
 
     @Override
-    public int getPartitionEncoderDataPageSize() {
+    public int getPartitionEncoderParquetDataPageSize() {
         return 0; // use default (1024*1024) bytes
     }
 }

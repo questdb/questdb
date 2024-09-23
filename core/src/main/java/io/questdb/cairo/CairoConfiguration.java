@@ -629,15 +629,15 @@ public interface CairoConfiguration {
 
     boolean useFastAsOfJoin();
 
-    int getPartitionEncoderVersion();
+    int getPartitionEncoderParquetVersion();
 
-    boolean isPartitionEncoderStatisticsEnabled();
+    boolean isPartitionEncoderParquetStatisticsEnabled();
 
-    int getPartitionEncoderCompressionCodec();
+    int getPartitionEncoderParquetCompressionCodec();
 
-    int getPartitionEncoderCompressionLevel();
+    int getPartitionEncoderParquetCompressionLevel();
 
-    int getPartitionEncoderRowGroupSize();
+    int getPartitionEncoderParquetRowGroupSize();
 
-    int getPartitionEncoderDataPageSize();
+    int getPartitionEncoderParquetDataPageSize();
 }

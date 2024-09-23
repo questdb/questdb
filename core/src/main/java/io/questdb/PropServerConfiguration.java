@@ -240,12 +240,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean o3QuickSortEnabled;
     private final int parallelIndexThreshold;
     private final boolean parallelIndexingEnabled;
-    private final boolean partitionEncoderStatisticsEnabled;
-    private final int partitionEncoderVersion;
-    private final int partitionEncoderCompressionCodec;
-    private final int partitionEncoderCompressionLevel;
-    private final int partitionEncoderRowGroupSize;
-    private final int partitionEncoderDataPageSize;
+    private final boolean partitionEncoderParquetStatisticsEnabled;
+    private final int partitionEncoderParquetVersion;
+    private final int partitionEncoderParquetCompressionCodec;
+    private final int partitionEncoderParquetCompressionLevel;
+    private final int partitionEncoderParqeutRowGroupSize;
+    private final int partitionEncoderParquetDataPageSize;
     private final boolean pgEnabled;
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final String posthogApiKey;
@@ -1380,12 +1380,12 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.posthogApiKey = getString(properties, env, PropertyKey.POSTHOG_API_KEY, null);
         this.configReloadEnabled = getBoolean(properties, env, PropertyKey.CONFIG_RELOAD_ENABLED, true);
 
-        this.partitionEncoderVersion = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_VERSION, ParquetVersion.PARQUET_VERSION_V1);
-        this.partitionEncoderStatisticsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_STATISTICS_ENABLED, true);
-        this.partitionEncoderCompressionCodec = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_COMPRESSION_CODEC, ParquetCompression.COMPRESSION_UNCOMPRESSED);
-        this.partitionEncoderCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_COMPRESSION_LEVEL, 0);
-        this.partitionEncoderRowGroupSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_ROW_GROUP_SIZE, 0);
-        this.partitionEncoderDataPageSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_DATA_PAGE_SIZE, 0);
+        this.partitionEncoderParquetVersion = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_VERSION, ParquetVersion.PARQUET_VERSION_V1);
+        this.partitionEncoderParquetStatisticsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, true);
+        this.partitionEncoderParquetCompressionCodec = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, ParquetCompression.COMPRESSION_UNCOMPRESSED);
+        this.partitionEncoderParquetCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, 0);
+        this.partitionEncoderParqeutRowGroupSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 0);
+        this.partitionEncoderParquetDataPageSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 0);
     }
 
     public static String rootSubdir(CharSequence dbRoot, CharSequence subdir) {
@@ -3154,33 +3154,33 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getPartitionEncoderVersion() {
-            return partitionEncoderVersion;
+        public int getPartitionEncoderParquetVersion() {
+            return partitionEncoderParquetVersion;
         }
 
         @Override
-        public boolean isPartitionEncoderStatisticsEnabled() {
-            return partitionEncoderStatisticsEnabled;
+        public boolean isPartitionEncoderParquetStatisticsEnabled() {
+            return partitionEncoderParquetStatisticsEnabled;
         }
 
         @Override
-        public int getPartitionEncoderCompressionCodec() {
-            return partitionEncoderCompressionCodec;
+        public int getPartitionEncoderParquetCompressionCodec() {
+            return partitionEncoderParquetCompressionCodec;
         }
 
         @Override
-        public int getPartitionEncoderCompressionLevel() {
-            return partitionEncoderCompressionLevel;
+        public int getPartitionEncoderParquetCompressionLevel() {
+            return partitionEncoderParquetCompressionLevel;
         }
 
         @Override
-        public int getPartitionEncoderRowGroupSize() {
-            return partitionEncoderRowGroupSize;
+        public int getPartitionEncoderParquetRowGroupSize() {
+            return partitionEncoderParqeutRowGroupSize;
         }
 
         @Override
-        public int getPartitionEncoderDataPageSize() {
-            return partitionEncoderDataPageSize;
+        public int getPartitionEncoderParquetDataPageSize() {
+            return partitionEncoderParquetDataPageSize;
         }
     }
 

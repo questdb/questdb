@@ -484,12 +484,12 @@ public enum PropertyKey implements ConfigPropertyKey {
     POSTHOG_API_KEY("posthog.api.key"),
     POSTHOG_ENABLED("posthog.enabled"),
     LOG_SQL_QUERY_PROGRESS_EXE("log.sql.query.progress.exe"),
-    CAIRO_PARTITION_ENCODER_VERSION("cairo.partition.encoder.version"),
-    CAIRO_PARTITION_ENCODER_STATISTICS_ENABLED("cairo.partition.encoder.statistics.enabled"),
-    CAIRO_PARTITION_ENCODER_COMPRESSION_CODEC("cairo.partition.encoder.compression.codec"),
-    CAIRO_PARTITION_ENCODER_COMPRESSION_LEVEL("cairo.partition.encoder.compression.level"),
-    CAIRO_PARTITION_ENCODER_ROW_GROUP_SIZE("cairo.partition.encoder.row.group.size"),
-    CAIRO_PARTITION_ENCODER_DATA_PAGE_SIZE("cairo.partition.encoder.data.page.size");
+    CAIRO_PARTITION_ENCODER_PARQUET_VERSION("cairo.partition.encoder.parquet.version"),
+    CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED("cairo.partition.encoder.parquet.statistics.enabled"),
+    CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC("cairo.partition.encoder.parquet.compression.codec"),
+    CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL("cairo.partition.encoder.parquet.compression.level"),
+    CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE("cairo.partition.encoder.parquet.row.group.size"),
+    CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE("cairo.partition.encoder.parquet.data.page.size");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

@@ -87,12 +87,12 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
-    public int getPartitionEncoderRowGroupSize() {
+    public int getPartitionEncoderParquetRowGroupSize() {
         return 1000;
     }
 
     @Override
-    public int getPartitionEncoderDataPageSize() {
+    public int getPartitionEncoderParquetDataPageSize() {
         return 1024; // 1KB
     }
 }
