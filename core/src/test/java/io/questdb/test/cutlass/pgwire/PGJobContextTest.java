@@ -8805,6 +8805,10 @@ create table tab as (
     @Test
     public void testSingleInClauseNonDedicatedTimestamp() throws Exception {
         skipOnWalRun(); // non-partitioned table
+        // this test fails in simple mode for the new PG driver
+        // The driver use to send `timestamp in '2020'` and now it sends
+        // `timestamp in ('2020')`. We interpret the latter as "points" rather than intervals.
+        // The fix would be to treat `in ('2020') as interval list
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement(
                     "create table xts as (select timestamp_sequence(0, 3600L * 1000 * 1000) ts from long_sequence(" + count + "))")) {
