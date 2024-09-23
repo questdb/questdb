@@ -28,8 +28,10 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.InsertOperation;
-import io.questdb.griffin.SqlException;
-import io.questdb.std.*;
+import io.questdb.std.AbstractSelfReturningObject;
+import io.questdb.std.IntList;
+import io.questdb.std.Transient;
+import io.questdb.std.WeakSelfReturningObjectPool;
 
 public class TypesAndInsert extends AbstractSelfReturningObject<TypesAndInsert> implements TypeContainer {
     // Parameter types as received via "P" message. The client is liable to send
@@ -57,12 +59,6 @@ public class TypesAndInsert extends AbstractSelfReturningObject<TypesAndInsert> 
             pgParameterTypeOIDs.clear();
             bindVariableColumnTypes.clear();
             closing = false;
-        }
-    }
-
-    public void copyOutTypeDescriptionTypeOIDsTo(IntList outTypeDescriptionTypeOIDs) {
-        for (int i = 0, n = bindVariableColumnTypes.size(); i < n; i++) {
-            outTypeDescriptionTypeOIDs.add(Numbers.bswap(PGOids.getTypeOid(bindVariableColumnTypes.getQuick(i))));
         }
     }
 
@@ -116,10 +112,7 @@ public class TypesAndInsert extends AbstractSelfReturningObject<TypesAndInsert> 
         }
     }
 
-    static void defineBindVariables(IntList types, BindVariableService bindVariableService) throws SqlException {
-        for (int i = 0, n = types.size(); i < n; i++) {
-            bindVariableService.define(i, types.getQuick(i), 0);
-        }
+    public IntList getBindVariableColumnTypes() {
+        return bindVariableColumnTypes;
     }
-
 }

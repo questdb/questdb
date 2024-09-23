@@ -12466,7 +12466,7 @@ create table tab as (
     }
 
     @FunctionalInterface
-    interface ConnectionAwareRunnable {
+    public interface ConnectionAwareRunnable {
         void run(Connection connection, boolean binary, Mode mode, int port) throws Exception;
     }
 
