@@ -27,8 +27,14 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
@@ -43,6 +49,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.cairo.O3OpenColumnJob.*;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableWriter.*;
+import static io.questdb.std.Files.PAGE_SIZE;
 
 public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
@@ -50,6 +57,212 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     public O3PartitionJob(MessageBus messageBus) {
         super(messageBus.getO3PartitionQueue(), messageBus.getO3PartitionSubSeq());
+    }
+
+    public static void processParquetPartition(
+            Path pathToTable,
+            int partitionBy,
+            ReadOnlyObjList<? extends MemoryCR> oooColumns,
+            long srcOooLo,
+            long srcOooHi,
+            long partitionTimestamp,
+            long sortedTimestampsAddr,
+            TableWriter tableWriter,
+            long srcNameTxn,
+            long partitionUpdateSinkAddr,
+            long o3TimestampMin,
+            long newPartitionSize,
+            long oldPartitionSize
+    ) {
+
+        // Number of rows to insert from the O3 segment into this partition.
+        final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
+        final TableRecordMetadata tableWriterMetadata = tableWriter.getMetadata();
+        Path path = Path.getThreadLocal(pathToTable);
+        setParquetPartitionPath(path, partitionBy, partitionTimestamp, srcNameTxn);
+
+        final int columnCount = tableWriterMetadata.getColumnCount();
+
+        // dstColumnsMemory and partitionDescriptor are reused across all row groups.
+        ObjList<MemoryCARWImpl> dstColumnsMemory = new ObjList<>(2 * columnCount);
+        for (int i = 0, size = 2 * columnCount; i < size; i++) {
+            dstColumnsMemory.add(new MemoryCARWImpl(PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3));
+        }
+
+        final int partitionIndex = tableWriter.getPartitionIndexByTimestamp(partitionTimestamp);
+        final long partitionParquetFileSize = tableWriter.getPartitionParquetFileSize(partitionIndex);
+
+        CairoConfiguration cairoConfiguration = tableWriter.getConfiguration();
+        FilesFacade ff = tableWriter.getFilesFacade();
+        try (PartitionDecoder partitionDecoder = new PartitionDecoder(ff);
+             PartitionUpdater partitionUpdater = new PartitionUpdater(ff);
+             PartitionDescriptor partitionDescriptor = new PartitionDescriptor()) {
+
+            partitionDecoder.of(path.$());
+
+            final int rowGroupCount = partitionDecoder.getMetadata().rowGroupCount();
+            final int timestampIndex = tableWriterMetadata.getTimestampIndex();
+            final int timestampColumnType = tableWriterMetadata.getColumnType(timestampIndex);
+            assert ColumnType.isTimestamp(timestampColumnType);
+
+            // for API completeness, we'll use the same configuration as the initial partition partitionDecoder.
+            final int compressionCodec = cairoConfiguration.getPartitionEncoderParquetCompressionCodec();
+            final int compressionLevel = cairoConfiguration.getPartitionEncoderParquetCompressionLevel();
+            final int rowGroupSize = cairoConfiguration.getPartitionEncoderParquetRowGroupSize();
+            final int dataPageSize = cairoConfiguration.getPartitionEncoderParquetDataPageSize();
+            final boolean statisticsEnabled = cairoConfiguration.isPartitionEncoderParquetStatisticsEnabled();
+
+            // partitionUpdater is the owner of the partitionDecoder descriptor
+            final long opts = cairoConfiguration.getWriterFileOpenOpts();
+            partitionUpdater.of(path.$(),
+                    opts,
+                    partitionParquetFileSize,
+                    timestampIndex,
+                    ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                    statisticsEnabled,
+                    rowGroupSize,
+                    dataPageSize
+            );
+
+            // The O3 range [srcOooLo, srcOooHi] has been split into intervals between row group minimums: [rowGroupN-1.min, rowGroupN.min].
+            // Each of these intervals is merged into the previous row group (rowGroupN-1).
+            //   +------+          <- rg0.min
+            //   | rg0  |  +-----+ <- srcOooLo
+            //   |      |  | OOO |
+            //   +------+  |     |
+            //             |     |
+            //   +------+  |     | <- rg1.min
+            //   | rg1  |  |     |
+            //   |      |  |     |
+            //   +------+  |     |
+            //             |     |
+            //   +------+  |     | <- rg2.min
+            //   | rg2  |  |     |
+            //   |      |  |     |
+            //   +------+  |     |
+            //             |     |
+            //             +-----+ <- srcOooHi
+
+            // on the first iteration, ooo range [srcOooLo, rg1.min]
+            // is merged into row group 0.
+            // on the second iteration, ooo range [rg1.min, rg2.min]
+            // is merged into row group 1.
+            // as a tail case, ooo range [rg2.min, srcOooHi]
+            // is merged into row group 2.
+
+            //   +------+          <- rg0.min
+            //   | rg0  |  +-----+ <- srcOooLo
+            //   |      |  | OOO |
+            //   +------+  |     |
+            //             +-----+
+            //   +------+         <- rg1.min
+            //   | rg1  |
+            //   |      |
+            //   +------+
+            //
+            //   +------+         <- rg2.min
+            //   | rg2  |
+            //   |      |
+            //   +------+
+            //
+            //   +------+         <- rg3.min
+            //   | rg3  |  +-----+ <- mergeRangeLo
+            //   |      |  | OOO |
+            //   +------+  |     |
+            //             |     |
+            //             +-----+ <- srcOooHi
+
+            // on the first iteration, ooo range [srcOooLo, rg1.min]
+            // is merged into row group 0.
+            // on the second iteration, ooo range [rg1.min, rg2.min]
+            // has no data, continue to the next row group.
+            // on the third iteration, ooo range [rg2.min, rg3.min]
+            // has no data, continue to the next row group.
+            // as a tail case, ooo range [mergeRangeLo, srcOooHi]
+            // is merged into row group 3.
+
+            long mergeRangeLo = srcOooLo;
+            for (int rowGroup = 1; rowGroup < rowGroupCount; rowGroup++) {
+                final long min = partitionDecoder.getColumnChunkMinTimestamp(rowGroup, timestampIndex);
+                final long mergeRangeHi = Vect.boundedBinarySearchIndexT(
+                        sortedTimestampsAddr,
+                        min,
+                        mergeRangeLo,
+                        srcOooHi,
+                        BinarySearch.SCAN_DOWN
+                );
+
+                // has no data to merge, continue to the next row group
+                if (mergeRangeHi < mergeRangeLo) {
+                    continue;
+                }
+
+                mergeRowGroup(
+                        partitionDescriptor,
+                        partitionUpdater,
+                        dstColumnsMemory,
+                        oooColumns,
+                        sortedTimestampsAddr,
+                        tableWriter,
+                        partitionDecoder,
+                        rowGroup - 1,
+                        timestampIndex,
+                        timestampColumnType,
+                        mergeRangeLo,
+                        mergeRangeHi,
+                        tableWriterMetadata,
+                        srcOooBatchRowSize
+                );
+                mergeRangeLo = mergeRangeHi + 1;
+            }
+
+            if (mergeRangeLo <= srcOooHi) {
+                // merge the tail [mergeRangeLo, srcOooHi] into the last row group
+                // this also handles the case where there is only a single row group
+                mergeRowGroup(
+                        partitionDescriptor,
+                        partitionUpdater,
+                        dstColumnsMemory,
+                        oooColumns,
+                        sortedTimestampsAddr,
+                        tableWriter,
+                        partitionDecoder,
+                        rowGroupCount - 1,
+                        timestampIndex,
+                        timestampColumnType,
+                        mergeRangeLo,
+                        srcOooHi,
+                        tableWriterMetadata,
+                        srcOooBatchRowSize
+                );
+            }
+        } catch (Throwable e) {
+            LOG.error().$("process partition error [table=").utf8(tableWriter.getTableToken().getTableName())
+                    .$(", e=").$(e)
+                    .I$();
+            // the file is re-opened here because PartitionUpdater owns the file descriptor.
+            final long fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
+            // truncate partition file to the previous uncorrupted size
+            if (!ff.truncate(fd, partitionParquetFileSize)) {
+                LOG.error().$("could not truncate partition file [path=").$(path).$(']').$();
+            }
+            ff.close(fd);
+            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
+        } finally {
+            final long fileSize = Files.length(path.$());
+            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
+            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
+            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize);
+            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, oldPartitionSize);
+            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, 1); // partitionMutates
+            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
+            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, fileSize); // update parquet partition file size
+
+            tableWriter.o3CountDownDoneLatch();
+            tableWriter.o3ClockDownPartitionUpdateCount();
+
+            Misc.freeObjListAndClear(dstColumnsMemory);
+        }
     }
 
     public static void processPartition(
@@ -74,7 +287,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             final long newPartitionSize,
             final long oldPartitionSize,
             long partitionUpdateSinkAddr,
-            long dedupColSinkAddr
+            long dedupColSinkAddr,
+            boolean isParquet
     ) {
         // is out of order data hitting the last partition?
         // if so we do not need to re-open files and write to existing file descriptors
@@ -82,6 +296,25 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long o3TimestampHi = getTimestampIndexValue(sortedTimestampsAddr, srcOooHi);
         final RecordMetadata metadata = tableWriter.getMetadata();
         final int timestampIndex = metadata.getTimestampIndex();
+        if (isParquet) {
+            processParquetPartition(
+                    pathToTable,
+                    partitionBy,
+                    oooColumns,
+                    srcOooLo,
+                    srcOooHi,
+                    partitionTimestamp,
+                    sortedTimestampsAddr,
+                    tableWriter,
+                    srcNameTxn,
+                    partitionUpdateSinkAddr,
+                    o3TimestampMin,
+                    newPartitionSize,
+                    oldPartitionSize
+            );
+            return;
+        }
+
         final Path path = Path.getThreadLocal(pathToTable);
 
         long srcTimestampFd = 0;
@@ -680,6 +913,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long oldPartitionSize = task.getOldPartitionSize();
         final long partitionUpdateSinkAddr = task.getPartitionUpdateSinkAddr();
         final long dedupColSinkAddr = task.getDedupColSinkAddr();
+        final boolean isParquet = task.isParquet();
 
         subSeq.done(cursor);
 
@@ -705,7 +939,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 newPartitionSize,
                 oldPartitionSize,
                 partitionUpdateSinkAddr,
-                dedupColSinkAddr
+                dedupColSinkAddr,
+                isParquet
         );
     }
 
@@ -967,6 +1202,179 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     ff.close(varFd);
                 }
             }
+        }
+    }
+
+    private static void mergeRowGroup(
+            PartitionDescriptor partitionDescriptor,
+            PartitionUpdater partitionUpdater,
+            ObjList<MemoryCARWImpl> dstColumnsMemory,
+            ReadOnlyObjList<? extends MemoryCR> oooColumns,
+            long sortedTimestampsAddr,
+            TableWriter tableWriter,
+            PartitionDecoder file,
+            int rowGroup,
+            int timestampIndex,
+            int timestampColumnType,
+            long mergeRangeLo,
+            long mergeRangeHi,
+            TableRecordMetadata tableWriterMetadata,
+            long srcOooBatchRowSize
+    ) {
+
+        long timestampChunkPtr = file.decodeColumnChunk(rowGroup, timestampIndex, timestampColumnType);
+        long timestampDataPtr = PartitionDecoder.getChunkDataPtr(timestampChunkPtr);
+        long rowGroupRowCount = PartitionDecoder.getRowGroupRowCount(timestampChunkPtr);
+
+        long mergeBatchRowCount = mergeRangeHi - mergeRangeLo + 1;
+        long mergeRowCount = mergeBatchRowCount + rowGroupRowCount;
+
+        final long timestampMergeIndexSize = mergeRowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
+        final long timestampMergeIndexAddr = createMergeIndex(
+                timestampDataPtr,
+                sortedTimestampsAddr,
+                0,
+                rowGroupRowCount - 1,
+                mergeRangeLo,
+                mergeRangeHi,
+                timestampMergeIndexSize
+        );
+
+        try {
+            partitionDescriptor.of(tableWriter.getTableToken().getTableName(), mergeRowCount, timestampIndex);
+
+            final int columnCount = tableWriterMetadata.getColumnCount();
+            for (int i = 0; i < columnCount; i++) {
+                int columnType = tableWriterMetadata.getColumnType(i);
+                final String columnName = tableWriterMetadata.getColumnName(i);
+                final int columnId = tableWriterMetadata.getColumnMetadata(i).getWriterIndex();
+
+                if (columnType < 0) {
+                    continue;
+                }
+
+                final boolean notTheTimestamp = i != timestampIndex;
+                final int columnOffset = getPrimaryColumnIndex(i);
+                final MemoryCR oooMem1 = oooColumns.getQuick(columnOffset);
+                final MemoryCR oooMem2 = oooColumns.getQuick(columnOffset + 1);
+
+                final long columnChunkPtr = notTheTimestamp ? file.decodeColumnChunk(rowGroup, i, columnType) : timestampChunkPtr;
+                final long columnDataPtr = PartitionDecoder.getChunkDataPtr(columnChunkPtr);
+                final long columnAuxPtr = PartitionDecoder.getChunkAuxPtr(columnChunkPtr);
+
+                if (ColumnType.isSymbol(columnType)) {
+
+                    final long srcOooFixAddr = oooMem1.addressOf(0);
+
+                    final MapWriter symbolMapWriter = tableWriter.getSymbolMapWriter(i);
+                    final MemoryR offsetsMem = symbolMapWriter.getSymbolOffsetsMemory();
+                    final MemoryR valuesMem = symbolMapWriter.getSymbolValuesMemory();
+
+                    final MemoryCARWImpl dstFixMem = dstColumnsMemory.getQuick(columnOffset);
+                    dstFixMem.clear();
+                    final MemoryCARWImpl dstVarMem = dstColumnsMemory.getQuick(columnOffset + 1);
+                    dstVarMem.clear();
+
+                    O3CopyJob.mergeSymbols(
+                            timestampMergeIndexAddr,
+                            mergeRowCount,
+                            columnAuxPtr,
+                            columnDataPtr,
+                            srcOooFixAddr,
+                            offsetsMem,
+                            valuesMem,
+                            dstFixMem,
+                            dstVarMem
+                    );
+
+                    partitionDescriptor.addColumn(
+                            columnName,
+                            ColumnType.VARCHAR,
+                            columnId,
+                            0,
+                            dstVarMem.addressOf(0),
+                            dstVarMem.getAppendOffset(),
+                            dstFixMem.addressOf(0),
+                            dstFixMem.getAppendOffset(),
+                            0,
+                            0
+                    );
+                } else if (ColumnType.isVarSize(columnType)) {
+                    final ColumnTypeDriver ctd = ColumnType.getDriver(columnType);
+                    final long srcOooFixAddr = oooMem2.addressOf(0);
+                    final long srcOooVarAddr = oooMem1.addressOf(0);
+
+                    long dstFixSize = ctd.auxRowsToBytes(srcOooBatchRowSize) + ctd.getAuxVectorSize(rowGroupRowCount);
+
+                    long dstVarSize = ctd.getDataVectorSize(srcOooFixAddr, mergeRangeLo, mergeRangeHi)
+                            + ctd.getDataVectorSizeAt(columnAuxPtr, rowGroupRowCount - 1);
+
+                    final MemoryCARWImpl dstFixMem = dstColumnsMemory.getQuick(columnOffset);
+                    dstFixMem.extend(dstFixSize);
+                    final MemoryCARWImpl dstVarMem = dstColumnsMemory.getQuick(columnOffset + 1);
+                    dstVarMem.extend(dstVarSize);
+
+                    O3CopyJob.mergeCopy(
+                            columnType,
+                            timestampMergeIndexAddr,
+                            mergeRowCount,
+                            columnAuxPtr,
+                            columnDataPtr,
+                            srcOooFixAddr,
+                            srcOooVarAddr,
+                            dstFixMem.addressOf(0),
+                            dstVarMem.addressOf(0),
+                            0
+                    );
+
+                    partitionDescriptor.addColumn(
+                            columnName,
+                            columnType,
+                            columnId,
+                            0,
+                            dstVarMem.addressOf(0),
+                            dstVarSize,
+                            dstFixMem.addressOf(0),
+                            dstFixSize,
+                            0,
+                            0
+                    );
+                } else {
+                    final long srcOooFixAddr = oooMem1.addressOf(0);
+                    long dstFixSize = mergeRowCount * ColumnType.sizeOf(columnType);
+                    final MemoryCARWImpl dstFixMem = dstColumnsMemory.getQuick(columnOffset);
+                    dstFixMem.extend(dstFixSize);
+
+                    // Merge column data
+                    O3CopyJob.mergeCopy(
+                            notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
+                            timestampMergeIndexAddr,
+                            mergeRowCount,
+                            columnDataPtr,
+                            0,
+                            srcOooFixAddr,
+                            0,
+                            dstFixMem.addressOf(0),
+                            0,
+                            0
+                    );
+                    partitionDescriptor.addColumn(
+                            columnName,
+                            columnType,
+                            columnId,
+                            0,
+                            dstFixMem.addressOf(0),
+                            dstFixSize,
+                            0,
+                            0,
+                            0,
+                            0
+                    );
+                }
+            }
+            partitionUpdater.updateRowGroup((short) rowGroup, partitionDescriptor);
+        } finally {
+            Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
         }
     }
 

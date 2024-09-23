@@ -293,6 +293,12 @@ public class AbstractO3Test extends AbstractTest {
 
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
                     @Override
+                    public CharSequence getSqlCopyInputRoot() {
+                        // reuse root as input root for tests
+                        return root;
+                    }
+
+                    @Override
                     public boolean disableColumnPurgeJob() {
                         return false;
                     }
@@ -341,6 +347,11 @@ public class AbstractO3Test extends AbstractTest {
             } else {
                 // we need to create entire engine
                 final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                    @Override
+                    public CharSequence getSqlCopyInputRoot() {
+                        return root;
+                    }
+
                     @Override
                     public boolean disableColumnPurgeJob() {
                         return false;
