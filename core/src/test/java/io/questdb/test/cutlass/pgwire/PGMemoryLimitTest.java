@@ -53,6 +53,7 @@ public class PGMemoryLimitTest extends BasePGTest {
 
     @Test
     public void testUpdateRecoversFromOomError() throws Exception {
+//        @Ignore
         Assume.assumeTrue(testParamLegacyMode);
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement stat = connection.createStatement()) {

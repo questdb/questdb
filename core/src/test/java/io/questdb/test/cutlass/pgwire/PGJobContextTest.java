@@ -165,7 +165,7 @@ public class PGJobContextTest extends BasePGTest {
         return Arrays.asList(new Object[][]{
                 {WalMode.WITH_WAL, LegacyMode.MODERN},
                 {WalMode.WITH_WAL, LegacyMode.LEGACY},
-                // Some tests randomly block in NO_WAL, MODERN case
+//                 @Ignore("Some tests randomly block")
 //                {WalMode.NO_WAL, LegacyMode.MODERN},
                 {WalMode.NO_WAL, LegacyMode.LEGACY},
         });
@@ -2163,12 +2163,14 @@ if __name__ == "__main__":
 
     @Test
     public void testBindVariablesWithNonIndexedSymbolInFilterBinaryTransfer() throws Exception {
+//        @Ignore("ERROR: bind variable at 0 is defined as unknown and cannot accept STRING")
         Assume.assumeFalse(testParamLegacyMode);
         testBindVariablesWithIndexedSymbolInFilter(true, false);
     }
 
     @Test
     public void testBindVariablesWithNonIndexedSymbolInFilterStringTransfer() throws Exception {
+//        @Ignore("ERROR: bind variable at 0 is defined as unknown and cannot accept STRING")
         Assume.assumeFalse(testParamLegacyMode);
         testBindVariablesWithIndexedSymbolInFilter(false, false);
     }
@@ -2781,7 +2783,7 @@ if __name__ == "__main__":
 
     @Test
     public void testCursorFetch() throws Exception {
-        // This test doesn't use partitioned tables.
+        // @Ignore("This test doesn't use partitioned tables.")
         Assume.assumeFalse(walEnabled);
 
         assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
@@ -2959,7 +2961,7 @@ if __name__ == "__main__":
     @Test
     @Ignore("TODO PGWire 2.0")
     public void testExecuteAndCancelSqlCommands() throws Exception {
-        // test covers all table types on its own
+        // @Ignore("test covers all table types on its own")
         Assume.assumeTrue(walEnabled);
 
         final long TIMEOUT = 240_000;
@@ -6375,7 +6377,7 @@ nodejs code:
 
     @Test
     public void testPrepareInsertAsSelect() throws Exception {
-        // This test doesn't use partitioned tables.
+        // @Ignore("This test doesn't use partitioned tables.")
         Assume.assumeFalse(walEnabled);
 
         assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
@@ -7101,6 +7103,7 @@ nodejs code:
 
     @Test
     public void testQueryAgainstIndexedSymbol() throws Exception {
+//        @Ignore("ERROR: bind variable at 0 is defined as unknown and cannot accept STRING")
         Assume.assumeFalse(testParamLegacyMode);
         final String[] values = {"'5'", "null", "'5' || ''", "replace(null, 'A', 'A')", "?5", "?null"};
         final CharSequenceObjHashMap<String> valMap = new CharSequenceObjHashMap<>();
@@ -7270,7 +7273,7 @@ nodejs code:
     @Test
     @Ignore("TODO PGWire 2.0")
     public void testQueryEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
-        // This test doesn't use tables.
+        // @Ignore("This test doesn't use tables.")
         Assume.assumeFalse(walEnabled);
 
         assertMemoryLeak(() -> {
@@ -7306,7 +7309,7 @@ nodejs code:
     @Test
     @Ignore("TODO PGWire 2.0")
     public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredAfterDelay() throws Exception {
-        // This test doesn't use tables.
+        // @Ignore("This test doesn't use tables.")
         Assume.assumeFalse(walEnabled);
 
         assertMemoryLeak(() -> {
@@ -7366,7 +7369,7 @@ nodejs code:
     @Test
     @Ignore("TODO PGWire 2.0")
     public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
-        // This test doesn't use tables.
+        // @Ignore("This test doesn't use tables.")
         Assume.assumeFalse(walEnabled);
 
         assertMemoryLeak(() -> {
@@ -7405,7 +7408,7 @@ nodejs code:
     @Test
     @Ignore("TODO PGWire 2.0")
     public void testQueryEventuallySucceedsOnDataUnavailableSmallSendBuffer() throws Exception {
-        // This test doesn't use tables.
+        // @Ignore("This test doesn't use tables.")
         Assume.assumeFalse(walEnabled);
 
         assertMemoryLeak(() -> {
@@ -9064,46 +9067,6 @@ create table tab as (
     }
 
     @Test
-    @Ignore("this is where we execute cached SQL against changed table")
-    public void testTableSchemaChangeExtended() throws Exception {
-        skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
-            connection.prepareStatement(
-                    "create table x as (select 2 id, 'foobar' str, timestamp_sequence(1,10000) as ts from long_sequence(1))"
-            ).execute();
-
-            try (PreparedStatement ps = connection.prepareStatement("x")) {
-                try (ResultSet resultSet = ps.executeQuery()) {
-                    sink.clear();
-                    assertResultSet(
-                            "id[INTEGER],str[VARCHAR],ts[TIMESTAMP]\n" +
-                                    "2,foobar,1970-01-01 00:00:00.000001\n",
-                            sink,
-                            resultSet
-                    );
-                }
-
-                connection.prepareStatement("alter table x drop column str;").execute();
-
-                drainWalQueue();
-
-                // Query the data once again - this time the schema is different,
-                // so the query should get recompiled.
-                // !!! The bug is here
-                try (ResultSet resultSet = ps.executeQuery()) {
-                    sink.clear();
-                    assertResultSet(
-                            "id[INTEGER],ts[TIMESTAMP]\n" +
-                                    "2,1970-01-01 00:00:00.000001\n",
-                            sink,
-                            resultSet
-                    );
-                }
-            }
-        });
-    }
-
-    @Test
     public void testSmallSendBufferForRowDescription() throws Exception {
         assertMemoryLeak(() -> {
 
@@ -9354,6 +9317,46 @@ create table tab as (
                 } catch (SQLException e) {
                     TestUtils.assertContains(e.getMessage(), "Invalid column: x2");
                     TestUtils.assertEquals("00000", e.getSQLState());
+                }
+            }
+        });
+    }
+
+    @Test
+    @Ignore("this is where we execute cached SQL against changed table")
+    public void testTableSchemaChangeExtended() throws Exception {
+        skipOnWalRun(); // non-partitioned table
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+            connection.prepareStatement(
+                    "create table x as (select 2 id, 'foobar' str, timestamp_sequence(1,10000) as ts from long_sequence(1))"
+            ).execute();
+
+            try (PreparedStatement ps = connection.prepareStatement("x")) {
+                try (ResultSet resultSet = ps.executeQuery()) {
+                    sink.clear();
+                    assertResultSet(
+                            "id[INTEGER],str[VARCHAR],ts[TIMESTAMP]\n" +
+                                    "2,foobar,1970-01-01 00:00:00.000001\n",
+                            sink,
+                            resultSet
+                    );
+                }
+
+                connection.prepareStatement("alter table x drop column str;").execute();
+
+                drainWalQueue();
+
+                // Query the data once again - this time the schema is different,
+                // so the query should get recompiled.
+                // !!! The bug is here
+                try (ResultSet resultSet = ps.executeQuery()) {
+                    sink.clear();
+                    assertResultSet(
+                            "id[INTEGER],ts[TIMESTAMP]\n" +
+                                    "2,1970-01-01 00:00:00.000001\n",
+                            sink,
+                            resultSet
+                    );
                 }
             }
         });
@@ -9640,6 +9643,7 @@ create table tab as (
 
     @Test
     public void testUndefinedBindVariableInSymbol() throws Exception {
+//        @Ignore("ERROR: bind variable at 0 is defined as unknown and cannot accept STRING")
         Assume.assumeFalse(testParamLegacyMode);
         final String[] values = {"'5'", "null", "'5' || ''", "replace(null, 'A', 'A')", "?5", "?null"};
         final CharSequenceObjHashMap<String> valMap = new CharSequenceObjHashMap<>();

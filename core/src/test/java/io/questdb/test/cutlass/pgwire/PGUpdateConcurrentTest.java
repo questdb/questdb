@@ -83,60 +83,70 @@ public class PGUpdateConcurrentTest extends BasePGTest {
 
     @Test
     public void testConcurrencyMultipleWriterMultipleReaderMultiPartitioned() throws Exception {
+//        @Ignore
         Assume.assumeTrue(testParamLegacyMode);
         testConcurrency(4, 10, 8, PartitionMode.MULTIPLE);
     }
 
     @Test
     public void testConcurrencyMultipleWriterMultipleReaderNonPartitioned() throws Exception {
+//        @Ignore
         Assume.assumeTrue(testParamLegacyMode);
         testConcurrency(4, 10, 8, PartitionMode.NONE);
     }
 
     @Test
     public void testConcurrencyMultipleWriterMultipleReaderSinglePartitioned() throws Exception {
+//        @Ignore
         Assume.assumeTrue(testParamLegacyMode);
         testConcurrency(4, 10, 8, PartitionMode.SINGLE);
     }
 
     @Test
     public void testConcurrencySingleWriterMultipleReaderMultiPartitioned() throws Exception {
+//        @Ignore
         Assume.assumeTrue(testParamLegacyMode);
         testConcurrency(1, 10, 25, PartitionMode.MULTIPLE);
     }
 
     @Test
     public void testConcurrencySingleWriterMultipleReaderNonPartitioned() throws Exception {
+//        @Ignore
         Assume.assumeTrue(testParamLegacyMode);
         testConcurrency(1, 10, 40, PartitionMode.NONE);
     }
 
     @Test
     public void testConcurrencySingleWriterMultipleReaderSinglePartitioned() throws Exception {
+//        @Ignore
         Assume.assumeTrue(testParamLegacyMode);
         testConcurrency(1, 10, 40, PartitionMode.SINGLE);
     }
 
     @Test
     public void testConcurrencySingleWriterSingleReaderMultiPartitioned() throws Exception {
+//        @Ignore
         Assume.assumeTrue(testParamLegacyMode);
         testConcurrency(1, 1, 30, PartitionMode.MULTIPLE);
     }
 
     @Test
     public void testConcurrencySingleWriterSingleReaderNonPartitioned() throws Exception {
+//        @Ignore
         Assume.assumeTrue(testParamLegacyMode);
         testConcurrency(1, 1, 50, PartitionMode.NONE);
     }
 
     @Test
     public void testConcurrencySingleWriterSingleReaderSinglePartitioned() throws Exception {
+//        @Ignore
         Assume.assumeTrue(testParamLegacyMode);
         testConcurrency(1, 1, 50, PartitionMode.SINGLE);
     }
 
     @Test
     public void testUpdateTimeout() throws Exception {
+//        @Ignore
         Assume.assumeTrue(testParamLegacyMode);
         assertMemoryLeak(() -> {
             try (

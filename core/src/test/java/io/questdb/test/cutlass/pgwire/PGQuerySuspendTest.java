@@ -71,7 +71,7 @@ public class PGQuerySuspendTest extends BasePGTest {
 
     @Test
     public void testAllCases() throws Exception {
-        // Modern code blocks on this test
+        // @Ignore("Modern code blocks on this test")
         Assume.assumeTrue(testParamLegacyMode);
         assertMemoryLeak(() -> {
             try (
