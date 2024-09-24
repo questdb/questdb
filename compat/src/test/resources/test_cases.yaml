@@ -1,0 +1,62 @@
+variables:
+  table_name: "sensor_data"
+
+tests:
+  - name: Insert and Select Test
+    description: Test inserting and selecting data.
+    prepare:
+      - action: execute
+        query: "CREATE TABLE IF NOT EXISTS ${table_name} (id INT, temperature DOUBLE, timestamp TIMESTAMP);"
+    steps:
+      - loop:
+          range:
+            start: 1
+            end: 5
+          as: id
+          steps:
+            - action: execute
+              query: "INSERT INTO ${table_name} (id, temperature, timestamp) VALUES ($[1], $[2], $[3]);"
+              parameters:
+                - "${id}"
+                - "${id}.5"
+                - "2023-10-01 10:00:00"
+              expect:
+                result: "INSERT 0 1"
+      - action: query
+        query: "SELECT 1, COUNT(*) FROM ${table_name};"
+        expect:
+          result:
+            - [ 1, 5 ]
+      - action: query all rows
+        query: "SELECT id, temperature, timestamp::varchar FROM ${table_name};"
+        expect:
+          result:
+            - [ 1, 1.5, "2023-10-01T10:00:00.000000Z" ]
+            - [ 2, 2.5, "2023-10-01T10:00:00.000000Z" ]
+            - [ 3, 3.5, "2023-10-01T10:00:00.000000Z" ]
+            - [ 4, 4.5, "2023-10-01T10:00:00.000000Z" ]
+            - [ 5, 5.5, "2023-10-01T10:00:00.000000Z" ]
+      - action: truncate table
+        query: "truncate table ${table_name};"
+        expect:
+          result: "OK"
+      - action: query truncated table
+        query: "SELECT COUNT(*) FROM ${table_name};"
+        expect:
+          result:
+            - [ 0 ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS ${table_name};"
+  - name: Smoke Test
+    description: Testing another test-case inside the same file
+    steps:
+      - action: query truncated table
+        query: "SELECT x FROM long_sequence(5)"
+        expect:
+          result:
+            - [ 1 ]
+            - [ 2 ]
+            - [ 3 ]
+            - [ 4 ]
+            - [ 5 ]

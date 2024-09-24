@@ -1,0 +1,36 @@
+name: PGWire
+
+on:
+  pull_request:
+    types: [ synchronize, opened, reopened, edited ]
+
+jobs:
+  build:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }} # Only run on non-forked PRs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@master
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'maven'
+      - name: Build distribution
+        run: mvn -B clean install -DskipTests -Pbuild-binaries
+      - name: Unpack distribution
+        run: tar -xzf core/target/questdb-*.tar.gz
+      - name: Start QuestDB
+        run: ./questdb-*bin/questdb.sh start
+      - name: Install Python environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-pip
+          pip3 install --user -r compat/src/test/python/requirements.txt
+      - name: Run tests
+        run: |
+          python3 compat/src/test/python/runner.py compat/src/test/resources/test_cases.yaml
+      - name: Stop QuestDB
+        run: ./questdb-*bin/questdb.sh stop
+
+        
+
