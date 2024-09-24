@@ -32,8 +32,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cutlass.pgwire.DefaultCircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.IPGWireServer;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.log.Log;
@@ -2181,7 +2181,7 @@ if __name__ == "__main__":
 
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(configuration);
+                    final IPGWireServer server = createPGServer(configuration);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -2236,7 +2236,7 @@ if __name__ == "__main__":
         skipOnWalRun(); // non-partitioned
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -2275,7 +2275,7 @@ if __name__ == "__main__":
             final CountDownLatch endLatch = new CountDownLatch(THREADS);
 
             try (
-                    final PGWireServer server = createPGServer(4, Long.MAX_VALUE, 6);
+                    final IPGWireServer server = createPGServer(4, Long.MAX_VALUE, 6);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -2332,7 +2332,7 @@ if __name__ == "__main__":
             mayDrainWalQueue();
 
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -2622,7 +2622,7 @@ if __name__ == "__main__":
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(2, 60);
+                    final IPGWireServer server = createPGServer(2, 60);
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -2652,7 +2652,7 @@ if __name__ == "__main__":
     @Ignore
     public void testCopyIn() throws SQLException, SqlException {
         try (
-                final PGWireServer server = createPGServer(2);
+                final IPGWireServer server = createPGServer(2);
                 final WorkerPool workerPool = server.getWorkerPool()
         ) {
             workerPool.start(LOG);
@@ -2845,7 +2845,7 @@ if __name__ == "__main__":
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(2, 60);
+                    final IPGWireServer server = createPGServer(2, 60);
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -3633,7 +3633,7 @@ if __name__ == "__main__":
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -3971,7 +3971,7 @@ if __name__ == "__main__":
     public void testIndexedSymbolBindVariableNotEqualsSingleValueMultipleExecutions() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -4047,7 +4047,7 @@ if __name__ == "__main__":
     public void testIndexedSymbolBindVariableNotMultipleValuesMultipleExecutions() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -4118,7 +4118,7 @@ if __name__ == "__main__":
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -4226,7 +4226,7 @@ if __name__ == "__main__":
     public void testInsertBooleans() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(4);
+                    final IPGWireServer server = createPGServer(4);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -4323,7 +4323,7 @@ if __name__ == "__main__":
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -4374,7 +4374,7 @@ if __name__ == "__main__":
             String expectedAll = "count[BIGINT]\n" +
                     "10000\n";
             try (
-                    final PGWireServer server = createPGServer(3);
+                    final IPGWireServer server = createPGServer(3);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -4459,7 +4459,7 @@ if __name__ == "__main__":
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -4602,7 +4602,7 @@ nodejs code:
     public void testInsertPreparedRenameInsert() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -4683,7 +4683,7 @@ nodejs code:
                     "10\n";
 
             try (
-                    final PGWireServer server = createPGServer(3);
+                    final IPGWireServer server = createPGServer(3);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -4735,7 +4735,7 @@ nodejs code:
     public void testInsertTimestampWithTypeSuffix() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -4840,7 +4840,7 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -5124,7 +5124,7 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(4);
+                    final IPGWireServer server = createPGServer(4);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -5189,7 +5189,7 @@ nodejs code:
 
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(4);
+                    final IPGWireServer server = createPGServer(4);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -5298,7 +5298,7 @@ nodejs code:
             };
 
             try (
-                    final PGWireServer server = createPGServer(configuration);
+                    final IPGWireServer server = createPGServer(configuration);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -5420,7 +5420,7 @@ nodejs code:
             sendBufferSize = Math.max(sendBufferSize, 2048);
             recvBufferSize = Math.max(recvBufferSize, 5000);
             try (
-                    final PGWireServer server = createPGServer(4);
+                    final IPGWireServer server = createPGServer(4);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -5664,7 +5664,7 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -5687,7 +5687,7 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -5804,7 +5804,7 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -5854,7 +5854,7 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -5882,7 +5882,7 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -5924,7 +5924,7 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -5988,7 +5988,7 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -6106,7 +6106,7 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             recvBufferSize = 2048;
-            try (final PGWireServer server = createPGServer(1);
+            try (final IPGWireServer server = createPGServer(1);
                  final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -6172,7 +6172,7 @@ nodejs code:
                             ") timestamp (timestamp)"
             );
             try (
-                    final PGWireServer server = createPGServer(new Port0PGWireConfiguration());
+                    final IPGWireServer server = createPGServer(new Port0PGWireConfiguration());
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -6208,7 +6208,7 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -6243,7 +6243,7 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -6436,7 +6436,7 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -6566,7 +6566,7 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -6685,7 +6685,7 @@ nodejs code:
             };
 
             final WorkerPool workerPool = new TestWorkerPool(4, metrics);
-            try (final PGWireServer server = createPGWireServer(
+            try (final IPGWireServer server = createPGWireServer(
                     conf,
                     engine,
                     workerPool
@@ -6760,7 +6760,7 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -6790,7 +6790,7 @@ nodejs code:
         assertMemoryLeak(() -> {
             sendBufferSize = 1024;
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -6856,7 +6856,7 @@ nodejs code:
     public void testPreparedStatementWithBindVariablesOnDifferentConnection() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -6886,7 +6886,7 @@ nodejs code:
     public void testPreparedStatementWithBindVariablesSetWrongOnDifferentConnection() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -6950,7 +6950,7 @@ nodejs code:
     public void testPreparedStatementWithNowFunction() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -7273,7 +7273,7 @@ nodejs code:
 
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1, 100);
+                    final IPGWireServer server = createPGServer(1, 100);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -7309,7 +7309,7 @@ nodejs code:
 
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -7369,7 +7369,7 @@ nodejs code:
 
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -7430,7 +7430,7 @@ nodejs code:
             };
 
             try (
-                    PGWireServer server = createPGServer(configuration);
+                    IPGWireServer server = createPGServer(configuration);
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -7480,7 +7480,7 @@ nodejs code:
         assertMemoryLeak(() -> {
             ddl("create table tab as (select rnd_double() d from long_sequence(10000000))");
             try (
-                    final PGWireServer server = createPGServer(1, Timestamps.SECOND_MILLIS);
+                    final IPGWireServer server = createPGServer(1, Timestamps.SECOND_MILLIS);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -7505,7 +7505,7 @@ nodejs code:
         assertMemoryLeak(() -> {
             recvBufferSize = Math.max(2048, recvBufferSize);
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -7715,7 +7715,7 @@ nodejs code:
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -7768,7 +7768,7 @@ nodejs code:
     public void testRowLimitNotResumed() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -7786,7 +7786,7 @@ nodejs code:
             mayDrainWalQueue();
 
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -7898,7 +7898,7 @@ nodejs code:
             mayDrainWalQueue();
 
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -8023,7 +8023,7 @@ nodejs code:
             sink.clear();
             recvBufferSize = 2048;
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -8560,7 +8560,7 @@ create table tab as (
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -8913,7 +8913,7 @@ create table tab as (
                 }
             };
             try (
-                    final PGWireServer server = createPGServer(configuration);
+                    final IPGWireServer server = createPGServer(configuration);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -8946,7 +8946,7 @@ create table tab as (
                 }
             };
             try (
-                    final PGWireServer server = createPGServer(configuration);
+                    final IPGWireServer server = createPGServer(configuration);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -9016,7 +9016,7 @@ create table tab as (
             };
 
             try (
-                    PGWireServer server = createPGServer(configuration);
+                    IPGWireServer server = createPGServer(configuration);
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -9073,7 +9073,7 @@ create table tab as (
             };
 
             try (
-                    final PGWireServer server = createPGServer(configuration);
+                    final IPGWireServer server = createPGServer(configuration);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -9299,7 +9299,7 @@ create table tab as (
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(4);
+                    final IPGWireServer server = createPGServer(4);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -9365,7 +9365,7 @@ create table tab as (
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -9413,7 +9413,7 @@ create table tab as (
     public void testTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -9521,7 +9521,7 @@ create table tab as (
             assertEquals(202000000, expectedTs.getNanos());
 
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -9675,7 +9675,7 @@ create table tab as (
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -9711,7 +9711,7 @@ create table tab as (
     public void testUpdate() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -9824,7 +9824,7 @@ create table tab as (
     public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -9945,7 +9945,7 @@ create table tab as (
     public void testUpdateNoAutoCommit() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -10611,7 +10611,7 @@ create table tab as (
 
         assertMemoryLeak(() -> {
             try (
-                    PGWireServer server = createPGServer(configuration, true);
+                    IPGWireServer server = createPGServer(configuration, true);
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -10696,7 +10696,7 @@ create table tab as (
         }
     }
 
-    private PGWireServer createPGServer(SOCountDownLatch queryScheduledCount) {
+    private IPGWireServer createPGServer(SOCountDownLatch queryScheduledCount) {
         int workerCount = 2;
 
         final PGWireConfiguration conf = new Port0PGWireConfiguration() {
@@ -10776,7 +10776,7 @@ create table tab as (
             );
 
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -10888,7 +10888,7 @@ create table tab as (
         ) {
             pool.assign(engine.getEngineMaintenanceJob());
             try (
-                    PGWireServer server = createPGWireServer(
+                    IPGWireServer server = createPGWireServer(
                             conf,
                             engine,
                             pool,
@@ -10966,7 +10966,7 @@ create table tab as (
     private void testAllTypesSelect(boolean simple) throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -11068,7 +11068,7 @@ create table tab as (
                     ")"
             );
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 this.recvBufferSize = recvBufferSize;
@@ -11171,7 +11171,7 @@ create table tab as (
     private void testBindVariableIsNotNull(boolean binary) throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -11337,7 +11337,7 @@ create table tab as (
     private void testBindVariablesWithIndexedSymbolInFilter(boolean binary, boolean indexed) throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -11562,7 +11562,7 @@ create table tab as (
                 }
             };
             try (
-                    final PGWireServer server = createPGServer(configuration);
+                    final IPGWireServer server = createPGServer(configuration);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -11618,7 +11618,7 @@ create table tab as (
             // when executing 'E' (execute) postgres protocol command
             forceRecvFragmentationChunkSize = recvBufferSize;
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -11660,7 +11660,7 @@ create table tab as (
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
 
             ) {
@@ -11798,7 +11798,7 @@ create table tab as (
                     "89,2011-04-11 00:00:00.0,2011-04-11 14:40:55.087821,2011-04-11 14:40:55.087,2011-04-11 00:00:00.0,2011-04-11 14:40:55.087821\n";
 
             try (
-                    final PGWireServer server = createPGServer(4);
+                    final IPGWireServer server = createPGServer(4);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -11888,7 +11888,7 @@ create table tab as (
                     ")"
             );
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -12076,7 +12076,7 @@ create table tab as (
                     ")"
             );
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -12120,7 +12120,7 @@ create table tab as (
         // 4. attempt to insert a record (should fail)
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(2);
+                    final IPGWireServer server = createPGServer(2);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -12299,7 +12299,7 @@ create table tab as (
     private void testSemicolon(boolean simpleQueryMode) throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
-            try (final PGWireServer server = createPGServer(2);
+            try (final IPGWireServer server = createPGServer(2);
                  final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -12316,7 +12316,7 @@ create table tab as (
     private void testUpdateAsync(SOCountDownLatch queryScheduledCount, OnTickAction onTick, String expected) throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(queryScheduledCount);
+                    final IPGWireServer server = createPGServer(queryScheduledCount);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);

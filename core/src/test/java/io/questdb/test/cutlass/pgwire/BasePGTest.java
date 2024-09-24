@@ -111,7 +111,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
         assertResultSet(null, expected, sink, rs);
     }
 
-    public static PGWireServer createPGWireServer(
+    public static IPGWireServer createPGWireServer(
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
@@ -121,10 +121,10 @@ public abstract class BasePGTest extends AbstractCairoTest {
         if (!configuration.isEnabled()) {
             return null;
         }
-        return PGWireServer.newInstance(configuration, cairoEngine, workerPool, registry, executionContextObjectFactory);
+        return IPGWireServer.newInstance(configuration, cairoEngine, workerPool, registry, executionContextObjectFactory);
     }
 
-    public static PGWireServer createPGWireServer(
+    public static IPGWireServer createPGWireServer(
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPool workerPool,
@@ -137,7 +137,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
         CircuitBreakerRegistry registry = fixedClientIdAndSecret ? HexTestsCircuitBreakRegistry.INSTANCE :
                 new DefaultCircuitBreakerRegistry(configuration, cairoEngine.getConfiguration());
 
-        return PGWireServer.newInstance(
+        return IPGWireServer.newInstance(
                 configuration,
                 cairoEngine,
                 workerPool,
@@ -146,7 +146,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
         );
     }
 
-    public static PGWireServer createPGWireServer(
+    public static IPGWireServer createPGWireServer(
             PGWireConfiguration configuration,
             CairoEngine cairoEngine,
             WorkerPool workerPool
@@ -375,7 +375,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
         try {
             assertMemoryLeak(() -> {
                 try (
-                        final PGWireServer server = createPGServer(2, queryTimeout);
+                        final IPGWireServer server = createPGServer(2, queryTimeout);
                         WorkerPool workerPool = server.getWorkerPool()
                 ) {
                     workerPool.start(LOG);
@@ -451,11 +451,11 @@ public abstract class BasePGTest extends AbstractCairoTest {
         assertWithPgServer(bits, Long.MAX_VALUE, runnable);
     }
 
-    protected PGWireServer createPGServer(PGWireConfiguration configuration) throws SqlException {
+    protected IPGWireServer createPGServer(PGWireConfiguration configuration) throws SqlException {
         return createPGServer(configuration, false);
     }
 
-    protected PGWireServer createPGServer(PGWireConfiguration configuration, boolean fixedClientIdAndSecret) throws SqlException {
+    protected IPGWireServer createPGServer(PGWireConfiguration configuration, boolean fixedClientIdAndSecret) throws SqlException {
         TestWorkerPool workerPool = new TestWorkerPool(configuration.getWorkerCount(), metrics);
         copyRequestJob = new CopyRequestJob(engine, configuration.getWorkerCount());
 
@@ -470,15 +470,15 @@ public abstract class BasePGTest extends AbstractCairoTest {
         );
     }
 
-    protected PGWireServer createPGServer(int workerCount) throws SqlException {
+    protected IPGWireServer createPGServer(int workerCount) throws SqlException {
         return createPGServer(workerCount, Long.MAX_VALUE);
     }
 
-    protected PGWireServer createPGServer(int workerCount, long maxQueryTime) throws SqlException {
+    protected IPGWireServer createPGServer(int workerCount, long maxQueryTime) throws SqlException {
         return createPGServer(workerCount, maxQueryTime, -1);
     }
 
-    protected PGWireServer createPGServer(int workerCount, long maxQueryTime, int connectionLimit) throws SqlException {
+    protected IPGWireServer createPGServer(int workerCount, long maxQueryTime, int connectionLimit) throws SqlException {
 
         final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             @Override

@@ -27,8 +27,8 @@ package io.questdb.test.cutlass.pgwire;
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.cutlass.pgwire.IPGWireServer;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Os;
@@ -281,7 +281,7 @@ public class PGSecurityTest extends BasePGTest {
         // 2022-05-17T15:58:38.974236Z I i.q.c.p.PGConnectionContext property [name=user, value=database] <-- buggy pgwire parser overwrites username with out of thin air value
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -297,7 +297,7 @@ public class PGSecurityTest extends BasePGTest {
         assertMemoryLeak(() -> {
             ddl("create table src (ts TIMESTAMP)");
             try (
-                    final PGWireServer server = createPGServer(READ_ONLY_USER_CONF);
+                    final IPGWireServer server = createPGServer(READ_ONLY_USER_CONF);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -331,7 +331,7 @@ public class PGSecurityTest extends BasePGTest {
 
     private void executeWithPg(String query) throws Exception {
         try (
-                final PGWireServer server = createPGServer(READ_ONLY_CONF);
+                final IPGWireServer server = createPGServer(READ_ONLY_CONF);
                 final WorkerPool workerPool = server.getWorkerPool()
         ) {
             workerPool.start(LOG);

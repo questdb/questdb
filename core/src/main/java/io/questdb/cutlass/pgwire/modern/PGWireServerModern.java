@@ -31,8 +31,8 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.pgwire.BadProtocolException;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.IPGWireServer;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -45,7 +45,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.network.IODispatcher.*;
 
-public class PGWireServerModern implements PGWireServer {
+public class PGWireServerModern implements IPGWireServer {
     private static final Log LOG = LogFactory.getLog(PGWireServerModern.class);
     private static final NoOpAssociativeCache<TypesAndSelectModern> NO_OP_CACHE = new NoOpAssociativeCache<>();
     private final PGConnectionContextFactory contextFactory;

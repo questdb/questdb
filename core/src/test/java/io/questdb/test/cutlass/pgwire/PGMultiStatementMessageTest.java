@@ -26,7 +26,7 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.cutlass.pgwire.IPGWireServer;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.mp.WorkerPool;
@@ -340,7 +340,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     public void testCachedPgStatementReturnsDataUsingProperFormatOnRecompilation() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    PGWireServer server = createPGServer(2);
+                    IPGWireServer server = createPGServer(2);
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -375,7 +375,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     public void testCachedTextFormatPgStatementReturnsDataUsingBinaryFormatWhenClientRequestsIt() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    PGWireServer server = createPGServer(2);
+                    IPGWireServer server = createPGServer(2);
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -394,7 +394,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             }
 
             try (
-                    PGWireServer server = createPGServer(2);
+                    IPGWireServer server = createPGServer(2);
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -1109,7 +1109,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     public void testDifferentExtendedQueriesExecutedInExtendedModeDoNotSpillFormats() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    PGWireServer server = createPGServer(2);
+                    IPGWireServer server = createPGServer(2);
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -1128,7 +1128,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             }
 
             try (
-                    PGWireServer server = createPGServer(2);
+                    IPGWireServer server = createPGServer(2);
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -1297,7 +1297,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     public void testQueryExecutedInBatchModeDoesNotUseCachedStatementBinaryFormat() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    PGWireServer server = createPGServer(2);
+                    IPGWireServer server = createPGServer(2);
                     WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
@@ -1866,7 +1866,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     class PGTestSetup implements Closeable {
         final Connection connection;
-        final PGWireServer server;
+        final IPGWireServer server;
         final Statement statement;
 
         PGTestSetup(boolean useSimpleMode, long queryTimeout) throws SQLException, SqlException {

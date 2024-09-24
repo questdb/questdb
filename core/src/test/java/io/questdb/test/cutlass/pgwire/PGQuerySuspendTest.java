@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.pgwire;
 
-import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.cutlass.pgwire.IPGWireServer;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -75,7 +75,7 @@ public class PGQuerySuspendTest extends BasePGTest {
         Assume.assumeTrue(testParamLegacyMode);
         assertMemoryLeak(() -> {
             try (
-                    final PGWireServer server = createPGServer(1);
+                    final IPGWireServer server = createPGServer(1);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
