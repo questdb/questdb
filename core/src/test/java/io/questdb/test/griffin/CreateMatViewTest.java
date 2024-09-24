@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.mv.MaterializedViewDefinition;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
@@ -34,6 +35,7 @@ import io.questdb.std.str.Sinkable;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.text.ParseException;
@@ -46,6 +48,12 @@ public class CreateMatViewTest extends AbstractCairoTest {
     private static final String TABLE1 = "table1";
     private static final String TABLE2 = "table2";
     private static final String TABLE3 = "table3";
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        AbstractCairoTest.setUpStatic();
+    }
 
     @Before
     public void setUp() {
@@ -202,17 +210,50 @@ public class CreateMatViewTest extends AbstractCairoTest {
 
     @Test
     public void testCreateMatViewNonDeterministicFunction() throws Exception {
-        assertMemoryLeak(() -> {
-            createTable(TABLE1);
+        final String[][] functions = new String[][]{
+                {"sysdate()", "sysdate"},
+                {"systimestamp()", "systimestamp"},
+                {"today()", "today"},
+                {"yesterday()", "yesterday"},
+                {"tomorrow()", "tomorrow"},
+                {"rnd_bin()", "rnd_bin"},
+                {"rnd_bin(4,4,4)", "rnd_bin"},
+                {"rnd_byte()", "rnd_byte"},
+                {"rnd_byte(1,4)", "rnd_byte"},
+                {"rnd_boolean()", "rnd_boolean"},
+                {"rnd_char()", "rnd_char"},
+                {"rnd_date()", "rnd_date"},
+                {"rnd_date(1,4,5)", "rnd_date"},
+                {"rnd_double()", "rnd_double"},
+                {"rnd_double(5)", "rnd_double"},
+                {"rnd_float()", "rnd_float"},
+                {"rnd_float(5)", "rnd_float"},
+                {"rnd_int()", "rnd_int"},
+                {"rnd_int(1,4,5)", "rnd_int"},
+                {"rnd_short()", "rnd_short"},
+                {"rnd_short(1,5)", "rnd_short"},
+                {"rnd_long()", "rnd_long"},
+                {"rnd_long(1,4,5)", "rnd_long"},
+                {"rnd_long256()", "rnd_long256"},
+                {"rnd_long256(3)", "rnd_long256"},
+                {"rnd_ipv4()", "rnd_ipv4"},
+                {"rnd_ipv4('2.2.2.2/16', 2)", "rnd_ipv4"},
+                {"rnd_str(1,4,5)", "rnd_str"},
+                {"rnd_str(1,4,5,6)", "rnd_str"},
+                {"rnd_str('abc','def','hij')", "rnd_str"},
+                {"rnd_varchar(1,4,5)", "rnd_varchar"},
+                {"rnd_varchar('abc','def','hij')", "rnd_varchar"},
+                {"rnd_symbol(1,4,5,6)", "rnd_symbol"},
+                {"rnd_symbol('abc','def','hij')", "rnd_symbol"},
+                {"rnd_timestamp(to_timestamp('2024-03-01', 'yyyy-mm-dd'), to_timestamp('2024-04-01', 'yyyy-mm-dd'), 0)", "rnd_timestamp"},
+                {"rnd_uuid4()", "rnd_uuid4"},
+                {"rnd_uuid4(5)", "rnd_uuid4"},
+                {"rnd_geohash(5)", "rnd_geohash"}
+        };
 
-            try {
-                ddl("create materialized view test as (select ts, rnd_boolean(), avg(v) from " + TABLE1 + " sample by 30s) partition by month");
-                fail("Expected SqlException missing");
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Non-deterministic column: rnd_boolean");
-            }
-            assertNull(engine.getMaterializedViewGraph().getView("test"));
-        });
+        for (String[] func : functions) {
+            testCreateMatViewNonDeterministicFunction(func[0], func[1]);
+        }
     }
 
     @Test
@@ -461,7 +502,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     private void createTable(String tableName, boolean walEnabled) throws SqlException {
-        ddl("create table " + tableName + " (ts timestamp, k symbol, v long) timestamp(ts) partition by day" + (walEnabled ? "" : " bypass") + " wal");
+        ddl("create table if not exists " + tableName + " (ts timestamp, k symbol, v long) timestamp(ts) partition by day" + (walEnabled ? "" : " bypass") + " wal");
         for (int i = 0; i < 9; i++) {
             insert("insert into " + tableName + " values (" + (i * 10000000) + ", 'k" + i + "', " + i + ")");
         }
@@ -471,5 +512,19 @@ public class CreateMatViewTest extends AbstractCairoTest {
         final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
         sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
         return sdf.parse(date).getTime() * 1000;
+    }
+
+    private void testCreateMatViewNonDeterministicFunction(String func, String columnName) throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            try {
+                ddl("create materialized view test as (select ts, " + func + ", avg(v) from " + TABLE1 + " sample by 30s) partition by month");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Non-deterministic column: " + columnName);
+            }
+            assertNull(engine.getMaterializedViewGraph().getView("test"));
+        });
     }
 }

@@ -138,10 +138,6 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         return content;
     }
 
-    public int getLength() {
-        return _len;
-    }
-
     public int getPosition() {
         return _pos;
     }
