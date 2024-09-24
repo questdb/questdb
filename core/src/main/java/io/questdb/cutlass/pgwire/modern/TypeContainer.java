@@ -22,31 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire.legacy;
+package io.questdb.cutlass.pgwire.modern;
 
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.InsertOperation;
-import io.questdb.std.WeakSelfReturningObjectPool;
+import io.questdb.std.IntList;
 
-public class TypesAndInsertLegacy extends AbstractTypeContainerLegacy<TypesAndInsertLegacy> {
-    private boolean hasBindVariables;
-    private InsertOperation insert;
-
-    public TypesAndInsertLegacy(WeakSelfReturningObjectPool<TypesAndInsertLegacy> parentPool) {
-        super(parentPool);
-    }
-
-    public InsertOperation getInsert() {
-        return insert;
-    }
-
-    public boolean hasBindVariables() {
-        return hasBindVariables;
-    }
-
-    public void of(InsertOperation insert, BindVariableService bindVariableService) {
-        this.insert = insert;
-        copyTypesFrom(bindVariableService);
-        this.hasBindVariables = bindVariableService.getIndexedVariableCount() > 0;
-    }
+public interface TypeContainer {
+    IntList getPgParameterTypeOIDs();
 }

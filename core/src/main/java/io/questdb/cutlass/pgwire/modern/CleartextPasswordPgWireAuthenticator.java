@@ -22,9 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire.legacy;
+package io.questdb.cutlass.pgwire.modern;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
@@ -42,17 +43,15 @@ import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cairo.SecurityContext.AUTH_TYPE_CREDENTIALS;
-import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
-import static io.questdb.cutlass.pgwire.legacy.PGConnectionContextLegacy.dumpBuffer;
+import static io.questdb.cutlass.pgwire.modern.PGConnectionContext.dumpBuffer;
 
-public class CleartextPasswordPgWireAuthenticatorLegacy implements Authenticator {
+public class CleartextPasswordPgWireAuthenticator implements Authenticator {
     public static final char STATUS_IDLE = 'I';
     private static final int INIT_CANCEL_REQUEST = 80877102;
     private static final int INIT_GSS_REQUEST = 80877104;
     private static final int INIT_SSL_REQUEST = 80877103;
     private static final int INIT_STARTUP_MESSAGE = 196608;
-    private static final Log LOG = LogFactory.getLog(CleartextPasswordPgWireAuthenticatorLegacy.class);
+    private static final Log LOG = LogFactory.getLog(CleartextPasswordPgWireAuthenticator.class);
     private static final byte MESSAGE_TYPE_ERROR_RESPONSE = 'E';
     private static final byte MESSAGE_TYPE_LOGIN_RESPONSE = 'R';
     private static final byte MESSAGE_TYPE_PARAMETER_STATUS = 'S';
@@ -68,7 +67,6 @@ public class CleartextPasswordPgWireAuthenticatorLegacy implements Authenticator
     private final CircuitBreakerRegistry registry;
     private final String serverVersion;
     private final ResponseSink sink;
-    private byte authType = AUTH_TYPE_NONE;
     private UsernamePasswordMatcher matcher;
     private long recvBufEnd;
     private long recvBufReadPos;
@@ -82,7 +80,7 @@ public class CleartextPasswordPgWireAuthenticatorLegacy implements Authenticator
     private State state = State.EXPECT_INIT_MESSAGE;
     private CharSequence username;
 
-    public CleartextPasswordPgWireAuthenticatorLegacy(
+    public CleartextPasswordPgWireAuthenticator(
             PGWireConfiguration configuration,
             NetworkSqlExecutionCircuitBreaker circuitBreaker,
             CircuitBreakerRegistry registry,
@@ -107,8 +105,6 @@ public class CleartextPasswordPgWireAuthenticatorLegacy implements Authenticator
 
     @Override
     public void clear() {
-        authType = AUTH_TYPE_NONE;
-
         circuitBreaker.setSecret(-1);
         circuitBreaker.resetMaxTimeToDefault();
         circuitBreaker.unsetTimer();
@@ -132,7 +128,7 @@ public class CleartextPasswordPgWireAuthenticatorLegacy implements Authenticator
 
     @Override
     public byte getAuthType() {
-        return authType;
+        return SecurityContext.AUTH_TYPE_CREDENTIALS;
     }
 
     public CharSequence getPrincipal() {
@@ -281,8 +277,6 @@ public class CleartextPasswordPgWireAuthenticatorLegacy implements Authenticator
     private void prepareBackendKeyData(ResponseSink responseSink) {
         responseSink.put('K');
         responseSink.putInt(Integer.BYTES * 3); // length of this message
-
-        // the below 8 bytes will not match when dumping PG traffic!
         responseSink.putInt(circuitBreakerId);
         responseSink.putInt(circuitBreaker.getSecret());
     }
@@ -413,9 +407,8 @@ public class CleartextPasswordPgWireAuthenticatorLegacy implements Authenticator
         // at this point we have a full message available ready to be processed
         recvBufReadPos += 1 + Integer.BYTES; // first move beyond the msgType and msgLen
 
-        long hi = PGConnectionContextLegacy.getStringLength(recvBufReadPos, msgLimit, "bad password length");
-        authType = verifyPassword(username, recvBufReadPos, (int) (hi - recvBufReadPos));
-        if (authType != AUTH_TYPE_NONE) {
+        long hi = PGConnectionContext.getUtf8StrSize(recvBufReadPos, msgLimit, "bad password length", null);
+        if (matcher.verifyPassword(username, recvBufReadPos, (int) (hi - recvBufReadPos))) {
             recvBufReadPos = msgLimit;
             state = State.AUTH_SUCCESS;
         } else {
@@ -433,9 +426,9 @@ public class CleartextPasswordPgWireAuthenticatorLegacy implements Authenticator
         // there is an extra byte at the end, and it has to be 0
         while (lo < msgLimit - 1) {
             final long nameLo = lo;
-            final long nameHi = PGConnectionContextLegacy.getStringLength(lo, msgLimit, "malformed property name");
+            final long nameHi = PGConnectionContext.getUtf8StrSize(lo, msgLimit, "malformed property name", null);
             final long valueLo = nameHi + 1;
-            final long valueHi = PGConnectionContextLegacy.getStringLength(valueLo, msgLimit, "malformed property value");
+            final long valueHi = PGConnectionContext.getUtf8StrSize(valueLo, msgLimit, "malformed property value", null);
             lo = valueHi + 1;
 
             // store user
@@ -449,8 +442,8 @@ public class CleartextPasswordPgWireAuthenticatorLegacy implements Authenticator
                 if (PGKeywords.startsWithTimeoutOption(valueLo, valueHi - valueLo)) {
                     try {
                         dus.of(valueLo + 21, valueHi, false);
-                        long sqlTimeout = Numbers.parseLong(dus);
-                        optionsListener.setSqlTimeout(sqlTimeout);
+                        long statementTimeout = Numbers.parseLong(dus);
+                        optionsListener.setSqlTimeout(statementTimeout);
                     } catch (NumericException ex) {
                         parsed = false;
                     }
@@ -500,10 +493,6 @@ public class CleartextPasswordPgWireAuthenticatorLegacy implements Authenticator
         return Authenticator.NEEDS_WRITE;
     }
 
-    // kept protected for ent
-    protected byte verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
-        return matcher.verifyPassword(username, passwordPtr, passwordLen) ? AUTH_TYPE_CREDENTIALS : AUTH_TYPE_NONE;
-    }
 
     private enum State {
         EXPECT_INIT_MESSAGE,

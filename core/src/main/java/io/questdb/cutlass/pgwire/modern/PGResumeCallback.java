@@ -22,9 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire;
-
-import io.questdb.griffin.SqlExecutionContext;
+package io.questdb.cutlass.pgwire.modern;
 
 @FunctionalInterface
 interface PGResumeCallback {

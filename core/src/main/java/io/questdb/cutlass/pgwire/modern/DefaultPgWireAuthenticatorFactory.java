@@ -22,7 +22,7 @@
  *
  ******************************************************************************/
 
-package io.questdb.cutlass.pgwire.legacy;
+package io.questdb.cutlass.pgwire.modern;
 
 import io.questdb.DynamicUsernamePasswordMatcher;
 import io.questdb.ServerConfiguration;
@@ -53,7 +53,7 @@ public final class DefaultPgWireAuthenticatorFactory implements PgWireAuthentica
         // and the authenticator will be responsible for closing them.
         final UsernamePasswordMatcher matcher = new DynamicUsernamePasswordMatcher(serverConfiguration, configuration);
 
-        return new CleartextPasswordPgWireAuthenticatorLegacy(
+        return new CleartextPasswordPgWireAuthenticator(
                 configuration,
                 circuitBreaker,
                 registry,

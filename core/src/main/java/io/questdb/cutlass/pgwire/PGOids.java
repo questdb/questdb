@@ -57,12 +57,13 @@ public class PGOids {
     public static final int PG_INT2 = 21;
     public static final int PG_INT4 = 23;
     public static final int PG_INT8 = 20;
+    public static final int PG_INTERNAL = 2281;
     public static final int PG_NAMESPACE_OID = 2615;
+    public static final int PG_OID = 26;
     public static final int PG_PUBLIC_OID = 2200;
     public static final int PG_TIMESTAMP = 1114;
     public static final IntList PG_TYPE_OIDS = new IntList();
     public static final IntList PG_TYPE_PROC_OIDS = new IntList();
-
     public static final char[] PG_TYPE_TO_CATEGORY = new char[14];
     public static final CharSequence[] PG_TYPE_TO_DEFAULT = new CharSequence[14];
     public static final short[] PG_TYPE_TO_LENGTH = new short[14];
@@ -71,9 +72,7 @@ public class PGOids {
     public static final CharSequence[] PG_TYPE_TO_PROC_SRC = new CharSequence[14];
     public static final IntIntHashMap PG_TYPE_TO_SIZE_MAP = new IntIntHashMap();
     public static final int PG_UUID = 2950;
-    public static final int PG_INTERNAL = 2281;
     public static final int PG_VARCHAR = 1043;
-    public static final int PG_OID = 26;
     public static final int X_PG_BOOL = ((PG_BOOL >> 24) & 0xff) | ((PG_BOOL << 8) & 0xff0000) | ((PG_BOOL >> 8) & 0xff00) | ((PG_BOOL << 24) & 0xff000000);
     public static final int X_B_PG_BOOL = 1 | X_PG_BOOL;
     public static final int X_PG_BYTEA = ((PG_BYTEA >> 24) & 0xff) | ((PG_BYTEA << 8) & 0xff0000) | ((PG_BYTEA >> 8) & 0xff00) | ((PG_BYTEA << 24) & 0xff000000);
@@ -103,28 +102,28 @@ public class PGOids {
     public static final int X_B_PG_UUID = 1 | X_PG_UUID;
     private static final IntList TYPE_OIDS = new IntList();
 
+    public static short getColumnBinaryFlag(int type) {
+        return (short) ((type >>> 31) & 0xff);
+    }
+
     public static int getTypeOid(int type) {
         return TYPE_OIDS.getQuick(ColumnType.tagOf(type));
     }
 
-    static short getColumnBinaryFlag(int type) {
-        return (short) ((type >>> 31) & 0xff);
-    }
-
-    static int toColumnBinaryType(short code, int type) {
+    public static int toColumnBinaryType(short code, int type) {
         return (((int) code) << 31) | type;
     }
 
-    static int toColumnType(int type) {
+    public static int toColumnType(int type) {
         // clear format flag
         return type & (~(1 << 31));
     }
 
-    static int toParamBinaryType(short code, int type) {
+    public static int toParamBinaryType(short code, int type) {
         return code | type;
     }
 
-    static int toParamType(int type) {
+    public static int toParamType(int type) {
         // clear format flag
         return type & (~1);
     }
