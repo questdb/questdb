@@ -29,6 +29,8 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.Authenticator;
+import io.questdb.cutlass.pgwire.legacy.PGConnectionContextLegacy;
+import io.questdb.cutlass.pgwire.legacy.TypesAndSelectLegacy;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -43,12 +45,12 @@ import static io.questdb.network.IODispatcher.*;
 
 public class PGWireServerImpl implements PGWireServer {
     private static final Log LOG = LogFactory.getLog(PGWireServerImpl.class);
-    private static final NoOpAssociativeCache<TypesAndSelect> NO_OP_CACHE = new NoOpAssociativeCache<>();
+    private static final NoOpAssociativeCache<TypesAndSelectLegacy> NO_OP_CACHE = new NoOpAssociativeCache<>();
     private final PGConnectionContextFactory contextFactory;
-    private final IODispatcher<PGConnectionContext> dispatcher;
+    private final IODispatcher<PGConnectionContextLegacy> dispatcher;
     private final Metrics metrics;
     private final CircuitBreakerRegistry registry;
-    private final AssociativeCache<TypesAndSelect> typesAndSelectCache;
+    private final AssociativeCache<TypesAndSelectLegacy> typesAndSelectCache;
     private final WorkerPool workerPool;
 
     public PGWireServerImpl(
@@ -85,7 +87,7 @@ public class PGWireServerImpl implements PGWireServer {
 
         for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
             workerPool.assign(i, new Job() {
-                private final IORequestProcessor<PGConnectionContext> processor = (operation, context, dispatcher) -> {
+                private final IORequestProcessor<PGConnectionContextLegacy> processor = (operation, context, dispatcher) -> {
                     try {
                         if (operation == IOOperation.HEARTBEAT) {
                             dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
@@ -155,14 +157,14 @@ public class PGWireServerImpl implements PGWireServer {
         return workerPool;
     }
 
-    private static class PGConnectionContextFactory extends IOContextFactoryImpl<PGConnectionContext> {
+    private static class PGConnectionContextFactory extends IOContextFactoryImpl<PGConnectionContextLegacy> {
 
         public PGConnectionContextFactory(
                 CairoEngine engine,
                 PGWireConfiguration configuration,
                 CircuitBreakerRegistry registry,
                 ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory,
-                AssociativeCache<TypesAndSelect> typesAndSelectCache
+                AssociativeCache<TypesAndSelectLegacy> typesAndSelectCache
         ) {
             super(
                     () -> {
@@ -170,7 +172,7 @@ public class PGWireServerImpl implements PGWireServer {
                                 configuration.getCircuitBreakerConfiguration(),
                                 MemoryTag.NATIVE_CB5
                         );
-                        PGConnectionContext pgConnectionContext = new PGConnectionContext(
+                        PGConnectionContextLegacy pgConnectionContext = new PGConnectionContextLegacy(
                                 engine,
                                 configuration,
                                 executionContextObjectFactory.newInstance(),
