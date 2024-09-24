@@ -1898,13 +1898,11 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testBindVariableDropLastPartitionListByMonthHigherPrecision() throws Exception {
         testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.MONTH);
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testBindVariableDropLastPartitionListByNoneHigherPrecision() throws Exception {
         try {
             testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.NONE);
@@ -1915,15 +1913,13 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testBindVariableDropLastPartitionListByWeekHigherPrecision() throws Exception {
         testBindVariableDropLastPartitionListWithDatePrecision(PartitionBy.WEEK);
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testBindVariableDropLastPartitionListWithWeekPrecision() throws Exception {
-        final ConnectionAwareRunnable runnable = (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             connection.prepareStatement("CREATE TABLE x (l LONG, ts TIMESTAMP, date DATE) TIMESTAMP(ts) PARTITION BY WEEK").execute();
             connection.prepareStatement("INSERT INTO x VALUES (12, '2023-02-11T11:12:22.116234Z', '2023-02-11'::date)").execute();
@@ -1931,8 +1927,7 @@ if __name__ == "__main__":
             connection.prepareStatement("INSERT INTO x VALUES (14, '2023-03-21T03:52:00.999999Z', '2023-03-21'::date)").execute();
             connection.commit();
             mayDrainWalQueue();
-            try (PreparedStatement dropPartition = connection.prepareStatement("ALTER TABLE x DROP PARTITION LIST ? ;")) {
-                dropPartition.setString(1, "2023-02-06T09");
+            try (PreparedStatement dropPartition = connection.prepareStatement("ALTER TABLE x DROP PARTITION LIST '" + "2023-02-06T09" + "' ;")) {
                 Assert.assertFalse(dropPartition.execute());
             }
             mayDrainWalQueue();
@@ -1948,11 +1943,7 @@ if __name__ == "__main__":
                         rs
                 );
             }
-        };
-        assertWithPgServer(Mode.SIMPLE, true, runnable, -2, Long.MAX_VALUE);
-        assertWithPgServer(Mode.SIMPLE, true, runnable, -1, Long.MAX_VALUE);
-        assertWithPgServer(Mode.SIMPLE, false, runnable, -2, Long.MAX_VALUE);
-        assertWithPgServer(Mode.SIMPLE, false, runnable, -1, Long.MAX_VALUE);
+        });
     }
 
     @Test
@@ -11144,7 +11135,7 @@ create table tab as (
     }
 
     private void testBindVariableDropLastPartitionListWithDatePrecision(int partitionBy) throws Exception {
-        final ConnectionAwareRunnable runnable = (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             connection.prepareStatement("CREATE TABLE x (l LONG, ts TIMESTAMP, date DATE) TIMESTAMP(ts) PARTITION BY " + PartitionBy.toString(partitionBy)).execute();
             connection.prepareStatement("INSERT INTO x VALUES (12, '2023-02-11T11:12:22.116234Z', '2023-02-11'::date)").execute();
@@ -11155,11 +11146,11 @@ create table tab as (
             try (
                     PreparedStatement select = connection.prepareStatement("SELECT date FROM x WHERE ts = '2023-02-11T11:12:22.116234Z'");
                     ResultSet rs = select.executeQuery();
-                    PreparedStatement dropPartition = connection.prepareStatement("ALTER TABLE x DROP PARTITION LIST ? ;")
             ) {
                 Assert.assertTrue(rs.next());
-                dropPartition.setDate(1, rs.getDate("date"));
-                Assert.assertFalse(dropPartition.execute());
+                try (PreparedStatement dropPartition = connection.prepareStatement("ALTER TABLE x DROP PARTITION LIST '" + rs.getDate("date") + "';")) {
+                    Assert.assertFalse(dropPartition.execute());
+                }
             }
             mayDrainWalQueue();
             try (
@@ -11174,11 +11165,7 @@ create table tab as (
                         rs
                 );
             }
-        };
-        assertWithPgServer(Mode.SIMPLE, true, runnable, -2, Long.MAX_VALUE);
-        assertWithPgServer(Mode.SIMPLE, true, runnable, -1, Long.MAX_VALUE);
-        assertWithPgServer(Mode.SIMPLE, false, runnable, -2, Long.MAX_VALUE);
-        assertWithPgServer(Mode.SIMPLE, false, runnable, -1, Long.MAX_VALUE);
+        });
     }
 
     private void testBindVariableIsNotNull(boolean binary) throws Exception {
