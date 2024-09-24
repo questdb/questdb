@@ -26,7 +26,6 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -53,9 +52,7 @@ public class PGMemoryLimitTest extends BasePGTest {
 
     @Test
     public void testUpdateRecoversFromOomError() throws Exception {
-//        @Ignore
-        Assume.assumeTrue(testParamLegacyMode);
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
             try (Statement stat = connection.createStatement()) {
                 stat.execute(
                         "create table up as" +
@@ -95,7 +92,6 @@ public class PGMemoryLimitTest extends BasePGTest {
                                 " WHERE up.ts = down.ts and x < 4"
                 );
             }
-
             final String expected = "ts[TIMESTAMP],x[BIGINT]\n" +
                     "1970-01-01 00:00:00.0,100\n" +
                     "1970-01-01 00:00:01.0,200\n" +
