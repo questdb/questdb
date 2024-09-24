@@ -52,10 +52,10 @@ tests:
       - action: execute
         query: "DROP TABLE IF EXISTS ${table_name};"
   - name: Smoke Test
+    iterations: 2
     description: Testing another test-case inside the same file
     steps:
       - action: query a pseudo table
-        iterations: 2
         query: "SELECT x FROM long_sequence(5)"
         expect:
           result:
