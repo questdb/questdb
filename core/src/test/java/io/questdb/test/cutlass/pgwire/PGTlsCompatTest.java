@@ -37,17 +37,28 @@ import io.questdb.network.SocketFactory;
 import io.questdb.test.mp.TestWorkerPool;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 import org.postgresql.util.PSQLException;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.util.Collection;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 
-@Ignore
+@RunWith(Parameterized.class)
 public class PGTlsCompatTest extends BasePGTest {
+
+    public PGTlsCompatTest(LegacyMode legacyMode) {
+        super(legacyMode);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return legacyModeParams();
+    }
 
     @Test
     public void testTlsSessionGetsCreatedWhenSocketSupportsTls() throws Exception {

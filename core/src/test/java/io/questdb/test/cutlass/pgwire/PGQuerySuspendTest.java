@@ -33,13 +33,16 @@ import io.questdb.test.cutlass.suspend.TestCase;
 import io.questdb.test.cutlass.suspend.TestCases;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
+import org.junit.Assume;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 
 import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.util.Collection;
 
 
 /**
@@ -49,7 +52,7 @@ import java.sql.ResultSet;
  * hasn't been suspended.
  */
 @SuppressWarnings("SqlNoDataSourceInspection")
-@Ignore
+@RunWith(Parameterized.class)
 public class PGQuerySuspendTest extends BasePGTest {
 
     private static final Log LOG = LogFactory.getLog(PGQuerySuspendTest.class);
@@ -57,8 +60,19 @@ public class PGQuerySuspendTest extends BasePGTest {
     private static final StringSink sinkB = new StringSink();
     private final static TestCases testCases = new TestCases();
 
+    public PGQuerySuspendTest(LegacyMode legacyMode) {
+        super(legacyMode);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return legacyModeParams();
+    }
+
     @Test
     public void testAllCases() throws Exception {
+        // @Ignore("Modern code blocks on this test")
+        Assume.assumeTrue(testParamLegacyMode);
         assertMemoryLeak(() -> {
             try (
                     final PGWireServer server = createPGServer(1);

@@ -33,12 +33,13 @@ import io.questdb.std.Rnd;
 public class Port0PGWireConfiguration extends DefaultPGWireConfiguration {
 
     private final DefaultIODispatcherConfiguration ioDispatcherConfiguration;
+    private final boolean isLegacyMode;
 
     public Port0PGWireConfiguration() {
-        this(-1);
+        this(-1, false);
     }
 
-    public Port0PGWireConfiguration(final int connectionLimit) {
+    public Port0PGWireConfiguration(final int connectionLimit, boolean isLegacyMode) {
         ioDispatcherConfiguration = new DefaultIODispatcherConfiguration() {
             @Override
             public int getBindPort() {
@@ -58,6 +59,7 @@ public class Port0PGWireConfiguration extends DefaultPGWireConfiguration {
                 return super.getLimit();
             }
         };
+        this.isLegacyMode = isLegacyMode;
     }
 
     @Override
@@ -68,5 +70,10 @@ public class Port0PGWireConfiguration extends DefaultPGWireConfiguration {
     @Override
     public Rnd getRandom() {
         return new Rnd();
+    }
+
+    @Override
+    public boolean isLegacyModeEnabled() {
+        return isLegacyMode;
     }
 }

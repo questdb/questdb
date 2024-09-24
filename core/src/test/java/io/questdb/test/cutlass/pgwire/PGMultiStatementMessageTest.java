@@ -36,14 +36,18 @@ import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Ignore;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 import org.postgresql.jdbc.PgConnection;
 import org.postgresql.util.PSQLException;
 
 import java.io.Closeable;
 import java.sql.*;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -57,12 +61,25 @@ import static org.junit.Assert.*;
 /**
  * Class contains tests of PostgreSQL simple query statements containing multiple commands separated by ';'
  */
+@RunWith(Parameterized.class)
 public class PGMultiStatementMessageTest extends BasePGTest {
+
+    public PGMultiStatementMessageTest(LegacyMode legacyMode) {
+        super(legacyMode);
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return legacyModeParams();
+    }
+
 
     // https://github.com/questdb/questdb/issues/1777
     // all of these commands are no-op (at the moment)
     @Test
     public void testAsyncPGCommandBlockDoesntProduceError() throws Exception {
+        // @Ignore("IllegalStateException: Received resultset tuples, but no field structure for them")
+        Assume.assumeFalse(testParamLegacyMode);
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 boolean result = statement.execute(
@@ -199,7 +216,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                             "DELETE FROM testB;");
                     assertExceptionNoLeakCheck("PSQLException should be thrown");
                 } catch (PSQLException e) {
-                    TestUtils.assertContains(e.getMessage(),  "ERROR: unexpected token [FROM]");
+                    TestUtils.assertContains(e.getMessage(), "ERROR: unexpected token [FROM]");
                 }
 
                 boolean hasResult = statement.execute("select * from testA; select  *from testB;");
@@ -295,6 +312,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testBlockWithEmptyQueriesAndComments() throws Exception {
+        // @Ignore("ERROR: empty query")
+        Assume.assumeFalse(testParamLegacyMode);
         assertWithPgServer(CONN_AWARE_ALL_SANS_Q & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("select 1;" +
@@ -491,13 +510,15 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                 assertEquals("ERROR: unexpected token [FROM]\n  Position: " + expectedPos, e.getMessage());
             }
             boolean hasResult = statement.execute("select * from mytable;");
-            assertResults(statement, hasResult, data(row(1L),  row(2L)));
+            assertResults(statement, hasResult, data(row(1L), row(2L)));
         });
     }
 
     @Test
     @Ignore("non-wal table (unpartitioned) cannot be altered after insert, the plan is to decommission non-WAL tables eventually")
     public void testCreateInsertAlterAddColumnThenRollbackLeavesEmptyTable() throws Exception {
+        // @Ignore("ERROR: Timeout expired on waiting for the async command execution result [instance=1]")
+        Assume.assumeFalse(testParamLegacyMode);
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
@@ -517,6 +538,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCreateInsertAlterAddColumnThenRollbackLeavesEmptyTableWal() throws Exception {
+        // @Ignore("ERROR: row value count does not match column count [expected=3, actual=2, tuple=1]")
+        Assume.assumeFalse(testParamLegacyMode);
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
@@ -1301,6 +1324,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testQueryWithJustCommentsReturnsNoResult() throws Exception {
+        // @Ignore("ERROR: empty query")
+        Assume.assumeFalse(testParamLegacyMode);
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("/* comment */");
@@ -1597,6 +1622,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testSelectWrappedInMultiLineCommentReturnsNoResult() throws Exception {
+        // @Ignore("ERROR: empty query")
+        Assume.assumeFalse(testParamLegacyMode);
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("/* comment start select  'hello12' */");
@@ -1606,6 +1633,8 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testSelectWrappedInSingleLineCommentAtEndReturnsNoResult() throws Exception {
+        // @Ignore("ERROR: empty query")
+        Assume.assumeFalse(testParamLegacyMode);
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("-- commented out command select  'hello8'; ");

@@ -46,7 +46,6 @@ import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class PGErrorHandlingTest extends BootstrapTest {
-
     @Before
     public void setUp() {
         super.setUp();
@@ -117,6 +116,11 @@ public class PGErrorHandlingTest extends BootstrapTest {
                                     public @NotNull PgWireAuthenticatorFactory getPgWireAuthenticatorFactory() {
                                         return (pgWireConfiguration, circuitBreaker, registry, optionsListener) -> new Authenticator() {
                                             @Override
+                                            public void close() {
+                                                Misc.free(circuitBreaker);
+                                            }
+
+                                            @Override
                                             public CharSequence getPrincipal() {
                                                 return null;
                                             }
@@ -143,11 +147,6 @@ public class PGErrorHandlingTest extends BootstrapTest {
                                             @Override
                                             public boolean isAuthenticated() {
                                                 throw new RuntimeException("Test error");
-                                            }
-
-                                            @Override
-                                            public void close() {
-                                                Misc.free(circuitBreaker);
                                             }
                                         };
                                     }
