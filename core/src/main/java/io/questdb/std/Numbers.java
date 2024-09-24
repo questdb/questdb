@@ -34,11 +34,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
-//#if jdk.version==8
-//$import sun.misc.FDBigInteger;
-//#else
 import jdk.internal.math.FDBigInteger;
-//#endif
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -1549,6 +1545,10 @@ public final class Numbers {
         ipv4 = ipv4 & checker;
 
         return ipv4;
+    }
+
+    public static int reverseBits(int i) {
+        return i<<24 | i>>8 & 0xff00 | i<<8 & 0xff0000 | i>>>24;
     }
 
     public static double roundDown(double value, int scale) throws NumericException {

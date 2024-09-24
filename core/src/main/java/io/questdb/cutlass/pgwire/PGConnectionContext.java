@@ -849,8 +849,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void msgFlush0() throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, BadProtocolException {
         syncPipeline();
-        responseUtf8Sink.sendBufferAndReset();
         resumeCallback = null;
+        responseUtf8Sink.sendBufferAndReset();
     }
 
     private BadProtocolException msgKaput() {
