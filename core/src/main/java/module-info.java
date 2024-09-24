@@ -162,6 +162,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.eq.EqIPv4FunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqIPv4StrFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqLongFunctionFactory,
+            io.questdb.griffin.engine.functions.eq.EqLongCharFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqLong128FunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqDoubleFunctionFactory,
             io.questdb.griffin.engine.functions.eq.EqLong256StrFunctionFactory,

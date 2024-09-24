@@ -1450,7 +1450,6 @@ public class PGPipelineEntry implements QuietCloseable {
 
         try {
             if (outResendCursorRecord) {
-                utf8Sink.resetToBookmark();
                 outRecord(utf8Sink, record, columnCount);
             }
 
