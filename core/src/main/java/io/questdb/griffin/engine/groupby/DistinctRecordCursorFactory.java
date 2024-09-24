@@ -77,7 +77,7 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
             cursor.of(baseCursor, mapSink, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
-            baseCursor.close();
+            cursor.close();
             throw e;
         }
     }
@@ -166,13 +166,13 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         public void of(RecordCursor baseCursor, RecordSink recordSink, SqlExecutionCircuitBreaker circuitBreaker) {
+            this.baseCursor = baseCursor;
+            record = baseCursor.getRecord();
             if (!isOpen) {
                 isOpen = true;
                 dataMap.reopen();
             }
-            this.baseCursor = baseCursor;
             this.recordSink = recordSink;
-            record = baseCursor.getRecord();
             this.circuitBreaker = circuitBreaker;
         }
 

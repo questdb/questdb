@@ -52,9 +52,9 @@ public interface FrameColumn extends Closeable {
 
     int getColumnType();
 
-    int getPrimaryFd();
+    long getPrimaryFd();
 
-    int getSecondaryFd();
+    long getSecondaryFd();
 
     int getStorageType();
 }

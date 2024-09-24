@@ -118,8 +118,8 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             this.queryExecutors.extendAndSet(CompiledQuery.COMMIT, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.ROLLBACK, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.CREATE_TABLE_AS_SELECT, sendConfirmation);
-            this.queryExecutors.extendAndSet(CompiledQuery.SNAPSHOT_DB_PREPARE, sendConfirmation);
-            this.queryExecutors.extendAndSet(CompiledQuery.SNAPSHOT_DB_COMPLETE, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.CHECKPOINT_CREATE, sendConfirmation);
+            this.queryExecutors.extendAndSet(CompiledQuery.CHECKPOINT_RELEASE, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.DEALLOCATE, sendConfirmation);
             this.queryExecutors.extendAndSet(CompiledQuery.EXPLAIN, this::executeExplain);
             this.queryExecutors.extendAndSet(CompiledQuery.TABLE_RESUME, sendConfirmation);
@@ -403,7 +403,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     }
 
     private static void readyForNextRequest(HttpConnectionContext context) {
-        LOG.info().$("all sent [fd=").$(context.getFd())
+        LOG.debug().$("all sent [fd=").$(context.getFd())
                 .$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent())
                 .$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).I$();

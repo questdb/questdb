@@ -60,6 +60,20 @@ pub enum DBOutput<T: ColumnType> {
     StatementComplete(u64),
 }
 
+
+pub struct DateFormat {
+    /// The format of the timestamp.
+    pub timestamp_format: Option<TimestampFormat>,
+}
+
+impl Default for DateFormat {
+    fn default() -> Self {
+        Self {
+            timestamp_format: None
+        }
+    }
+}
+
 /// The async database to be tested.
 #[async_trait]
 pub trait AsyncDB {
@@ -69,7 +83,7 @@ pub trait AsyncDB {
     type ColumnType: ColumnType;
 
     /// Async run a SQL query and return the output.
-    async fn run(&mut self, sql: &str) -> Result<DBOutput<Self::ColumnType>, Self::Error>;
+    async fn run(&mut self, sql: &str, format: DateFormat) -> Result<DBOutput<Self::ColumnType>, Self::Error>;
 
     /// Engine name of current database.
     fn engine_name(&self) -> &str {
@@ -120,7 +134,7 @@ where
     type Error = D::Error;
     type ColumnType = D::ColumnType;
 
-    async fn run(&mut self, sql: &str) -> Result<DBOutput<Self::ColumnType>, Self::Error> {
+    async fn run(&mut self, sql: &str, _: DateFormat) -> Result<DBOutput<Self::ColumnType>, Self::Error> {
         D::run(self, sql)
     }
 
@@ -509,6 +523,7 @@ pub struct Runner<D: AsyncDB, M: MakeConnection> {
     hash_threshold: usize,
     /// Labels for condition `skipif` and `onlyif`.
     labels: HashSet<String>,
+    timestamp_format: Option<TimestampFormat>
 }
 
 impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
@@ -524,6 +539,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
             hash_threshold: 0,
             labels: HashSet::new(),
             conn: Connections::new(make_conn),
+            timestamp_format: None,
         }
     }
 
@@ -599,7 +615,10 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                     return RecordOutput::Nothing;
                 }
 
-                let ret = conn.run(&sql).await;
+                let data_format = DateFormat {
+                    timestamp_format: self.timestamp_format,
+                };
+                let ret = conn.run(&sql, data_format).await;
                 match ret {
                     Ok(out) => match out {
                         DBOutput::Rows { types, rows } => RecordOutput::Query {
@@ -748,7 +767,10 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                     return RecordOutput::Nothing;
                 }
 
-                let (types, mut rows) = match conn.run(&sql).await {
+                let data_format = DateFormat {
+                    timestamp_format: self.timestamp_format,
+                };
+                let (types, mut rows) = match conn.run(&sql, data_format).await {
                     Ok(out) => match out {
                         DBOutput::Rows { types, rows } => (types, rows),
                         DBOutput::StatementComplete(count) => {
@@ -810,6 +832,11 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                     }
                     Control::Substitution(on_off) => match (&mut self.substitution, on_off) {
                         (s @ None, true) => *s = Some(Substitution::default()),
+                        (s @ Some(_), false) => *s = None,
+                        _ => {}
+                    },
+                    Control::IsoTimestamp(on_off) => match (&mut self.timestamp_format, on_off) {
+                        (s @ None, true) => *s = Some(TimestampFormat::Iso),
                         (s @ Some(_), false) => *s = None,
                         _ => {}
                     },
@@ -1160,6 +1187,7 @@ impl<D: AsyncDB, M: MakeConnection<Conn = D>> Runner<D, M> {
                 sort_mode: self.sort_mode,
                 hash_threshold: self.hash_threshold,
                 labels: self.labels.clone(),
+                timestamp_format: self.timestamp_format,
             };
 
             tasks.push(async move {

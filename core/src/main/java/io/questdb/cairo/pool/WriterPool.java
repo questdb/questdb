@@ -131,7 +131,9 @@ public class WriterPool extends AbstractPool {
      * @return cached TableWriter instance.
      */
     public TableWriter get(TableToken tableToken, @NotNull String lockReason) {
+        // writer cannot be null because our async command is null
         TableWriter w = getWriterEntry(tableToken, lockReason, null);
+        assert w != null;
         w.goActive();
         return w;
     }
@@ -277,8 +279,9 @@ public class WriterPool extends AbstractPool {
                         e,
                         root,
                         engine.getDdlListener(tableToken),
-                        engine.getSnapshotAgent(),
-                        engine.getMetrics()
+                        engine.getCheckpointStatus(),
+                        engine.getMetrics(),
+                        engine
                 );
             }
 
@@ -396,8 +399,9 @@ public class WriterPool extends AbstractPool {
                     e,
                     root,
                     engine.getDdlListener(tableToken),
-                    engine.getSnapshotAgent(),
-                    engine.getMetrics()
+                    engine.getCheckpointStatus(),
+                    engine.getMetrics(),
+                    engine
             );
             e.ownershipReason = lockReason;
             return logAndReturn(e, PoolListener.EV_CREATE);
@@ -641,7 +645,7 @@ public class WriterPool extends AbstractPool {
         private CairoException ex = null;
         // time writer was last released
         private volatile long lastReleaseTime;
-        private volatile int lockFd = -1;
+        private volatile long lockFd = -1;
         // owner thread id or -1 if writer is available for hire
         private volatile long owner = Thread.currentThread().getId();
         private volatile String ownershipReason = OWNERSHIP_REASON_NONE;

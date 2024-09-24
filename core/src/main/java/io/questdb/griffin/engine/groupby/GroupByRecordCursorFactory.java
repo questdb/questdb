@@ -103,11 +103,17 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         try {
             // init all record functions for this cursor, in case functions require metadata and/or symbol tables
             Function.init(recordFunctions, baseCursor, executionContext);
+        } catch (Throwable th) {
+            baseCursor.close();
+            throw th;
+        }
+
+        try {
             cursor.of(baseCursor, executionContext);
             return cursor;
-        } catch (Throwable e) {
-            baseCursor.close();
-            throw e;
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
         }
     }
 
@@ -201,12 +207,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         public void of(RecordCursor managedCursor, SqlExecutionContext executionContext) throws SqlException {
+            this.managedCursor = managedCursor;
             if (!isOpen) {
                 isOpen = true;
                 dataMap.reopen();
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
-            this.managedCursor = managedCursor;
             Function.init(keyFunctions, managedCursor, executionContext);
             isDataMapBuilt = false;
             rowId = 0;

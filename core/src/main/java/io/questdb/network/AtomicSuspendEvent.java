@@ -44,7 +44,7 @@ public class AtomicSuspendEvent extends SuspendEvent {
     }
 
     @Override
-    public int getFd() {
+    public long getFd() {
         // no-op
         return -1;
     }

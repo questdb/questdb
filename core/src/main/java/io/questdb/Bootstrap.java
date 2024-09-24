@@ -59,11 +59,11 @@ import static io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory.
 public class Bootstrap {
 
     public static final String CONFIG_FILE = "/server.conf";
+    public static final String CONTAINERIZED_SYSTEM_PROPERTY = "containerized";
     public static final String SWITCH_USE_DEFAULT_LOG_FACTORY_CONFIGURATION = "--use-default-log-factory-configuration";
     private static final String LOG_NAME = "server-main";
     private static final String PUBLIC_VERSION_TXT = "version.txt";
     private static final String PUBLIC_ZIP = "/io/questdb/site/public.zip";
-    public static final String CONTAINERIZED_SYSTEM_PROPERTY = "containerized";
     private final String banner;
     private final BuildInformation buildInformation;
     private final ServerConfiguration config;
@@ -101,8 +101,9 @@ public class Bootstrap {
         }
 
         // before we set up the logger, we need to copy the conf file
+        byte[] buffer = new byte[1024 * 1024];
         try {
-            copyLogConfResource(new byte[1024 * 1024]);
+            copyLogConfResource(buffer);
         } catch (IOException e) {
             throw new BootstrapException("Could not extract log configuration file");
         }
@@ -113,6 +114,13 @@ public class Bootstrap {
             LogFactory.configureRootDir(rootDirectory);
         }
         log = LogFactory.getLog(LOG_NAME);
+
+        try {
+            copyResource(rootDirectory, false, buffer, "import/readme.txt", log);
+            copyResource(rootDirectory, false, buffer, "import/trades.parquet", log);
+        } catch (IOException e) {
+            throw new BootstrapException("Could not create the default import directory");
+        }
 
         // report copyright and architecture
         log.advisoryW()
@@ -197,7 +205,6 @@ public class Bootstrap {
             log.advisoryW().$("Metrics are disabled, health check endpoint will not consider unhandled errors").$();
         }
         Unsafe.setRssMemLimit(config.getMemoryConfiguration().getResolvedRamUsageLimitBytes());
-
     }
 
     public static String[] getServerMainArgs(CharSequence root) {
@@ -366,19 +373,6 @@ public class Bootstrap {
         return new CairoEngine(getConfiguration().getCairoConfiguration(), getMetrics());
     }
 
-    private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
-        copyConfResource(dir, force, buffer, res, res, log);
-    }
-
-    private static void copyConfResource(String dir, boolean force, byte[] buffer, String res, String dest, Log log) throws IOException {
-        File out = new File(dir, dest);
-        try (InputStream is = ServerMain.class.getResourceAsStream("/io/questdb/site/" + res)) {
-            if (is != null) {
-                copyInputStream(force, buffer, out, is, log);
-            }
-        }
-    }
-
     private static void copyInputStream(boolean force, byte[] buffer, File out, InputStream is, Log log) throws IOException {
         final boolean exists = out.exists();
         if (force || !exists) {
@@ -403,6 +397,19 @@ public class Bootstrap {
         if (log != null) {
             log.debugW().$("skipped [path=").$(out).I$();
         }
+    }
+
+    private static void copyResource(String dir, boolean force, byte[] buffer, String res, String dest, Log log) throws IOException {
+        File out = new File(dir, dest);
+        try (InputStream is = ServerMain.class.getResourceAsStream("/io/questdb/site/" + res)) {
+            if (is != null) {
+                copyInputStream(force, buffer, out, is, log);
+            }
+        }
+    }
+
+    private static void copyResource(String dir, boolean force, byte[] buffer, String res, Log log) throws IOException {
+        copyResource(dir, force, buffer, res, res, log);
     }
 
     private static String getPublicVersion(String publicDir) throws IOException {
@@ -443,7 +450,7 @@ public class Bootstrap {
     private static void verifyFileOpts(Path path, CairoConfiguration cairoConfiguration) {
         final FilesFacade ff = cairoConfiguration.getFilesFacade();
         path.of(cairoConfiguration.getRoot()).concat("_verify_").put(cairoConfiguration.getRandom().nextPositiveInt()).put(".d").$();
-        int fd = ff.openRW(path.$(), cairoConfiguration.getWriterFileOpenOpts());
+        long fd = ff.openRW(path.$(), cairoConfiguration.getWriterFileOpenOpts());
         try {
             if (fd > -1) {
                 long mem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -457,6 +464,14 @@ public class Bootstrap {
             ff.close(fd);
         }
         ff.remove(path.$());
+    }
+
+    private void copyLogConfResource(byte[] buffer) throws IOException {
+        if (Chars.equalsIgnoreCaseNc("false", System.getProperty(CONTAINERIZED_SYSTEM_PROPERTY))) {
+            copyResource(rootDirectory, false, buffer, "conf/non_containerized_log.conf", "conf/log.conf", null);
+        } else {
+            copyResource(rootDirectory, false, buffer, "conf/log.conf", null);
+        }
     }
 
     private void createHelloFile(String helloMsg) {
@@ -474,25 +489,17 @@ public class Bootstrap {
     }
 
     private void extractConfDir(byte[] buffer) throws IOException {
-        copyConfResource(rootDirectory, false, buffer, "conf/date.formats", log);
+        copyResource(rootDirectory, false, buffer, "conf/date.formats", log);
         try {
-            copyConfResource(rootDirectory, true, buffer, "conf/mime.types", log);
+            copyResource(rootDirectory, true, buffer, "conf/mime.types", log);
         } catch (IOException exception) {
             // conf can be read-only, this is not critical
             if (exception.getMessage() == null || (!exception.getMessage().contains("Read-only file system") && !exception.getMessage().contains("Permission denied"))) {
                 throw exception;
             }
         }
-        copyConfResource(rootDirectory, false, buffer, "conf/server.conf", log);
+        copyResource(rootDirectory, false, buffer, "conf/server.conf", log);
         copyLogConfResource(buffer);
-    }
-
-    private void copyLogConfResource(byte[] buffer) throws IOException {
-        if (Chars.equalsIgnoreCaseNc("true", System.getProperty(CONTAINERIZED_SYSTEM_PROPERTY))) {
-            copyConfResource(rootDirectory, false, buffer, "conf/log.conf", null);
-        } else {
-            copyConfResource(rootDirectory, false, buffer, "conf/non_containerized_log.conf", "conf/log.conf", null);
-        }
     }
 
     private void extractSite0(String publicDir, byte[] buffer, String thisVersion) throws IOException {
@@ -537,7 +544,8 @@ public class Bootstrap {
         try (Path path = new Path()) {
             verifyFileSystem(path, cairoConfig.getRoot(), "db", true);
             verifyFileSystem(path, cairoConfig.getBackupRoot(), "backup", true);
-            verifyFileSystem(path, cairoConfig.getSnapshotRoot(), "snapshot", true);
+            verifyFileSystem(path, cairoConfig.getCheckpointRoot(), TableUtils.CHECKPOINT_DIRECTORY, true);
+            verifyFileSystem(path, cairoConfig.getLegacyCheckpointRoot(), TableUtils.LEGACY_CHECKPOINT_DIRECTORY, true);
             verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input", false);
             verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker", true);
             verifyFileOpts(path, cairoConfig);

@@ -28,7 +28,7 @@ import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cutlass.auth.Authenticator;
+import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -48,8 +48,8 @@ public class PGWireServer implements IPGWireServer {
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final Metrics metrics;
     private final CircuitBreakerRegistry registry;
-    private final AssociativeCache<TypesAndSelect> typesAndSelectCache;
     private final WorkerPool workerPool;
+    private AssociativeCache<TypesAndSelect> typesAndSelectCache;
 
     public PGWireServer(
             PGWireConfiguration configuration,
@@ -141,7 +141,7 @@ public class PGWireServer implements IPGWireServer {
         Misc.free(dispatcher);
         Misc.free(registry);
         Misc.free(contextFactory);
-        Misc.free(typesAndSelectCache);
+        typesAndSelectCache = Misc.free(typesAndSelectCache);
     }
 
     @Override
@@ -153,6 +153,13 @@ public class PGWireServer implements IPGWireServer {
     @Override
     public WorkerPool getWorkerPool() {
         return workerPool;
+    }
+
+    @Override
+    public void resetQueryCache() {
+        if (typesAndSelectCache != null) {
+            typesAndSelectCache.clear();
+        }
     }
 
     private static class PGConnectionContextFactory extends IOContextFactoryImpl<PGConnectionContext> {
@@ -178,7 +185,7 @@ public class PGWireServer implements IPGWireServer {
                                 typesAndSelectCache
                         );
                         FactoryProvider factoryProvider = configuration.getFactoryProvider();
-                        Authenticator authenticator = factoryProvider.getPgWireAuthenticatorFactory().getPgWireAuthenticator(
+                        SocketAuthenticator authenticator = factoryProvider.getPgWireAuthenticatorFactory().getPgWireAuthenticator(
                                 configuration,
                                 circuitBreaker,
                                 registry,

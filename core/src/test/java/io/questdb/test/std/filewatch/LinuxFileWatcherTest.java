@@ -150,7 +150,7 @@ public class LinuxFileWatcherTest extends AbstractTest {
         }
 
         @Override
-        public int epollCtl(int epfd, int op, int fd, long eventPtr) {
+        public int epollCtl(long epfd, int op, long fd, long eventPtr) {
             if (epollCtlCounter++ == epollCtlFaultAt) {
                 return -1;
             }
@@ -158,7 +158,7 @@ public class LinuxFileWatcherTest extends AbstractTest {
         }
 
         @Override
-        public int epollWait(int epfd, long eventPtr, int eventCount, int timeout) {
+        public int epollWait(long epfd, long eventPtr, int eventCount, int timeout) {
             if (epollWaitCounter++ == epollWaitFaultAt) {
                 return -1;
             }
@@ -189,12 +189,12 @@ public class LinuxFileWatcherTest extends AbstractTest {
         }
 
         @Override
-        public long readEventFd(int fd) {
+        public long readEventFd(long fd) {
             return delegate.readEventFd(fd);
         }
 
         @Override
-        public int writeEventFd(int fd) {
+        public int writeEventFd(long fd) {
             return delegate.writeEventFd(fd);
         }
     }
@@ -220,7 +220,7 @@ public class LinuxFileWatcherTest extends AbstractTest {
         }
 
         @Override
-        public int inotifyAddWatch(int fd, long pathPtr, int flags) {
+        public int inotifyAddWatch(long fd, long pathPtr, int flags) {
             return delegate.inotifyAddWatch(fd, pathPtr, flags);
         }
 
@@ -233,7 +233,7 @@ public class LinuxFileWatcherTest extends AbstractTest {
         }
 
         @Override
-        public short inotifyRmWatch(int fd, int wd) {
+        public short inotifyRmWatch(long fd, int wd) {
             return delegate.inotifyRmWatch(fd, wd);
         }
 
@@ -246,17 +246,17 @@ public class LinuxFileWatcherTest extends AbstractTest {
         }
 
         @Override
-        public int readEvent(int fd, long buf, int bufSize) {
+        public int readEvent(long fd, long buf, int bufSize) {
             return delegate.readEvent(fd, buf, bufSize);
         }
 
         @Override
-        public int readPipe(int fd) {
+        public int readPipe(long fd) {
             return delegate.readPipe(fd);
         }
 
         @Override
-        public int writePipe(int fd) {
+        public int writePipe(long fd) {
             return delegate.writePipe(fd);
         }
     }

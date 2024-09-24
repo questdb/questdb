@@ -28,13 +28,12 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.str.Path;
 
 public class BitmapIndexBwdNullReader implements BitmapIndexReader {
-
     private final NullCursor cursor = new NullCursor();
 
     @Override
     public RowCursor getCursor(boolean cachedInstance, int key, long minValue, long maxValue) {
         final NullCursor cursor = getCursor(cachedInstance);
-        cursor.value = maxValue;
+        cursor.value = maxValue - minValue;
         return cursor;
     }
 

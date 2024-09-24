@@ -69,8 +69,8 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     }
 
     @Override
-    public int detachFdClose() {
-        int lfd = fd;
+    public long detachFdClose() {
+        long lfd = fd;
         fd = -1;
         close();
         return lfd;
@@ -111,7 +111,7 @@ public class MemoryCMORImpl extends MemoryCMRImpl implements MemoryCMOR {
     }
 
     @Override
-    public void ofOffset(FilesFacade ff, int fd, LPSZ name, long lo, long hi, int memoryTag, long opts) {
+    public void ofOffset(FilesFacade ff, long fd, LPSZ name, long lo, long hi, int memoryTag, long opts) {
         this.memoryTag = memoryTag;
         if (fd > -1) {
             close();

@@ -35,6 +35,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -84,9 +85,12 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             String expected = "location\tcast\ttemperature\ttimestamp\thumidity\n" +
                     "us-midwest\t\t82.0\t2016-06-13T17:43:50.100400Z\tnull\n" +
                     "us-eastcoast\tcast\t81.0\t2016-06-13T17:43:50.101400Z\t23.0\n";
-            try (TableReader reader = newOffPoolReader(configuration, tableName)) {
+            try (
+                    TableReader reader = newOffPoolReader(configuration, tableName);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
                 TableReaderMetadata meta = reader.getMetadata();
-                assertCursorTwoPass(expected, reader.getCursor(), meta);
+                assertCursorTwoPass(expected, cursor, meta);
                 Assert.assertEquals(5, meta.getColumnCount());
                 Assert.assertEquals(ColumnType.SYMBOL, meta.getColumnType("location"));
                 Assert.assertEquals(ColumnType.DOUBLE, meta.getColumnType("temperature"));
@@ -446,7 +450,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         runInContext(
                 new TestFilesFacadeImpl() {
                     @Override
-                    public int openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, long opts) {
                         if (Utf8s.endsWithAscii(name, "broken.d.1")) {
                             return -1;
                         }
@@ -486,7 +490,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         runInContext(
                 new TestFilesFacadeImpl() {
                     @Override
-                    public int openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, long opts) {
                         if (Utf8s.endsWithAscii(name, "1970-01-01.1" + Files.SEPARATOR + "temperature.d")) {
                             return -1;
                         }
@@ -524,7 +528,7 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         runInContext(
                 new TestFilesFacadeImpl() {
                     @Override
-                    public int openRW(LPSZ name, long opts) {
+                    public long openRW(LPSZ name, long opts) {
                         if (Utf8s.endsWithAscii(name, "broken.d")) {
                             return -1;
                         }
@@ -1018,33 +1022,6 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     @Test
-    public void testInsertIntoExistingVarcharColumn() throws Exception {
-        String table = "tableExistAlready";
-        runInContext(() -> {
-            ddl("create table " + table + " (location SYMBOL, slog VARCHAR, timestamp TIMESTAMP) timestamp(timestamp);");
-            recvBuffer =
-                    table + ",location=us-midwest slog=\"82\",timestamp=1465839830100100t 1465839830100300200\n" +
-                            table + ",location=us-midwest slog=\"hello\" 1465839830100500200\n" +
-                            table + ",location=us-eastcoast,city=york,city=london slog=\"baba yaga\" 1465839830101400200\n" +
-                            table + ",location=us-midwest,city=london slog=\"mexico\" 1465839830102300200\n" +
-                            table + ",location=us-eastcoast slog=\"pub crawl\" 1465839830102400200\n" +
-                            table + ",location=us-eastcoast slog=\"dont fix what's not broken\" 1465839830102400200\n" +
-                            table + ",location=us-westcost slog=\"are we there yet?\",timestamp=1465839830102500t\n";
-            handleIO();
-            closeContext();
-            String expected = "location\tslog\ttimestamp\tcity\n" +
-                    "us-midwest\t82\t2016-06-13T17:43:50.100100Z\t\n" +
-                    "us-midwest\thello\t2016-06-13T17:43:50.100500Z\t\n" +
-                    "us-eastcoast\tbaba yaga\t2016-06-13T17:43:50.101400Z\tyork\n" +
-                    "us-midwest\tmexico\t2016-06-13T17:43:50.102300Z\tlondon\n" +
-                    "us-eastcoast\tpub crawl\t2016-06-13T17:43:50.102400Z\t\n" +
-                    "us-eastcoast\tdont fix what's not broken\t2016-06-13T17:43:50.102400Z\t\n" +
-                    "us-westcost\tare we there yet?\t2016-06-13T17:43:50.102500Z\t\n";
-            assertTable(expected, table);
-        });
-    }
-
-    @Test
     public void testDuplicateFieldWhenTableExistsAlreadyNonASCIIFirstRow() throws Exception {
         String table = "dupField";
         runInContext(() -> {
@@ -1350,6 +1327,33 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     @Test
     public void testFragmentationMidTableName() throws Exception {
         testFragmentation("weat".length(), "weather1");
+    }
+
+    @Test
+    public void testInsertIntoExistingVarcharColumn() throws Exception {
+        String table = "tableExistAlready";
+        runInContext(() -> {
+            ddl("create table " + table + " (location SYMBOL, slog VARCHAR, timestamp TIMESTAMP) timestamp(timestamp);");
+            recvBuffer =
+                    table + ",location=us-midwest slog=\"82\",timestamp=1465839830100100t 1465839830100300200\n" +
+                            table + ",location=us-midwest slog=\"hello\" 1465839830100500200\n" +
+                            table + ",location=us-eastcoast,city=york,city=london slog=\"baba yaga\" 1465839830101400200\n" +
+                            table + ",location=us-midwest,city=london slog=\"mexico\" 1465839830102300200\n" +
+                            table + ",location=us-eastcoast slog=\"pub crawl\" 1465839830102400200\n" +
+                            table + ",location=us-eastcoast slog=\"dont fix what's not broken\" 1465839830102400200\n" +
+                            table + ",location=us-westcost slog=\"are we there yet?\",timestamp=1465839830102500t\n";
+            handleIO();
+            closeContext();
+            String expected = "location\tslog\ttimestamp\tcity\n" +
+                    "us-midwest\t82\t2016-06-13T17:43:50.100100Z\t\n" +
+                    "us-midwest\thello\t2016-06-13T17:43:50.100500Z\t\n" +
+                    "us-eastcoast\tbaba yaga\t2016-06-13T17:43:50.101400Z\tyork\n" +
+                    "us-midwest\tmexico\t2016-06-13T17:43:50.102300Z\tlondon\n" +
+                    "us-eastcoast\tpub crawl\t2016-06-13T17:43:50.102400Z\t\n" +
+                    "us-eastcoast\tdont fix what's not broken\t2016-06-13T17:43:50.102400Z\t\n" +
+                    "us-westcost\tare we there yet?\t2016-06-13T17:43:50.102500Z\t\n";
+            assertTable(expected, table);
+        });
     }
 
     @Test
@@ -1950,16 +1954,18 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
     }
 
     private void assertTableCount(CharSequence tableName, int nExpectedRows, long maxExpectedTimestampNanos) {
-        try (TableReader reader = newOffPoolReader(configuration, tableName)) {
+        try (
+                TableReader reader = newOffPoolReader(configuration, tableName);
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
             Assert.assertEquals(maxExpectedTimestampNanos / 1000, reader.getMaxTimestamp());
             int timestampColIndex = reader.getMetadata().getTimestampIndex();
-            TableReaderRecordCursor recordCursor = reader.getCursor();
             int nRows = 0;
-            long timestampinNanos = 1465839830100400200L;
-            while (recordCursor.hasNext()) {
-                long actualTimestampInMicros = recordCursor.getRecord().getTimestamp(timestampColIndex);
-                Assert.assertEquals(timestampinNanos / 1000, actualTimestampInMicros);
-                timestampinNanos += 1000;
+            long timestampNanos = 1465839830100400200L;
+            while (cursor.hasNext()) {
+                long actualTimestampInMicros = cursor.getRecord().getTimestamp(timestampColIndex);
+                Assert.assertEquals(timestampNanos / 1000, actualTimestampInMicros);
+                timestampNanos += 1000;
                 nRows++;
             }
             Assert.assertEquals(nExpectedRows, nRows);
@@ -1989,9 +1995,8 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
         addTable(table);
 
         runInContext(() -> {
-            recvBuffer =
-                    table + ",location=us-midwest temperature=82 1465839830100400200\n" +
-                            table + ",location=us-eastcoast temperature=81,newcol=" + ilpValue + " 1465839830101400200\n";
+            recvBuffer = table + ",location=us-midwest temperature=82 1465839830100400200\n" +
+                    table + ",location=us-eastcoast temperature=81,newcol=" + ilpValue + " 1465839830101400200\n";
             handleIO();
             closeContext();
             if (walEnabled) {
@@ -2000,8 +2005,11 @@ public class LineTcpConnectionContextTest extends BaseLineTcpContextTest {
             String expected = "location\ttemperature\ttimestamp\tnewcol\n" +
                     "us-midwest\t82.0\t2016-06-13T17:43:50.100400Z\t" + emptyValue + "\n" +
                     "us-eastcoast\t81.0\t2016-06-13T17:43:50.101400Z\t" + tableValue + "\n";
-            try (TableReader reader = newOffPoolReader(configuration, table)) {
-                assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
+            try (
+                    TableReader reader = newOffPoolReader(configuration, table);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
+                assertCursorTwoPass(expected, cursor, reader.getMetadata());
                 Assert.assertEquals(expectedType, ColumnType.tagOf(reader.getMetadata().getColumnType("newcol")));
             }
         });

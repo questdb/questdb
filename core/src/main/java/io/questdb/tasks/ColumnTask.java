@@ -37,7 +37,7 @@ public class ColumnTask {
     private long long3;
     private long long4;
     private TableWriter.ColumnTaskHandler taskHandler;
-    private int timestampColumnIndex;
+    private long timestampColumnIndex;
 
     public int getColumnIndex() {
         return columnIndex;
@@ -75,7 +75,7 @@ public class ColumnTask {
         return taskHandler;
     }
 
-    public int getTimestampColumnIndex() {
+    public long getTimestampColumnIndex() {
         return timestampColumnIndex;
     }
 
@@ -83,7 +83,7 @@ public class ColumnTask {
             CountDownLatchSPI countDownLatchSPI,
             int columnIndex,
             int columnType,
-            int timestampIndex,
+            long timestampIndex,
             long long0,
             long long1,
             long long2,

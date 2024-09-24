@@ -1051,7 +1051,7 @@ public class LogFactoryTest {
                 try (Path path = new Path()) {
                     for (int i = 0; i < extraFiles; i++) {
                         path.of(base + extraFilePrefix).put(i).put(".log").$();
-                        int fd = Files.openRW(path.$());
+                        long fd = Files.openRW(path.$());
                         try {
                             Files.allocate(fd, nSizeLimit + 1);
                         } finally {

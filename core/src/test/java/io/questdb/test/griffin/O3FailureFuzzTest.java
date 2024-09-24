@@ -59,7 +59,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
     private final static AtomicBoolean failNextAllocOrOpen = new AtomicBoolean(false);
     private static final TestFilesFacadeImpl ffAllocateFailure = new TestFilesFacadeImpl() {
         @Override
-        public boolean allocate(int fd, long size) {
+        public boolean allocate(long fd, long size) {
             if (counter.decrementAndGet() == 0) {
                 failNextAllocOrOpen.set(false);
                 return false;
@@ -68,7 +68,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
         }
 
         @Override
-        public long length(int fd) {
+        public long length(long fd) {
             if (!failNextAllocOrOpen.get() && counter.decrementAndGet() == 0) {
                 failNextAllocOrOpen.set(true);
                 return 0;
@@ -78,7 +78,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
     };
     private static final FilesFacade ffOpenFailure = new TestFilesFacadeImpl() {
         @Override
-        public int openRW(LPSZ name, long opts) {
+        public long openRW(LPSZ name, long opts) {
             if ((Utf8s.endsWithAscii(name, Files.SEPARATOR + "ts.d") && Utf8s.containsAscii(name, "1970-01-06") && counter.decrementAndGet() == 0) && failNextAllocOrOpen.get()) {
                 failNextAllocOrOpen.set(false);
                 return -1;
@@ -142,7 +142,7 @@ public class O3FailureFuzzTest extends AbstractO3Test {
         executeWithPool(0, O3FailureFuzzTest::testPartitionedDataAppendOOPrependOODataFailRetry0, new TestFilesFacadeImpl() {
 
             @Override
-            public long mmap(int fd, long len, long offset, int flags, int memoryTag) {
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
                 if (failNextAllocOrOpen.get() && this.fd == fd) {
                     failNextAllocOrOpen.set(false);
                     this.fd = -1;
@@ -152,8 +152,8 @@ public class O3FailureFuzzTest extends AbstractO3Test {
             }
 
             @Override
-            public int openRW(LPSZ name, long opts) {
-                int fd = super.openRW(name, opts);
+            public long openRW(LPSZ name, long opts) {
+                long fd = super.openRW(name, opts);
                 if (Utf8s.endsWithAscii(name, "1970-01-06" + Files.SEPARATOR + "m.d") && counter.decrementAndGet() == 0) {
                     this.fd = fd;
                     failNextAllocOrOpen.set(true);

@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -53,7 +52,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             @Transient ColumnTypes joinColumnTypes,
-            @Transient ColumnTypes valueTypes, // this expected to be just LONG, we store chain references in map
+            @Transient ColumnTypes valueTypes, // this expected to be just 2 INTs, we store chain references in map
             RecordSink masterKeySink,
             RecordSink slaveKeySink,
             int columnSplit,
@@ -109,6 +108,28 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
         sink.child("Hash", slaveFactory);
     }
 
+    private static void populateRowIDHashMap(
+            SqlExecutionCircuitBreaker circuitBreaker,
+            RecordCursor cursor,
+            Map keyMap,
+            RecordSink recordSink,
+            LongChain rowIDChain
+    ) {
+        final Record record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+
+            MapKey key = keyMap.withKey();
+            key.put(record, recordSink);
+            MapValue value = key.createValue();
+            if (value.isNew()) {
+                value.putInt(0, rowIDChain.put(record.getRowId(), -1));
+            } else {
+                value.putInt(0, rowIDChain.put(record.getRowId(), value.getInt(0)));
+            }
+        }
+    }
+
     @Override
     protected void _close() {
         Misc.freeIfCloseable(getMetadata());
@@ -125,7 +146,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
         private boolean isMapBuilt;
         private boolean isOpen;
         private Record masterRecord;
-        private LongChain.TreeCursor slaveChainCursor;
+        private LongChain.Cursor slaveChainCursor;
         private Record slaveRecord;
 
         public HashOuterJoinLightRecordCursor(
@@ -165,7 +186,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
         @Override
         public boolean hasNext() {
             if (!isMapBuilt) {
-                TableUtils.populateRowIDHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain);
+                populateRowIDHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain);
                 isMapBuilt = true;
             }
 
@@ -179,7 +200,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                 key.put(masterRecord, masterKeySink);
                 MapValue value = key.findValue();
                 if (value != null) {
-                    slaveChainCursor = slaveChain.getCursor(value.getLong(0));
+                    slaveChainCursor = slaveChain.getCursor(value.getInt(0));
                     // we know cursor has values
                     // advance to get first value
                     slaveChainCursor.hasNext();

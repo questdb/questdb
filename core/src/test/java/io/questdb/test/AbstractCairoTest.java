@@ -195,7 +195,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 rows.add(record.getRowId());
             }
 
-            final Record rec = cursor.getRecordB();
+            final Record rec = cursor.getRecord();
             CursorPrinter.println(metadata, sink);
             for (int i = 0, n = rows.size(); i < n; i++) {
                 cursor.recordAt(rec, rows.getQuick(i));
@@ -404,6 +404,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     public static void refreshTablesInBaseEngine() {
         engine.reloadTableNames();
+
     }
 
     @BeforeClass
@@ -419,6 +420,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getRootContext();
         metrics = node1.getMetrics();
         engine = node1.getEngine();
+        engine.metadataCacheClear();
         messageBus = node1.getMessageBus();
 
         node1.initGriffin(circuitBreaker);
@@ -444,6 +446,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         factoryProvider = null;
         engineFactory = null;
         configurationFactory = null;
+        engine.metadataCacheClear();
         AbstractTest.tearDownStatic();
         DumpThreadStacksFunctionFactory.dumpThreadStacks();
     }
@@ -458,12 +461,15 @@ public abstract class AbstractCairoTest extends AbstractTest {
         SharedRandom.RANDOM.set(new Rnd());
         forEachNode(QuestDBTestNode::setUpCairo);
         engine.resetNameRegistryMemory();
+        engine.metadataCacheClear();
         refreshTablesInBaseEngine();
         SharedRandom.RANDOM.set(new Rnd());
         TestFilesFacadeImpl.resetTracking();
         memoryUsage = -1;
         forEachNode(QuestDBTestNode::setUpGriffin);
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
+        // 30% chance to enable paranoia checking FD mode
+        Files.PARANOIA_FD_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
     }
 
     @After
@@ -476,6 +482,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         LOG.info().$("Tearing down test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         forEachNode(node -> node.tearDownCairo(removeDir));
         ioURingFacade = IOURingFacadeImpl.INSTANCE;
+        engine.metadataCacheClear();
         sink.clear();
         memoryUsage = -1;
         if (inputWorkRoot != null) {
@@ -1185,7 +1192,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
             while (cursor.hasNext()) {
                 long ts = record.getTimestamp(index);
                 if ((isAscending && timestamp > ts) || (!isAscending && timestamp < ts)) {
-
                     StringSink error = new StringSink();
                     error.put("record # ").put(c).put(" should have ").put(isAscending ? "bigger" : "smaller").put(" (or equal) timestamp than the row before. Values prior=");
                     TimestampFormatUtils.appendDateTimeUSec(error, timestamp);
@@ -1227,7 +1233,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static boolean couldObtainLock(Path path) {
-        final int lockFd = TableUtils.lock(TestFilesFacadeImpl.INSTANCE, path.$(), false);
+        final long lockFd = TableUtils.lock(TestFilesFacadeImpl.INSTANCE, path.$(), false);
         if (lockFd != -1L) {
             TestFilesFacadeImpl.INSTANCE.close(lockFd);
             return true;  // Could lock/unlock.
@@ -1381,15 +1387,15 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected static TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics) {
-        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), metrics, new MessageBusImpl(configuration));
+        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), metrics, new MessageBusImpl(configuration), engine);
     }
 
     protected static TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName) {
-        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName));
+        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), engine);
     }
 
     protected static TableWriter newOffPoolWriter(CharSequence tableName) {
-        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName));
+        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), engine);
     }
 
     protected static void printSql(CharSequence sql) throws SqlException {
@@ -1935,7 +1941,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected TableWriter newOffPoolWriter(CairoConfiguration configuration, CharSequence tableName, Metrics metrics, MessageBus messageBus) {
-        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), metrics, messageBus);
+        return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), metrics, messageBus, engine);
     }
 
     protected TableToken registerTableName(CharSequence tableName) {

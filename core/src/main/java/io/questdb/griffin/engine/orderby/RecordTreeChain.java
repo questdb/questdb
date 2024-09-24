@@ -316,21 +316,13 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
     }
 
     public class TreeCursor implements RecordCursor {
-        private RecordCursor base;
+        private RecordCursor baseCursor;
         private long current;
-        private boolean isOpen;
-
-        public TreeCursor() {
-            this.isOpen = true;
-        }
 
         @Override
         public void close() {
-            if (isOpen) {
-                isOpen = false;
-                Misc.free(base);
-                current = -1;
-            }
+            // base cursor's lifecycle is managed externally, so we don't close it here
+            current = -1;
         }
 
         @Override
@@ -345,7 +337,7 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
 
         @Override
         public SymbolTable getSymbolTable(int columnIndex) {
-            return base.getSymbolTable(columnIndex);
+            return baseCursor.getSymbolTable(columnIndex);
         }
 
         @Override
@@ -365,7 +357,7 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
 
         @Override
         public SymbolTable newSymbolTable(int columnIndex) {
-            return base.newSymbolTable(columnIndex);
+            return baseCursor.newSymbolTable(columnIndex);
         }
 
         @Override
@@ -375,7 +367,7 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
 
         @Override
         public long size() {
-            return base.size();
+            return baseCursor.size();
         }
 
         @Override
@@ -390,8 +382,7 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
         }
 
         private void of(RecordCursor base) {
-            isOpen = true;
-            this.base = base;
+            this.baseCursor = base;
             recordChain.setSymbolTableResolver(base);
             toTop();
         }

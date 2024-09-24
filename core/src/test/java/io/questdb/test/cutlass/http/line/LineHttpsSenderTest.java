@@ -34,6 +34,7 @@ import io.questdb.cutlass.line.LineSenderException;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TlsProxyRule;
 import org.junit.Assert;
@@ -289,8 +290,11 @@ public class LineHttpsSenderTest extends AbstractBootstrapTest {
         TestUtils.assertEventually(() -> {
             assertTableExists(engine, tableName);
 
-            try (TableReader reader = engine.getReader(tableName)) {
-                long size = reader.getCursor().size();
+            try (
+                    TableReader reader = engine.getReader(tableName);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
+                long size = cursor.size();
                 assertEquals(expectedSize, size);
             } catch (EntryLockedException e) {
                 // if table is busy we want to fail this round and have the assertEventually() to retry later

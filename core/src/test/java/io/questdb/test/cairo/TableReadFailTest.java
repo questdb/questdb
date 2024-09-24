@@ -27,7 +27,6 @@ package io.questdb.test.cairo;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
@@ -50,7 +49,7 @@ public class TableReadFailTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, TableUtils.META_FILE_NAME)) {
                     return -1;
                 }
@@ -65,7 +64,7 @@ public class TableReadFailTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 1);
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public int openRO(LPSZ path) {
+            public long openRO(LPSZ path) {
                 if (Utf8s.endsWithAscii(path, TableUtils.META_FILE_NAME)) {
                     return -1;
                 }
@@ -89,9 +88,9 @@ public class TableReadFailTest extends AbstractCairoTest {
             try (
                     Path path = new Path();
                     TableReader reader = newOffPoolReader(configuration, x);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader);
                     MemoryCMARW mem = Vm.getCMARWInstance()
             ) {
-
                 final Rnd rnd = new Rnd();
                 final int N = 1000;
 
@@ -99,19 +98,18 @@ public class TableReadFailTest extends AbstractCairoTest {
                 TableToken tableToken = engine.verifyTableName(x);
                 path.of(configuration.getRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
 
-                try (TableWriter w = newOffPoolWriter(configuration, x, metrics)) {
+                try (TableWriter writer = newOffPoolWriter(configuration, x, metrics)) {
                     for (int i = 0; i < N; i++) {
-                        TableWriter.Row r = w.newRow();
+                        TableWriter.Row r = writer.newRow();
                         r.putInt(0, rnd.nextInt());
                         r.putLong(1, rnd.nextLong());
                         r.append();
                     }
-                    w.commit();
+                    writer.commit();
                 }
 
                 Assert.assertTrue(reader.reload());
 
-                RecordCursor cursor = reader.getCursor();
                 final Record record = cursor.getRecord();
                 rnd.reset();
                 int count = 0;
@@ -157,22 +155,22 @@ public class TableReadFailTest extends AbstractCairoTest {
                 // make sure reload functions correctly. Txn changed from 1 to 3, reload should return true
                 Assert.assertTrue(reader.reload());
 
-                try (TableWriter w = newOffPoolWriter(configuration, x, metrics)) {
+                try (TableWriter writer = newOffPoolWriter(configuration, x, metrics)) {
                     // add more data
                     for (int i = 0; i < N; i++) {
-                        TableWriter.Row r = w.newRow();
+                        TableWriter.Row r = writer.newRow();
                         r.putInt(0, rnd.nextInt());
                         r.putLong(1, rnd.nextLong());
                         r.append();
                     }
-                    w.commit();
+                    writer.commit();
                 }
 
                 // does positive reload work?
                 Assert.assertTrue(reader.reload());
 
                 // can reader still see correct data?
-                cursor = reader.getCursor();
+                cursor.toTop();
                 rnd.reset();
                 count = 0;
                 while (cursor.hasNext()) {
@@ -190,7 +188,7 @@ public class TableReadFailTest extends AbstractCairoTest {
     public void testTxnFileCannotOpenConstructor() throws Exception {
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, TableUtils.TXN_FILE_NAME)) {
                     return -1;
                 }

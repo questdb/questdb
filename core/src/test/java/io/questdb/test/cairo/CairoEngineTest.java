@@ -119,7 +119,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                     private boolean failNextAlloc = false;
 
                     @Override
-                    public boolean allocate(int fd, long size) {
+                    public boolean allocate(long fd, long size) {
                         if (failNextAlloc) {
                             failNextAlloc = false;
                             return false;
@@ -128,7 +128,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                     }
 
                     @Override
-                    public long length(int fd) {
+                    public long length(long fd) {
                         if (this.fd == fd) {
                             failNextAlloc = true;
                             this.fd = -1;
@@ -138,8 +138,8 @@ public class CairoEngineTest extends AbstractCairoTest {
                     }
 
                     @Override
-                    public int openRW(LPSZ name, long opts) {
-                        int fd = super.openRW(name, opts);
+                    public long openRW(LPSZ name, long opts) {
+                        long fd = super.openRW(name, opts);
                         if (Utf8s.endsWithAscii(name, TableUtils.TAB_INDEX_FILE_NAME)) {
                             this.fd = fd;
                         }

@@ -31,8 +31,17 @@ import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class SpreadFunctionFactoryTest extends AbstractFunctionFactoryTest {
+
     @Test
-    public void testMidPrice() throws Exception {
+    public void testNullBehavior() throws Exception {
+        final String expected = "spread\nnull\n";
+        assertQuery(expected, "select spread(NULL, 1.0)");
+        assertQuery(expected, "select spread(1.0, NULL)");
+        assertQuery(expected, "select spread(NULL, NULL)");
+    }
+
+    @Test
+    public void testSpread() throws Exception {
         assertQuery("spread\n0.0\n", "select spread(2.0, 2.0)");
         assertQuery("spread\n2.0\n", "select spread(1.0, 3.0)");
         assertQuery("spread\n4.0\n", "select spread(0.0, 4.0)");
@@ -44,23 +53,6 @@ public class SpreadFunctionFactoryTest extends AbstractFunctionFactoryTest {
         assertQuery("spread\n1.0\n", "select spread(-1.0,0.0)");
         assertQuery("spread\n1.0\n", "select spread(-2.0,-1.0)");
         assertQuery("spread\n1.1111090000000001\n", "select spread(-2.22222,-1.111111)");
-    }
-
-    @Test
-    public void testNonFiniteNumber() throws Exception {
-        final String expected = "spread\nnull\n";
-        assertQuery(expected, "select spread(NULL, 1.0)");
-        assertQuery(expected, "select spread(1.0, NULL)");
-        assertQuery(expected, "select spread(NULL, NULL)");
-    }
-
-    @Test
-    public void testNullBehavior() throws Exception {
-        final String expected = "spread\nnull\n";
-        assertQuery(expected, "select spread(NULL, 1.0)");
-        assertQuery(expected, "select spread(1.0, NULL)");
-        assertQuery(expected, "select spread(NULL, NULL)");
-
     }
 
     @Override

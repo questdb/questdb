@@ -266,7 +266,7 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                             "    Async Group By workers: 1\n" +
                             "      values: [avg(l2price([14,bid_size,bid_value])),avg(l2price([14,ask_size,ask_value]))]\n" +
                             "      filter: null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n"
             );
@@ -277,7 +277,7 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                             " as spread from x",
                     "VirtualRecord\n" +
                             "  functions: [l2price([14,ask_size,ask_value])-l2price([14,bid_size,bid_value])]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n"
             );

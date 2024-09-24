@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.DataFrameCursorFactory;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.*;
@@ -35,14 +35,16 @@ public class LatestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecord
     protected final DirectLongList prefixes;
 
     public LatestByAllIndexedRecordCursorFactory(
-            @NotNull RecordMetadata metadata,
             @NotNull CairoConfiguration configuration,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull RecordMetadata metadata,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int columnIndex,
             @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts,
             @NotNull LongList prefixes
     ) {
-        super(metadata, dataFrameCursorFactory, configuration);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
+
         try {
             this.prefixes = new DirectLongList(Math.max(2, prefixes.size()), MemoryTag.NATIVE_LATEST_BY_LONG_LIST);
             // copy into owned direct memory
@@ -50,7 +52,7 @@ public class LatestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecord
                 this.prefixes.add(prefixes.get(i));
             }
 
-            this.cursor = new LatestByAllIndexedRecordCursor(columnIndex, rows, columnIndexes, this.prefixes);
+            this.cursor = new LatestByAllIndexedRecordCursor(configuration, metadata, columnIndex, rows, this.prefixes);
         } catch (Throwable th) {
             close();
             throw th;
@@ -66,7 +68,7 @@ public class LatestByAllIndexedRecordCursorFactory extends AbstractTreeSetRecord
     public void toPlan(PlanSink sink) {
         sink.type("LatestByAllIndexed");
         sink.child(cursor);
-        sink.child(dataFrameCursorFactory);
+        sink.child(partitionFrameCursorFactory);
     }
 
     @Override

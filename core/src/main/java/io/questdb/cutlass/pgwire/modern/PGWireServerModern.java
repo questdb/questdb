@@ -28,7 +28,7 @@ import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cutlass.auth.Authenticator;
+import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.pgwire.BadProtocolException;
 import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.IPGWireServer;
@@ -159,6 +159,13 @@ public class PGWireServerModern implements IPGWireServer {
         return workerPool;
     }
 
+    @Override
+    public void resetQueryCache() {
+        if (typesAndSelectCache != null) {
+            typesAndSelectCache.clear();
+        }
+    }
+
     private static class PGConnectionContextFactory extends IOContextFactoryImpl<PGConnectionContextModern> {
 
         public PGConnectionContextFactory(
@@ -182,7 +189,7 @@ public class PGWireServerModern implements IPGWireServer {
                                 typesAndSelectCache
                         );
                         FactoryProvider factoryProvider = configuration.getFactoryProvider();
-                        Authenticator authenticator = factoryProvider.getPgWireAuthenticatorFactory().getPgWireAuthenticator(
+                        SocketAuthenticator authenticator = factoryProvider.getPgWireAuthenticatorFactory().getPgWireAuthenticator(
                                 configuration,
                                 circuitBreaker,
                                 registry,

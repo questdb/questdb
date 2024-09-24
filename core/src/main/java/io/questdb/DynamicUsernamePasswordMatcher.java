@@ -24,8 +24,8 @@
 
 package io.questdb;
 
+import io.questdb.cutlass.auth.UsernamePasswordMatcher;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.cutlass.pgwire.UsernamePasswordMatcher;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
@@ -33,6 +33,9 @@ import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
+
+import static io.questdb.cairo.SecurityContext.AUTH_TYPE_CREDENTIALS;
+import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
 
 public class DynamicUsernamePasswordMatcher implements UsernamePasswordMatcher, QuietCloseable {
     private final DirectUtf8Sink defaultPassword;
@@ -67,9 +70,8 @@ public class DynamicUsernamePasswordMatcher implements UsernamePasswordMatcher, 
     }
 
     @Override
-    public boolean verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
+    public byte verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
         if (serverConfiguration != null && serverConfiguration.getPGWireConfiguration() != pgwireConfiguration) {
-
             if (lock.writeLock().tryLock()) {
                 try {
                     // Update the cached pgwire config
@@ -88,17 +90,24 @@ public class DynamicUsernamePasswordMatcher implements UsernamePasswordMatcher, 
         lock.readLock().lock();
         try {
             if (username.length() == 0) {
-                return false;
+                return AUTH_TYPE_NONE;
             }
             if (Chars.equals(username, pgwireConfiguration.getDefaultUsername())) {
-                return Utf8s.equals(defaultPassword, passwordPtr, passwordLen);
+                return verifyPassword(defaultPassword, passwordPtr, passwordLen);
             } else if (pgwireConfiguration.isReadOnlyUserEnabled() && Chars.equals(username, pgwireConfiguration.getReadOnlyUsername())) {
-                return Utf8s.equals(readOnlyPassword, passwordPtr, passwordLen);
+                return verifyPassword(readOnlyPassword, passwordPtr, passwordLen);
             } else {
-                return false;
+                return AUTH_TYPE_NONE;
             }
         } finally {
             lock.readLock().unlock();
         }
+    }
+
+    private byte verifyPassword(DirectUtf8Sink expectedPwd, long passwordPtr, int passwordLen) {
+        if (Utf8s.equals(expectedPwd, passwordPtr, passwordLen)) {
+            return AUTH_TYPE_CREDENTIALS;
+        }
+        return AUTH_TYPE_NONE;
     }
 }

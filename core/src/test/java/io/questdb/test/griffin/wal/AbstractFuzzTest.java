@@ -37,6 +37,8 @@ import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.mp.TestWorkerPool;
@@ -156,8 +158,12 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             }
         }
 
+        Utf8StringSink sink = new Utf8StringSink();
         for (; symbolIndex < totalSymbols; symbolIndex++) {
-            symbols[symbolIndex] = strLen > 0 ? Chars.toString(rnd.nextChars(rnd.nextInt(strLen))) : "";
+            // Create strings with unicode chars
+            sink.clear();
+            rnd.nextUtf8Str(rnd.nextInt(strLen), sink);
+            symbols[symbolIndex] = strLen > 0 ? Utf8s.toString(sink) : "";
         }
         return symbols;
     }

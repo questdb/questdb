@@ -30,7 +30,6 @@ import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.pgwire.IPGWireServer;
 import io.questdb.griffin.SqlException;
@@ -39,6 +38,7 @@ import io.questdb.std.ThreadLocal;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.runner.RunWith;
@@ -201,24 +201,26 @@ public class PGUpdateConcurrentTest extends BasePGTest {
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             validators.get(i).reset();
         }
-        RecordCursor cursor = rdr.getCursor();
-        final Record record = cursor.getRecord();
-        int recordIndex = 0;
-        while (cursor.hasNext()) {
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                final StringSink readerSink = PGUpdateConcurrentTest.readerSink.get();
-                readerSink.clear();
-                CursorPrinter.printColumn(record, metadata, i, readerSink);
-                CharSequence[] expectedValueArray = expectedValues.get(i);
-                CharSequence expectedValue = expectedValueArray != null ? expectedValueArray[recordIndex] : null;
-                if (!validators.get(i).validate(expectedValue, readerSink)) {
-                    throw SqlException.$(0, "assertSql failed, recordIndex=").put(recordIndex)
-                            .put(", columnIndex=").put(i)
-                            .put(", expected=").put(expectedValue)
-                            .put(", actual=").put(readerSink);
+        try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor()) {
+            cursor.of(rdr);
+            final Record record = cursor.getRecord();
+            int recordIndex = 0;
+            while (cursor.hasNext()) {
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    final StringSink readerSink = PGUpdateConcurrentTest.readerSink.get();
+                    readerSink.clear();
+                    CursorPrinter.printColumn(record, metadata, i, readerSink);
+                    CharSequence[] expectedValueArray = expectedValues.get(i);
+                    CharSequence expectedValue = expectedValueArray != null ? expectedValueArray[recordIndex] : null;
+                    if (!validators.get(i).validate(expectedValue, readerSink)) {
+                        throw SqlException.$(0, "assertSql failed, recordIndex=").put(recordIndex)
+                                .put(", columnIndex=").put(i)
+                                .put(", expected=").put(expectedValue)
+                                .put(", actual=").put(readerSink);
+                    }
                 }
+                recordIndex++;
             }
-            recordIndex++;
         }
     }
 

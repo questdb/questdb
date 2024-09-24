@@ -29,8 +29,8 @@ import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
-import io.questdb.cairo.sql.DataFrameCursorFactory;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.std.IntList;
@@ -42,25 +42,28 @@ import org.jetbrains.annotations.Nullable;
 public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
 
     public LatestByAllSymbolsFilteredRecordCursorFactory(
-            @NotNull RecordMetadata metadata,
             @NotNull CairoConfiguration configuration,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull RecordMetadata metadata,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             @NotNull RecordSink recordSink,
             @Transient @NotNull ColumnTypes partitionByColumnTypes,
             @NotNull IntList partitionByColumnIndexes,
             @Nullable IntList partitionBySymbolCounts,
             @Nullable Function filter,
-            @NotNull IntList columnIndexes
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
     ) {
-        super(metadata, dataFrameCursorFactory, configuration);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
+
         try {
             Map map = MapFactory.createOrderedMap(configuration, partitionByColumnTypes);
             this.cursor = new LatestByAllSymbolsFilteredRecordCursor(
+                    configuration,
+                    metadata,
                     map,
                     rows,
                     recordSink,
                     filter,
-                    columnIndexes,
                     partitionByColumnIndexes,
                     partitionBySymbolCounts
             );
@@ -80,7 +83,7 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
         sink.type("LatestByAllSymbolsFiltered");
         sink.optAttr("filter", ((LatestByAllSymbolsFilteredRecordCursor) cursor).getFilter());
         sink.child(cursor);
-        sink.child(dataFrameCursorFactory);
+        sink.child(partitionFrameCursorFactory);
     }
 
     @Override

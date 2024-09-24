@@ -51,13 +51,16 @@ import io.questdb.griffin.engine.functions.finance.LevelTwoPriceFunctionFactory;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.engine.functions.lt.LtIPv4StrFunctionFactory;
 import io.questdb.griffin.engine.functions.lt.LtStrIPv4FunctionFactory;
+import io.questdb.griffin.engine.functions.math.GreatestNumericFunctionFactory;
+import io.questdb.griffin.engine.functions.math.LeastNumericFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
+import io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory;
+import io.questdb.griffin.engine.functions.table.HydrateTableMetadataFunctionFactory;
 import io.questdb.griffin.engine.functions.table.ParquetScanFunctionFactory;
 import io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory;
-import io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
-import io.questdb.griffin.engine.table.DataFrameRecordCursorFactory;
+import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.model.WindowColumn;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
@@ -99,13 +102,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                Filter filter: b.age=10\n" +
                         "                    Nested Loop Left Join\n" +
                         "                      filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)\n" +
-                        "                        DataFrame\n" +
+                        "                        PageFrame\n" +
                         "                            Row forward scan\n" +
                         "                            Frame forward scan on: table_1\n" +
-                        "                        DataFrame\n" +
+                        "                        PageFrame\n" +
                         "                            Row forward scan\n" +
                         "                            Frame forward scan on: table_2\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: table_2\n"
         ));
@@ -127,13 +130,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "          filter: (a.ts>=dateadd('m',-1,b2.ts) and b.age=10)\n" +
                         "            Nested Loop Left Join\n" +
                         "              filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: table_1\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: table_2\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: table_2\n"
         ));
@@ -156,13 +159,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                Filter filter: a.age=b.age\n" +
                         "                    Nested Loop Left Join\n" +
                         "                      filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)\n" +
-                        "                        DataFrame\n" +
+                        "                        PageFrame\n" +
                         "                            Row forward scan\n" +
                         "                            Frame forward scan on: table_1\n" +
-                        "                        DataFrame\n" +
+                        "                        PageFrame\n" +
                         "                            Row forward scan\n" +
                         "                            Frame forward scan on: table_2\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: table_2\n"
         ));
@@ -181,10 +184,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    SelectedRecord\n" +
                         "        Nested Loop Left Join\n" +
                         "          filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts and a.age=10)\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: table_1\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: table_2\n"
         ));
@@ -201,10 +204,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "SelectedRecord\n" +
                         "    Nested Loop Left Join\n" +
                         "      filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts and b.age=10)\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: table_1\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: table_2\n"
         ));
@@ -225,10 +228,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        Filter filter: b.age=10\n" +
                         "            Nested Loop Left Join\n" +
                         "              filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: table_1\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: table_2\n"
         ));
@@ -247,10 +250,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    Filter filter: a.age*b.age=10\n" +
                         "        Nested Loop Left Join\n" +
                         "          filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: table_1\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: table_2\n"
         ));
@@ -271,10 +274,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "          filter: (a.ts>=dateadd('m',-1,b.ts) and dateadd('m',1,b.ts)>=a.ts)\n" +
                         "            Async JIT Filter workers: 1\n" +
                         "              filter: age=10\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: table_1\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: table_2\n"
         ));
@@ -291,10 +294,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.ts::int\n" +
                             "        AsOf Join Fast Scan\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
             );
@@ -312,10 +315,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Filter filter: a.i/10=b.i\n" +
                             "        AsOf Join Fast Scan\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
             );
@@ -332,10 +335,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a asof join b on ts",
                     "SelectedRecord\n" +
                             "    AsOf Join Fast Scan\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: b\n"
             );
@@ -352,11 +355,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a asof join (select * from b limit 10) on ts",
                     "SelectedRecord\n" +
                             "    AsOf Join\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
                             "        Limit lo: 10\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
             );
@@ -373,12 +376,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a asof join ((select * from b order by ts, i ) timestamp(ts))  on ts",
                     "SelectedRecord\n" +
                             "    AsOf Join\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
                             "        Sort light\n" +
                             "          keys: [ts, i]\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
             );
@@ -399,13 +402,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    AsOf Join Fast Scan\n" +
                             "        AsOf Join Fast Scan\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n"
             );
@@ -426,10 +429,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.i\n" +
                             "        AsOf Join Fast Scan\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
             );
@@ -451,10 +454,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "SelectedRecord\n" +
                                 "    AsOf Join\n" +
                                 "      condition: b.i=a.i\n" +
-                                "        DataFrame\n" +
+                                "        PageFrame\n" +
                                 "            Row forward scan\n" +
                                 "            Frame forward scan on: a\n" +
-                                "        DataFrame\n" +
+                                "        PageFrame\n" +
                                 "            Row forward scan\n" +
                                 "            Frame forward scan on: b\n",
                         sqlExecutionContext
@@ -475,10 +478,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    AsOf Join Fast Scan\n" +
                             "        Async JIT Filter workers: 1\n" +
                             "          filter: 0<i\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: b\n"
             );
@@ -495,10 +498,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a asof join b",
                     "SelectedRecord\n" +
                             "    AsOf Join Fast Scan\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: b\n"
             );
@@ -515,10 +518,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a asof join b on(ts)",
                     "SelectedRecord\n" +
                             "    AsOf Join Fast Scan\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: b\n"
             );
@@ -535,10 +538,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a asof join b on(ts)",
                     "SelectedRecord\n" +
                             "    AsOf Join Fast Scan\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: b\n"
             );
@@ -567,7 +570,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Limit lo: 3\n" +
                             "    CachedWindow\n" +
                             "      unorderedFunctions: [row_number() over (partition by [sym]),avg(i) over (),sum(i) over (),first_value(i) over ()]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n"
             );
@@ -618,7 +621,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [k]\n" +
                         "      values: [count(*),count(i),count(l),count(d),count(dat),count(ts)]\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: x\n"
         );
@@ -632,10 +635,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "SelectedRecord\n" +
                         "    Filter filter: length(a.s1)=length(b.s2)\n" +
                         "        Cross Join\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n"
         );
@@ -660,10 +663,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from a cross join a b",
                 "SelectedRecord\n" +
                         "    Cross Join\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -677,13 +680,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "SelectedRecord\n" +
                         "    Cross Join\n" +
                         "        Cross Join\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -703,10 +706,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         query,
                         "SelectedRecord\n" +
                                 "    Cross Join\n" +
-                                "        DataFrame\n" +
+                                "        PageFrame\n" +
                                 "            Row forward scan\n" +
                                 "            Frame forward scan on: t\n" +
-                                "        DataFrame\n" +
+                                "        PageFrame\n" +
                                 "            Row forward scan\n" +
                                 "            Frame forward scan on: t\n"
                 );
@@ -742,10 +745,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Cross Join\n" +
                             "        Limit lo: 10\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: t\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
@@ -765,10 +768,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Cross Join\n" +
                             "        Limit lo: 10\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: t\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
@@ -790,10 +793,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    SelectedRecord\n" +
                             "        Cross Join\n" +
                             "            Limit lo: 10\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: t\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: t\n"
             );
@@ -813,10 +816,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Cross Join\n" +
                             "        Limit lo: 10\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: t\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
@@ -836,7 +839,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: avg\n" +
                             "    CachedWindow\n" +
                             "      unorderedFunctions: [avg(event) over (partition by [1])]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n"
             );
@@ -854,7 +857,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Limit lo: 10\n" +
                         "    DistinctTimeSeries\n" +
                         "      keys: ts\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
         );
@@ -869,7 +872,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  keys: [ts desc]\n" +
                         "    DistinctTimeSeries\n" +
                         "      keys: ts\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
         );
@@ -883,7 +886,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Limit lo: 10\n" +
                         "    DistinctTimeSeries\n" +
                         "      keys: ts\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
         );
@@ -897,7 +900,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Limit lo: -10\n" +
                         "    DistinctTimeSeries\n" +
                         "      keys: ts\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
         );
@@ -914,7 +917,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        SelectedRecord\n" +
                         "            Async JIT Filter workers: 1\n" +
                         "              filter: y=5\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: di\n"
         );
@@ -931,7 +934,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        SelectedRecord\n" +
                         "            Async JIT Filter workers: 1\n" +
                         "              filter: y=5\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: di\n"
         );
@@ -948,7 +951,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        SelectedRecord\n" +
                         "            Async Filter workers: 1\n" +
                         "              filter: abs(y)=5\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: di\n"
         );
@@ -965,7 +968,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        SelectedRecord\n" +
                         "            Async Filter workers: 1\n" +
                         "              filter: abs(y)=5\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: di\n"
         );
@@ -982,7 +985,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        SelectedRecord\n" +
                         "            Async Filter workers: 1\n" +
                         "              filter: abs(y)=5\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: di\n"
         );
@@ -999,7 +1002,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        GroupBy vectorized: true workers: 1\n" +
                         "          keys: [x]\n" +
                         "          values: [count(*)]\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: di\n"
         );
@@ -1016,7 +1019,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        GroupBy vectorized: true workers: 1\n" +
                         "          keys: [x]\n" +
                         "          values: [count(*)]\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: di\n"
         );
@@ -1032,7 +1035,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        GroupBy vectorized: true workers: 1\n" +
                         "          keys: [x]\n" +
                         "          values: [count(*)]\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: di\n"
         );
@@ -1048,7 +1051,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        GroupBy vectorized: true workers: 1\n" +
                         "          keys: [x]\n" +
                         "          values: [count(*)]\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: di\n"
         );
@@ -1065,7 +1068,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        SelectedRecord\n" +
                         "            Async JIT Filter workers: 1\n" +
                         "              filter: y=5\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: di\n"
         );
@@ -1082,7 +1085,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        SelectedRecord\n" +
                         "            Async JIT Filter workers: 1\n" +
                         "              filter: y=5\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: di\n"
         );
@@ -1099,7 +1102,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        SelectedRecord\n" +
                         "            Async Filter workers: 1\n" +
                         "              filter: abs(y)=5\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: di\n"
         );
@@ -1116,7 +1119,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        SelectedRecord\n" +
                         "            Async Filter workers: 1\n" +
                         "              filter: abs(y)=5\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: di\n"
         );
@@ -1133,7 +1136,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        SelectedRecord\n" +
                         "            Async Filter workers: 1\n" +
                         "              filter: abs(y)=5\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: di\n"
         );
@@ -1145,11 +1148,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, s string);",
                 "select * from a except select * from a",
                 "Except\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n" +
                         "    Hash\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -1161,11 +1164,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, s string);",
                 "select * from a except all select * from a",
                 "Except All\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n" +
                         "    Hash\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -1180,11 +1183,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts desc",
                     "Except\n" +
                             "    Limit lo: 10\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: a\n" +
                             "    Hash\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n"
             );
@@ -1200,11 +1203,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts asc",
                     "Except\n" +
                             "    Limit lo: 10\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
                             "    Hash\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n"
             );
@@ -1218,15 +1221,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts asc",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Except\n" +
                             "        Limit lo: 10\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: a\n" +
                             "        Hash\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n"
             );
@@ -1240,15 +1243,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts desc",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts desc]\n" +
                             "    Except\n" +
                             "        Limit lo: 10\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
                             "        Hash\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n"
             );
@@ -1275,7 +1278,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExplainDeferredSingleSymbolFilterDataFrame() throws Exception {
+    public void testExplainDeferredSingleSymbolFilterPageFrame() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tab \n" +
                     "(\n" +
@@ -1293,12 +1296,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  from tab\n" +
                             "  where id = 'XXX' \n" +
                             "  sample by 15m ALIGN to CALENDAR\n",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      keys: [ts,id]\n" +
                             "      values: [last(val)]\n" +
-                            "        DeferredSingleSymbolFilterDataFrame\n" +
+                            "        DeferredSingleSymbolFilterPageFrame\n" +
                             "            Index forward scan on: id\n" +
                             "              filter: id=1\n" +
                             "            Frame forward scan on: tab\n"
@@ -1356,7 +1359,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from a where s = '\b\f\n\r\t\\u0013'",
                 "Async Filter workers: 1\n" +
                         "  filter: s='\\b\\f\\n\\r\\t\\u0013'\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -1367,7 +1370,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table a ( l long, d double)");
             assertSql("QUERY PLAN\n" +
-                    "DataFrame\n" +
+                    "PageFrame\n" +
                     "    Row forward scan\n" +
                     "    Frame forward scan on: a\n", "explain select * from a;"
             );
@@ -1381,12 +1384,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "with b as (select * from a where i = 0)" +
                         "select * from a union all select * from b",
                 "Union All\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n" +
                         "    Async JIT Filter workers: 1\n" +
                         "      filter: i=0\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -1401,14 +1404,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "SelectedRecord\n" +
                         "    Hash Join Light\n" +
                         "      condition: b.i=a.i\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n" +
                         "        Hash\n" +
                         "            SelectedRecord\n" +
                         "                Sort light\n" +
                         "                  keys: [s]\n" +
-                        "                    DataFrame\n" +
+                        "                    PageFrame\n" +
                         "                        Row forward scan\n" +
                         "                        Frame forward scan on: a\n"
         );
@@ -1420,7 +1423,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             ddl("create table a ( l long, d double)");
             assertSql("QUERY PLAN\n" +
                     "Limit lo: 10\n" +
-                    "    DataFrame\n" +
+                    "    PageFrame\n" +
                     "        Row forward scan\n" +
                     "        Frame forward scan on: a\n", "explain with b as (select * from a limit 10) select * from b;"
             );
@@ -1435,7 +1438,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Update table: a\n" +
                     "    VirtualRecord\n" +
                     "      functions: [1,10.1]\n" +
-                    "        DataFrame\n" +
+                    "        PageFrame\n" +
                     "            Row forward scan\n" +
                     "            Frame forward scan on: a\n", "explain update a set l = 1, d=10.1;"
             );
@@ -1454,11 +1457,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "        SelectedRecord\n" +
                     "            Hash Join Light\n" +
                     "              condition: l2=l1\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: a\n" +
                     "                Hash\n" +
-                    "                    DataFrame\n" +
+                    "                    PageFrame\n" +
                     "                        Row forward scan\n" +
                     "                        Frame forward scan on: b\n", "explain update a set l1 = 1, d1=d2 from b where l1=l2;"
             );
@@ -1476,7 +1479,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "      functions: [20,d+rnd_double()]\n" +
                         "        Async Filter workers: 1\n" +
                         "          filter: d<100.0\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Interval forward scan on: a\n" +
                         "                  intervals: [(\"1970-01-02T00:00:00.000001Z\",\"MAX\")]\n"
@@ -1492,7 +1495,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN '1' MINUTES PRECEDING AND CURRENT ROW) from tab",
                     "Window\n" +
                             "  functions: [avg(value) over (partition by [key] range between 60000000 preceding and current row)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
             );
@@ -1501,7 +1504,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN '4' MINUTES PRECEDING AND '3' MINUTES PRECEDING) from tab",
                     "Window\n" +
                             "  functions: [avg(value) over (partition by [key] range between 240000000 preceding and 180000000 preceding)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
             );
@@ -1510,7 +1513,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '10' MINUTES PRECEDING) from tab",
                     "Window\n" +
                             "  functions: [avg(value) over (partition by [key] range between unbounded preceding and 600000000 preceding)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
             );
@@ -1561,7 +1564,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                \"condition\": \"b.l=a.l\",\n" +
                         "                \"Plans\": [\n" +
                         "                {\n" +
-                        "                    \"Node Type\": \"DataFrame\",\n" +
+                        "                    \"Node Type\": \"PageFrame\",\n" +
                         "                    \"Plans\": [\n" +
                         "                    {\n" +
                         "                        \"Node Type\": \"Row forward scan\"\n" +
@@ -1581,7 +1584,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                        \"filter\": \"10<l\",\n" +
                         "                        \"Plans\": [\n" +
                         "                        {\n" +
-                        "                            \"Node Type\": \"DataFrame\",\n" +
+                        "                            \"Node Type\": \"PageFrame\",\n" +
                         "                            \"Plans\": [\n" +
                         "                            {\n" +
                         "                                \"Node Type\": \"Row forward scan\"\n" +
@@ -1632,7 +1635,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "            \"Node Type\": \"Union\",\n" +
                         "            \"Plans\": [\n" +
                         "            {\n" +
-                        "                \"Node Type\": \"DataFrame\",\n" +
+                        "                \"Node Type\": \"PageFrame\",\n" +
                         "                \"Plans\": [\n" +
                         "                {\n" +
                         "                    \"Node Type\": \"Row forward scan\"\n" +
@@ -1643,7 +1646,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "                } ]\n" +
                         "            },\n" +
                         "            {\n" +
-                        "                \"Node Type\": \"DataFrame\",\n" +
+                        "                \"Node Type\": \"PageFrame\",\n" +
                         "                \"Plans\": [\n" +
                         "                {\n" +
                         "                    \"Node Type\": \"Row forward scan\"\n" +
@@ -1682,7 +1685,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "            \"filter\": \"(taba.a1=tabb.b1 or taba.a2=tabb.b2)\",\n" +
                             "            \"Plans\": [\n" +
                             "            {\n" +
-                            "                \"Node Type\": \"DataFrame\",\n" +
+                            "                \"Node Type\": \"PageFrame\",\n" +
                             "                \"Plans\": [\n" +
                             "                {\n" +
                             "                    \"Node Type\": \"Row forward scan\"\n" +
@@ -1693,7 +1696,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                } ]\n" +
                             "            },\n" +
                             "            {\n" +
-                            "                \"Node Type\": \"DataFrame\",\n" +
+                            "                \"Node Type\": \"PageFrame\",\n" +
                             "                \"Plans\": [\n" +
                             "                {\n" +
                             "                    \"Node Type\": \"Row forward scan\"\n" +
@@ -1731,7 +1734,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table x ( i int)",
                 "(select * from x)",
-                "DataFrame\n" +
+                "PageFrame\n" +
                         "    Row forward scan\n" +
                         "    Frame forward scan on: x\n"
         );
@@ -1742,7 +1745,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table x ( i int)",
                 "((select * from x))",
-                "DataFrame\n" +
+                "PageFrame\n" +
                         "    Row forward scan\n" +
                         "    Frame forward scan on: x\n"
         );
@@ -1753,7 +1756,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table x ( i int)",
                 "((x))",
-                "DataFrame\n" +
+                "PageFrame\n" +
                         "    Row forward scan\n" +
                         "    Frame forward scan on: x\n"
         );
@@ -1778,7 +1781,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    Async JIT Group By workers: 1\n" +
                         "      values: [last(timestamp),last(price)]\n" +
                         "      filter: symbol='BTC-USD'\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Interval forward scan on: trades\n" +
                         "              intervals: [(\"1969-12-31T23:30:00.000001Z\",\"MAX\")]\n"
@@ -1794,7 +1797,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select s, count() from trips where s is not null order by count desc",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [count desc]\n" +
                             "    GroupBy vectorized: false\n" +
                             "      keys: [s]\n" +
@@ -1821,7 +1824,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: s is not null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
             );
@@ -1832,7 +1835,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (s is not null and s!='A1000')\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
             );
@@ -1845,7 +1848,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (s is not null and s!=:s1::string)\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
             );
@@ -1856,7 +1859,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (l!=0 and s is not null)\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
             );
@@ -1867,7 +1870,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (s is not null or l!=0)\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
             );
@@ -1878,7 +1881,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (l!=0 and s is not null)\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
             );
@@ -1889,7 +1892,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (l!=0 or s is not null)\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
             );
@@ -1900,7 +1903,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (100<l or (l!=0 and s is not null))\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
             );
@@ -1911,7 +1914,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (100<l or (l!=0 and not (s in [null,A1000,A2000])))\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
             );
@@ -1925,7 +1928,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (100<l or (l!=0 and not (s in [null,A1000] or s in [:s1::string])))\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
             );
@@ -1945,7 +1948,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: s is not null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
             );
@@ -1966,7 +1969,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: s is not null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
             );
@@ -1977,7 +1980,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (s is not null and s!='A1000')\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
             );
@@ -1990,7 +1993,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (s is not null and s!=:s1::string)\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
             );
@@ -2001,7 +2004,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (s is not null and l!=0)\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
             );
@@ -2012,7 +2015,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (s is not null or l!=0)\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
             );
@@ -2023,7 +2026,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (l!=0 and s is not null)\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
             );
@@ -2034,7 +2037,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (l!=0 or s is not null)\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
             );
@@ -2045,7 +2048,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (100<l or (l!=0 and s is not null))\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
             );
@@ -2059,7 +2062,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [s]\n" +
                             "  values: [count(*)]\n" +
                             "  filter: (100<l or (l!=0 and not (s in [null,A1000] or s in [:s1::string])))\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: trips\n"
             );
@@ -2100,10 +2103,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "  values: [count(*)]\n" +
                     "    FilterOnValues symbolOrder: desc\n" +
                     "        Cursor-order scan\n" +
-                    "            Index forward scan on: referencePriceType\n" +
-                    "              filter: referencePriceType=3 and not (referencePriceType in [TYPE1])\n" +
-                    "            Index forward scan on: referencePriceType\n" +
-                    "              filter: referencePriceType=1 and not (referencePriceType in [TYPE1])\n" +
+                    "            Index forward scan on: venue\n" +
+                    "              filter: venue=3 and not (referencePriceType in [TYPE1])\n" +
+                    "            Index forward scan on: venue\n" +
+                    "              filter: venue=1 and not (referencePriceType in [TYPE1])\n" +
                     "        Frame forward scan on: reference_prices\n";
 
             assertPlanNoLeakCheck(query1, expectedPlan);
@@ -2132,14 +2135,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 "    Filter filter: 0<a.l+b.l\n" +
                                 "        Hash Join\n" +
                                 "          condition: b.l=a.l\n" +
-                                "            DataFrame\n" +
+                                "            PageFrame\n" +
                                 "                Row forward scan\n" +
                                 "                Frame forward scan on: a\n" +
                                 "            Hash\n" +
                                 "                Async JIT Filter workers: 1\n" +
                                 "                  limit: 4\n" +
                                 "                  filter: 10<l\n" +
-                                "                    DataFrame\n" +
+                                "                    PageFrame\n" +
                                 "                        Row forward scan\n" +
                                 "                        Frame forward scan on: a\n",
                         sqlExecutionContext
@@ -2160,12 +2163,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "SelectedRecord\n" +
                                 "    Hash Join\n" +
                                 "      condition: _xQdbA1.l=a.l\n" +
-                                "        DataFrame\n" +
+                                "        PageFrame\n" +
                                 "            Row forward scan\n" +
                                 "            Frame forward scan on: a\n" +
                                 "        Hash\n" +
                                 "            Limit lo: 40\n" +
-                                "                DataFrame\n" +
+                                "                PageFrame\n" +
                                 "                    Row forward scan\n" +
                                 "                    Frame forward scan on: a\n",
                         sqlExecutionContext
@@ -2186,11 +2189,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "SelectedRecord\n" +
                                 "    Hash Outer Join\n" +
                                 "      condition: a1.l=a.l\n" +
-                                "        DataFrame\n" +
+                                "        PageFrame\n" +
                                 "            Row forward scan\n" +
                                 "            Frame forward scan on: a\n" +
                                 "        Hash\n" +
-                                "            DataFrame\n" +
+                                "            PageFrame\n" +
                                 "                Row forward scan\n" +
                                 "                Frame forward scan on: a\n",
                         sqlExecutionContext
@@ -2272,16 +2275,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             PlanSink planSink = new TextPlanSink() {
                 @Override
-                public PlanSink putColumnName(int columnIdx) {
-                    val("column(").val(columnIdx).val(")");
+                public PlanSink putColumnName(int columnIndex) {
+                    val("column(").val(columnIndex).val(")");
                     return this;
                 }
             };
 
             PlanSink tmpPlanSink = new TextPlanSink() {
                 @Override
-                public PlanSink putColumnName(int columnIdx) {
-                    val("column(").val(columnIdx).val(")");
+                public PlanSink putColumnName(int columnIndex) {
+                    val("column(").val(columnIndex).val(")");
                     return this;
                 }
             };
@@ -2416,13 +2419,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     args.add(new StrConstant("0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9652"));
                                 } else if (isIPv4StrFactory(factory) && sigArgType == ColumnType.STRING) {
                                     args.add(new StrConstant("10.8.6.5"));
-                                } else if (factory instanceof ContainsIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                                } else if (factory instanceof ContainsIPv4StrFunctionFactory && sigArgType == ColumnType.STRING) {
                                     args.add(new StrConstant("12.6.5.10/24"));
-                                } else if (factory instanceof ContainsEqIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                                } else if (factory instanceof ContainsEqIPv4StrFunctionFactory && sigArgType == ColumnType.STRING) {
                                     args.add(new StrConstant("12.6.5.10/24"));
-                                } else if (factory instanceof NegContainsEqIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                                } else if (factory instanceof NegContainsEqIPv4StrFunctionFactory && sigArgType == ColumnType.STRING) {
                                     args.add(new StrConstant("34.56.22.11/12"));
-                                } else if (factory instanceof NegContainsIPv4FunctionFactory && sigArgType == ColumnType.STRING) {
+                                } else if (factory instanceof NegContainsIPv4StrFunctionFactory && sigArgType == ColumnType.STRING) {
                                     args.add(new StrConstant("32.12.22.11/12"));
                                 } else if (factory instanceof RndIPv4CCFunctionFactory) {
                                     args.add(new StrConstant("4.12.22.11/12"));
@@ -2432,12 +2435,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 } else if (factory instanceof InUuidFunctionFactory && p == 1) {
                                     // this factory requires valid UUID string, otherwise it will fail
                                     args.add(new StrConstant("11111111-1111-1111-1111-111111111111"));
+                                } else if (factory instanceof GreatestNumericFunctionFactory) {
+                                    args.add(new DoubleConstant(1.5));
+                                    args.add(new DoubleConstant(3.2));
+                                } else if (factory instanceof LeastNumericFunctionFactory) {
+                                    args.add(new DoubleConstant(1.5));
+                                    args.add(new DoubleConstant(3.2));
                                 } else if ((factory instanceof JsonExtractTypedFunctionFactory)) {
                                     if (p == 0) {
                                         args.add(new VarcharConstant("{\"a\": 1}"));
                                         args.add(new VarcharConstant(".a"));
                                         args.add(new IntConstant(ColumnType.INT));
                                     }
+                                } else if ((factory instanceof HydrateTableMetadataFunctionFactory)) {
+                                    args.add(new StrConstant("*"));
                                 } else if (Chars.equals(key, "approx_count_distinct") && sigArgCount == 2 && p == 1 && sigArgType == ColumnType.INT) {
                                     args.add(new IntConstant(4)); // precision has to be in the range of 4 to 18
                                 } else if (!useConst) {
@@ -2465,7 +2476,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                             // TODO: test with partition by, order by and various frame modes
                             if (factory.isWindow()) {
-                                sqlExecutionContext.configureWindowContext(null, null, null, false, DataFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20, WindowColumn.EXCLUDE_NO_OTHERS, 0, -1);
+                                sqlExecutionContext.configureWindowContext(null, null, null, false, PageFrameRecordCursorFactory.SCAN_DIRECTION_FORWARD, -1, true, WindowColumn.FRAMING_RANGE, Long.MIN_VALUE, 10, 0, 20, WindowColumn.EXCLUDE_NO_OTHERS, 0, -1);
                             }
                             Function function = null;
                             try {
@@ -2520,7 +2531,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  keys: [b]\n" +
                         "  values: [min(l)]\n" +
                         "  filter: null\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -2535,7 +2546,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  keys: [concat]\n" +
                         "  values: [min(l)]\n" +
                         "  filter: null\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -2550,7 +2561,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  keys: [b]\n" +
                         "  values: [min(l)]\n" +
                         "  filter: b=true\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -2565,7 +2576,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  keys: [d]\n" +
                         "  values: [min(l)]\n" +
                         "  filter: null\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -2580,7 +2591,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  keys: [f]\n" +
                         "  values: [min(l)]\n" +
                         "  filter: null\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -2594,7 +2605,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "GroupBy vectorized: true workers: 1\n" +
                         "  keys: [ts]\n" +
                         "  values: [min(d)]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -2609,7 +2620,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  keys: [hour]\n" +
                         "  values: [min(d)]\n" +
                         "  filter: 0<d\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -2637,7 +2648,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [ts]\n" +
                         "      values: [min(d)]\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -2653,7 +2664,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [i]\n" +
                         "      values: [min(d)]\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -2669,7 +2680,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [i]\n" +
                         "      values: [min(d)]\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -2685,7 +2696,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [i]\n" +
                         "      values: [min(l),max(l)]\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -2701,7 +2712,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [i]\n" +
                         "      values: [min(d)]\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -2715,7 +2726,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "GroupBy vectorized: true workers: 1\n" +
                         "  keys: [s]\n" +
                         "  values: [count(*)]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -2729,7 +2740,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "GroupBy vectorized: true workers: 1\n" +
                         "  keys: [s]\n" +
                         "  values: [count(*)]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -2747,11 +2758,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [d]\n" +
                             "  values: [max(i)]\n" +
                             "    Except\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
                             "        Hash\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
             );
@@ -2770,11 +2781,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [d]\n" +
                             "  values: [max(i)]\n" +
                             "    Intersect\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
                             "        Hash\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
             );
@@ -2790,10 +2801,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  keys: [d]\n" +
                         "  values: [max(i)]\n" +
                         "    Union\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -2808,10 +2819,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  keys: [d]\n" +
                         "  values: [max(i)]\n" +
                         "    Union All\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -2826,7 +2837,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  keys: [l]\n" +
                         "  values: [min(d)]\n" +
                         "  filter: null\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -2840,7 +2851,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "GroupBy vectorized: true workers: 1\n" +
                         "  keys: [i]\n" +
                         "  values: [count(*)]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -2854,7 +2865,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async JIT Group By workers: 1\n" +
                         "  keys: [i]\n" +
                         "  filter: d<42\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -2868,7 +2879,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async Group By workers: 1\n" +
                         "  keys: [i]\n" +
                         "  filter: null\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -2882,7 +2893,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async Group By workers: 1\n" +
                         "  keys: [i,j]\n" +
                         "  filter: null\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -2896,7 +2907,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async JIT Group By workers: 1\n" +
                         "  keys: [i,j]\n" +
                         "  filter: 42<d\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -2910,7 +2921,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "GroupBy vectorized: true workers: 1\n" +
                         "  keys: [s]\n" +
                         "  values: [count(*)]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -2924,7 +2935,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async JIT Group By workers: 1\n" +
                         "  keys: [s]\n" +
                         "  filter: d=42\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -2938,7 +2949,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async Group By workers: 1\n" +
                         "  keys: [s]\n" +
                         "  filter: null\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -2952,7 +2963,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async Group By workers: 1\n" +
                         "  keys: [s]\n" +
                         "  filter: s like %foobar%\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -2965,7 +2976,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select min(d) from a",
                 "GroupBy vectorized: true workers: 1\n" +
                         "  values: [min(d)]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -2981,11 +2992,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    SelectedRecord\n" +
                         "        Hash Join Light\n" +
                         "          condition: b.i=a.i\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
                         "            Hash\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: a\n"
         );
@@ -2999,7 +3010,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async Group By workers: 1\n" +
                         "  values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]\n" +
                         "  filter: null\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -3013,7 +3024,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async JIT Group By workers: 1\n" +
                         "  values: [first(gb),last(gb),first(gs),last(gs),first(gi),last(gi),first(gl),last(gl)]\n" +
                         "  filter: 42<i\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -3028,7 +3039,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  functions: [max-min]\n" +
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      values: [min(i),max(i)]\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -3042,7 +3053,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async Group By workers: 1\n" +
                         "  values: [min(d),max(d*d)]\n" +
                         "  filter: null\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -3056,7 +3067,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async Group By workers: 1\n" +
                         "  values: [max(d+1)]\n" +
                         "  filter: null\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -3069,7 +3080,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select count(*), max(i), min(d) from a",
                 "GroupBy vectorized: true workers: 1\n" +
                         "  values: [count(*),max(i),min(d)]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -3083,7 +3094,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async Group By workers: 1\n" +
                         "  values: [first(10),last(d),avg(10),min(10),max(10)]\n" +
                         "  filter: null\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -3097,7 +3108,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async JIT Group By workers: 1\n" +
                         "  values: [max(i)]\n" +
                         "  filter: i<10\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -3110,7 +3121,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select max(i) from (select * from a order by d)",
                 "GroupBy vectorized: true workers: 1\n" +
                         "  values: [max(i)]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -3125,7 +3136,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  values: [max(i)]\n" +
                         "    Sort light lo: 10\n" +
                         "      keys: [d]\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -3139,10 +3150,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "GroupBy vectorized: false\n" +
                         "  values: [max(i)]\n" +
                         "    Union All\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -3157,7 +3168,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  keys: [s]\n" +
                         "  values: [avg(l)]\n" +
                         "  filter: null\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -3172,7 +3183,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  keys: [s]\n" +
                         "  values: [avg(l)]\n" +
                         "  filter: 42<l\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -3186,7 +3197,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "GroupBy vectorized: true workers: 1\n" +
                         "  keys: [s]\n" +
                         "  values: [avg(l)]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -3202,7 +3213,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [s]\n" +
                         "      values: [min(l),max(l)]\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -3216,7 +3227,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "GroupBy vectorized: false\n" +
                         "  keys: [cast]\n" +
                         "  values: [avg(l)]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -3232,10 +3243,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  values: [avg(l)]\n" +
                         "  filter: s in cursor \n" +
                         "    Filter filter: s='key'\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -3251,7 +3262,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
         );
@@ -3267,7 +3278,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
         );
@@ -3282,7 +3293,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
         );
@@ -3297,7 +3308,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    GroupBy vectorized: true workers: 1\n" +
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
         );
@@ -3313,7 +3324,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
                         "      filter: y=5\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
         );
@@ -3329,7 +3340,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
                         "      filter: y=5\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
         );
@@ -3345,7 +3356,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
                         "      filter: abs(y)=5\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
         );
@@ -3361,7 +3372,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
                         "      filter: abs(y)=5\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
         );
@@ -3377,7 +3388,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "      keys: [x]\n" +
                         "      values: [count(*)]\n" +
                         "      filter: abs(y)=5\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
         );
@@ -3394,7 +3405,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "      keys: [ts]\n" +
                         "      values: [count(*)]\n" +
                         "      filter: y=5\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: di\n"
         );
@@ -3412,11 +3423,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Filter filter: (b.i<a.i and a.s1=b.s2)\n" +
                             "        Hash Join Light\n" +
                             "          condition: b.i=a.i\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
                             "            Hash\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: b\n"
             );
@@ -3443,14 +3454,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 "      condition: c1=b1\n" +
                                 "        Hash Join\n" +
                                 "          condition: b1=a1\n" +
-                                "            DataFrame\n" +
+                                "            PageFrame\n" +
                                 "                Row forward scan\n" +
                                 "                Frame forward scan on: taba\n" +
                                 "            Hash\n" +
-                                "                DataFrame\n" +
+                                "                PageFrame\n" +
                                 "                    Row forward scan\n" +
                                 "                    Frame forward scan on: tabb\n" +
-                                "        DataFrame\n" +
+                                "        PageFrame\n" +
                                 "            Row forward scan\n" +
                                 "            Frame forward scan on: tabc\n",
                         sqlExecutionContext
@@ -3470,11 +3481,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Hash Outer Join Light\n" +
                             "      condition: b.i=a.i\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
                             "        Hash\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
             );
@@ -3493,11 +3504,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Filter filter: b.i!=null\n" +
                             "        Hash Outer Join Light\n" +
                             "          condition: b.i=a.i\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
                             "            Hash\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: b\n"
             );
@@ -3520,13 +3531,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Cross Join\n" +
                             "        Cross Join\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n"
             );
@@ -3540,7 +3551,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select u, ts from a where u in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333')",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: u in ['22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','33333333-3333-3333-3333-333333333333']\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -3552,11 +3563,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, s string);",
                 "select * from a intersect select * from a",
                 "Intersect\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n" +
                         "    Hash\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -3568,13 +3579,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, s string);",
                 "select * from a intersect select * from a where i > 0",
                 "Intersect\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n" +
                         "    Hash\n" +
                         "        Async JIT Filter workers: 1\n" +
                         "          filter: 0<i\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n"
         );
@@ -3586,11 +3597,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, s string);",
                 "select * from a intersect all select * from a",
                 "Intersect All\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n" +
                         "    Hash\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -3605,11 +3616,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts desc",
                     "Intersect\n" +
                             "    Limit lo: 10\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: a\n" +
                             "    Hash\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n"
             );
@@ -3625,11 +3636,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts asc",
                     "Intersect\n" +
                             "    Limit lo: 10\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
                             "    Hash\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n"
             );
@@ -3643,15 +3654,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts asc",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Intersect\n" +
                             "        Limit lo: 10\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: a\n" +
                             "        Hash\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n"
             );
@@ -3665,15 +3676,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts desc",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts desc]\n" +
                             "    Intersect\n" +
                             "        Limit lo: 10\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
                             "        Hash\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n"
             );
@@ -3691,7 +3702,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [k]\n" +
                             "  values: [ksum(x),nsum(x)]\n" +
                             "  filter: null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
             );
@@ -3737,7 +3748,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "                          expectedSymbolsCount: 2147483647\n" +
                             "                        Interval backward scan on: maps\n" +
                             "                          intervals: [(\"2023-09-01T09:40:27.286000Z\",\"2023-09-01T10:40:27.286000Z\")]\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: maps\n"
             );
@@ -3766,7 +3777,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Sample By\n" +
                             "          fill: none\n" +
                             "          values: [max(s)]\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tab\n"
             );
@@ -3797,12 +3808,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        Union\n" +
                         "            Async JIT Filter workers: 1\n" +
                         "              filter: i=10\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: a\n" +
                         "            Async JIT Filter workers: 1\n" +
                         "              filter: i=20\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: a\n"
         );
@@ -3913,7 +3924,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
                         "        DistinctSymbol\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
                         "    Row backward scan on: s\n" +
@@ -3930,7 +3941,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
                         "        DistinctSymbol\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
                         "    Row backward scan on: s\n" +
@@ -3946,7 +3957,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
                         "        DistinctSymbol\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
                         "    Index backward scan on: s\n" +
@@ -3963,7 +3974,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "LatestBySubQuery\n" +
                         "    Subquery\n" +
                         "        DistinctSymbol\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
                         "    Index backward scan on: s\n" +
@@ -4020,7 +4031,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    SelectedRecord\n" +
                         "        Async JIT Filter workers: 1\n" +
                         "          filter: (0<i and i<10)\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n"
         );
@@ -4057,7 +4068,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
                 "select * from a latest on ts partition by s",
                 "LatestByAllIndexed\n" +
-                        "    Index backward scan on: s parallel: true\n" +
+                        "    Async index backward scan on: s workers: 1\n" +
                         "    Frame backward scan on: a\n"
         );
     }
@@ -4067,7 +4078,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, s symbol index, ts timestamp) timestamp(ts);",
                 "select s, i, ts from a where s  = 'S1' latest on ts partition by s",
-                "DataFrame\n" +
+                "PageFrame\n" +
                         "    Index backward scan on: s deferred: true\n" +
                         "      filter: s='S1'\n" +
                         "    Frame backward scan on: a\n"
@@ -4151,7 +4162,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select s, i, ts from a where s  in ('s1') latest on ts partition by s",
-                    "DataFrame\n" +
+                    "PageFrame\n" +
                             "    Index backward scan on: s\n" +
                             "      filter: s=1\n" +
                             "    Frame backward scan on: a\n"
@@ -4166,8 +4177,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
             compile("insert into a select x::int, 's' ||(x%10), x::timestamp from long_sequence(1000)");
 
             assertPlanNoLeakCheck(
-                    "select s, i, ts from a where s  in ('bogus_key') latest on ts partition by s",
-                    "DataFrame\n" +
+                    "select s, i, ts from a where s in ('bogus_key') latest on ts partition by s",
+                    "PageFrame\n" +
                             "    Index backward scan on: s deferred: true\n" +
                             "      filter: s='bogus_key'\n" +
                             "    Frame backward scan on: a\n"
@@ -4226,11 +4237,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Hash Outer Join Light\n" +
                             "      condition: b=a\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: taba\n" +
                             "        Hash\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tabb\n"
             );
@@ -4248,11 +4259,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Hash Outer Join Light\n" +
                             "      condition: b2=a2 and b1=a1\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: taba\n" +
                             "        Hash\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tabb\n"
             );
@@ -4270,10 +4281,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Nested Loop Left Join\n" +
                             "      filter: (taba.a1=tabb.b1 or taba.a2=tabb.b2)\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: taba\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tabb\n"
             );
@@ -4292,10 +4303,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Filter filter: tabb.b2<taba.a1\n" +
                             "        Nested Loop Left Join\n" +
                             "          filter: (taba.a1=tabb.b1 or taba.a2=tabb.b2)\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: taba\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tabb\n"
             );
@@ -4315,11 +4326,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Hash Outer Join Light\n" +
                             "      condition: b1=a1\n" +
                             "      filter: (taba.a2=tabb.b2+10 or taba.a2=2*tabb.b2)\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: taba\n" +
                             "        Hash\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tabb\n"
             );
@@ -4345,15 +4356,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Hash Outer Join Light\n" +
                             "          condition: b1=a1\n" +
                             "          filter: taba.a1=5\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: taba\n" +
                             "            Hash\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tabb\n" +
                             "        Hash\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tabc\n"
             );
@@ -4364,7 +4375,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testLeftJoinWithEquality7() throws Exception {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                testHashAndAsOfJoin(compiler, true);
+                testHashAndAsOfJoin(compiler, true, true);
             }
         });
     }
@@ -4374,7 +4385,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
-                testHashAndAsOfJoin(compiler, false);
+                testHashAndAsOfJoin(compiler, false, false);
             }
         });
     }
@@ -4391,11 +4402,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Hash Outer Join Light\n" +
                             "      condition: b2=a2 and b1=a1\n" +
                             "      filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: taba\n" +
                             "        Hash\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tabb\n"
             );
@@ -4414,11 +4425,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Hash Outer Join Light\n" +
                             "      condition: b2=a2 and b1=a1\n" +
                             "      filter: taba.a2+5=tabb.b2+10\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: taba\n" +
                             "        Hash\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tabb\n"
             );
@@ -4437,7 +4448,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Hash Outer Join\n" +
                             "      condition: b2=a2 and b1=a1\n" +
                             "      filter: false\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: taba\n" +
                             "        Hash\n" +
@@ -4459,11 +4470,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Hash Outer Join Light\n" +
                             "      condition: b1=a1\n" +
                             "      filter: taba.a2!=taba.a2\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: taba\n" +
                             "        Hash\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tabb\n"
             );
@@ -4482,11 +4493,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Hash Outer Join Light\n" +
                             "      condition: b1=a1\n" +
                             "      filter: taba.a2=taba.a2\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: taba\n" +
                             "        Hash\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tabb\n"
             );
@@ -4506,11 +4517,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Hash Outer Join Light\n" +
                             "      condition: b1=a1\n" +
                             "      filter: (taba.a2 ~ a.* and tabb.b2 ~ .*z)\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: taba\n" +
                             "        Hash\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tabb\n"
             );
@@ -4532,11 +4543,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Hash Outer Join Light\n" +
                             "          condition: b2=a2 and b1=a1\n" +
                             "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: taba\n" +
                             "            Hash\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tabb\n"
             );
@@ -4556,11 +4567,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Hash Outer Join Light\n" +
                             "          condition: b2=a2 and b1=a1\n" +
                             "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: taba\n" +
                             "            Hash\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tabb\n"
             );
@@ -4580,11 +4591,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Hash Outer Join Light\n" +
                             "          condition: b1=a1\n" +
                             "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: taba\n" +
                             "            Hash\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tabb\n"
             );
@@ -4602,10 +4613,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Nested Loop Left Join\n" +
                             "      filter: abs(taba.a2+1)=abs(tabb.b2)\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: taba\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tabb\n"
             );
@@ -4623,10 +4634,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Nested Loop Left Join\n" +
                             "      filter: (abs(taba.a2+1)=abs(tabb.b2) or taba.a2/2=tabb.b2+1)\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: taba\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tabb\n"
             );
@@ -4655,11 +4666,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 "    Filter filter: T2.value=T2.value\n" +
                                 "        " + factoryType + "\n" +
                                 (i == 0 ? "          condition: T2.created=T1.created\n" : "") +
-                                "            DataFrame\n" +
+                                "            PageFrame\n" +
                                 "                Row forward scan\n" +
                                 "                Frame forward scan on: tab\n" +
                                 (i == 0 ? "            Hash\n" : "") +
-                                (i == 0 ? "    " : "") + "            DataFrame\n" +
+                                (i == 0 ? "    " : "") + "            PageFrame\n" +
                                 (i == 0 ? "    " : "") + "                Row forward scan\n" +
                                 (i == 0 ? "    " : "") + "                Frame forward scan on: tab\n"
                 );
@@ -4673,11 +4684,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 "    Filter filter: T2.value!=1\n" +
                                 "        " + factoryType + "\n" +
                                 (i == 0 ? "          condition: T2.created=T1.created\n" : "") +
-                                "            DataFrame\n" +
+                                "            PageFrame\n" +
                                 "                Row forward scan\n" +
                                 "                Frame forward scan on: tab\n" +
                                 (i == 0 ? "            Hash\n" : "") +
-                                (i == 0 ? "    " : "") + "            DataFrame\n" +
+                                (i == 0 ? "    " : "") + "            PageFrame\n" +
                                 (i == 0 ? "    " : "") + "                Row forward scan\n" +
                                 (i == 0 ? "    " : "") + "                Frame forward scan on: tab\n"
                 );
@@ -4693,11 +4704,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 (i == 0 ? "      condition: T2.created=T1.created\n" : "") +
                                 "        Async JIT Filter workers: 1\n" +
                                 "          filter: value!=1\n" +
-                                "            DataFrame\n" +
+                                "            PageFrame\n" +
                                 "                Row forward scan\n" +
                                 "                Frame forward scan on: tab\n" +
                                 (i == 0 ? "        Hash\n" : "") +
-                                (i == 0 ? "    " : "") + "        DataFrame\n" +
+                                (i == 0 ? "    " : "") + "        PageFrame\n" +
                                 (i == 0 ? "    " : "") + "            Row forward scan\n" +
                                 (i == 0 ? "    " : "") + "            Frame forward scan on: tab\n"
                 );
@@ -4718,15 +4729,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "          condition: T2.created=T1.created\n" +
                             "            Async JIT Filter workers: 1\n" +
                             "              filter: value=1\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n" +
                             "            Hash\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n" +
                             "        Hash\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tab\n"
             );
@@ -4743,15 +4754,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Filter filter: T2.created=1\n" +
                             "            Hash Outer Join Light\n" +
                             "              condition: T2.created=T1.created\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n" +
                             "                Hash\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: tab\n" +
                             "        Hash\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tab\n"
             );
@@ -4767,17 +4778,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "      condition: T3.created=T2.created\n" +
                             "        Hash Outer Join Light\n" +
                             "          condition: T2.created=T1.created\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tab\n" +
                             "            Hash\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n" +
                             "        Hash\n" +
                             "            Async JIT Filter workers: 1\n" +
                             "              filter: value=1\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n"
             );
@@ -4795,11 +4806,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Filter filter: T2.value=T2.value\n" +
                             "            Hash Outer Join Light\n" +
                             "              condition: T2.created=T1.created\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n" +
                             "                Hash\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: tab\n"
             );
@@ -4815,11 +4826,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    SelectedRecord\n" +
                             "        Hash Outer Join Light\n" +
                             "          condition: T2.created=T1.created\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tab\n" +
                             "            Hash\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n"
             );
@@ -4838,7 +4849,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  and s5 like '%a%' and s6 ilike '%a%';",
                     "Async Filter workers: 1\n" +
                             "  filter: ((s1 like %a and s2 ilike %a and s3 like a% and s4 ilike a%) and s5 like %a% and s6 ilike %a%)\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
             );
@@ -4856,10 +4867,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Filter filter: a.ts::long*a.i<b.ts::long*b.i\n" +
                             "        Lt Join Fast Scan\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
             );
@@ -4876,10 +4887,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a lt join b on ts",
                     "SelectedRecord\n" +
                             "    Lt Join Fast Scan\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: b\n"
             );
@@ -4899,10 +4910,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.ts\n" +
                             "        Lt Join Fast Scan\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
             );
@@ -4920,10 +4931,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.ts\n" +
                             "        Lt Join Fast Scan\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
             );
@@ -4941,10 +4952,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.ts\n" +
                             "        Lt Join Fast Scan\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
             );
@@ -4961,11 +4972,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a lt join (select * from b limit 10) on ts",
                     "SelectedRecord\n" +
                             "    Lt Join\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
                             "        Limit lo: 10\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
             );
@@ -4988,10 +4999,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "SelectedRecord\n" +
                                 "    Lt Join\n" +
                                 "      condition: b.i=a.i\n" +
-                                "        DataFrame\n" +
+                                "        PageFrame\n" +
                                 "            Row forward scan\n" +
                                 "            Frame forward scan on: a\n" +
-                                "        DataFrame\n" +
+                                "        PageFrame\n" +
                                 "            Row forward scan\n" +
                                 "            Frame forward scan on: b\n",
                         sqlExecutionContext
@@ -5012,10 +5023,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Lt Join Fast Scan\n" +
                             "        Async JIT Filter workers: 1\n" +
                             "          filter: 0<i\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: b\n"
             );
@@ -5032,10 +5043,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a lt join b",
                     "SelectedRecord\n" +
                             "    Lt Join Fast Scan\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: b\n"
             );
@@ -5052,10 +5063,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a lt join b on(ts)",
                     "SelectedRecord\n" +
                             "    Lt Join Fast Scan\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: b\n"
             );
@@ -5072,10 +5083,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a lt join b on(ts)",
                     "SelectedRecord\n" +
                             "    Lt Join Fast Scan\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: b\n"
             );
@@ -5092,12 +5103,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from a lt join ((select * from b order by ts, i ) timestamp(ts))  on ts",
                     "SelectedRecord\n" +
                             "    Lt Join\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
                             "        Sort light\n" +
                             "          keys: [ts, i]\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
             );
@@ -5118,13 +5129,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Lt Join Fast Scan\n" +
                             "        Lt Join Fast Scan\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n"
             );
@@ -5138,15 +5149,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from a except select * from a except select * from a",
                 "Except\n" +
                         "    Except\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n" +
                         "        Hash\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
                         "    Hash\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -5159,15 +5170,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from a intersect select * from a intersect select * from a",
                 "Intersect\n" +
                         "    Intersect\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n" +
                         "        Hash\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
                         "    Hash\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -5180,13 +5191,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from a union select * from a union select * from a",
                 "Union\n" +
                         "    Union\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -5199,13 +5210,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from a union all select * from a union all select * from a",
                 "Union All\n" +
                         "    Union All\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -5224,10 +5235,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "SelectedRecord\n" +
                                 "    Nested Loop Left Join\n" +
                                 "      filter: 0<t1.x*t2.x\n" +
-                                "        DataFrame\n" +
+                                "        PageFrame\n" +
                                 "            Row forward scan\n" +
                                 "            Frame forward scan on: t\n" +
-                                "        DataFrame\n" +
+                                "        PageFrame\n" +
                                 "            Row forward scan\n" +
                                 "            Frame forward scan on: t\n"
                 );
@@ -5264,10 +5275,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Nested Loop Left Join\n" +
                             "      filter: 0<t1.x*t2.x\n" +
                             "        Limit lo: 10\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: t\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n"
             );
@@ -5294,11 +5305,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "      functions: [true]\n" +
                             "        Hash Join Light\n" +
                             "          condition: t2.b=t1.b\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tab\n" +
                             "            Hash\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n"
             );
@@ -5318,11 +5329,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        Filter filter: not (sleep(60000))\n" +
                         "            Hash Join Light\n" +
                         "              condition: t2.b=t1.b\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: tab\n" +
                         "                Hash\n" +
-                        "                    DataFrame\n" +
+                        "                    PageFrame\n" +
                         "                        Row forward scan\n" +
                         "                        Frame forward scan on: tab\n"
         );
@@ -5342,11 +5353,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Filter filter: -1<now()::long\n" +
                             "            Hash Join Light\n" +
                             "              condition: t2.b=t1.b\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n" +
                             "                Hash\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: tab\n"
             );
@@ -5360,11 +5371,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Filter filter: now()::long<0\n" +
                             "            Hash Join Light\n" +
                             "              condition: t2.b=t1.b\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n" +
                             "                Hash\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: tab\n"
             );
@@ -5403,7 +5414,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Async JIT Filter workers: 1\n" +
                             "          limit: 1\n" +
                             "          filter: id='12345678'\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: device_data\n",
                     "date\tval\tcolumn\n" +
@@ -5422,7 +5433,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Async JIT Filter workers: 1\n" +
                             "          limit: 1\n" +
                             "          filter: id='12345678'\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: device_data\n",
                     "date\tval\tcolumn\n" +
@@ -5441,7 +5452,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Async JIT Filter workers: 1\n" +
                             "          limit: 2\n" +
                             "          filter: id='12345678'\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: device_data\n",
                     "date\tval\tcolumn\n" +
@@ -5461,12 +5472,51 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        SelectedRecord\n" +
                             "            Async JIT Filter workers: 1\n" +
                             "              filter: id='12345678'\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row backward scan\n" +
                             "                    Frame backward scan on: device_data\n",
                     "date\tval\tcolumn\n" +
                             "1970-01-01T00:00:00.000009Z\t9.0\t10.0\n" +
                             "1970-01-01T00:00:00.000008Z\t8.0\t9.0\n"
+            );
+
+            // with a virtual column
+            assertSqlAndPlanNoLeakCheck(
+                    "SELECT timestamp, val, now() " +
+                            "FROM device_data " +
+                            "WHERE device_data.id = '12345678' " +
+                            "ORDER BY timestamp DESC " +
+                            "LIMIT 1",
+                    "VirtualRecord\n" +
+                            "  functions: [timestamp,val,now()]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      limit: 1\n" +
+                            "      filter: id='12345678'\n" +
+                            "        PageFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: device_data\n",
+                    "timestamp\tval\tnow\n" +
+                            "1970-01-01T00:00:00.000010Z\t10.0\t1970-01-01T00:00:00.000000Z\n"
+            );
+
+            assertSqlAndPlanNoLeakCheck(
+                    "SELECT timestamp, val, now() " +
+                            "FROM device_data " +
+                            "WHERE device_data.id = '12345678' " +
+                            "ORDER BY timestamp ASC " +
+                            "LIMIT -3",
+                    "VirtualRecord\n" +
+                            "  functions: [timestamp,val,now()]\n" +
+                            "    Async JIT Filter workers: 1\n" +
+                            "      limit: 3\n" +
+                            "      filter: id='12345678'\n" +
+                            "        PageFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: device_data\n",
+                    "timestamp\tval\tnow\n" +
+                            "1970-01-01T00:00:00.000008Z\t8.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "1970-01-01T00:00:00.000009Z\t9.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "1970-01-01T00:00:00.000010Z\t10.0\t1970-01-01T00:00:00.000000Z\n"
             );
 
             // use alias in order by
@@ -5482,7 +5532,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        SelectedRecord\n" +
                             "            Async JIT Filter workers: 1\n" +
                             "              filter: id='12345678'\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row backward scan\n" +
                             "                    Frame backward scan on: device_data\n",
                     "date\tval\tcolumn\n" +
@@ -5501,7 +5551,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        SelectedRecord\n" +
                             "            Async JIT Filter workers: 1\n" +
                             "              filter: id='12345678'\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: device_data\n",
                     "date\tval\tcolumn\n" +
@@ -5520,7 +5570,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        SelectedRecord\n" +
                             "            Async JIT Filter workers: 1\n" +
                             "              filter: id='12345678'\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row backward scan\n" +
                             "                    Frame backward scan on: device_data\n",
                     "date\tval\tcolumn\n" +
@@ -5540,7 +5590,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        SelectedRecord\n" +
                             "            Async JIT Filter workers: 1\n" +
                             "              filter: id='12345678'\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row backward scan\n" +
                             "                    Frame backward scan on: device_data\n",
                     "date\tval\tcolumn\n" +
@@ -5569,12 +5619,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    " + joinType + " Join\n" +
                         "        Sort light\n" +
                         "          keys: [timestamp, galon_price desc]\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: gas_prices\n" +
                         "        Sort light\n" +
                         "          keys: [timestamp, galon_price desc]\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: gas_prices\n";
 
@@ -5602,12 +5652,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "        Splice Join\n" +
                     "            Sort light\n" +
                     "              keys: [timestamp, galon_price desc]\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: gas_prices\n" +
                     "            Sort light\n" +
                     "              keys: [timestamp, galon_price desc]\n" +
-                    "                DataFrame\n" +
+                    "                PageFrame\n" +
                     "                    Row forward scan\n" +
                     "                    Frame forward scan on: gas_prices\n";
 
@@ -5642,7 +5692,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "  keys: [timestamp]\n" +
                     "    Union\n" +
                     "        Union\n" +
-                    "            DataFrame\n" +
+                    "            PageFrame\n" +
                     "                Row forward scan\n" +
                     "                Frame forward scan on: gas_prices\n" +
                     "            VirtualRecord\n" +
@@ -5663,7 +5713,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from (select * from tab order by ts, i desc limit 10) order by ts",
                 "Sort light lo: 10 partiallySorted: true\n" +
                         "  keys: [ts, i desc]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -5676,7 +5726,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from (select * from tab order by ts desc, i asc limit 10) order by ts desc",
                 "Sort light lo: 10\n" +
                         "  keys: [ts desc, i]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -5700,14 +5750,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Cross Join\n" +
                             "            Hash Join Light\n" +
                             "              condition: T3.created=T2.created\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: test\n" +
                             "                Hash\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: test\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: test\n"
             );
@@ -5754,7 +5804,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  functions: [row_number()]\n" +
                             "    Async JIT Filter workers: 1\n" +
                             "      filter: x=10\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
             );
@@ -5764,7 +5814,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Filter filter: x=10\n" +
                             "    Window\n" +
                             "      functions: [row_number()]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
             );
@@ -5775,7 +5825,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Union All\n" +
                             "        Window\n" +
                             "          functions: [row_number()]\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: tab\n" +
                             "        VirtualRecord\n" +
@@ -5790,7 +5840,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "      functions: [row_number()]\n" +
                             "        SelectedRecord\n" +
                             "            Cross Join\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n" +
                             "                VirtualRecord\n" +
@@ -5806,7 +5856,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Filter filter: x=10\n" +
                             "            Window\n" +
                             "              functions: [row_number()]\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: tab\n" +
                             "        Hash\n" +
@@ -5828,7 +5878,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(x+10)]\n" +
                             "  filter: null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
             );
@@ -5838,7 +5888,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(10+x)]\n" +
                             "  filter: null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
             );
@@ -5862,11 +5912,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        SelectedRecord\n" +
                             "            Hash Join Light\n" +
                             "              condition: tabb.id=taba.id\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: taba\n" +
                             "                Hash\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: tabb\n"
             );
@@ -5882,11 +5932,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        SelectedRecord\n" +
                             "            Hash Join Light\n" +
                             "              condition: tabb.id=taba.id\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: taba\n" +
                             "                Hash\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: tabb\n"
             );
@@ -5904,7 +5954,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  functions: [sum,sum+COUNT*10]\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
             );
@@ -5915,7 +5965,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  functions: [sum,COUNT*10+sum]\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
             );
@@ -5933,7 +5983,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  functions: [sum,sum*10]\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
             );
@@ -5944,7 +5994,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  functions: [sum,10*sum]\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
             );
@@ -5962,7 +6012,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  functions: [sum,sum-COUNT*10]\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
             );
@@ -5973,7 +6023,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  functions: [sum,COUNT*10-sum]\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
             );
@@ -5991,7 +6041,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  functions: [sum,sum+COUNT*2]\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
             );
@@ -6002,7 +6052,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  functions: [sum,COUNT*2+sum]\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
             );
@@ -6020,7 +6070,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  functions: [sum,sum*10]\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
             );
@@ -6031,7 +6081,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  functions: [sum,10*sum]\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
             );
@@ -6049,7 +6099,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  functions: [sum,sum-COUNT*10]\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
             );
@@ -6060,7 +6110,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  functions: [sum,COUNT*10-sum]\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(x)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
             );
@@ -6077,7 +6127,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(x*10)]\n" +
                             "  filter: null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
             );
@@ -6087,7 +6137,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(10*x)]\n" +
                             "  filter: null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
             );
@@ -6104,7 +6154,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(x*10.0)]\n" +
                             "  filter: null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
             );
@@ -6114,7 +6164,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(10.0*x)]\n" +
                             "  filter: null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
             );
@@ -6138,11 +6188,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        SelectedRecord\n" +
                             "            Hash Join Light\n" +
                             "              condition: tabb.id=taba.id\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: taba\n" +
                             "                Hash\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: tabb\n"
             );
@@ -6158,11 +6208,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        SelectedRecord\n" +
                             "            Hash Join Light\n" +
                             "              condition: tabb.id=taba.id\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: taba\n" +
                             "                Hash\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: tabb\n"
             );
@@ -6180,7 +6230,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  functions: [sum,sum+COUNT*42]\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(*)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
             );
@@ -6191,7 +6241,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  functions: [sum,COUNT*42+sum]\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(*)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
             );
@@ -6209,7 +6259,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  functions: [sum,sum*10]\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
             );
@@ -6220,7 +6270,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  functions: [sum,10*sum]\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
             );
@@ -6238,7 +6288,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  functions: [sum,sum-COUNT*10]\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(*)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
             );
@@ -6249,7 +6299,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  functions: [sum,COUNT*10-sum]\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(x),count(*)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: tab\n"
             );
@@ -6266,7 +6316,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(x-10)]\n" +
                             "  filter: null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
             );
@@ -6276,7 +6326,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Async Group By workers: 1\n" +
                             "  values: [sum(x),sum(10-x)]\n" +
                             "  filter: null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
             );
@@ -6300,11 +6350,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        SelectedRecord\n" +
                             "            Hash Join Light\n" +
                             "              condition: tabb.id=taba.id\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: taba\n" +
                             "                Hash\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: tabb\n"
             );
@@ -6320,11 +6370,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        SelectedRecord\n" +
                             "            Hash Join Light\n" +
                             "              condition: tabb.id=taba.id\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: taba\n" +
                             "                Hash\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: tabb\n"
             );
@@ -6349,7 +6399,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  functions: [sum,count,sum,sum+count1,sum+count*1,sum*2,sum,count1]\n" +
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      values: [sum(resolutIONWidth),count(resolutIONWidth),count(*)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: hits\n"
             );
@@ -6380,11 +6430,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        SelectedRecord\n" +
                             "            Hash Join Light\n" +
                             "              condition: h2.id=h1.id\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: hits1\n" +
                             "                Hash\n" +
-                            "                    DataFrame\n" +
+                            "                    PageFrame\n" +
                             "                        Row forward scan\n" +
                             "                        Frame forward scan on: hits2\n"
             );
@@ -6407,7 +6457,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SELECT count_distinct(s), count_distinct(x) FROM test",
                     "GroupBy vectorized: false\n" +
                             "  values: [count_distinct(s),count_distinct(x)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: test\n"
             );
@@ -6418,7 +6468,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Async Group By workers: 1\n" +
                             "  values: [count_distinct(10)]\n" +
                             "  filter: null\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: test\n"
             );
@@ -6430,7 +6480,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [s]\n" +
                             "      filter: s is not null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n"
             );
@@ -6442,7 +6492,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Async Group By workers: 1\n" +
                             "      keys: [s]\n" +
                             "      filter: (s like %abc% and s is not null)\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n"
             );
@@ -6454,7 +6504,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Async Group By workers: 1\n" +
                             "      keys: [substring]\n" +
                             "      filter: substring(s,1,1) is not null\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n"
             );
@@ -6466,7 +6516,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Async Group By workers: 1\n" +
                             "      keys: [substring]\n" +
                             "      filter: (s like %abc% and substring(s,1,1) is not null)\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n"
             );
@@ -6478,7 +6528,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Async Group By workers: 1\n" +
                             "      keys: [substring]\n" +
                             "      filter: (s like %abc% and substring is not null and substring(s,1,1) is not null)\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n"
             );
@@ -6490,7 +6540,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [column]\n" +
                             "      filter: (5<x and x+1!=null)\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n"
             );
@@ -6502,7 +6552,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [column]\n" +
                             "      filter: (5<x and x+1!=null)\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n"
             );
@@ -6520,7 +6570,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Async JIT Group By workers: 1\n" +
                             "      keys: [column]\n" +
                             "      filter: (5<x and x+1!=null)\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: test\n"
             );
@@ -6542,7 +6592,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Sample By\n" +
                             "  fill: none\n" +
                             "  values: [first(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6550,13 +6600,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select first(i) from a sample by 1h align to calendar",
                     "SelectedRecord\n" +
-                            "    Sort light\n" +
+                            "    Radix sort light\n" +
                             "      keys: [ts]\n" +
                             "        Async Group By workers: 1\n" +
                             "          keys: [ts]\n" +
                             "          values: [first(i)]\n" +
                             "          filter: null\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n"
             );
@@ -6572,7 +6622,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Sample By\n" +
                             "  fill: linear\n" +
                             "  values: [first(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6582,7 +6632,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Sample By\n" +
                             "  fill: linear\n" +
                             "  values: [first(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6598,7 +6648,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Sample By\n" +
                             "  fill: null\n" +
                             "  values: [first(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6609,7 +6659,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Sample By\n" +
                             "  fill: null\n" +
                             "  values: [first(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6627,7 +6677,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "              keys: [ts]\n" +
                             "              values: [first(i)]\n" +
                             "              filter: null\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: a\n"
             );
@@ -6645,7 +6695,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  fill: prev\n" +
                             "  keys: [s]\n" +
                             "  values: [first(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6656,7 +6706,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  fill: prev\n" +
                             "  keys: [s]\n" +
                             "  values: [first(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6672,7 +6722,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Sample By\n" +
                             "  fill: prev\n" +
                             "  values: [first(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6682,7 +6732,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Sample By\n" +
                             "  fill: prev\n" +
                             "  values: [first(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6699,7 +6749,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  fill: value\n" +
                             "  keys: [s]\n" +
                             "  values: [first(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6710,7 +6760,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  fill: value\n" +
                             "  keys: [s]\n" +
                             "  values: [first(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6726,7 +6776,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Sample By\n" +
                             "  fill: value\n" +
                             "  values: [first(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6737,7 +6787,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Sample By\n" +
                             "  fill: value\n" +
                             "  values: [first(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6755,7 +6805,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "              keys: [ts]\n" +
                             "              values: [first(i)]\n" +
                             "              filter: null\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: a\n"
             );
@@ -6775,7 +6825,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SampleByFirstLast\n" +
                             "  keys: [sym]\n" +
                             "  values: [first(i), last(s), first(l)]\n" +
-                            "    DeferredSingleSymbolFilterDataFrame\n" +
+                            "    DeferredSingleSymbolFilterPageFrame\n" +
                             "        Index forward scan on: sym deferred: true\n" +
                             "          filter: sym='S'\n" +
                             "        Interval forward scan on: a\n" +
@@ -6789,12 +6839,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "and   ts > 0::timestamp and ts < 100::timestamp " +
                             "sample by 1h align to calendar",
                     "SelectedRecord\n" +
-                            "    Sort light\n" +
+                            "    Radix sort light\n" +
                             "      keys: [ts]\n" +
                             "        GroupBy vectorized: false\n" +
                             "          keys: [sym,ts]\n" +
                             "          values: [first(i),last(s),first(l)]\n" +
-                            "            DeferredSingleSymbolFilterDataFrame\n" +
+                            "            DeferredSingleSymbolFilterPageFrame\n" +
                             "                Index forward scan on: sym deferred: true\n" +
                             "                  filter: sym='S'\n" +
                             "                Interval forward scan on: a\n" +
@@ -6812,7 +6862,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Sample By\n" +
                             "  keys: [l,i]\n" +
                             "  values: [first(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6820,13 +6870,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select l, i, first(i) from a sample by 1h align to calendar",
                     "SelectedRecord\n" +
-                            "    Sort light\n" +
+                            "    Radix sort light\n" +
                             "      keys: [ts]\n" +
                             "        Async Group By workers: 1\n" +
                             "          keys: [l,i,ts]\n" +
                             "          values: [first(i)]\n" +
                             "          filter: null\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n"
             );
@@ -6842,7 +6892,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Sample By\n" +
                             "  keys: [l,i]\n" +
                             "  values: [first(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6850,13 +6900,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select l, i, first(i) from a sample by 1h align to calendar",
                     "SelectedRecord\n" +
-                            "    Sort light\n" +
+                            "    Radix sort light\n" +
                             "      keys: [ts]\n" +
                             "        Async Group By workers: 1\n" +
                             "          keys: [l,i,ts]\n" +
                             "          values: [first(i)]\n" +
                             "          filter: null\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n"
             );
@@ -6873,7 +6923,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  fill: null\n" +
                             "  keys: [l]\n" +
                             "  values: [first(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6884,7 +6934,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  fill: null\n" +
                             "  keys: [l]\n" +
                             "  values: [first(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6901,7 +6951,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  fill: linear\n" +
                             "  keys: [l]\n" +
                             "  values: [first(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6912,7 +6962,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  fill: linear\n" +
                             "  keys: [l]\n" +
                             "  values: [first(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6929,7 +6979,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  fill: value\n" +
                             "  keys: [l]\n" +
                             "  values: [first(i),last(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6940,7 +6990,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  fill: value\n" +
                             "  keys: [l]\n" +
                             "  values: [first(i),last(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6957,7 +7007,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  fill: value\n" +
                             "  keys: [l]\n" +
                             "  values: [first(i),last(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6968,7 +7018,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  fill: value\n" +
                             "  keys: [l]\n" +
                             "  values: [first(i),last(i)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -6980,7 +7030,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a",
-                "DataFrame\n" +
+                "PageFrame\n" +
                         "    Row forward scan\n" +
                         "    Frame forward scan on: a\n"
         );
@@ -7002,7 +7052,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, d double)",
                 "select count(*) from a",
                 "Count\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -7017,7 +7067,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    Limit lo: 1\n" +
                         "        VirtualRecord\n" +
                         "          functions: [1]\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n"
         );
@@ -7031,10 +7081,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Count\n" +
                         "    SelectedRecord\n" +
                         "        Lt Join Fast Scan\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n"
         );
@@ -7048,10 +7098,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Count\n" +
                         "    SelectedRecord\n" +
                         "        AsOf Join Fast Scan\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n"
         );
@@ -7065,10 +7115,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Count\n" +
                         "    SelectedRecord\n" +
                         "        Cross Join\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n"
         );
@@ -7079,7 +7129,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, s symbol index, ts timestamp) timestamp(ts)",
                 "select * from a where s = 'S1' order by ts desc ",
-                "DeferredSingleSymbolFilterDataFrame\n" +
+                "DeferredSingleSymbolFilterPageFrame\n" +
                         "    Index backward scan on: s deferred: true\n" +
                         "      filter: s='S1'\n" +
                         "    Frame backward scan on: a\n"
@@ -7091,7 +7141,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, s symbol index, ts timestamp) timestamp(ts)",
                 "select * from a where s = 'S1' order by ts asc",
-                "DeferredSingleSymbolFilterDataFrame\n" +
+                "DeferredSingleSymbolFilterPageFrame\n" +
                         "    Index forward scan on: s deferred: true\n" +
                         "      filter: s='S1'\n" +
                         "    Frame forward scan on: a\n"
@@ -7107,7 +7157,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    Async Group By workers: 1\n" +
                         "      keys: [i,j]\n" +
                         "      filter: null\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -7122,7 +7172,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    Async JIT Group By workers: 1\n" +
                         "      keys: [i,j]\n" +
                         "      filter: 42<d\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -7134,7 +7184,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, d double)",
                 "select count() from a",
                 "Count\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -7146,7 +7196,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, d double)",
                 "select count(2) from a",
                 "Count\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -7158,7 +7208,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, s symbol index)",
                 "select count(*) from a where s = 'S1'",
                 "Count\n" +
-                        "    DeferredSingleSymbolFilterDataFrame\n" +
+                        "    DeferredSingleSymbolFilterPageFrame\n" +
                         "        Index forward scan on: s deferred: true\n" +
                         "          filter: s='S1'\n" +
                         "        Frame forward scan on: a\n"
@@ -7172,10 +7222,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select count(*) from (select * from a union all select * from a) ",
                 "Count\n" +
                         "    Union All\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -7188,10 +7238,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select count(*) from (select * from a union select * from a) ",
                 "Count\n" +
                         "    Union\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -7204,11 +7254,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select count(*) from (select * from a intersect select * from a) ",
                 "Count\n" +
                         "    Intersect\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n" +
                         "        Hash\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n"
         );
@@ -7230,7 +7280,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, s symbol index)",
                 "select count(*) from a where 1=1 ",
                 "Count\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -7243,7 +7293,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select count_distinct(s) from tab",
                 "GroupBy vectorized: false\n" +
                         "  values: [count_distinct(s)]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -7256,7 +7306,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select count_distinct(s) from tab",
                 "GroupBy vectorized: false\n" +
                         "  values: [count_distinct(s)]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -7271,7 +7321,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    Async JIT Group By workers: 1\n" +
                         "      keys: [l]\n" +
                         "      filter: l!=null\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: tab\n"
         );
@@ -7286,7 +7336,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  keys: [s]\n" +
                         "  values: [count_distinct(i)]\n" +
                         "  filter: null\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -7301,7 +7351,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  keys: [s]\n" +
                         "  values: [count_distinct(ip)]\n" +
                         "  filter: null\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -7316,7 +7366,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  keys: [s]\n" +
                         "  values: [count_distinct(l)]\n" +
                         "  filter: null\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -7327,7 +7377,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by ts desc",
-                "DataFrame\n" +
+                "PageFrame\n" +
                         "    Row backward scan\n" +
                         "    Frame backward scan on: a\n"
         );
@@ -7338,9 +7388,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) ;",
                 "select * from a order by ts desc",
-                "Sort light\n" +
+                "Radix sort light\n" +
                         "  keys: [ts desc]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -7354,7 +7404,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Sort\n" +
                         "  keys: [ts desc]\n" +
                         "    Union All\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n" +
                         "        VirtualRecord\n" +
@@ -7370,7 +7420,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select distinct l, ts from tab",
                 "DistinctTimeSeries\n" +
                         "  keys: l,ts\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -7384,7 +7434,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select distinct (l, ts) from tab",
                 "DistinctTimeSeries\n" +
                         "  keys: l,ts\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -7397,7 +7447,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select distinct(l) from tab",
                 "Distinct\n" +
                         "  keys: l\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -7409,7 +7459,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( s symbol, ts timestamp);",
                 "select distinct(s) from tab",
                 "DistinctSymbol\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -7421,7 +7471,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table tab ( s symbol index, ts timestamp);",
                 "select distinct(s) from tab",
                 "DistinctSymbol\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -7434,7 +7484,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select distinct ts, l  from tab",
                 "Distinct\n" +
                         "  keys: ts,l\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -7449,7 +7499,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from t where d in (5, -1, 1, null)",
                     "Async JIT Filter workers: 1\n" +
                             "  filter: d in [-1.0,1.0,5.0,NaN]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
             );
@@ -7458,7 +7508,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from t where d not in (5, -1, 1, null)",
                     "Async JIT Filter workers: 1\n" +
                             "  filter: not (d in [-1.0,1.0,5.0,NaN])\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
             );
@@ -7472,7 +7522,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where ts > sysdate()",
                 "Async Filter workers: 1\n" +
                         "  filter: sysdate()<ts\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -7485,7 +7535,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where ts > systimestamp()",
                 "Async Filter workers: 1\n" +
                         "  filter: systimestamp()<ts\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -7496,7 +7546,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts > now()",
-                "DataFrame\n" +
+                "PageFrame\n" +
                         "    Row forward scan\n" +
                         "    Interval forward scan on: tab\n" +
                         "      intervals: [(\"1970-01-01T00:00:00.000001Z\",\"MAX\")]\n"
@@ -7508,7 +7558,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts > dateadd('d', -1, now()) and ts < now()",
-                "DataFrame\n" +
+                "PageFrame\n" +
                         "    Row forward scan\n" +
                         "    Interval forward scan on: tab\n" +
                         "      intervals: [(\"1969-12-31T00:00:00.000001Z\",\"1969-12-31T23:59:59.999999Z\")]\n"
@@ -7520,7 +7570,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts > '2022-01-01' and ts > now()",
-                "DataFrame\n" +
+                "PageFrame\n" +
                         "    Row forward scan\n" +
                         "    Interval forward scan on: tab\n" +
                         "      intervals: [(\"2022-01-01T00:00:00.000001Z\",\"MAX\")]\n"
@@ -7532,7 +7582,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts > '2022-01-01' and ts > now() order by ts desc",
-                "DataFrame\n" +
+                "PageFrame\n" +
                         "    Row backward scan\n" +
                         "    Interval backward scan on: tab\n" +
                         "      intervals: [(\"2022-01-01T00:00:00.000001Z\",\"MAX\")]\n"
@@ -7595,7 +7645,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s = 'S1' order by ts desc limit 1 ",
                 "Limit lo: 1\n" +
-                        "    DeferredSingleSymbolFilterDataFrame\n" +
+                        "    DeferredSingleSymbolFilterPageFrame\n" +
                         "        Index backward scan on: s deferred: true\n" +
                         "          filter: s='S1'\n" +
                         "        Frame backward scan on: a\n"
@@ -7608,7 +7658,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day;",
                 "select * from a where s = 'S1' order by ts desc limit 1 ",
                 "Limit lo: 1\n" +
-                        "    DeferredSingleSymbolFilterDataFrame\n" +
+                        "    DeferredSingleSymbolFilterPageFrame\n" +
                         "        Index backward scan on: s deferred: true\n" +
                         "          filter: s='S1'\n" +
                         "        Frame backward scan on: a\n"
@@ -7621,7 +7671,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
                 "select * from a where s = 'S1' order by ts desc limit 1 ",
                 "Limit lo: 1\n" +
-                        "    DeferredSingleSymbolFilterDataFrame\n" +
+                        "    DeferredSingleSymbolFilterPageFrame\n" +
                         "        Index backward scan on: s deferred: true\n" +
                         "          filter: s='S1'\n" +
                         "        Frame backward scan on: a\n"
@@ -7634,7 +7684,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day;",
                 "select * from a where s = 'S1' order by ts desc limit 1 ",
                 "Limit lo: 1\n" +
-                        "    DeferredSingleSymbolFilterDataFrame\n" +
+                        "    DeferredSingleSymbolFilterPageFrame\n" +
                         "        Index backward scan on: s deferred: true\n" +
                         "          filter: s='S1'\n" +
                         "        Frame backward scan on: a\n"
@@ -7716,7 +7766,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: (s=$0::string or s=$1::string)\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: a\n"
         );
@@ -7730,7 +7780,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: (s='S1' or s='S2')\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: a\n"
         );
@@ -7793,7 +7843,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( s symbol index) ;",
                 "select * from a where s = 'S1' order by s asc limit 10",
                 "Limit lo: 10\n" +
-                        "    DeferredSingleSymbolFilterDataFrame\n" +
+                        "    DeferredSingleSymbolFilterPageFrame\n" +
                         "        Index forward scan on: s deferred: true\n" +
                         "          filter: s='S1'\n" +
                         "        Frame forward scan on: a\n"
@@ -7807,7 +7857,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from a where s = 'S1' order by s asc limit 10",
                 "Sort light lo: 10\n" +
                         "  keys: [s]\n" +
-                        "    DeferredSingleSymbolFilterDataFrame\n" +
+                        "    DeferredSingleSymbolFilterPageFrame\n" +
                         "        Index forward scan on: s deferred: true\n" +
                         "          filter: s='S1'\n" +
                         "        Frame forward scan on: a\n"
@@ -7993,7 +8043,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select * from a where s1 in ('S1', 'S2') and s2 in ('S2') limit 1",
                     "Limit lo: 1\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Index forward scan on: s2\n" +
                             "          filter: s2=2 and s1 in [S1,S2]\n" +
                             "        Frame forward scan on: a\n"
@@ -8008,7 +8058,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             compile("insert into a select 'S' || x, 'S' || x, x::timestamp from long_sequence(10)");
             assertPlanNoLeakCheck(
                     "select * from a where s1 in ('S1')  order by ts desc",
-                    "DeferredSingleSymbolFilterDataFrame\n" +
+                    "DeferredSingleSymbolFilterPageFrame\n" +
                             "    Index backward scan on: s1\n" +
                             "      filter: s1=1\n" +
                             "    Frame backward scan on: a\n"
@@ -8023,7 +8073,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             compile("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
             assertPlanNoLeakCheck(
                     "select * from a where s1 = 'S1'  order by ts desc",
-                    "DeferredSingleSymbolFilterDataFrame\n" +
+                    "DeferredSingleSymbolFilterPageFrame\n" +
                             "    Index backward scan on: s1\n" +
                             "      filter: s1=1\n" +
                             "    Frame backward scan on: a\n"
@@ -8041,7 +8091,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "where s1 = 'S1' " +
                             "and ts > 0::timestamp and ts < 9::timestamp  " +
                             "order by s1,ts desc",
-                    "DeferredSingleSymbolFilterDataFrame\n" +
+                    "DeferredSingleSymbolFilterPageFrame\n" +
                             "    Index backward scan on: s1\n" +
                             "      filter: s1=1\n" +
                             "    Interval forward scan on: a\n" +
@@ -8086,7 +8136,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [s1, ts desc]\n" +
                             "    Async JIT Filter workers: 1\n" +
                             "      filter: (s1='S1' or s1='S2')\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Interval forward scan on: a\n" +
                             "              intervals: [(\"1970-01-01T00:00:00.000001Z\",\"1970-01-01T00:00:00.000008Z\")]\n"
@@ -8150,7 +8200,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from t where l in (5, -1, 1, null)",
                     "Async JIT Filter workers: 1\n" +
                             "  filter: l in [null,-1,1,5]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
             );
@@ -8159,7 +8209,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from t where l not in (5, -1, 1, null)",
                     "Async JIT Filter workers: 1\n" +
                             "  filter: not (l in [null,-1,1,5])\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
             );
@@ -8174,10 +8224,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from a limit -5",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Limit lo: 5\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: a\n"
             );
@@ -8192,10 +8242,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from a limit -10+2",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Limit lo: 8\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: a\n"
             );
@@ -8207,10 +8257,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts);",
                 "select * from a order by 2 desc limit -10",
-                "Sort light\n" +
+                "Radix sort light\n" +
                         "  keys: [ts desc]\n" +
                         "    Limit lo: 10\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -8221,7 +8271,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by ts asc",
-                "DataFrame\n" +
+                "PageFrame\n" +
                         "    Row forward scan\n" +
                         "    Frame forward scan on: a\n"
         );
@@ -8235,10 +8285,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts asc limit 5) order by ts desc",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts desc]\n" +
                             "    Limit lo: 5\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n"
             );
@@ -8253,10 +8303,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts desc limit 5) order by ts asc",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Limit lo: 5\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: a\n"
             );
@@ -8269,7 +8319,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by ts desc limit 9223372036854775806L+3L ",
                 "Limit lo: -9223372036854775807L\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: a\n"
         );
@@ -8281,7 +8331,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by ts desc limit -1000000 ",
                 "Limit lo: -1000000\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: a\n"
         );
@@ -8292,10 +8342,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by ts desc limit -10",
-                "Sort light\n" +
+                "Radix sort light\n" +
                         "  keys: [ts desc]\n" +
                         "    Limit lo: 10\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -8306,10 +8356,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts)",
                 "select * from a order by ts  limit -5",
-                "Sort light\n" +
+                "Radix sort light\n" +
                         "  keys: [ts]\n" +
                         "    Limit lo: 5\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row backward scan\n" +
                         "            Frame backward scan on: a\n"
         );
@@ -8327,7 +8377,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Sample By\n" +
                             "      fill: none\n" +
                             "      values: [count(*)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n"
             );
@@ -8338,7 +8388,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      keys: [i]\n" +
                             "      values: [count(*)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n"
             );
@@ -8349,7 +8399,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    GroupBy vectorized: true workers: 1\n" +
                             "      keys: [i]\n" +
                             "      values: [count(*)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n"
             );
@@ -8361,7 +8411,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        GroupBy vectorized: true workers: 1\n" +
                             "          keys: [i]\n" +
                             "          values: [count(*)]\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n"
             );
@@ -8373,9 +8423,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by i asc",
-                "Sort light\n" +
+                "Radix sort light\n" +
                         "  keys: [i]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -8386,9 +8436,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by i desc",
-                "Sort light\n" +
+                "Radix sort light\n" +
                         "  keys: [i desc]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -8401,7 +8451,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from a order by i limit 10, 100",
                 "Sort light lo: 10 hi: 100\n" +
                         "  keys: [i]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -8422,7 +8472,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts > '2020-03-01'",
-                "DataFrame\n" +
+                "PageFrame\n" +
                         "    Row forward scan\n" +
                         "    Interval forward scan on: tab\n" +
                         "      intervals: [(\"2020-03-01T00:00:00.000001Z\",\"MAX\")]\n"
@@ -8434,9 +8484,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc ",
-                "Sort light\n" +
+                "Radix sort light\n" +
                         "  keys: [l desc]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Interval forward scan on: tab\n" +
                         "          intervals: [(\"2020-01-01T03:00:00.000000Z\",\"2020-01-01T04:00:00.999999Z\"),(\"2020-01-02T03:00:00.000000Z\",\"2020-01-02T04:00:00.999999Z\"),(\"2020-01-03T03:00:00.000000Z\",\"2020-01-03T04:00:00.999999Z\")]\n"
@@ -8450,7 +8500,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc, ts desc ",
                 "Sort light\n" +
                         "  keys: [l desc, ts desc]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Interval forward scan on: tab\n" +
                         "          intervals: [(\"2020-01-01T03:00:00.000000Z\",\"2020-01-01T04:00:00.999999Z\"),(\"2020-01-02T03:00:00.000000Z\",\"2020-01-02T04:00:00.999999Z\"),(\"2020-01-03T03:00:00.000000Z\",\"2020-01-03T04:00:00.999999Z\")]\n"
@@ -8462,7 +8512,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts in '2020-03-01'",
-                "DataFrame\n" +
+                "PageFrame\n" +
                         "    Row forward scan\n" +
                         "    Interval forward scan on: tab\n" +
                         "      intervals: [(\"2020-03-01T00:00:00.000000Z\",\"2020-03-01T23:59:59.999999Z\")]\n"
@@ -8474,9 +8524,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts in '2020-03-01' or ts in '2020-03-10'",
-                "Async Filter workers: 1\n" +
+                "Async JIT Filter workers: 1\n" +
                         "  filter: (ts in [1583020800000000,1583107199999999] or ts in [1583798400000000,1583884799999999])\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8496,7 +8546,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts in '2020-03' and ts > '2020-03-10'",
-                "DataFrame\n" +
+                "PageFrame\n" +
                         "    Row forward scan\n" +
                         "    Interval forward scan on: tab\n" +
                         "      intervals: [(\"2020-03-10T00:00:00.000001Z\",\"2020-03-31T23:59:59.999999Z\")]\n"
@@ -8510,7 +8560,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where (ts > '2020-03-01' and ts < '2020-03-10') or (ts > '2020-04-01' and ts < '2020-04-10') ",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: ((1583020800000000<ts and ts<1583798400000000) or (1585699200000000<ts and ts<1586476800000000))\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8523,7 +8573,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where (ts between '2020-03-01' and '2020-03-10') or (ts between '2020-04-01' and '2020-04-10') ",
                 "Async Filter workers: 1\n" +
                         "  filter: (ts between 1583020800000000 and 1583798400000000 or ts between 1585699200000000 and 1586476800000000)\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8534,7 +8584,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' ",
-                "DataFrame\n" +
+                "PageFrame\n" +
                         "    Row forward scan\n" +
                         "    Interval forward scan on: tab\n" +
                         "      intervals: [(\"2020-01-01T03:00:00.000000Z\",\"2020-01-01T04:00:00.999999Z\"),(\"2020-01-02T03:00:00.000000Z\",\"2020-01-02T04:00:00.999999Z\"),(\"2020-01-03T03:00:00.000000Z\",\"2020-01-03T04:00:00.999999Z\")]\n"
@@ -8546,7 +8596,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table tab ( l long, ts timestamp) timestamp(ts);",
                 "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by ts desc",
-                "DataFrame\n" +
+                "PageFrame\n" +
                         "    Row backward scan\n" +
                         "    Interval backward scan on: tab\n" +
                         "      intervals: [(\"2020-01-01T03:00:00.000000Z\",\"2020-01-01T04:00:00.999999Z\"),(\"2020-01-02T03:00:00.000000Z\",\"2020-01-02T04:00:00.999999Z\"),(\"2020-01-03T03:00:00.000000Z\",\"2020-01-03T04:00:00.999999Z\")]\n"
@@ -8560,7 +8610,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where ts > '2020-03-01'",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: 1583020800000000<ts\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8584,7 +8634,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  keys: [str, x]\n" +
                         "    Async Filter workers: 1\n" +
                         "      filter: str='A'\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: xx\n"
         );
@@ -8597,7 +8647,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where l > 100 ",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: 100<l\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8610,7 +8660,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where s in ( 'A', 'B' )",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: s in [A,B]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8623,7 +8673,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where ts in ( '2020-01-01', '2020-01-02' )",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: ts in [1577836800000000,1577923200000000]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8636,7 +8686,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where ts in ( '2020-01-01', '2020-01-03' ) and s = 'ABC'",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: (ts in [1577836800000000,1578009600000000] and s='ABC')\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8649,7 +8699,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where ts in ( '2020-01-01' ) and s = 'ABC'",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: (ts in [1577836800000000,1577923199999999] and s='ABC')\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8662,7 +8712,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where l = 12 or l = 15 ",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: (l=12 or l=15)\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8675,7 +8725,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where l = 12.345 ",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: l=12.345\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8688,7 +8738,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where b = false ",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: b=false\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8701,7 +8751,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where not(b = false or ts = 123) ",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: (b!=false and ts!=123)\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8714,7 +8764,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where l1 < l2 ",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: l1<l2\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8727,7 +8777,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where l1 * l2 > 0  ",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: 0<l1*l2\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8740,7 +8790,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where l > 100 and l < 1000 ",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: (100<l and l<1000)\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8753,7 +8803,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where l1 * l2 > l3  ",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: l3<l1*l2\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8766,7 +8816,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where l = $1 ",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: l=$0::long\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8779,7 +8829,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where d = 1024.1 + 1 ",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: d=1024.1+1\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8792,7 +8842,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where d = null ",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: d is null\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8806,7 +8856,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: d=1.2\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8820,7 +8870,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: d=1.2\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
         );
@@ -8834,7 +8884,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: d=1.2\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
         );
@@ -8848,7 +8898,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: d=1.2\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
         );
@@ -8862,7 +8912,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: d=1.2\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
         );
@@ -8878,7 +8928,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: d=1.2\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
         );
@@ -8892,7 +8942,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: d=1.2\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
         );
@@ -8906,7 +8956,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async JIT Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: d=1.2\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
         );
@@ -8919,7 +8969,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where s = null ",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: s is null\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8932,7 +8982,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where v = null ",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: v is null\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8945,7 +8995,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where l > 100 and l < 1000 and ts = '2022-01-01' ",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: (100<l and l<1000 and ts=1640995200000000)\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8958,7 +9008,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where l > 100 and l < 1000 and l = 20",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: (100<l and l<1000 and l=20)\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8971,7 +9021,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where l > 100 and l < 1000 or l = 20",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: ((100<l and l<1000) or l=20)\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8984,7 +9034,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where l > 100 and l < 1000 or ts = 123",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: ((100<l and l<1000) or ts=123)\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -8997,7 +9047,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where l > 100 and l < 1000 or ts > '2021-01-01'",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: ((100<l and l<1000) or 1609459200000000<ts)\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -9010,7 +9060,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where l > 100 and l < 1000 and ts in '2021-01-01'",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: (100<l and l<1000)\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Interval forward scan on: tab\n" +
                         "          intervals: [(\"2021-01-01T00:00:00.000000Z\",\"2021-01-01T23:59:59.999999Z\")]\n"
@@ -9024,7 +9074,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where l in ( 100, 200 )",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: l in [100,200]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -9036,7 +9086,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a limit 10",
                 "Limit lo: 10\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -9048,7 +9098,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a limit 10, 100",
                 "Limit lo: 10 hi: 100\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -9060,7 +9110,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a limit -10, -100",
                 "Limit lo: -10 hi: -100\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -9071,10 +9121,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a limit -10",
-                "Sort light\n" +
+                "Radix sort light\n" +
                         "  keys: [ts]\n" +
                         "    Limit lo: 10\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row backward scan\n" +
                         "            Frame backward scan on: a\n"
         );
@@ -9087,7 +9137,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where l = 12::short ",
                 "Async Filter workers: 1\n" +
                         "  filter: l=12::short\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -9100,7 +9150,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where s = 1::short ",
                 "Async Filter workers: 1\n" +
                         "  filter: s=1::short\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -9113,7 +9163,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where b = true::boolean ",
                 "Async Filter workers: 1\n" +
                         "  filter: b=true\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -9126,7 +9176,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where l = 1024::long ",
                 "Async Filter workers: 1\n" +
                         "  filter: l=1024::long\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -9139,7 +9189,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where d = 1024.1::double ",
                 "Async Filter workers: 1\n" +
                         "  filter: d=1024.1\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -9152,7 +9202,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where d = null::double ",
                 "Async Filter workers: 1\n" +
                         "  filter: d is null\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -9165,7 +9215,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where (l | l) > 0  ",
                 "Async Filter workers: 1\n" +
                         "  filter: 0<l|l\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -9178,7 +9228,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where (l & l) > 0  ",
                 "Async Filter workers: 1\n" +
                         "  filter: 0<l&l\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -9191,7 +9241,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where (l ^ l) > 0  ",
                 "Async Filter workers: 1\n" +
                         "  filter: 0<l^l\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -9205,7 +9255,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: 0<l^l\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
         );
@@ -9222,7 +9272,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async Filter workers: 1\n" +
                         "  limit: 1\n" +
                         "  filter: 0<l^l\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: tab\n"
         );
@@ -9235,7 +9285,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where l = 12::byte ",
                 "Async Filter workers: 1\n" +
                         "  filter: l=12::byte\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -9248,7 +9298,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where l = '123' ",
                 "Async Filter workers: 1\n" +
                         "  filter: l='123'\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -9261,7 +9311,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where l = rnd_long() ",
                 "Async Filter workers: 1\n" +
                         "  filter: l=rnd_long()\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -9274,7 +9324,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where l = case when l > 0 then 1 when l = 0 then 0 else -1 end ",
                 "Async Filter workers: 1\n" +
                         "  filter: l=case([0<l,1,l=0,0,-1])\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -9287,7 +9337,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where l = $1::string ",
                 "Async Filter workers: 1\n" +
                         "  filter: l=$0::string\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -9300,7 +9350,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where s = 'test' ",
                 "Async Filter workers: 1\n" +
                         "  filter: s='test'\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -9313,7 +9363,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tab where b = 1::byte ",
                 "Async Filter workers: 1\n" +
                         "  filter: b=1::byte\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tab\n"
         );
@@ -9326,7 +9376,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from tst where timestamp not between '2021-01-01' and '2021-01-10' ",
                 "Async Filter workers: 1\n" +
                         "  filter: not (timestamp between 1609459200000000 and 1610236800000000)\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: tst\n"
         );
@@ -9338,7 +9388,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by ts desc limit 10",
                 "Limit lo: 10\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row backward scan\n" +
                         "        Frame backward scan on: a\n"
         );
@@ -9349,10 +9399,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by ts desc limit -10",
-                "Sort light\n" +
+                "Radix sort light\n" +
                         "  keys: [ts desc]\n" +
                         "    Limit lo: 10\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -9364,10 +9414,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select i from a order by ts desc limit -10",
                 "SelectedRecord\n" +
-                        "    Sort light\n" +
+                        "    Radix sort light\n" +
                         "      keys: [ts desc]\n" +
                         "        Limit lo: 10\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n"
         );
@@ -9378,10 +9428,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan(
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select * from a order by ts limit -10",
-                "Sort light\n" +
+                "Radix sort light\n" +
                         "  keys: [ts]\n" +
                         "    Limit lo: 10\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row backward scan\n" +
                         "            Frame backward scan on: a\n"
         );
@@ -9393,10 +9443,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, ts timestamp) timestamp(ts) ;",
                 "select i from a order by ts limit -10",
                 "SelectedRecord\n" +
-                        "    Sort light\n" +
+                        "    Radix sort light\n" +
                         "      keys: [ts]\n" +
                         "        Limit lo: 10\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row backward scan\n" +
                         "                Frame backward scan on: a\n"
         );
@@ -9409,7 +9459,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select ts, l, i from a where l<i",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: l<i\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -9422,7 +9472,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select ts, l, i from a where l::short<i",
                 "Async Filter workers: 1\n" +
                         "  filter: l::short<i\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -9444,7 +9494,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "            Async Filter workers: 1\n" +
                         "              limit: 100\n" +
                         "              filter: l::short<i\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: a\n"
         );
@@ -9465,7 +9515,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "        Sort light lo: 100 partiallySorted: true\n" +
                         "          keys: [ts1, l1]\n" +
                         "            SelectedRecord\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: a\n"
         );
@@ -9482,7 +9532,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    SelectedRecord\n" +
                         "        Async Filter workers: 1\n" +
                         "          filter: (l::short<i and l<0)\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: a\n"
         );
@@ -9501,7 +9551,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "      keys: [k]\n" +
                         "      values: [max(i*l),min(l),min(i)]\n" +
                         "      filter: l::short<i\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: a\n"
         );
@@ -9515,7 +9565,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts asc limit 10) order by ts asc",
                     "Limit lo: 10\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -9531,7 +9581,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from (select * from a order by ts desc, l desc limit 10) order by ts desc",
                     "Sort light lo: 10\n" +
                             "  keys: [ts desc, l desc]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: a\n"
             );
@@ -9549,10 +9599,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Lt Join Fast Scan\n" +
                             "        Sort light lo: 10 partiallySorted: true\n" +
                             "          keys: [ts, l]\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n"
             );
@@ -9574,10 +9624,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "        Limit lo: 10\n" +
                             "            Sort light\n" +
                             "              keys: [ts, l]\n" +
-                            "                DataFrame\n" +
+                            "                PageFrame\n" +
                             "                    Row forward scan\n" +
                             "                    Frame forward scan on: a\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n"
             );
@@ -9593,12 +9643,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "select * from " +
                             "(select * from (select * from a order by ts desc, l desc) limit 10) " +
                             "order by ts asc",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Limit lo: 10\n" +
                             "        Sort light\n" +
                             "          keys: [ts desc, l desc]\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n"
             );
@@ -9628,13 +9678,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "              keys: [ts, l]\n" +
                             "                SelectedRecord\n" +
                             "                    Cross Join\n" +
-                            "                        DataFrame\n" +
+                            "                        PageFrame\n" +
                             "                            Row forward scan\n" +
                             "                            Frame forward scan on: a\n" +
-                            "                        DataFrame\n" +
+                            "                        PageFrame\n" +
                             "                            Row forward scan\n" +
                             "                            Frame forward scan on: a\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n"
             );
@@ -9659,10 +9709,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Limit lo: 10\n" +
                             "    SelectedRecord\n" +
                             "        Cross Join\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: a\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n"
             );
@@ -9676,10 +9726,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts asc limit 10) order by ts desc",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts desc]\n" +
                             "    Limit lo: 10\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n"
             );
@@ -9694,7 +9744,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts desc limit 10) order by ts desc",
                     "Limit lo: 10\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row backward scan\n" +
                             "        Frame backward scan on: a\n"
             );
@@ -9708,10 +9758,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select * from (select * from a order by ts desc limit 10) order by ts asc",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [ts]\n" +
                             "    Limit lo: 10\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: a\n"
             );
@@ -9729,7 +9779,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  keys: [ts, l]\n" +
                             "    Sort light lo: 10\n" +
                             "      keys: [ts, l]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n"
             );
@@ -9748,7 +9798,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Limit lo: 10 hi: -10\n" +
                             "        Sort light\n" +
                             "          keys: [ts, l]\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n"
             );
@@ -9767,10 +9817,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Filter filter: a.i=b.ts\n" +
                             "        Splice Join\n" +
                             "          condition: b.ts=a.ts\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
             );
@@ -9789,10 +9839,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "    Filter filter: a.i+b.i=1\n" +
                             "        Splice Join\n" +
                             "          condition: b.ts=a.ts\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
             );
@@ -9810,10 +9860,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Splice Join\n" +
                             "      condition: b.ts=a.ts\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: b\n"
             );
@@ -9831,11 +9881,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Splice Join\n" +
                             "      condition: _xQdbA1.ts=a.ts\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
                             "        Limit lo: 10\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
             );
@@ -9853,12 +9903,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Splice Join\n" +
                             "      condition: _xQdbA1.ts=a.ts\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: a\n" +
                             "        Sort light\n" +
                             "          keys: [ts, i]\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
             );
@@ -9876,10 +9926,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "SelectedRecord\n" +
                             "    Filter filter: a.i=b.i\n" +
                             "        Splice Join\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: a\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: b\n"
             );
@@ -9892,10 +9942,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, s string);",
                 "select * from a union select * from a",
                 "Union\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -9907,10 +9957,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table a ( i int, s string);",
                 "select * from a union all select * from a",
                 "Union All\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -9927,7 +9977,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Async JIT Filter workers: 1\n" +
                             "  limit: 5\n" +
                             "  filter: x<100\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
             );
@@ -9956,7 +10006,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select u, ts from a where u = '11111111-1111-1111-1111-111111111111' or u = '22222222-2222-2222-2222-222222222222' or u = '33333333-3333-3333-3333-333333333333'",
                 "Async JIT Filter workers: 1\n" +
                         "  filter: ((u='11111111-1111-1111-1111-111111111111' or u='22222222-2222-2222-2222-222222222222') or u='33333333-3333-3333-3333-333333333333')\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: a\n"
         );
@@ -9970,7 +10020,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "CachedWindow\n" +
                         "  orderedFunctions: [[l] => [row_number()]]\n" +
                         "  unorderedFunctions: [row_number() over (partition by [l])]\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: t\n"
         );
@@ -9985,7 +10035,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "  orderedFunctions: [[ts] => [row_number() over (partition by [l])]]\n" +
                         "    VirtualRecord\n" +
                         "      functions: [str,ts,l,10]\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: t\n"
         );
@@ -10001,7 +10051,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "    VirtualRecord\n" +
                         "      functions: [str,ts,l1,ts::long+l1]\n" +
                         "        SelectedRecord\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: t\n"
         );
@@ -10021,7 +10071,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "CachedWindow\n" +
                             "  orderedFunctions: [[i, j] => [avg(j) over (rows between unbounded preceding and current row)," +
                             "sum(j) over (rows between unbounded preceding and current row),first_value(j) over ()]]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
             );
@@ -10035,7 +10085,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "Window\n" +
                             "  functions: [avg(j) over (partition by [i] rows between 1 preceding and current row)," +
                             "sum(j) over (partition by [i] rows between 1 preceding and current row),first_value(j) over (partition by [i] rows between 1 preceding and current row)]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: tab\n"
             );
@@ -10053,7 +10103,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "[j, i desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row )," +
                             "sum(j) over (partition by [i] rows between unbounded preceding and current row )," +
                             "first_value(j) over (partition by [i] rows between unbounded preceding and current row )]]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: tab\n"
             );
@@ -10071,7 +10121,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "sum(j) over (partition by [i,j] rows between unbounded preceding and current row )," +
                             "first_value(j) over (partition by [i,j] rows between unbounded preceding and current row )]]\n" +
                             "      unorderedFunctions: [rank() over (partition by [j,i])]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: tab\n"
             );
@@ -10098,7 +10148,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: cpu_ts\n"
             );
@@ -10117,7 +10167,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: cpu_ts\n"
             );
@@ -10140,7 +10190,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)" +
                             "]\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: cpu_ts\n"
             );
@@ -10167,7 +10217,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row backward scan\n" +
                             "            Frame backward scan on: cpu_ts\n"
             );
@@ -10188,7 +10238,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "          orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: cpu_ts\n"
             );
@@ -10218,7 +10268,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: cpu_ts\n"
             );
@@ -10240,7 +10290,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: cpu_ts\n"
             );
@@ -10262,7 +10312,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: cpu_ts\n"
             );
@@ -10280,7 +10330,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: cpu_ts\n"
             );
@@ -10298,7 +10348,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "  orderedFunctions: [[ts] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row backward scan\n" +
                             "        Frame backward scan on: cpu_ts\n"
             );
@@ -10318,7 +10368,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: cpu_ts\n"
             );
@@ -10338,7 +10388,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: cpu_ts\n"
             );
@@ -10360,7 +10410,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row backward scan\n" +
                             "                Frame backward scan on: cpu_ts\n"
             );
@@ -10382,7 +10432,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: cpu_ts\n"
             );
@@ -10404,7 +10454,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "          functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Frame forward scan on: cpu_ts\n"
             );
@@ -10420,7 +10470,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                     "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                     "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
-                    "    DataFrame\n" +
+                    "    PageFrame\n" +
                     "        Row forward scan\n" +
                     "        Frame forward scan on: cpu_ts\n";
 
@@ -10478,7 +10528,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                             "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: cpu_ts\n";
 
@@ -10512,7 +10562,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "  functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                     "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                     "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
-                    "    DataFrame\n" +
+                    "    PageFrame\n" +
                     "        Row backward scan\n" +
                     "        Frame backward scan on: cpu_ts\n";
             assertPlanNoLeakCheck(
@@ -10568,7 +10618,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     "      functions: [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                     "sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row)," +
                     "first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]\n" +
-                    "        DataFrame\n" +
+                    "        PageFrame\n" +
                     "            Row backward scan\n" +
                     "            Frame backward scan on: cpu_ts\n";
 
@@ -10625,7 +10675,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             "avg(i) over (partition by [i] rows between unbounded preceding and current row )," +
                             "sum(i) over (partition by [i] rows between unbounded preceding and current row )," +
                             "first_value(i) over (partition by [i] rows between unbounded preceding and current row )]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n"
             );
@@ -10732,7 +10782,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "select * from t where x = :v1 ",
                 "Async Filter workers: 1\n" +
                         "  filter: x=:v1::" + type + "\n" +
-                        "    DataFrame\n" +
+                        "    PageFrame\n" +
                         "        Row forward scan\n" +
                         "        Frame forward scan on: t\n"
         );
@@ -10817,11 +10867,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     // left join maintains order metadata and can be part of asof join
-    private void testHashAndAsOfJoin(SqlCompiler compiler, boolean isLight) throws Exception {
+    private void testHashAndAsOfJoin(SqlCompiler compiler, boolean isLight, boolean isFastAsOfJoin) throws Exception {
         ddl("create table taba (a1 int, ts1 timestamp) timestamp(ts1)");
         ddl("create table tabb (b1 int, b2 long)");
         ddl("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
 
+        String asofJoinType = isFastAsOfJoin ? " Fast Scan" : (isLight ? "Light" : "");
         assertPlanNoLeakCheck(
                 compiler,
                 "select * " +
@@ -10829,18 +10880,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "left join tabb on a1=b1 " +
                         "asof join tabc on b1=c1",
                 "SelectedRecord\n" +
-                        "    AsOf Join" + (isLight ? " Light" : "") + "\n" +
+                        "    AsOf Join" + asofJoinType + "\n" +
                         "      condition: c1=b1\n" +
                         "        Hash Outer Join" + (isLight ? " Light" : "") + "\n" +
                         "          condition: b1=a1\n" +
-                        "            DataFrame\n" +
+                        "            PageFrame\n" +
                         "                Row forward scan\n" +
                         "                Frame forward scan on: taba\n" +
                         "            Hash\n" +
-                        "                DataFrame\n" +
+                        "                PageFrame\n" +
                         "                    Row forward scan\n" +
                         "                    Frame forward scan on: tabb\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Frame forward scan on: tabc\n",
                 sqlExecutionContext

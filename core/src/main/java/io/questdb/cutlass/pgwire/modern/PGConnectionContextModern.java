@@ -32,8 +32,8 @@ import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
+import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.pgwire.BadProtocolException;
 import io.questdb.cutlass.pgwire.OptionsListener;
 import io.questdb.cutlass.pgwire.PGResponseSink;
@@ -122,7 +122,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool;
     private final DirectUtf8String utf8String = new DirectUtf8String();
-    private Authenticator authenticator;
+    private SocketAuthenticator authenticator;
     private int bufferRemainingOffset = 0;
     private int bufferRemainingSize = 0;
     private boolean freezeRecvBuffer;
@@ -385,7 +385,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     }
 
     @Override
-    public PGConnectionContextModern of(int fd, @NotNull IODispatcher<PGConnectionContextModern> dispatcher) {
+    public PGConnectionContextModern of(long fd, @NotNull IODispatcher<PGConnectionContextModern> dispatcher) {
         super.of(fd, dispatcher);
         sqlExecutionContext.with(fd);
         if (recvBuffer == 0) {
@@ -401,7 +401,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         return this;
     }
 
-    public void setAuthenticator(Authenticator authenticator) {
+    public void setAuthenticator(SocketAuthenticator authenticator) {
         this.authenticator = authenticator;
     }
 
@@ -509,7 +509,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         int r;
         try {
             r = authenticator.handleIO();
-            if (r == Authenticator.OK) {
+            if (r == SocketAuthenticator.OK) {
                 try {
                     final SecurityContext securityContext = securityContextFactory.getInstance(
                             authenticator.getPrincipal(),
@@ -528,14 +528,14 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             throw PeerDisconnectedException.INSTANCE;
         }
         switch (r) {
-            case Authenticator.OK:
+            case SocketAuthenticator.OK:
                 assert authenticator.isAuthenticated();
                 break;
-            case Authenticator.NEEDS_READ:
+            case SocketAuthenticator.NEEDS_READ:
                 throw PeerIsSlowToWriteException.INSTANCE;
-            case Authenticator.NEEDS_WRITE:
+            case SocketAuthenticator.NEEDS_WRITE:
                 throw PeerIsSlowToReadException.INSTANCE;
-            case Authenticator.NEEDS_DISCONNECT:
+            case SocketAuthenticator.NEEDS_DISCONNECT:
                 throw PeerDisconnectedException.INSTANCE;
             default:
                 throw BadProtocolException.INSTANCE;

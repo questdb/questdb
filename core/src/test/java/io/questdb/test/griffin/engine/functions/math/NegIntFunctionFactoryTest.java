@@ -25,27 +25,25 @@
 package io.questdb.test.griffin.engine.functions.math;
 
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.math.NegIntFunctionFactory;
-import io.questdb.std.Numbers;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class NegIntFunctionFactoryTest extends AbstractFunctionFactoryTest {
 
     @Test
-    public void testNaN() throws SqlException {
-        call(Numbers.INT_NULL).andAssert(Numbers.INT_NULL);
+    public void testNaN() throws Exception {
+        assertQuery("column\nnull\n", "SELECT -null");
     }
 
     @Test
-    public void testNegative() throws SqlException {
-        call(-123).andAssert(123);
+    public void testNegative() throws Exception {
+        assertQuery("column\n123\n", "SELECT -(-123)");
     }
 
     @Test
-    public void testPositive() throws SqlException {
-        call(123).andAssert(-123);
+    public void testPositive() throws Exception {
+        assertQuery("column\n-123\n", "SELECT -123");
     }
 
     @Override

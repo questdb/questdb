@@ -240,7 +240,7 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     @Test
     public void testNonAscii() {
         assertThat(
-                "weather1 terület=\"europeI\",temperature=80.0,humidity=24.0,hőmérséklet=18.0,notes=5072.0,ветер=63.0 1465839830102351000--non ascii--\n",
+                "weather1 terület=\"europeI\",temperature=80.0,humidity=24.0,hőmérséklet=18.0,notes=5072.0,ветер=63.0 1465839830102351000\n",
                 "weather1 terület=\"europeI\",temperature=80.0,humidity=24.0,hőmérséklet=18.0,notes=5072.0,ветер=63.0 1465839830102351000\n"
         );
     }
@@ -268,17 +268,17 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
     @Test
     public void testSupportsUtf8Chars() {
         assertThat(
-                "लаблअца,символ=значение1 поле=\"значение2\",поле2=\"значение3\" 123--non ascii--\n",
+                "लаблअца,символ=значение1 поле=\"значение2\",поле2=\"значение3\" 123\n",
                 "लаблअца,символ=значение1 поле=\"значение2\",поле2=\"значение3\" 123\n"
         );
 
         assertThat(
-                "लаблअца,символ=значение2 161--non ascii--\n",
+                "लаблअца,символ=значение2 161\n",
                 "लаблअца,символ=значение2  161\n"
         );
 
         assertThat(
-                "table,tag=ok field=\"значение2 non ascii quoted\" 161--non ascii--\n",
+                "table,tag=ok field=\"значение2 non ascii quoted\" 161\n",
                 "table,tag=ok field=\"значение2 non ascii quoted\" 161\n"
         );
     }
@@ -498,10 +498,6 @@ public class LineTcpParser2Test extends LineUdpLexerTest {
                         break;
                 }
             }
-        }
-
-        if (lineTcpParser.hasNonAsciiChars()) {
-            sink.put("--non ascii--");
         }
         sink.put('\n');
     }

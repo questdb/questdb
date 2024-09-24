@@ -398,7 +398,7 @@ public class CopyTask {
             long ptr;
             long hi;
 
-            int fd = TableUtils.openRO(ff, path.$(), LOG);
+            long fd = TableUtils.openRO(ff, path.$(), LOG);
             ff.fadvise(fd, chunkStart, chunkEnd - chunkStart, Files.POSIX_FADV_SEQUENTIAL);
             try {
                 do {
@@ -504,8 +504,9 @@ public class CopyTask {
                             DefaultLifecycleManager.INSTANCE,
                             root,
                             cairoEngine.getDdlListener(tableToken),
-                            cairoEngine.getSnapshotAgent(),
-                            cairoEngine.getMetrics()
+                            cairoEngine.getCheckpointStatus(),
+                            cairoEngine.getMetrics(),
+                            cairoEngine
                     )
             ) {
                 for (int i = 0; i < columnCount; i++) {
@@ -652,8 +653,8 @@ public class CopyTask {
             long columnMemorySize = 0;
             long remapTableMemory = 0;
             long remapTableMemorySize = 0;
-            int columnFd = -1;
-            int remapFd = -1;
+            long columnFd = -1;
+            long remapFd = -1;
             try {
                 columnFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
                 columnMemorySize = ff.length(columnFd);
@@ -889,8 +890,9 @@ public class CopyTask {
                             DefaultLifecycleManager.INSTANCE,
                             importRoot,
                             engine.getDdlListener(tableToken),
-                            engine.getSnapshotAgent(),
-                            engine.getMetrics()
+                            engine.getCheckpointStatus(),
+                            engine.getMetrics(),
+                            engine
                     )
             ) {
                 tableWriterRef = writer;
@@ -1051,7 +1053,7 @@ public class CopyTask {
             offsets.clear();
             lexer.setupBeforeExactLines(onFieldsPartitioned);
 
-            int fd = -1;
+            long fd = -1;
             try {
                 tmpPath.of(configuration.getSqlCopyInputRoot()).concat(inputFileName);
                 utf8Sink.clear();
@@ -1164,7 +1166,7 @@ public class CopyTask {
 
             lexer.setupBeforeExactLines(onFieldsPartitioned);
 
-            int fd = -1;
+            long fd = -1;
             try {
                 tmpPath.of(configuration.getSqlCopyInputRoot()).concat(inputFileName);
                 utf8Sink.clear();
@@ -1263,7 +1265,7 @@ public class CopyTask {
 
             long mergedIndexSize = -1;
             long mergeIndexAddr = 0;
-            int fd = -1;
+            long fd = -1;
             try {
                 mergedIndexSize = openIndexChunks(ff, partitionPath, unmergedIndexes, partitionLen);
 
@@ -1367,7 +1369,7 @@ public class CopyTask {
                             partitionPath.trimTo(partitionLen);
                             partitionPath.concat(chunkName);
 
-                            int fd = TableUtils.openRO(ff, partitionPath.$(), LOG);
+                            long fd = TableUtils.openRO(ff, partitionPath.$(), LOG);
                             long size = 0;
                             long address = -1;
 

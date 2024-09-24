@@ -40,6 +40,8 @@ import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.log.Log;
 import io.questdb.metrics.MetricsConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -72,7 +74,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     public static final long COMMIT_INTERVAL_DEFAULT = 2000;
     public static final String CONFIG_DIRECTORY = "conf";
     public static final String DB_DIRECTORY = "db";
-    public static final String SNAPSHOT_DIRECTORY = "snapshot";
     public static final String TMP_DIRECTORY = "tmp";
     private static final String RELEASE_TYPE = "release.type";
     private static final String RELEASE_VERSION = "release.version";
@@ -107,6 +108,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean cairoSqlLegacyOperatorPrecedence;
     private final long cairoTableRegistryAutoReloadFrequency;
     private final int cairoTableRegistryCompactionThreshold;
+    private final boolean checkpointRecoveryEnabled;
+    private final String checkpointRoot;
     private final PropSqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new PropSqlExecutionCircuitBreakerConfiguration();
     private final int circuitBreakerThrottle;
     private final int columnIndexerQueueCapacity;
@@ -181,6 +184,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int jsonCacheSize;
     private final String keepAliveHeader;
     private final int latestByQueueCapacity;
+    private final String legacyCheckpointRoot;
     private final boolean lineHttpEnabled;
     private final CharSequence lineHttpPingVersion;
     private final LineHttpProcessorConfiguration lineHttpProcessorConfiguration = new PropLineHttpProcessorConfiguration();
@@ -204,6 +208,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean lineUdpUnicast;
     private final DateLocale locale;
     private final Log log;
+    private final boolean logSqlQueryProgressExe;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
     private final double maxRequiredDelimiterStdDev;
@@ -235,6 +240,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean o3QuickSortEnabled;
     private final int parallelIndexThreshold;
     private final boolean parallelIndexingEnabled;
+    private final boolean partitionEncoderParquetStatisticsEnabled;
+    private final int partitionEncoderParquetVersion;
+    private final int partitionEncoderParquetCompressionCodec;
+    private final int partitionEncoderParquetCompressionLevel;
+    private final int partitionEncoderParqeutRowGroupSize;
+    private final int partitionEncoderParquetDataPageSize;
     private final boolean pgEnabled;
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final String posthogApiKey;
@@ -265,8 +276,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sharedWorkerSleepTimeout;
     private final long sharedWorkerYieldThreshold;
     private final String snapshotInstanceId;
-    private final boolean snapshotRecoveryEnabled;
-    private final String snapshotRoot;
     private final long spinLockTimeout;
     private final int sqlAsOfJoinLookahead;
     private final int sqlBindVariablePoolSize;
@@ -315,6 +324,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlMaxNegativeLimit;
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlModelPoolCapacity;
+    private final int sqlOrderByRadixSortThreshold;
+    private final boolean sqlOrderBySortEnabled;
     private final int sqlPageFrameMaxRows;
     private final int sqlPageFrameMinRows;
     private final boolean sqlParallelFilterEnabled;
@@ -362,6 +373,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final TextConfiguration textConfiguration = new PropTextConfiguration();
     private final int textLexerStringPoolCapacity;
     private final int timestampAdapterPoolCapacity;
+    private final boolean useFastAsOfJoin;
     private final boolean useLegacyStringDefault;
     private final int utf8SinkSize;
     private final PropertyValidator validator;
@@ -522,6 +534,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private boolean stringToCharCastAllowed;
     private long symbolCacheWaitUsBeforeReload;
 
+
     public PropServerConfiguration(
             String root,
             Properties properties,
@@ -577,6 +590,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             boolean loadAdditionalConfigurations
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
+        this.logSqlQueryProgressExe = getBoolean(properties, env, PropertyKey.LOG_SQL_QUERY_PROGRESS_EXE, true);
+
         this.filesFacade = filesFacade;
         this.fpf = fpf;
         this.microsecondClock = microsecondClock;
@@ -638,35 +653,72 @@ public class PropServerConfiguration implements ServerConfiguration {
 
         this.dbDirectory = getString(properties, env, PropertyKey.CAIRO_ROOT, DB_DIRECTORY);
         String tmpRoot;
-        if (new File(this.dbDirectory).isAbsolute()) {
+        boolean absDbDir = new File(this.dbDirectory).isAbsolute();
+        if (absDbDir) {
             this.root = this.dbDirectory;
             this.confRoot = rootSubdir(this.root, CONFIG_DIRECTORY); // ../conf
-            this.snapshotRoot = rootSubdir(this.root, SNAPSHOT_DIRECTORY); // ../snapshot
+            this.checkpointRoot = rootSubdir(this.root, TableUtils.CHECKPOINT_DIRECTORY); // ../.checkpoint
+            this.legacyCheckpointRoot = rootSubdir(this.root, TableUtils.LEGACY_CHECKPOINT_DIRECTORY);
             tmpRoot = rootSubdir(this.root, TMP_DIRECTORY); // ../tmp
         } else {
             this.root = new File(root, this.dbDirectory).getAbsolutePath();
             this.confRoot = new File(root, CONFIG_DIRECTORY).getAbsolutePath();
-            this.snapshotRoot = new File(root, SNAPSHOT_DIRECTORY).getAbsolutePath();
+            this.checkpointRoot = new File(root, TableUtils.CHECKPOINT_DIRECTORY).getAbsolutePath();
+            this.legacyCheckpointRoot = new File(root, TableUtils.LEGACY_CHECKPOINT_DIRECTORY).getAbsolutePath();
             tmpRoot = new File(root, TMP_DIRECTORY).getAbsolutePath();
+        }
+
+        String configuredCairoSqlCopyRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, "import");
+        if (!Chars.empty(configuredCairoSqlCopyRoot)) {
+            if (new File(configuredCairoSqlCopyRoot).isAbsolute()) {
+                this.cairoSqlCopyRoot = configuredCairoSqlCopyRoot;
+            } else {
+                if (absDbDir) {
+                    this.cairoSqlCopyRoot = rootSubdir(this.root, configuredCairoSqlCopyRoot); // ../import
+                } else {
+                    this.cairoSqlCopyRoot = new File(root, configuredCairoSqlCopyRoot).getAbsolutePath();
+                }
+            }
+            String cairoSqlCopyWorkRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, tmpRoot);
+            this.cairoSqlCopyWorkRoot = getCanonicalPath(cairoSqlCopyWorkRoot);
+            if (pathEquals(root, this.cairoSqlCopyWorkRoot)
+                    || pathEquals(this.root, this.cairoSqlCopyWorkRoot)
+                    || pathEquals(this.confRoot, this.cairoSqlCopyWorkRoot)
+                    || pathEquals(this.checkpointRoot, this.cairoSqlCopyWorkRoot)) {
+                throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + " can't point to root, data, conf or snapshot dirs. ");
+            }
+        } else {
+            this.cairoSqlCopyRoot = null;
+            this.cairoSqlCopyWorkRoot = null;
         }
 
         this.cairoAttachPartitionSuffix = getString(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, TableUtils.ATTACHABLE_DIR_MARKER);
         this.cairoAttachPartitionCopy = getBoolean(properties, env, PropertyKey.CAIRO_ATTACH_PARTITION_COPY, false);
 
-        this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_SNAPSHOT_INSTANCE_ID, "");
-        this.snapshotRecoveryEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SNAPSHOT_RECOVERY_ENABLED, true);
+        this.snapshotInstanceId = getString(properties, env, PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "");
+        this.checkpointRecoveryEnabled = getBoolean(
+                properties,
+                env,
+                PropertyKey.CAIRO_LEGACY_SNAPSHOT_RECOVERY_ENABLED,
+                getBoolean(
+                        properties,
+                        env,
+                        PropertyKey.CAIRO_CHECKPOINT_RECOVERY_ENABLED,
+                        true
+                )
+        );
         this.devModeEnabled = getBoolean(properties, env, PropertyKey.DEV_MODE_ENABLED, false);
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuUsed = 0;
         int cpuSpare = 0;
         int cpuIoWorkers = 0;
-        int cpuWalApplyWorkers = 2;
+        int cpuWalApplyWorkers = 1;
 
         if (cpuAvailable > 8) {
-            cpuWalApplyWorkers = 3;
+            cpuWalApplyWorkers = 2;
         } else if (cpuAvailable > 16) {
-            cpuWalApplyWorkers = 4;
+            cpuWalApplyWorkers = 2;
             cpuSpare = 1;
             // tested on 4/32/48 core servers
             cpuIoWorkers = cpuAvailable / 2;
@@ -682,7 +734,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             volumeDefinitions.of(getString(properties, env, PropertyKey.CAIRO_VOLUMES, null), path, root);
             ff.mkdirs(path.of(this.root).slash(), this.mkdirMode);
             path.of(this.root).concat(TableUtils.TAB_INDEX_FILE_NAME);
-            final int tableIndexFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
+            final long tableIndexFd = TableUtils.openFileRWOrFail(ff, path.$(), CairoConfiguration.O_NONE);
             final long fileSize = ff.length(tableIndexFd);
             if (fileSize < Long.BYTES) {
                 if (!ff.allocate(tableIndexFd, Files.PAGE_SIZE)) {
@@ -841,7 +893,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (loadAdditionalConfigurations && httpServerEnabled) {
                 this.jsonQueryConnectionCheckFrequency = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY, 1_000_000);
                 this.jsonQueryFloatScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE, 4);
+                if (jsonQueryFloatScale > Numbers.MAX_FLOAT_SCALE) {
+                    throw new ServerConfigurationException(PropertyKey.HTTP_JSON_QUERY_FLOAT_SCALE.getPropertyPath() + " cannot be greater than " + Numbers.MAX_FLOAT_SCALE);
+                }
                 this.jsonQueryDoubleScale = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE, 12);
+                if (jsonQueryDoubleScale > Numbers.MAX_DOUBLE_SCALE) {
+                    throw new ServerConfigurationException(PropertyKey.HTTP_JSON_QUERY_DOUBLE_SCALE.getPropertyPath() + " cannot be greater than " + Numbers.MAX_DOUBLE_SCALE);
+                }
                 String httpBindTo = getString(properties, env, PropertyKey.HTTP_BIND_TO, "0.0.0.0:9000");
                 parseBindTo(properties, env, PropertyKey.HTTP_NET_BIND_TO, httpBindTo, (a, p) -> {
                     httpNetBindIPv4Address = a;
@@ -971,16 +1029,17 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlExplainModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY, 32);
             this.sqlModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_MODEL_POOL_CAPACITY, 1024);
             this.sqlMaxNegativeLimit = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 10_000);
-            this.sqlSortKeyPageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 4 * Numbers.SIZE_1MB);
+            this.sqlSortKeyPageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 128 * 1024);
             this.sqlSortKeyMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_MAX_PAGES, Integer.MAX_VALUE);
-            this.sqlSortLightValuePageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE, 8 * 1048576);
+            this.sqlSortLightValuePageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE, 128 * 1024);
             this.sqlSortLightValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlHashJoinValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 16777216);
             this.sqlHashJoinValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlLatestByRowCount = getInt(properties, env, PropertyKey.CAIRO_SQL_LATEST_BY_ROW_COUNT, 1000);
-            this.sqlHashJoinLightValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, 1048576);
+            this.sqlHashJoinLightValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, 128 * 1024);
             this.sqlHashJoinLightValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlAsOfJoinLookahead = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_LOOKAHEAD, 100);
+            this.useFastAsOfJoin = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_FAST, true);
             this.sqlSortValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 16777216);
             this.sqlSortValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.workStealTimeoutNanos = getLong(properties, env, PropertyKey.CAIRO_WORK_STEAL_TIMEOUT_NANOS, 10_000);
@@ -1014,7 +1073,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlSampleByDefaultAlignment = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_DEFAULT_ALIGNMENT_CALENDAR, true);
 
             this.sqlDoubleToStrCastScale = getInt(properties, env, PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE, 12);
+            if (sqlDoubleToStrCastScale > Numbers.MAX_DOUBLE_SCALE) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_DOUBLE_CAST_SCALE.getPropertyPath() + " cannot be greater than " + Numbers.MAX_DOUBLE_SCALE);
+            }
             this.sqlFloatToStrCastScale = getInt(properties, env, PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE, 4);
+            if (sqlFloatToStrCastScale > Numbers.MAX_FLOAT_SCALE) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_FLOAT_CAST_SCALE.getPropertyPath() + " cannot be greater than " + Numbers.MAX_FLOAT_SCALE);
+            }
+
             this.sqlGroupByMapCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_MAP_CAPACITY, 1024);
             this.sqlGroupByAllocatorChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_DEFAULT_CHUNK_SIZE, 128 * 1024);
             this.sqlGroupByAllocatorMaxChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE, 4 * Numbers.SIZE_1GB);
@@ -1066,21 +1132,6 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             try (JsonLexer lexer = new JsonLexer(1024, 1024)) {
                 inputFormatConfiguration.parseConfiguration(PropServerConfiguration.class, lexer, confRoot, sqlCopyFormatsFile);
-            }
-
-            this.cairoSqlCopyRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ROOT, null);
-            String cairoSqlCopyWorkRoot = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_WORK_ROOT, tmpRoot);
-            if (cairoSqlCopyRoot != null) {
-                this.cairoSqlCopyWorkRoot = getCanonicalPath(cairoSqlCopyWorkRoot);
-            } else {
-                this.cairoSqlCopyWorkRoot = null;
-            }
-
-            if (pathEquals(root, this.cairoSqlCopyWorkRoot)
-                    || pathEquals(this.root, this.cairoSqlCopyWorkRoot)
-                    || pathEquals(this.confRoot, this.cairoSqlCopyWorkRoot)
-                    || pathEquals(this.snapshotRoot, this.cairoSqlCopyWorkRoot)) {
-                throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_COPY_WORK_ROOT.getPropertyPath() + " can't point to root, data, conf or snapshot dirs. ");
             }
 
             String cairoSQLCopyIdSupplier = getString(properties, env, PropertyKey.CAIRO_SQL_COPY_ID_SUPPLIER, "random");
@@ -1312,6 +1363,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParallelFilterEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelGroupByEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, defaultParallelSqlEnabled);
             this.sqlParallelWorkStealingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 16);
+            this.sqlOrderBySortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
+            this.sqlOrderByRadixSortThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_RADIX_SORT_THRESHOLD, 600);
             this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
             this.writerAsyncCommandBusyWaitTimeout = getLong(properties, env, PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
             this.writerAsyncCommandMaxWaitTimeout = getLong(properties, env, PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 30_000);
@@ -1328,6 +1381,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.posthogEnabled = getBoolean(properties, env, PropertyKey.POSTHOG_ENABLED, false);
         this.posthogApiKey = getString(properties, env, PropertyKey.POSTHOG_API_KEY, null);
         this.configReloadEnabled = getBoolean(properties, env, PropertyKey.CONFIG_RELOAD_ENABLED, true);
+
+        this.partitionEncoderParquetVersion = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_VERSION, ParquetVersion.PARQUET_VERSION_V1);
+        this.partitionEncoderParquetStatisticsEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED, true);
+        this.partitionEncoderParquetCompressionCodec = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC, ParquetCompression.COMPRESSION_UNCOMPRESSED);
+        this.partitionEncoderParquetCompressionLevel = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL, 0);
+        this.partitionEncoderParqeutRowGroupSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 0);
+        this.partitionEncoderParquetDataPageSize = getInt(properties, env, PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 0);
     }
 
     public static String rootSubdir(CharSequence dbRoot, CharSequence subdir) {
@@ -1582,7 +1642,10 @@ public class PropServerConfiguration implements ServerConfiguration {
     }
 
     protected int getIntPercentage(
-            Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, int defaultValue
+            Properties properties,
+            @Nullable Map<String, String> env,
+            ConfigPropertyKey key,
+            int defaultValue
     ) throws ServerConfigurationException {
         int percentage = getInt(properties, env, key, defaultValue);
         if (percentage < 0 || percentage > 100) {
@@ -2045,6 +2108,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public @NotNull CharSequence getCheckpointRoot() {
+            return checkpointRoot;
+        }
+
+        @Override
         public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
             return circuitBreakerConfiguration;
         }
@@ -2303,6 +2371,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public @NotNull CharSequence getLegacyCheckpointRoot() {
+            return legacyCheckpointRoot;
+        }
+
+        @Override
+        public boolean getLogSqlQueryProgressExe() {
+            return logSqlQueryProgressExe;
+        }
+
+        @Override
         public int getMaxCrashFiles() {
             return cairoMaxCrashFiles;
         }
@@ -2503,11 +2581,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public @NotNull CharSequence getSnapshotRoot() {
-            return snapshotRoot;
-        }
-
-        @Override
         public long getSpinLockTimeout() {
             return spinLockTimeout;
         }
@@ -2680,6 +2753,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlModelPoolCapacity() {
             return sqlModelPoolCapacity;
+        }
+
+        @Override
+        public int getSqlOrderByRadixSortThreshold() {
+            return sqlOrderByRadixSortThreshold;
         }
 
         @Override
@@ -2877,6 +2955,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public double getWalLagRowsMultiplier() {
+            return walSquashUncommittedRowsMultiplier;
+        }
+
+        @Override
         public long getWalMaxLagSize() {
             return walMaxLagSize;
         }
@@ -2914,11 +2997,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getWalSegmentRolloverSize() {
             return walSegmentRolloverSize;
-        }
-
-        @Override
-        public double getWalLagRowsMultiplier() {
-            return walSquashUncommittedRowsMultiplier;
         }
 
         @Override
@@ -2977,6 +3055,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isCheckpointRecoveryEnabled() {
+            return checkpointRecoveryEnabled;
+        }
+
+        @Override
         public boolean isDevModeEnabled() {
             return devModeEnabled;
         }
@@ -3012,13 +3095,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isSnapshotRecoveryEnabled() {
-            return snapshotRecoveryEnabled;
+        public boolean isSqlJitDebugEnabled() {
+            return sqlJitDebugEnabled;
         }
 
         @Override
-        public boolean isSqlJitDebugEnabled() {
-            return sqlJitDebugEnabled;
+        public boolean isSqlOrderBySortEnabled() {
+            return sqlOrderBySortEnabled;
         }
 
         @Override
@@ -3065,6 +3148,41 @@ public class PropServerConfiguration implements ServerConfiguration {
             settings.put(RELEASE_TYPE, str(getReleaseType()));
             settings.put(RELEASE_VERSION, str(getBuildInformation().getSwVersion()));
             settings.put(ACL_ENABLED, Boolean.toString(!Chars.empty(httpUsername)));
+        }
+
+        @Override
+        public boolean useFastAsOfJoin() {
+            return useFastAsOfJoin;
+        }
+
+        @Override
+        public int getPartitionEncoderParquetVersion() {
+            return partitionEncoderParquetVersion;
+        }
+
+        @Override
+        public boolean isPartitionEncoderParquetStatisticsEnabled() {
+            return partitionEncoderParquetStatisticsEnabled;
+        }
+
+        @Override
+        public int getPartitionEncoderParquetCompressionCodec() {
+            return partitionEncoderParquetCompressionCodec;
+        }
+
+        @Override
+        public int getPartitionEncoderParquetCompressionLevel() {
+            return partitionEncoderParquetCompressionLevel;
+        }
+
+        @Override
+        public int getPartitionEncoderParquetRowGroupSize() {
+            return partitionEncoderParqeutRowGroupSize;
+        }
+
+        @Override
+        public int getPartitionEncoderParquetDataPageSize() {
+            return partitionEncoderParquetDataPageSize;
         }
     }
 

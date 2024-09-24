@@ -27,8 +27,9 @@ package io.questdb.cutlass.pgwire.modern;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
+import io.questdb.cutlass.auth.SocketAuthenticator;
+import io.questdb.cutlass.auth.UsernamePasswordMatcher;
 import io.questdb.cutlass.pgwire.*;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
@@ -43,9 +44,10 @@ import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
 import static io.questdb.cutlass.pgwire.modern.PGConnectionContextModern.dumpBuffer;
 
-public class CleartextPasswordPgWireAuthenticatorModern implements Authenticator {
+public class CleartextPasswordPgWireAuthenticatorModern implements SocketAuthenticator {
     public static final char STATUS_IDLE = 'I';
     private static final int INIT_CANCEL_REQUEST = 80877102;
     private static final int INIT_GSS_REQUEST = 80877104;
@@ -151,59 +153,59 @@ public class CleartextPasswordPgWireAuthenticatorModern implements Authenticator
                 switch (state) {
                     case EXPECT_INIT_MESSAGE: {
                         int r = readFromSocket();
-                        if (r != Authenticator.OK) {
+                        if (r != SocketAuthenticator.OK) {
                             return r;
                         }
                         r = processInitMessage();
-                        if (r != Authenticator.OK) {
+                        if (r != SocketAuthenticator.OK) {
                             return r;
                         }
                         break;
                     }
                     case EXPECT_PASSWORD_MESSAGE: {
                         int r = readFromSocket();
-                        if (r != Authenticator.OK) {
+                        if (r != SocketAuthenticator.OK) {
                             return r;
                         }
                         r = processPasswordMessage();
-                        if (r != Authenticator.OK) {
+                        if (r != SocketAuthenticator.OK) {
                             return r;
                         }
                         break;
                     }
                     case WRITE_AND_EXPECT_PASSWORD_MESSAGE: {
                         int r = writeToSocketAndAdvance(State.EXPECT_PASSWORD_MESSAGE);
-                        if (r != Authenticator.OK) {
+                        if (r != SocketAuthenticator.OK) {
                             return r;
                         }
                         break;
                     }
                     case WRITE_AND_EXPECT_INIT_MESSAGE: {
                         int r = writeToSocketAndAdvance(State.EXPECT_INIT_MESSAGE);
-                        if (r != Authenticator.OK) {
+                        if (r != SocketAuthenticator.OK) {
                             return r;
                         }
                         break;
                     }
                     case WRITE_AND_AUTH_SUCCESS: {
                         int r = writeToSocketAndAdvance(State.AUTH_SUCCESS);
-                        if (r != Authenticator.OK) {
+                        if (r != SocketAuthenticator.OK) {
                             return r;
                         }
                         break;
                     }
                     case WRITE_AND_AUTH_FAILURE: {
                         int r = writeToSocketAndAdvance(State.AUTH_FAILED);
-                        if (r != Authenticator.OK) {
+                        if (r != SocketAuthenticator.OK) {
                             return r;
                         }
                         break;
                     }
                     case AUTH_SUCCESS:
                         circuitBreaker.of(socket.getFd());
-                        return Authenticator.OK;
+                        return SocketAuthenticator.OK;
                     case AUTH_FAILED:
-                        return Authenticator.NEEDS_DISCONNECT;
+                        return SocketAuthenticator.NEEDS_DISCONNECT;
                     default:
                         assert false;
                 }
@@ -355,11 +357,11 @@ public class CleartextPasswordPgWireAuthenticatorModern implements Authenticator
     private int processInitMessage() throws BadProtocolException {
         int availableToRead = availableToRead();
         if (availableToRead < Integer.BYTES) { // size of message
-            return Authenticator.NEEDS_READ;
+            return SocketAuthenticator.NEEDS_READ;
         }
         int msgLen = getIntUnsafe(recvBufReadPos);
         if (msgLen > availableToRead) {
-            return Authenticator.NEEDS_READ;
+            return SocketAuthenticator.NEEDS_READ;
         }
         // at this point we have a full message available ready to be processed
         recvBufReadPos += Integer.BYTES; // first move beyond the msgLen
@@ -372,7 +374,7 @@ public class CleartextPasswordPgWireAuthenticatorModern implements Authenticator
                 break;
             case INIT_CANCEL_REQUEST:
                 processCancelMessage();
-                return Authenticator.NEEDS_DISCONNECT;
+                return SocketAuthenticator.NEEDS_DISCONNECT;
             case INIT_SSL_REQUEST:
                 compactRecvBuf();
                 prepareSslResponse();
@@ -387,13 +389,13 @@ public class CleartextPasswordPgWireAuthenticatorModern implements Authenticator
                 LOG.error().$("unknown init message [protocol=").$(protocol).$(']').$();
                 throw BadProtocolException.INSTANCE;
         }
-        return Authenticator.OK;
+        return SocketAuthenticator.OK;
     }
 
     private int processPasswordMessage() throws BadProtocolException {
         int availableToRead = availableToRead();
         if (availableToRead < 1 + Integer.BYTES) { // msgType + msgLen
-            return Authenticator.NEEDS_READ;
+            return SocketAuthenticator.NEEDS_READ;
         }
         byte msgType = Unsafe.getUnsafe().getByte(recvBufReadPos);
         assert msgType == MESSAGE_TYPE_PASSWORD_MESSAGE;
@@ -401,14 +403,14 @@ public class CleartextPasswordPgWireAuthenticatorModern implements Authenticator
         int msgLen = getIntUnsafe(recvBufReadPos + 1);
         long msgLimit = (recvBufReadPos + msgLen + 1); // +1 for the type byte which is not included in msgLen
         if (recvBufWritePos < msgLimit) {
-            return Authenticator.NEEDS_READ;
+            return SocketAuthenticator.NEEDS_READ;
         }
 
         // at this point we have a full message available ready to be processed
         recvBufReadPos += 1 + Integer.BYTES; // first move beyond the msgType and msgLen
 
         long hi = PGConnectionContextModern.getUtf8StrSize(recvBufReadPos, msgLimit, "bad password length", null);
-        if (matcher.verifyPassword(username, recvBufReadPos, (int) (hi - recvBufReadPos))) {
+        if (matcher.verifyPassword(username, recvBufReadPos, (int) (hi - recvBufReadPos)) != AUTH_TYPE_NONE) {
             recvBufReadPos = msgLimit;
             state = State.AUTH_SUCCESS;
         } else {
@@ -416,7 +418,7 @@ public class CleartextPasswordPgWireAuthenticatorModern implements Authenticator
             prepareErrorResponse("invalid username/password");
             state = State.WRITE_AND_AUTH_FAILURE;
         }
-        return Authenticator.OK;
+        return SocketAuthenticator.OK;
     }
 
     private void processStartupMessage(int msgLen) throws BadProtocolException {
@@ -468,10 +470,10 @@ public class CleartextPasswordPgWireAuthenticatorModern implements Authenticator
         int bytesRead = socket.recv(recvBufWritePos, (int) (recvBufEnd - recvBufWritePos));
         dumpBuffer('>', recvBufWritePos, bytesRead, dumpNetworkTraffic);
         if (bytesRead < 0) {
-            return Authenticator.NEEDS_DISCONNECT;
+            return SocketAuthenticator.NEEDS_DISCONNECT;
         }
         recvBufWritePos += bytesRead;
-        return Authenticator.OK;
+        return SocketAuthenticator.OK;
     }
 
     private int writeToSocketAndAdvance(State nextState) {
@@ -479,18 +481,18 @@ public class CleartextPasswordPgWireAuthenticatorModern implements Authenticator
         int n = socket.send(sendBufReadPos, toWrite);
         dumpBuffer('<', sendBufReadPos, n, dumpNetworkTraffic);
         if (n < 0) {
-            return Authenticator.NEEDS_DISCONNECT;
+            return SocketAuthenticator.NEEDS_DISCONNECT;
         }
         sendBufReadPos += n;
         compactSendBuf();
         if (sendBufReadPos == sendBufWritePos) {
             state = nextState;
-            return Authenticator.OK;
+            return SocketAuthenticator.OK;
         }
         // we could try to call socket.send() again as there could be space in the socket buffer now
         // but: auth messages are small and we assume that the socket buffer is large enough to accommodate them in one go
         // thus this return should be rare and we will just wait for the next select() call
-        return Authenticator.NEEDS_WRITE;
+        return SocketAuthenticator.NEEDS_WRITE;
     }
 
 

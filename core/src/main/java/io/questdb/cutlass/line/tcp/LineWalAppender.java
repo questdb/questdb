@@ -31,6 +31,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.Uuid;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8s;
@@ -121,7 +122,7 @@ public class LineWalAppender {
         final int entCount = parser.getEntityCount();
         for (int i = 0; i < entCount; i++) {
             final LineTcpParser.ProtoEntity ent = parser.getEntity(i);
-            int columnWriterIndex = ld.getColumnWriterIndex(ent.getName(), parser.hasNonAsciiChars(), metadata);
+            int columnWriterIndex = ld.getColumnWriterIndex(ent.getName(), metadata);
 
             switch (columnWriterIndex) {
                 default:
@@ -136,7 +137,7 @@ public class LineWalAppender {
                         break;
                     } else {
                         // column has been deleted from the metadata, but it is in our utf8 cache
-                        ld.removeFromCaches(ent.getName(), parser.hasNonAsciiChars());
+                        ld.removeFromCaches(ent.getName());
                         // act as if we did not find this column and fall through
                     }
                 case COLUMN_NOT_FOUND:
@@ -318,7 +319,15 @@ public class LineWalAppender {
                                     r.putSymUtf8(columnIndex, entityValue);
                                     break;
                                 case ColumnType.UUID:
-                                    r.putUuidUtf8(columnIndex, entityValue);
+                                    CharSequence asciiCharSequence = entityValue.asAsciiCharSequence();
+                                    try {
+                                        Uuid.checkDashesAndLength(asciiCharSequence);
+                                        long uuidLo = Uuid.parseLo(asciiCharSequence);
+                                        long uuidHi = Uuid.parseHi(asciiCharSequence);
+                                        r.putLong128(columnIndex, uuidLo, uuidHi);
+                                    } catch (NumericException e) {
+                                        throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());
+                                    }
                                     break;
                                 default:
                                     throw castError(tud.getTableNameUtf16(), "STRING", colType, ent.getName());

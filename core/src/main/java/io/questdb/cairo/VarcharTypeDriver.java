@@ -379,7 +379,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, int fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts) {
+    public void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, long fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts) {
         auxMem.ofOffset(
                 ff,
                 fd,
@@ -396,7 +396,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
             FilesFacade ff,
             MemoryR auxMem,
             MemoryOM dataMem,
-            int dataFd,
+            long dataFd,
             LPSZ fileName,
             long rowLo,
             long rowHi,
@@ -464,7 +464,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public long getDataVectorSizeAtFromFd(FilesFacade ff, int auxFd, long row) {
+    public long getDataVectorSizeAtFromFd(FilesFacade ff, long auxFd, long row) {
         long auxFileOffset = VARCHAR_AUX_WIDTH_BYTES * row;
         if (row < 0) {
             return 0;
@@ -514,7 +514,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void o3copyAuxVector(FilesFacade ff, long srcAddr, long srcLo, long srcHi, long dstAddr, long dstFileOffset, int dstFd, boolean mixedIOFlag) {
+    public void o3copyAuxVector(FilesFacade ff, long srcAddr, long srcLo, long srcHi, long dstAddr, long dstFileOffset, long dstFd, boolean mixedIOFlag) {
         O3CopyJob.copyFixedSizeCol(ff, srcAddr, srcLo, srcHi, dstAddr, dstFileOffset, dstFd, VARCHAR_AUX_SHL, mixedIOFlag);
     }
 
@@ -664,7 +664,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
         return header == TableUtils.NULL_LEN;
     }
 
-    private static int readInt(FilesFacade ff, int fd, long offset) {
+    private static int readInt(FilesFacade ff, long fd, long offset) {
         long res = ff.readIntAsUnsignedLong(fd, offset);
         if (res < 0) {
             throw CairoException.critical(ff.errno())
