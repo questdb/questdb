@@ -80,6 +80,12 @@ def assert_result(expect, actual):
                 # If actual is a status string, cannot compare to expected list
                 raise AssertionError(f"Expected result {expected_result}, got status '{actual}'")
             actual_converted = [list(record.values()) for record in actual]
+            # Convert timestamps to strings for comparison, format: '2021-09-01T12:34:56.123456Z'
+            for row in actual_converted:
+                for i, value in enumerate(row):
+                    if isinstance(value, datetime.datetime):
+                        row[i] = value.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+
             assert actual_converted == expected_result, f"Expected result {expected_result}, got {actual_converted}"
         else:
             # For non-list expected results, compare as strings
@@ -89,6 +95,11 @@ def assert_result(expect, actual):
             # If actual is a status string, cannot compare to expected results
             raise AssertionError(f"Expected result containing {expect['result_contains']}, got status '{actual}'")
         actual_converted = [list(record.values()) for record in actual]
+        # Convert timestamps to strings for comparison, format: '2021-09-01T12:34:56.123456Z'
+        for row in actual_converted:
+            for i, value in enumerate(row):
+                if isinstance(value, datetime.datetime):
+                    row[i] = value.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
         for expected_row in expect['result_contains']:
             assert expected_row in actual_converted, f"Expected row {expected_row} not found in actual results."
 

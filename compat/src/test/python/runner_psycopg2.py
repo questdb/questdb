@@ -96,6 +96,10 @@ def assert_result(expect, actual):
         if isinstance(expected_result, list):
             # Convert tuples in actual to lists
             actual_converted = [list(row) for row in actual]
+            for row in actual_converted:
+                for i, value in enumerate(row):
+                    if isinstance(value, datetime.datetime):
+                        row[i] = value.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
             assert actual_converted == expected_result, f"Expected result {expected_result}, got {actual_converted}"
         else:
             # For non-list expected results, compare as strings
@@ -103,6 +107,10 @@ def assert_result(expect, actual):
     elif 'result_contains' in expect:
         # Convert tuples in actual to lists
         actual_converted = [list(row) for row in actual]
+        for row in actual_converted:
+            for i, value in enumerate(row):
+                if isinstance(value, datetime.datetime):
+                    row[i] = value.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
         for expected_row in expect['result_contains']:
             assert expected_row in actual_converted, f"Expected row {expected_row} not found in actual results."
 

@@ -31,7 +31,7 @@ tests:
           result:
             - [ 1, 10 ]
       - action: query all rows
-        query: "SELECT id, temperature, timestamp::varchar FROM ${table_name};"
+        query: "SELECT id, temperature, timestamp FROM ${table_name};"
         expect:
           result_contains:
             - [ 1, 1.5, "2023-10-01T10:00:00.000000Z" ]
@@ -52,10 +52,10 @@ tests:
       - action: execute
         query: "DROP TABLE IF EXISTS ${table_name};"
   - name: Smoke Test
-    iterations: 2
     description: Testing another test-case inside the same file
+    iterations: 2
     steps:
-      - action: query a pseudo table
+      - action: query truncated table
         query: "SELECT x FROM long_sequence(5)"
         expect:
           result:
@@ -64,3 +64,14 @@ tests:
             - [ 3 ]
             - [ 4 ]
             - [ 5 ]
+  - name: Parquet test
+    description: This test uses the builtin Parquet demo data
+    steps:
+      - action: query
+        query: "SELECT * FROM read_parquet('trades.parquet') WHERE side = $[1];"
+        parameters:
+          - value: "buy"
+            type: "VARCHAR"
+        expect:
+          result_contains:
+            - [ 'BTC-USD', 'buy', 66991.56, 0.00014933, '2024-07-26T07:52:48.243272Z' ]
