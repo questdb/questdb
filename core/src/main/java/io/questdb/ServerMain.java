@@ -399,7 +399,6 @@ public class ServerMain implements Closeable {
         ));
 
         // pg wire
-        IPGWireServer pgWireServer;
         freeOnExit.register(pgWireServer = services().createPGWireServer(
                 config.getPGWireConfiguration(),
                 engine,
