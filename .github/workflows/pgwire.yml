@@ -16,7 +16,7 @@ jobs:
           java-version: '17'
           cache: 'maven'
       - name: Build distribution
-        run: mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries
+        run: mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries -pl '!benchmarks'
       - name: Unpack distribution
         run: tar -xzf core/target/questdb-*-no-jre-bin.tar.gz
       - name: Start QuestDB
@@ -43,6 +43,15 @@ jobs:
         run: |
           source venv_psycopg3/bin/activate
           python compat/src/test/python/runner_psycopg3.py compat/src/test/resources/test_cases.yaml
+      - name: Create and start virtual environment for asyncpg
+        run: |
+          python3 -m venv venv_asyncpg
+          source venv_asyncpg/bin/activate
+          pip install -r compat/src/test/python/requirements_asyncpg.txt
+      - name: Run tests with asyncpg
+        run: |
+          source venv_asyncpg/bin/activate
+          python compat/src/test/python/runner_asyncpg.py compat/src/test/resources/test_cases.yaml
       - name: Stop QuestDB
         run: ./questdb-*bin/questdb.sh stop
 

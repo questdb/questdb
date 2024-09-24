@@ -6,31 +6,34 @@ tests:
     description: Test inserting and selecting data.
     prepare:
       - action: execute
-        query: "CREATE TABLE IF NOT EXISTS ${table_name} (id INT, temperature DOUBLE, timestamp TIMESTAMP);"
+        query: "CREATE TABLE ${table_name} (id INT, temperature DOUBLE, timestamp timestamp);"
     steps:
       - loop:
           range:
             start: 1
-            end: 5
+            end: 10
           as: id
           steps:
             - action: execute
               query: "INSERT INTO ${table_name} (id, temperature, timestamp) VALUES ($[1], $[2], $[3]);"
               parameters:
-                - "${id}"
-                - "${id}.5"
-                - "2023-10-01 10:00:00"
+                - value: "${id}"
+                  type: "INT4"
+                - value: "${id}.5"
+                  type: "FLOAT8"
+                - value: "2023-10-01T10:00:00.000000Z"
+                  type: "TIMESTAMP"
               expect:
                 result: "INSERT 0 1"
       - action: query
         query: "SELECT 1, COUNT(*) FROM ${table_name};"
         expect:
           result:
-            - [ 1, 5 ]
+            - [ 1, 10 ]
       - action: query all rows
         query: "SELECT id, temperature, timestamp::varchar FROM ${table_name};"
         expect:
-          result:
+          result_contains:
             - [ 1, 1.5, "2023-10-01T10:00:00.000000Z" ]
             - [ 2, 2.5, "2023-10-01T10:00:00.000000Z" ]
             - [ 3, 3.5, "2023-10-01T10:00:00.000000Z" ]

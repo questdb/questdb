@@ -1,28 +1,6 @@
-#      ___                  _   ____  ____
-#     / _ \ _   _  ___  ___| |_|  _ \| __ )
-#    | | | | | | |/ _ \/ __| __| | | |  _ \
-#    | |_| | |_| |  __/\__ \ |_| |_| | |_) |
-#     \__\_\\__,_|\___||___/\__|____/|____/
-#
-#   Copyright (c) 2014-2019 Appsicle
-#   Copyright (c) 2019-2024 QuestDB
-#
-#   Licensed under the Apache License, Version 2.0 (the "License");
-#   you may not use this file except in compliance with the License.
-#   You may obtain a copy of the License at
-#
-#   http://www.apache.org/licenses/LICENSE-2.0
-#
-#   Unless required by applicable law or agreed to in writing, software
-#   distributed under the License is distributed on an "AS IS" BASIS,
-#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#   See the License for the specific language governing permissions and
-#   limitations under the License.
-#
-
-
+import asyncio
+import asyncpg
 import datetime
-import psycopg2
 import re
 import sys
 import yaml
@@ -42,9 +20,9 @@ def substitute_variables(text, variables):
 
 
 def replace_param_placeholders(query):
-    # Replace $[n] with %s for psycopg2
+    # Replace $[n] with $n for asyncpg
     # Matches $[1], $[2], etc.
-    return re.sub(r'\$\[\d+\]', '%s', query)
+    return re.sub(r'\$\[(\d+)\]', r'$\1', query)
 
 
 def extract_parameters(typed_parameters, variables):
@@ -78,44 +56,52 @@ def convert_and_push_parameters(value, type, resolved_parameters):
         resolved_parameters.append(value)
 
 
-def execute_query(cursor, query, parameters):
-    if parameters:
-        cursor.execute(query, parameters)
+async def execute_query(connection, query, parameters):
+    query_type = query.strip().split()[0].lower()
+    if query_type == 'select':
+        if parameters:
+            result = await connection.fetch(query, *parameters)
+        else:
+            result = await connection.fetch(query)
+        return result
     else:
-        cursor.execute(query)
-    try:
-        return cursor.fetchall()
-    except psycopg2.ProgrammingError:
-        # No results to fetch (e.g., for INSERT, UPDATE)
-        return cursor.statusmessage
+        if parameters:
+            status = await connection.execute(query, *parameters)
+        else:
+            status = await connection.execute(query)
+        return status
 
 
 def assert_result(expect, actual):
     if 'result' in expect:
         expected_result = expect['result']
         if isinstance(expected_result, list):
-            # Convert tuples in actual to lists
-            actual_converted = [list(row) for row in actual]
+            if isinstance(actual, str):
+                # If actual is a status string, cannot compare to expected list
+                raise AssertionError(f"Expected result {expected_result}, got status '{actual}'")
+            actual_converted = [list(record.values()) for record in actual]
             assert actual_converted == expected_result, f"Expected result {expected_result}, got {actual_converted}"
         else:
             # For non-list expected results, compare as strings
             assert str(actual) == str(expected_result), f"Expected result '{expected_result}', got '{actual}'"
     elif 'result_contains' in expect:
-        # Convert tuples in actual to lists
-        actual_converted = [list(row) for row in actual]
+        if isinstance(actual, str):
+            # If actual is a status string, cannot compare to expected results
+            raise AssertionError(f"Expected result containing {expect['result_contains']}, got status '{actual}'")
+        actual_converted = [list(record.values()) for record in actual]
         for expected_row in expect['result_contains']:
             assert expected_row in actual_converted, f"Expected row {expected_row} not found in actual results."
 
 
-def execute_steps(steps, variables, cursor, connection):
+async def execute_steps(steps, variables, connection):
     for step in steps:
         if 'loop' in step:
-            execute_loop(step['loop'], variables, cursor, connection)
+            await execute_loop(step['loop'], variables, connection)
         else:
-            execute_step(step, variables, cursor, connection)
+            await execute_step(step, variables, connection)
 
 
-def execute_loop(loop_def, variables, cursor, connection):
+async def execute_loop(loop_def, variables, connection):
     loop_var_name = loop_def['as']
     loop_variables = variables.copy()
 
@@ -130,13 +116,13 @@ def execute_loop(loop_def, variables, cursor, connection):
 
     for item in iterable:
         loop_variables[loop_var_name] = item
-        execute_steps(loop_def['steps'], loop_variables, cursor, connection)
+        await execute_steps(loop_def['steps'], loop_variables, connection)
 
 
-def execute_step(step, variables, cursor, connection):
-    action = step['action']
+async def execute_step(step, variables, connection):
+    action = step.get('action')
     query_template = step.get('query')
-    parameters = step.get('parameters', [])
+    types_parameters = step.get('parameters', [])
     expect = step.get('expect', {})
 
     # Substitute variables in query
@@ -145,29 +131,35 @@ def execute_step(step, variables, cursor, connection):
     # Replace parameter placeholders in query
     query = replace_param_placeholders(query_with_vars)
 
-    resolved_parameters = extract_parameters(parameters, variables)
-    result = execute_query(cursor, query, resolved_parameters)
-    connection.commit()
+    resolved_parameters = extract_parameters(types_parameters, variables)
+    result = await execute_query(connection, query, resolved_parameters)
 
     # Assert result
     if expect:
         assert_result(expect, result)
 
 
-def run_test(test, global_variables, connection):
+async def run_test(test, global_variables):
     variables = global_variables.copy()
     variables.update(test.get('variables', {}))
 
-    cursor = connection.cursor()
+    connection = await asyncpg.connect(
+        host='localhost',
+        port=8812,
+        user='admin',
+        password='quest',
+        database='qdb'
+    )
 
+    test_failed = False
     try:
         # Prepare phase
         prepare_steps = test.get('prepare', [])
-        execute_steps(prepare_steps, variables, cursor, connection)
+        await execute_steps(prepare_steps, variables, connection)
 
         # Test steps
         test_steps = test.get('steps', [])
-        execute_steps(test_steps, variables, cursor, connection)
+        await execute_steps(test_steps, variables, connection)
 
         print(f"Test '{test['name']}' passed.")
 
@@ -181,35 +173,26 @@ def run_test(test, global_variables, connection):
         # Teardown phase should run regardless of test outcome
         teardown_steps = test.get('teardown', [])
         try:
-            execute_steps(teardown_steps, variables, cursor, connection)
+            await execute_steps(teardown_steps, variables, connection)
         except Exception as teardown_exception:
             print(f"Teardown for test '{test['name']}' failed: {str(teardown_exception)}")
-            # Optionally handle teardown exceptions (e.g., logging)
-        cursor.close()
+        await connection.close()
         if test_failed:
             sys.exit(1)
 
 
-def main(yaml_file):
+async def main(yaml_file):
     data = load_yaml(yaml_file)
     global_variables = data.get('variables', {})
     tests = data.get('tests', [])
 
     for test in tests:
-        connection = psycopg2.connect(
-            host='localhost',
-            port=8812,
-            user='admin',
-            password='quest',
-            database='qdb'
-        )
-        run_test(test, global_variables, connection)
-        connection.close()
+        await run_test(test, global_variables)
 
 
 if __name__ == '__main__':
     if len(sys.argv) != 2:
-        print("Usage: python runner_psycopg2.py <test_file.yaml>")
+        print("Usage: python runner.py <test_file.yaml>")
         sys.exit(1)
     yaml_file = sys.argv[1]
-    main(yaml_file)
+    asyncio.run(main(yaml_file))

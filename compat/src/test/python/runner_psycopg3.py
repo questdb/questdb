@@ -1,3 +1,26 @@
+#      ___                  _   ____  ____
+#     / _ \ _   _  ___  ___| |_|  _ \| __ )
+#    | | | | | | |/ _ \/ __| __| | | |  _ \
+#    | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+#     \__\_\\__,_|\___||___/\__|____/|____/
+#
+#   Copyright (c) 2014-2019 Appsicle
+#   Copyright (c) 2019-2024 QuestDB
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+#
+
+import datetime
 import psycopg
 import re
 import sys
@@ -23,22 +46,35 @@ def replace_param_placeholders(query):
     return re.sub(r'\$\[\d+\]', '%s', query)
 
 
-def extract_parameters(parameters, variables):
+def extract_parameters(typed_parameters, variables):
     resolved_parameters = []
-    for param in parameters:
-        if isinstance(param, str):
-            resolved_param = substitute_variables(param, variables)
-            # Convert to appropriate type if necessary
-            if resolved_param.isdigit():
-                resolved_parameters.append(int(resolved_param))
-            else:
-                try:
-                    resolved_parameters.append(float(resolved_param))
-                except ValueError:
-                    resolved_parameters.append(resolved_param)
+    for typed_param in typed_parameters:
+        type_ = typed_param.get('type').lower()
+        value = typed_param.get('value')
+
+        # convert_and_push_parameters(value, type_, resolved_parameters)
+        if isinstance(value, str):
+            resolved_param = substitute_variables(value, variables)
+            convert_and_push_parameters(resolved_param, type_, resolved_parameters)
         else:
-            resolved_parameters.append(param)
+            convert_and_push_parameters(value, type_, resolved_parameters)
     return resolved_parameters
+
+
+def convert_and_push_parameters(value, type, resolved_parameters):
+    if type == 'int4' or type == 'int8':
+        resolved_parameters.append(int(value))
+    elif type == 'float4' or type == 'float8':
+        resolved_parameters.append(float(value))
+    elif type == 'boolean':
+        resolved_parameters.append(bool(value))
+    elif type == 'varchar':
+        resolved_parameters.append(str(value))
+    elif type == 'timestamp':
+        parsed_value = datetime.datetime.strptime(value, '%Y-%m-%dT%H:%M:%S.%fZ')
+        resolved_parameters.append(parsed_value)
+    else:
+        resolved_parameters.append(value)
 
 
 def execute_query(cursor, query, parameters):
