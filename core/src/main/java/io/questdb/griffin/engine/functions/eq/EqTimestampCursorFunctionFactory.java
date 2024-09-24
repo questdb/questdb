@@ -164,14 +164,6 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            // the function is thread safe because its state is epoch, which does not mutate
-            // between frame executions. For non-thread-safe function, which operates a cursor,
-            // the cursor will be re-executed as many times as there are threads. Which is suboptimal.
-            return true;
-        }
-
-        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             try (RecordCursor cursor = factory.getCursor(executionContext)) {
@@ -181,6 +173,14 @@ public class EqTimestampCursorFunctionFactory implements FunctionFactory {
                     epoch = Numbers.LONG_NULL;
                 }
             }
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            // the function is thread safe because its state is epoch, which does not mutate
+            // between frame executions. For non-thread-safe function, which operates a cursor,
+            // the cursor will be re-executed as many times as there are threads. Which is suboptimal.
+            return true;
         }
     }
 

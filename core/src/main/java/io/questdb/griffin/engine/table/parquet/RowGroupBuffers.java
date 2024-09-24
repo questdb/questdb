@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.table.parquet;
 
 import io.questdb.cairo.Reopenable;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
@@ -35,11 +37,22 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
     private static final long CHUNK_AUX_SIZE_OFFSET;
     private static final long CHUNK_DATA_PTR_OFFSET;
     private static final long CHUNK_DATA_SIZE_OFFSET;
+    private static final long CHUNK_STATS_MIN_VALUE_PTR_OFFSET;
+    private static final long CHUNK_STATS_MIN_VALUE_SIZE_OFFSET;
     private static final long CHUNK_STRUCT_SIZE;
+    private static final Log LOG = LogFactory.getLog(RowGroupBuffers.class);
     private long ptr;
 
     public RowGroupBuffers() {
         this.ptr = create();
+    }
+
+    public static long getChunkStatsMinValuePtr(long chunkStatsPtr) {
+        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_MIN_VALUE_PTR_OFFSET);
+    }
+
+    public static long getChunkStatsMinValueSize(long chunkStatsPtr) {
+        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_MIN_VALUE_SIZE_OFFSET);
     }
 
     @Override
@@ -89,6 +102,10 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
 
     private static native long chunkDataSizeOffset();
 
+    private static native long chunkStatMinValuePtrOffset();
+
+    private static native long chunkStatMinValueSizeOffset();
+
     private static native long columnBuffersPtrOffset();
 
     private static native long columnChunkBuffersSize();
@@ -106,5 +123,7 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
         CHUNK_DATA_SIZE_OFFSET = chunkDataSizeOffset();
         CHUNK_AUX_PTR_OFFSET = chunkAuxPtrOffset();
         CHUNK_AUX_SIZE_OFFSET = chunkAuxSizeOffset();
+        CHUNK_STATS_MIN_VALUE_PTR_OFFSET = chunkStatMinValuePtrOffset();
+        CHUNK_STATS_MIN_VALUE_SIZE_OFFSET = chunkStatMinValueSizeOffset();
     }
 }

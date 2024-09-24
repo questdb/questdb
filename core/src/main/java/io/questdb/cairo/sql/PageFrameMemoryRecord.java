@@ -35,8 +35,6 @@ import io.questdb.std.*;
 import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.Closeable;
-
 /**
  * Must be initialized with a {@link PageFrameMemoryPool#navigateTo(int, PageFrameMemoryRecord)}
  * or {@link #init(PageFrameMemory)} call for a given page frame before any use.

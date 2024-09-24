@@ -107,17 +107,6 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         });
     }
 
-    private static void createTable(String upPartO3) throws SqlException {
-        ddl("create table " + upPartO3 + " as" +
-                " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
-                " x," +
-                " rnd_str('a', 'b', 'c', 'd') str," +
-                " rnd_symbol('A', 'B', 'C', 'D') sym1," +
-                " rnd_symbol('1', '2', '3', '4') sym2" +
-                " from long_sequence(5)), index(sym2)" +
-                " timestamp(ts) PARTITION BY DAY WAL");
-    }
-
     @Test
     public void testManyUpdatesInserts() throws Exception {
         assertMemoryLeak(() -> {
@@ -892,6 +881,17 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         "1970-01-01T00:00:00.000001Z\ttbl_name2\tcol2\t2\t0\t12\t3\t33\t-1\t2022-02-13T00:00:00.000000Z\t3\t1970-01-01T00:00:00.000010Z\n", purgeJob.getLogTableName());
             }
         });
+    }
+
+    private static void createTable(String upPartO3) throws SqlException {
+        ddl("create table " + upPartO3 + " as" +
+                " (select timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1000000L) ts," +
+                " x," +
+                " rnd_str('a', 'b', 'c', 'd') str," +
+                " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                " rnd_symbol('1', '2', '3', '4') sym2" +
+                " from long_sequence(5)), index(sym2)" +
+                " timestamp(ts) PARTITION BY DAY WAL");
     }
 
     private void appendTaskToQueue(ColumnPurgeTask task) {

@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use futures::{future::BoxFuture, pin_mut, StreamExt};
 use parquet2::{
     error::Result,

@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import org.jetbrains.annotations.Nullable;
 
 public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCursor {

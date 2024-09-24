@@ -2,10 +2,10 @@ use crate::parquet::col_type::ColumnType;
 use crate::parquet::qdb_metadata::QdbMeta;
 use parquet2::metadata::FileMetaData;
 use std::io::{Read, Seek};
+use std::ptr;
 
 mod column_sink;
 mod decode;
-mod io;
 mod jni;
 mod meta;
 mod slicer;
@@ -26,7 +26,7 @@ where
     reader: R,
     metadata: FileMetaData,
     qdb_meta: Option<QdbMeta>,
-    decompress_buf: Vec<u8>,
+    decompress_buffer: Vec<u8>,
 }
 
 #[repr(C)]
@@ -42,8 +42,10 @@ pub struct ColumnMeta {
 // The fields are accessed from Java.
 #[repr(C)]
 pub struct RowGroupBuffers {
-    pub column_bufs_ptr: *const ColumnChunkBuffers,
-    pub column_bufs: Vec<ColumnChunkBuffers>,
+    column_bufs_ptr: *const ColumnChunkBuffers,
+    column_bufs: Vec<ColumnChunkBuffers>,
+    column_chunk_stats_ptr: *const ColumnChunkStats,
+    column_chunk_stats: Vec<ColumnChunkStats>,
 }
 
 /// QuestDB-format Column Data
@@ -61,6 +63,23 @@ pub struct ColumnChunkBuffers {
     pub aux_size: usize,
     pub aux_ptr: *mut u8,
     pub aux_vec: Vec<u8>,
+}
+
+#[repr(C)]
+pub struct ColumnChunkStats {
+    pub min_value_ptr: *mut u8,
+    pub min_value_size: usize,
+    pub min_value: Vec<u8>,
+}
+
+impl ColumnChunkStats {
+    pub fn new() -> Self {
+        Self {
+            min_value_ptr: ptr::null_mut(),
+            min_value_size: 0,
+            min_value: Vec::new(),
+        }
+    }
 }
 
 #[cfg(test)]

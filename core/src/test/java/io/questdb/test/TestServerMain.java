@@ -77,6 +77,18 @@ public class TestServerMain extends ServerMain {
         }
     }
 
+    public void compile(String sql) {
+        try {
+            if (sqlExecutionContext == null) {
+                getEngine().compile(sql);
+            } else {
+                getEngine().compile(sql, sqlExecutionContext);
+            }
+        } catch (SqlException e) {
+            throw new AssertionError(e);
+        }
+    }
+
     public void reset() {
         // Drop all tables
         CairoEngine engine = this.getEngine();
@@ -92,17 +104,5 @@ public class TestServerMain extends ServerMain {
         engine.resetNameRegistryMemory();
         resetQueryCache();
         engine.setUp();
-    }
-
-    public void compile(String sql) {
-        try {
-            if (sqlExecutionContext == null) {
-                getEngine().compile(sql);
-            } else {
-                getEngine().compile(sql, sqlExecutionContext);
-            }
-        } catch (SqlException e) {
-            throw new AssertionError(e);
-        }
     }
 }

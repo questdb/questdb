@@ -94,9 +94,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private static final int INSTRUCTION_SIZE = Integer.BYTES + Integer.BYTES + Long.BYTES + Long.BYTES;
     // contains <memory_offset, constant_node> pairs for backfilling purposes
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
+    private final PostOrderTreeTraversalAlgo inPredicateTraverseAlgo = new PostOrderTreeTraversalAlgo();
     private final PredicateContext predicateContext = new PredicateContext();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
-    private final PostOrderTreeTraversalAlgo inPredicateTraverseAlgo = new PostOrderTreeTraversalAlgo();
     private ObjList<Function> bindVarFunctions;
     private final LongObjHashMap.LongObjConsumer<ExpressionNode> backfillNodeConsumer = this::backfillNode;
     private SqlExecutionContext executionContext;
@@ -524,6 +524,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return columnTypeTag == ColumnType.BOOLEAN;
     }
 
+    private boolean isInTimestampPredicate() throws SqlException {
+        // visit inOperationNode to get expression type
+        predicateContext.onNodeVisited(predicateContext.inOperationNode.rhs);
+        predicateContext.onNodeVisited(predicateContext.inOperationNode.lhs);
+
+        // check predicate type is timestamp
+        return predicateContext.type == PredicateType.TIMESTAMP;
+    }
+
     private boolean isTopLevelBooleanColumn(ExpressionNode node) {
         if (node.type == ExpressionNode.LITERAL && isBooleanColumn(node)) {
             return true;
@@ -765,6 +774,60 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             }
         } catch (UnsupportedOperationException e) {
             throw SqlException.position(position).put("unexpected type for geo hash: ").put(typeCode);
+        }
+    }
+
+    private void serializeIn() throws SqlException {
+        predicateContext.currentInSerialization = true;
+
+        final ObjList<ExpressionNode> args = predicateContext.inOperationNode.args;
+
+        if (args.size() < 3) {
+            inPredicateTraverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
+            inPredicateTraverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
+            putOperator(EQ);
+        }
+
+        int orCount = -1;
+        for (int i = 0; i < predicateContext.inOperationNode.args.size() - 1; ++i) {
+            inPredicateTraverseAlgo.traverse(args.get(i), this);
+            inPredicateTraverseAlgo.traverse(args.getLast(), this);
+            putOperator(EQ);
+            orCount++;
+        }
+
+        for (int i = 0; i < orCount; ++i) {
+            putOperator(OR);
+        }
+    }
+
+    private void serializeInTimestampRange(int position) throws SqlException {
+        predicateContext.currentInSerialization = true;
+
+        final CharSequence token = predicateContext.inOperationNode.rhs.token;
+        final CharSequence intervalEx = token == null || SqlKeywords.isNullKeyword(token) ? null : GenericLexer.unquote(token);
+
+        final LongList intervals = predicateContext.inIntervals;
+        IntervalUtils.parseAndApplyIntervalEx(intervalEx, intervals, position);
+
+        final ExpressionNode lhs = predicateContext.inOperationNode.lhs;
+
+        int orCount = -1;
+        for (int i = 0; i < intervals.size() / 2; i += 1) {
+            long lo = IntervalUtils.getEncodedPeriodLo(intervals, i * 2);
+            long hi = IntervalUtils.getEncodedPeriodHi(intervals, i * 2);
+            putOperand(IMM, I8_TYPE, lo);
+            inPredicateTraverseAlgo.traverse(lhs, this);
+            putOperator(GE);
+            putOperand(IMM, I8_TYPE, hi);
+            inPredicateTraverseAlgo.traverse(lhs, this);
+            putOperator(LE);
+            putOperator(AND);
+            orCount++;
+        }
+
+        for (int i = 0; i < orCount; ++i) {
+            putOperator(OR);
         }
     }
 
@@ -1010,69 +1073,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         throw SqlException.position(position).put("unexpected non-numeric constant: ").put(token);
     }
 
-    private void serializeIn() throws SqlException {
-        predicateContext.currentInSerialization = true;
-
-        final ObjList<ExpressionNode> args = predicateContext.inOperationNode.args;
-
-        if (args.size() < 3) {
-            inPredicateTraverseAlgo.traverse(predicateContext.inOperationNode.rhs, this);
-            inPredicateTraverseAlgo.traverse(predicateContext.inOperationNode.lhs, this);
-            putOperator(EQ);
-        }
-
-        int orCount = -1;
-        for (int i = 0; i < predicateContext.inOperationNode.args.size() - 1; ++i) {
-            inPredicateTraverseAlgo.traverse(args.get(i), this);
-            inPredicateTraverseAlgo.traverse(args.getLast(), this);
-            putOperator(EQ);
-            orCount++;
-        }
-
-        for (int i = 0; i < orCount; ++i) {
-            putOperator(OR);
-        }
-    }
-
-    private void serializeInTimestampRange(int position) throws SqlException {
-        predicateContext.currentInSerialization = true;
-
-        final CharSequence token = predicateContext.inOperationNode.rhs.token;
-        final CharSequence intervalEx = token == null || SqlKeywords.isNullKeyword(token) ? null : GenericLexer.unquote(token);
-
-        final LongList intervals = predicateContext.inIntervals;
-        IntervalUtils.parseAndApplyIntervalEx(intervalEx, intervals, position);
-
-        final ExpressionNode lhs = predicateContext.inOperationNode.lhs;
-
-        int orCount = -1;
-        for (int i = 0; i < intervals.size() / 2; i += 1) {
-            long lo = IntervalUtils.getEncodedPeriodLo(intervals, i * 2);
-            long hi = IntervalUtils.getEncodedPeriodHi(intervals, i * 2);
-            putOperand(IMM, I8_TYPE, lo);
-            inPredicateTraverseAlgo.traverse(lhs, this);
-            putOperator(GE);
-            putOperand(IMM, I8_TYPE, hi);
-            inPredicateTraverseAlgo.traverse(lhs, this);
-            putOperator(LE);
-            putOperator(AND);
-            orCount++;
-        }
-
-        for (int i = 0; i < orCount; ++i) {
-            putOperator(OR);
-        }
-    }
-
-    private boolean isInTimestampPredicate() throws SqlException {
-        // visit inOperationNode to get expression type
-        predicateContext.onNodeVisited(predicateContext.inOperationNode.rhs);
-        predicateContext.onNodeVisited(predicateContext.inOperationNode.lhs);
-
-        // check predicate type is timestamp
-        return predicateContext.type == PredicateType.TIMESTAMP;
-    }
-
     private enum PredicateType {
         NUMERIC, CHAR, SYMBOL, BOOLEAN, GEO_HASH, UUID, IPv4, TIMESTAMP
     }
@@ -1241,15 +1241,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
 
         final TypesObserver globalTypesObserver = new TypesObserver();
         final TypesObserver localTypesObserver = new TypesObserver();
+        private final LongList inIntervals = new LongList();
         boolean hasArithmeticOperations;
         boolean singleBooleanColumn;
         int symbolColumnIndex; // used for symbol deferred constants and bind variables
         StaticSymbolTable symbolTable; // used for known symbol constant lookups
         PredicateType type;
-        private ExpressionNode rootNode;
-        private ExpressionNode inOperationNode = null;
         private boolean currentInSerialization = false;
-        private final LongList inIntervals = new LongList();
+        private ExpressionNode inOperationNode = null;
+        private ExpressionNode rootNode;
 
         @Override
         public void clear() {

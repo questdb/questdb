@@ -25,14 +25,13 @@
 package io.questdb.griffin.engine.table.parquet;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectString;
-import io.questdb.std.str.LPSZ;
 
 public class PartitionDecoder implements QuietCloseable {
     private static final long COLUMNS_PTR_OFFSET;
@@ -81,6 +80,23 @@ public class PartitionDecoder implements QuietCloseable {
                     .I$();
             throw CairoException.nonCritical().put(th.getMessage());
         }
+    }
+
+    public long getColumnChunkMinTimestamp(
+            RowGroupBuffers rowGroupBuffers,
+            int rowGroupIndex,
+            int timestampColumnIndex
+    ) {
+        final long chunkStatsPtr = getColumnChunkStats(
+                ptr,
+                rowGroupBuffers.ptr(),
+                rowGroupIndex,
+                timestampColumnIndex);
+        final long size = RowGroupBuffers.getChunkStatsMinValueSize(chunkStatsPtr);
+        assert size == Long.BYTES;
+        final long ptr = RowGroupBuffers.getChunkStatsMinValuePtr(chunkStatsPtr);
+        assert ptr != 0;
+        return Unsafe.getUnsafe().getLong(ptr);
     }
 
     public long getFd() {
@@ -133,6 +149,13 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native void destroy(long impl);
 
+
+    private static native long getColumnChunkStats(
+            long decoderPtr,
+            long rowGroupBuffersPtr,
+            int rowGroupIndex,
+            int columnId);
+
     private static native long rowCountOffset();
 
     private static native long rowGroupCountOffset();
@@ -167,7 +190,13 @@ public class PartitionDecoder implements QuietCloseable {
             metadata.clear();
             final int columnCount = columnCount();
             for (int i = 0; i < columnCount; i++) {
-                metadata.add(new TableColumnMetadata(Chars.toString(columnName(i)), getColumnType(i)));
+                final String columnName = Chars.toString(columnName(i));
+                final int columnType = getColumnType(i);
+                if (ColumnType.isSymbol(columnType)) {
+                    metadata.add(new TableColumnMetadata(columnName, columnType, true, 1024, true, null));
+                } else {
+                    metadata.add(new TableColumnMetadata(columnName, columnType));
+                }
             }
         }
 

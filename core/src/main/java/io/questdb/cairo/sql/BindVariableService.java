@@ -494,35 +494,6 @@ public interface BindVariableService extends Mutable {
     void setStr(CharSequence name, CharSequence value) throws SqlException;
 
     /**
-     * Set type of bind variable by index as varchar
-     *
-     * @param index numeric index of the bind variable
-     * @throws SqlException is throw when variable has already been defined with type
-     *                      that is not compatible with UTF8 encoded String
-     */
-    void setVarchar(int index) throws SqlException;
-
-    /**
-     * Set type of bind variable by index as varchar and provide a value
-     *
-     * @param index numeric index of the bind variable
-     * @param value as Utf8Sequence
-     * @throws SqlException is throw when variable has already been defined with type
-     *                      that is not compatible with UTF8 encoded String
-     */
-    void setVarchar(int index, Utf8Sequence value) throws SqlException;
-
-    /**
-     * Set type of bind variable by name as varchar and provide a value
-     *
-     * @param name  of the bind variable
-     * @param value as Utf8Sequence
-     * @throws SqlException is throw when variable has already been defined with type
-     *                      that is not compatible with UTF8 encoded String
-     */
-    void setVarchar(CharSequence name, Utf8Sequence value) throws SqlException;
-
-    /**
      * Set type of bind variable by index as timestamp
      *
      * @param index numeric index of the bind variable
@@ -570,4 +541,33 @@ public interface BindVariableService extends Mutable {
      * @throws SqlException is throw when variable has already been defined with type that is not compatible with UUID
      */
     void setUuid(CharSequence name, long lo, long hi) throws SqlException;
+
+    /**
+     * Set type of bind variable by index as varchar
+     *
+     * @param index numeric index of the bind variable
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with UTF8 encoded String
+     */
+    void setVarchar(int index) throws SqlException;
+
+    /**
+     * Set type of bind variable by index as varchar and provide a value
+     *
+     * @param index numeric index of the bind variable
+     * @param value as Utf8Sequence
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with UTF8 encoded String
+     */
+    void setVarchar(int index, Utf8Sequence value) throws SqlException;
+
+    /**
+     * Set type of bind variable by name as varchar and provide a value
+     *
+     * @param name  of the bind variable
+     * @param value as Utf8Sequence
+     * @throws SqlException is throw when variable has already been defined with type
+     *                      that is not compatible with UTF8 encoded String
+     */
+    void setVarchar(CharSequence name, Utf8Sequence value) throws SqlException;
 }

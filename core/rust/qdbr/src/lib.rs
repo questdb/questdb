@@ -22,12 +22,12 @@
  *
  ******************************************************************************/
 
+extern crate core;
+pub extern crate jni;
 mod parquet;
 mod parquet_read;
 mod parquet_write;
-
-extern crate core;
-pub extern crate jni;
+mod utils;
 
 use jni::sys::jlong;
 use jni::{objects::JClass, JNIEnv};

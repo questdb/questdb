@@ -58,33 +58,13 @@ public class TableTransactionLog implements Closeable {
     private final Utf8StringSink rootPath = new Utf8StringSink();
     private final MemoryCMARW txnMetaMem = Vm.getCMARWInstance();
     private final MemoryCMARW txnMetaMemIndex = Vm.getCMARWInstance();
-    private TableTransactionLogFile txnLogFile;
     private volatile long lastTxn = -1;
+    private TableTransactionLogFile txnLogFile;
 
     TableTransactionLog(FilesFacade ff, int mkDirMode, int defaultSeqPartTxnCount) {
         this.ff = ff;
         this.defaultSeqPartTxnCount = defaultSeqPartTxnCount;
         this.mkDirMode = mkDirMode;
-    }
-
-    @Override
-    public void close() {
-        txnLogFile = Misc.free(txnLogFile);
-        txnMetaMem.close(false);
-        txnMetaMemIndex.close(false);
-        rootPath.clear();
-    }
-
-    public boolean reload(Path path) {
-        close();
-        open(path);
-        return true;
-    }
-
-    public void sync() {
-        txnMetaMemIndex.sync(false);
-        txnMetaMem.sync(false);
-        txnLogFile.sync();
     }
 
     public static long readMaxStructureVersion(FilesFacade ff, Path path) {
@@ -108,6 +88,46 @@ public class TableTransactionLog implements Closeable {
             path.trimTo(pathLen);
             ff.close(logFileFd);
         }
+    }
+
+    @Override
+    public void close() {
+        txnLogFile = Misc.free(txnLogFile);
+        txnMetaMem.close(false);
+        txnMetaMemIndex.close(false);
+        rootPath.clear();
+    }
+
+    public void open(Path path) {
+        if (this.rootPath.size() == 0) {
+            assert txnLogFile == null;
+            this.rootPath.put(path);
+
+            txnLogFile = openTxnFile(path, ff, mkDirMode);
+            long maxStructureVersion = txnLogFile.open(path);
+
+            openFiles(path);
+            maxMetadataVersion.set(maxStructureVersion);
+            long structureAppendOffset = maxStructureVersion * Long.BYTES;
+            long txnMetaMemSize = txnMetaMemIndex.getLong(structureAppendOffset);
+            txnMetaMemIndex.jumpTo(structureAppendOffset + Long.BYTES);
+            txnMetaMem.jumpTo(txnMetaMemSize);
+        } else {
+            assert Utf8s.equals(path, this.rootPath);
+        }
+        lastTxn = txnLogFile.lastTxn();
+    }
+
+    public boolean reload(Path path) {
+        close();
+        open(path);
+        return true;
+    }
+
+    public void sync() {
+        txnMetaMemIndex.sync(false);
+        txnMetaMem.sync(false);
+        txnLogFile.sync();
     }
 
     private static int getFormatVersion(Path path, FilesFacade ff) {
@@ -228,26 +248,6 @@ public class TableTransactionLog implements Closeable {
 
     long lastTxn() {
         return lastTxn;
-    }
-
-    public void open(Path path) {
-        if (this.rootPath.size() == 0) {
-            assert txnLogFile == null;
-            this.rootPath.put(path);
-
-            txnLogFile = openTxnFile(path, ff, mkDirMode);
-            long maxStructureVersion = txnLogFile.open(path);
-
-            openFiles(path);
-            maxMetadataVersion.set(maxStructureVersion);
-            long structureAppendOffset = maxStructureVersion * Long.BYTES;
-            long txnMetaMemSize = txnMetaMemIndex.getLong(structureAppendOffset);
-            txnMetaMemIndex.jumpTo(structureAppendOffset + Long.BYTES);
-            txnMetaMem.jumpTo(txnMetaMemSize);
-        } else {
-            assert Utf8s.equals(path, this.rootPath);
-        }
-        lastTxn = txnLogFile.lastTxn();
     }
 
     void openFiles(Path path) {

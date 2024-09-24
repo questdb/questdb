@@ -190,6 +190,12 @@ public class ImportIODispatcherTest extends AbstractTest {
             REQUEST_FOOTER;
     private final String DdlCols1 = "(Col1+STRING,Pickup_DateTime+TIMESTAMP,DropOff_datetime+VARCHAR)";
     private final String DdlCols2 = "(Col1+STRING,Col2+STRING,Col3+STRING,Col4+STRING,Pickup_DateTime+TIMESTAMP)+timestamp(Pickup_DateTime)";
+    private final String ImportCreateParamRequestFalse = ValidImportRequest1
+            .replace("POST /upload?name=trips HTTP",
+                    "POST /upload?name=trips&timestamp=Pickup_DateTime&createTable=false HTTP");
+    private final String ImportCreateParamRequestTrue = ValidImportRequest1
+            .replace("POST /upload?name=trips HTTP",
+                    "POST /upload?name=trips&timestamp=Pickup_DateTime&createTable=true HTTP");
     private final String ValidImportResponse1 = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -299,6 +305,15 @@ public class ImportIODispatcherTest extends AbstractTest {
             "\r\n" +
             "00\r\n" +
             "\r\n";
+    private final String ImportCreateParamResponse = WarningValidImportResponse1
+            .replace(
+                    "\r\n" +
+                            "|   Partition by  |                                              NONE  |                 |         |  From Table  |\r\n" +
+                            "|      Timestamp  |                                              NONE  |                 |         |  From Table  |",
+                    "\r\n" +
+                            "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
+                            "|      Timestamp  |                                   Pickup_DateTime  |                 |         |              |"
+            );
     private final String WarningValidImportResponse1Json = "HTTP/1.1 200 OK\r\n" +
             "Server: questDB/1.0\r\n" +
             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -322,21 +337,6 @@ public class ImportIODispatcherTest extends AbstractTest {
             "]}\r\n" +
             "00\r\n" +
             "\r\n";
-    private final String ImportCreateParamRequestTrue = ValidImportRequest1
-            .replace("POST /upload?name=trips HTTP",
-                    "POST /upload?name=trips&timestamp=Pickup_DateTime&createTable=true HTTP");
-    private final String ImportCreateParamRequestFalse = ValidImportRequest1
-            .replace("POST /upload?name=trips HTTP",
-                    "POST /upload?name=trips&timestamp=Pickup_DateTime&createTable=false HTTP");
-    private final String ImportCreateParamResponse = WarningValidImportResponse1
-            .replace(
-                    "\r\n" +
-                            "|   Partition by  |                                              NONE  |                 |         |  From Table  |\r\n" +
-                            "|      Timestamp  |                                              NONE  |                 |         |  From Table  |",
-                    "\r\n" +
-                            "|   Partition by  |                                              NONE  |                 |         |              |\r\n" +
-                            "|      Timestamp  |                                   Pickup_DateTime  |                 |         |              |"
-            );
     @Rule
     public Timeout timeout = Timeout.builder()
             .withTimeout(10 * 60 * 1000, TimeUnit.MILLISECONDS)

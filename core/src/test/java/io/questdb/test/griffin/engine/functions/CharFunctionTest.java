@@ -61,26 +61,6 @@ public class CharFunctionTest {
     };
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetGeoByte() {
-        function.getGeoByte(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetGeoInt() {
-        function.getGeoInt(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetGeoLong() {
-        function.getGeoLong(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetGeoShort() {
-        function.getGeoShort(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testGetBin() {
         function.getBin(null);
     }
@@ -116,6 +96,26 @@ public class CharFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoByte() {
+        function.getGeoByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoInt() {
+        function.getGeoInt(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoLong() {
+        function.getGeoLong(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetGeoShort() {
+        function.getGeoShort(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetIPv4() {
         function.getIPv4(null);
     }
@@ -128,6 +128,31 @@ public class CharFunctionTest {
     @Test
     public void testGetLong() {
         Assert.assertEquals(value, function.getLong(null));
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Hi() {
+        function.getLong128Hi(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong128Lo() {
+        function.getLong128Lo(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256() {
+        function.getLong256(null, null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256A() {
+        function.getLong256A(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetLong256B() {
+        function.getLong256B(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -179,32 +204,6 @@ public class CharFunctionTest {
     public void testGetTimestamp() {
         function.getTimestamp(null);
     }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong128Hi() {
-        function.getLong128Hi(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong128Lo() {
-        function.getLong128Lo(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong256() {
-        function.getLong256(null, null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong256A() {
-        function.getLong256A(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetLong256B() {
-        function.getLong256B(null);
-    }
-
 
     @Test
     public void testGetVarcharA() {

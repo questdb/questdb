@@ -26,6 +26,7 @@ package io.questdb.cairo.vm;
 
 import io.questdb.cairo.MapWriter;
 import io.questdb.cairo.SymbolValueCountCollector;
+import io.questdb.cairo.vm.api.MemoryR;
 
 public class NullMapWriter implements MapWriter {
     public static final MapWriter INSTANCE = new NullMapWriter();
@@ -42,6 +43,16 @@ public class NullMapWriter implements MapWriter {
 
     @Override
     public int getSymbolCount() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public MemoryR getSymbolOffsetsMemory() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public MemoryR getSymbolValuesMemory() {
         throw new UnsupportedOperationException();
     }
 

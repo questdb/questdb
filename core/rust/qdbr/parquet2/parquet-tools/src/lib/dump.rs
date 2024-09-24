@@ -156,7 +156,7 @@ where
 
 fn print_iterator<I, T, W>(iter: I, sample_size: usize, writer: &mut W) -> Result<()>
 where
-    I: Iterator<Item = T>,
+    I: Iterator<Item=T>,
     T: std::fmt::Debug,
     W: Write,
 {

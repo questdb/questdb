@@ -47,16 +47,6 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCorrNoValues() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table tbl1(x int, y int)");
-            assertSql(
-                    "corr\nnull\n", "select corr(x, y) from tbl1"
-            );
-        });
-    }
-
-    @Test
     public void testCorrDoubleValues() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
@@ -99,6 +89,16 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCorrNoValues() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tbl1(x int, y int)");
+            assertSql(
+                    "corr\nnull\n", "select corr(x, y) from tbl1"
+            );
+        });
+    }
+
+    @Test
     public void testCorrOneColumnAllNull() throws Exception {
         assertMemoryLeak(() -> assertSql(
                 "corr\nnull\n", "select corr(x, y) from (select cast(null as double) x, x as y from long_sequence(100))"
@@ -118,18 +118,6 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCorrTwoValue() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table tbl1(x int, y int)");
-            insert("insert into 'tbl1' VALUES " +
-                    "(1, 1), (2, 2)");
-            assertSql(
-                    "corr\n1.0\n", "select corr(x, y) from tbl1"
-            );
-        });
-    }
-
-    @Test
     public void testCorrOverflow() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select 100000000 x, 100000000 y from long_sequence(1000000))");
@@ -144,6 +132,18 @@ public class CorrGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             ddl("create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))");
             insert("insert into 'tbl1' VALUES (null, null)");
+            assertSql(
+                    "corr\n1.0\n", "select corr(x, y) from tbl1"
+            );
+        });
+    }
+
+    @Test
+    public void testCorrTwoValue() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table tbl1(x int, y int)");
+            insert("insert into 'tbl1' VALUES " +
+                    "(1, 1), (2, 2)");
             assertSql(
                     "corr\n1.0\n", "select corr(x, y) from tbl1"
             );

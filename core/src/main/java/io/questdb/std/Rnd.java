@@ -199,13 +199,6 @@ public class Rnd {
         }
     }
 
-    public void shuffle(List<?> list) {
-        for (int i = 1, n = list.size(); i < n; i++) {
-            int swapTarget = nextInt(i + 1);
-            Collections.swap(list, i, swapTarget);
-        }
-    }
-
     // https://stackoverflow.com/questions/1319022/really-good-bad-utf-8-example-test-data
     public void nextUtf8Str(int len, Utf8Sink sink) {
         for (int i = 0; i < len; i++) {
@@ -274,6 +267,13 @@ public class Rnd {
 
     public final void reset() {
         reset(0xdeadbeef, 0xdee4c0ed);
+    }
+
+    public void shuffle(List<?> list) {
+        for (int i = 1, n = list.size(); i < n; i++) {
+            int swapTarget = nextInt(i + 1);
+            Collections.swap(list, i, swapTarget);
+        }
     }
 
     public void syncWith(Rnd other) {

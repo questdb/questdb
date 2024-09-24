@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use bytes::{Buf, BytesMut};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use sqllogictest::{AsyncDB, DateFormat, DBOutput, DefaultColumnType};
+use sqllogictest::{AsyncDB, DBOutput, DateFormat, DefaultColumnType};
 use thiserror::Error;
 use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};

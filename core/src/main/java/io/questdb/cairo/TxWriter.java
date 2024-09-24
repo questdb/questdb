@@ -372,7 +372,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         long maskedSize = attachedPartitions.getQuick(offset);
 
         maskedSize = updatePartitionHasParquetFormat(maskedSize, true);
-        maskedSize = updatePartitionIsReadOnly(maskedSize, true);
 
         attachedPartitions.setQuick(offset, maskedSize);
 
@@ -488,14 +487,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         updateAttachedPartitionSizeByTimestamp(timestamp, rowCount, partitionNameTxn);
     }
 
-    private static long updatePartitionIsReadOnly(long maskedSize, boolean isReadOnly) {
-        return updatePartitionFlagAt(maskedSize, isReadOnly, PARTITION_MASK_READ_ONLY_BIT_OFFSET);
-    }
-
-    private static long updatePartitionHasParquetFormat(long maskedSize, boolean isParquetFormat) {
-        return updatePartitionFlagAt(maskedSize, isParquetFormat, PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET);
-    }
-
     private static long updatePartitionFlagAt(long maskedSize, boolean flag, int bitOffset) {
         if (flag) {
             maskedSize |= 1L << bitOffset;
@@ -503,6 +494,14 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             maskedSize &= ~(1L << bitOffset);
         }
         return maskedSize;
+    }
+
+    private static long updatePartitionHasParquetFormat(long maskedSize, boolean isParquetFormat) {
+        return updatePartitionFlagAt(maskedSize, isParquetFormat, PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET);
+    }
+
+    private static long updatePartitionIsReadOnly(long maskedSize, boolean isReadOnly) {
+        return updatePartitionFlagAt(maskedSize, isReadOnly, PARTITION_MASK_READ_ONLY_BIT_OFFSET);
     }
 
     private int calculateWriteOffset(int areaSize) {

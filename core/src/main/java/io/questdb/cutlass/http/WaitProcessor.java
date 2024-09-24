@@ -38,13 +38,13 @@ import java.util.PriorityQueue;
 public class WaitProcessor extends SynchronizedJob implements RescheduleContext, Closeable {
 
     private final MillisecondClock clock;
+    private final IODispatcher<HttpConnectionContext> dispatcher;
     private final double exponentialWaitMultiplier;
     private final Sequence inPubSequence;
     private final RingQueue<RetryHolder> inQueue;
     private final Sequence inSubSequence;
     private final long maxWaitCapMs;
     private final PriorityQueue<Retry> nextRerun;
-    private final IODispatcher<HttpConnectionContext> dispatcher;
     private final Sequence outPubSequence;
     private final RingQueue<RetryHolder> outQueue;
     private final Sequence outSubSequence;
@@ -94,30 +94,6 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
             } else {
                 return useful;
             }
-        }
-    }
-
-    private void run(HttpRequestProcessorSelector selector, Retry retry) {
-        try {
-            if (!retry.tryRerun(selector, this)) {
-                try {
-                    reschedule(retry, retry.getAttemptDetails().attempt + 1, retry.getAttemptDetails().waitStartTimestamp);
-                } catch (RetryFailedOperationException e) {
-                    retry.fail(selector, e);
-                }
-            }
-        } catch (PeerDisconnectedException e) {
-            HttpConnectionContext context = (HttpConnectionContext) retry;
-            dispatcher.disconnect((HttpConnectionContext) retry, IODispatcher.DISCONNECT_REASON_KICKED_OUT_AT_RECV);
-        } catch (PeerIsSlowToReadException e) {
-            HttpConnectionContext context = (HttpConnectionContext) retry;
-            dispatcher.registerChannel(context, IOOperation.WRITE);
-        } catch (PeerIsSlowToWriteException e) {
-            HttpConnectionContext context = (HttpConnectionContext) retry;
-            dispatcher.registerChannel(context, IOOperation.READ);
-        } catch (ServerDisconnectException e) {
-            HttpConnectionContext context = (HttpConnectionContext) retry;
-            dispatcher.disconnect((HttpConnectionContext) retry, context.getDisconnectReason());
         }
     }
 
@@ -213,6 +189,30 @@ public class WaitProcessor extends SynchronizedJob implements RescheduleContext,
             retryHolder.retry = retry;
             inPubSequence.done(cursor);
             return;
+        }
+    }
+
+    private void run(HttpRequestProcessorSelector selector, Retry retry) {
+        try {
+            if (!retry.tryRerun(selector, this)) {
+                try {
+                    reschedule(retry, retry.getAttemptDetails().attempt + 1, retry.getAttemptDetails().waitStartTimestamp);
+                } catch (RetryFailedOperationException e) {
+                    retry.fail(selector, e);
+                }
+            }
+        } catch (PeerDisconnectedException e) {
+            HttpConnectionContext context = (HttpConnectionContext) retry;
+            dispatcher.disconnect((HttpConnectionContext) retry, IODispatcher.DISCONNECT_REASON_KICKED_OUT_AT_RECV);
+        } catch (PeerIsSlowToReadException e) {
+            HttpConnectionContext context = (HttpConnectionContext) retry;
+            dispatcher.registerChannel(context, IOOperation.WRITE);
+        } catch (PeerIsSlowToWriteException e) {
+            HttpConnectionContext context = (HttpConnectionContext) retry;
+            dispatcher.registerChannel(context, IOOperation.READ);
+        } catch (ServerDisconnectException e) {
+            HttpConnectionContext context = (HttpConnectionContext) retry;
+            dispatcher.disconnect((HttpConnectionContext) retry, context.getDisconnectReason());
         }
     }
 

@@ -521,6 +521,31 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPartitionEncoderParquetCompressionCodec() {
+        return getDelegate().getPartitionEncoderParquetCompressionCodec();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetCompressionLevel() {
+        return getDelegate().getPartitionEncoderParquetCompressionLevel();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetDataPageSize() {
+        return getDelegate().getPartitionEncoderParquetDataPageSize();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetRowGroupSize() {
+        return getDelegate().getPartitionEncoderParquetRowGroupSize();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetVersion() {
+        return getDelegate().getPartitionEncoderParquetVersion();
+    }
+
+    @Override
     public long getPartitionO3SplitMinSize() {
         return getDelegate().getPartitionO3SplitMinSize();
     }
@@ -1103,6 +1128,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isParallelIndexingEnabled() {
         return getDelegate().isParallelIndexingEnabled();
+    }
+
+    @Override
+    public boolean isPartitionEncoderParquetStatisticsEnabled() {
+        return getDelegate().isPartitionEncoderParquetStatisticsEnabled();
     }
 
     @Override

@@ -25,11 +25,11 @@
 package io.questdb.test.tools;
 
 public class BindVariableTestTuple {
+    public static final int MUST_SUCCEED = -1;
     private final String description;
+    private final int errorPosition;
     private final String expected;
     private final BindVariableTestSetter setter;
-    private final int errorPosition;
-    public static final int MUST_SUCCEED = -1;
 
     public BindVariableTestTuple(String description, String expected, BindVariableTestSetter setter) {
         // failure is not expected when error position is -1
@@ -43,19 +43,19 @@ public class BindVariableTestTuple {
         this.errorPosition = errorPosition;
     }
 
-    public BindVariableTestSetter getSetter() {
-        return setter;
-    }
-
-    public CharSequence getExpected() {
-        return expected;
+    public String getDescription() {
+        return description;
     }
 
     public int getErrorPosition() {
         return errorPosition;
     }
 
-    public String getDescription() {
-        return description;
+    public CharSequence getExpected() {
+        return expected;
+    }
+
+    public BindVariableTestSetter getSetter() {
+        return setter;
     }
 }

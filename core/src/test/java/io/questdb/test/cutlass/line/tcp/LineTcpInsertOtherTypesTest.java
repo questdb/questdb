@@ -932,12 +932,6 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
         assertStringTypes(varchar ? ColumnType.VARCHAR : ColumnType.STRING);
     }
 
-    private void assertStringTypesNoTable(boolean varchar) throws Exception {
-        useLegacyString = !varchar;
-        assertStringTypes(ColumnType.UNDEFINED);
-        useLegacyString = true; // restore default
-    }
-
     private void assertStringTypes(int columnType) throws Exception {
         assertType(columnType,
                 "value\ttimestamp\n" +
@@ -966,6 +960,12 @@ public class LineTcpInsertOtherTypesTest extends BaseLineTcpContextTest {
                 },
                 false
         );
+    }
+
+    private void assertStringTypesNoTable(boolean varchar) throws Exception {
+        useLegacyString = !varchar;
+        assertStringTypes(ColumnType.UNDEFINED);
+        useLegacyString = true; // restore default
     }
 
     private void assertTimestamp(String expected, CharSequence[] values) throws Exception {

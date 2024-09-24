@@ -33,6 +33,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
@@ -178,11 +180,11 @@ public class ParquetTest extends AbstractTest {
                 PartitionEncoder.encodeWithOptions(
                         partitionDescriptor,
                         path,
-                        (5L << 32) | PartitionEncoder.COMPRESSION_ZSTD,
+                        (5L << 32) | ParquetCompression.COMPRESSION_ZSTD,
                         true,
                         ROW_GROUP_SIZE,
                         DATA_PAGE_SIZE,
-                        PartitionEncoder.PARQUET_VERSION_V1
+                        ParquetVersion.PARQUET_VERSION_V1
                 );
 
                 LOG.info().$("Took: ").$((System.nanoTime() - start) / 1_000_000).$("ms").$();

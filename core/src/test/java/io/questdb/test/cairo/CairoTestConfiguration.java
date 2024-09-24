@@ -53,6 +53,11 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
+    public @NotNull CharSequence getCheckpointRoot() {
+        return snapshotRoot;
+    }
+
+    @Override
     public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return overrides.getCircuitBreakerConfiguration() != null ? overrides.getCircuitBreakerConfiguration() : super.getCircuitBreakerConfiguration();
     }
@@ -112,11 +117,6 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     @Override
     public @NotNull RostiAllocFacade getRostiAllocFacade() {
         return overrides.getRostiAllocFacade() != null ? overrides.getRostiAllocFacade() : super.getRostiAllocFacade();
-    }
-
-    @Override
-    public @NotNull CharSequence getCheckpointRoot() {
-        return snapshotRoot;
     }
 
     @Override

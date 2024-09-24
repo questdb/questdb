@@ -16,7 +16,7 @@ use crate::parquet_read::slicer::{
     BooleanBitmapSlicer, DataPageFixedSlicer, DeltaBinaryPackedSlicer, DeltaBytesArraySlicer,
     DeltaLengthArraySlicer, PlainVarSlicer, ValueConvertSlicer,
 };
-use crate::parquet_read::{ColumnChunkBuffers, ParquetDecoder, RowGroupBuffers};
+use crate::parquet_read::{ColumnChunkBuffers, ColumnChunkStats, ParquetDecoder, RowGroupBuffers};
 use parquet2::deserialize::{
     FilteredHybridEncoded, FilteredHybridRleDecoderIter, HybridDecoderBitmapIter,
 };
@@ -38,11 +38,22 @@ impl RowGroupBuffers {
         Self {
             column_bufs_ptr: ptr::null_mut(),
             column_bufs: Vec::new(),
+            column_chunk_stats_ptr: ptr::null_mut(),
+            column_chunk_stats: Vec::new(),
         }
     }
 
-    pub fn refresh_ptrs(&mut self) {
-        self.column_bufs_ptr = self.column_bufs.as_mut_ptr();
+    pub fn ensure_n_columns(&mut self, required_cols: usize) {
+        if self.column_bufs.len() < required_cols {
+            self.column_bufs
+                .resize_with(required_cols, ColumnChunkBuffers::new);
+            self.column_chunk_stats
+                .resize_with(required_cols, ColumnChunkStats::new);
+
+            // refresh ptrs
+            self.column_bufs_ptr = self.column_bufs.as_mut_ptr();
+            self.column_chunk_stats_ptr = self.column_chunk_stats.as_mut_ptr();
+        }
     }
 }
 
@@ -99,11 +110,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         }
 
         let col_count = self.col_count as usize;
-        if row_group_bufs.column_bufs.len() < (col_count) {
-            row_group_bufs
-                .column_bufs
-                .resize_with(col_count, ColumnChunkBuffers::new);
-        }
+        row_group_bufs.ensure_n_columns(col_count);
 
         let mut row_group_size = 0usize;
         for (dest_col_idx, &(column_idx, to_column_type)) in columns.iter().enumerate() {
@@ -152,7 +159,6 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             }
         }
 
-        row_group_bufs.refresh_ptrs();
         Ok(row_group_size)
     }
 
@@ -186,7 +192,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         column_chunk_bufs.data_vec.clear();
         for maybe_page in page_reader {
             let page = maybe_page?;
-            let page = decompress(page, &mut self.decompress_buf)?;
+            let page = decompress(page, &mut self.decompress_buffer)?;
 
             match page {
                 Page::Dict(page) => {
@@ -212,6 +218,35 @@ impl<R: Read + Seek> ParquetDecoder<R> {
 
         column_chunk_bufs.refresh_ptrs();
         Ok(row_count)
+    }
+
+    pub fn update_column_chunk_stats(
+        &mut self,
+        row_group_buffers: &mut RowGroupBuffers,
+        row_group: usize,
+        file_column_index: usize,
+        column: usize,
+    ) {
+        let col_count = self.col_count as usize;
+        row_group_buffers.ensure_n_columns(col_count);
+
+        let columns = self.metadata.row_groups[row_group].columns();
+        let column_metadata = &columns[file_column_index];
+        let column_chunk = column_metadata.column_chunk();
+        let stats = &mut row_group_buffers.column_chunk_stats[column];
+
+        stats.min_value.clear();
+
+        if let Some(meta_data) = &column_chunk.meta_data {
+            if let Some(statistics) = &meta_data.statistics {
+                if let Some(min) = statistics.min_value.as_ref() {
+                    stats.min_value.extend_from_slice(min);
+                }
+            }
+        }
+
+        stats.min_value_ptr = stats.min_value.as_mut_ptr();
+        stats.min_value_size = stats.min_value.len();
     }
 }
 

@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
-import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCursor {

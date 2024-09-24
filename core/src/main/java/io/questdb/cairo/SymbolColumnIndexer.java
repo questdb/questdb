@@ -31,9 +31,9 @@ import io.questdb.std.str.Path;
 public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
 
     private static final long SEQUENCE_OFFSET;
-    private long buffer;
     private final int bufferSize;
     private final BitmapIndexWriter writer;
+    private long buffer;
     private long columnTop;
     private volatile boolean distressed = false;
     private long fd = -1;
@@ -60,10 +60,6 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
             Unsafe.free(buffer, bufferSize, MemoryTag.NATIVE_INDEX_READER);
             buffer = 0;
         }
-    }
-
-    public void releaseIndexWriter() {
-        Misc.free(writer);
     }
 
     @Override
@@ -151,6 +147,10 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
     @Override
     public void refreshSourceAndIndex(long loRow, long hiRow) {
         index(ff, fd, loRow, hiRow);
+    }
+
+    public void releaseIndexWriter() {
+        Misc.free(writer);
     }
 
     @Override

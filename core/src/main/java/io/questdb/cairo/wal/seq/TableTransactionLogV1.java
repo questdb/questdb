@@ -56,9 +56,9 @@ import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
  * See the format of the header and transaction record in @link TableTransactionLogFile
  */
 public class TableTransactionLogV1 implements TableTransactionLogFile {
-    public static long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV1.class);
     private static final ThreadLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new ThreadLocal<>();
+    public static long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
     private final FilesFacade ff;
     private final AtomicLong maxTxn = new AtomicLong();
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
@@ -239,6 +239,11 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         }
 
         @Override
+        public int getPartitionSize() {
+            return 0;
+        }
+
+        @Override
         public int getSegmentId() {
             return Unsafe.getUnsafe().getInt(address + txnOffset + TX_LOG_SEGMENT_OFFSET);
         }
@@ -306,11 +311,6 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         @Override
         public void toMinTxn() {
             toTop();
-        }
-
-        @Override
-        public int getPartitionSize() {
-            return 0;
         }
 
         @Override

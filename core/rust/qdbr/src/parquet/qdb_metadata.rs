@@ -179,7 +179,7 @@ mod tests {
                     format: Some(QdbMetaColFormat::LocalKeyIsGlobal),
                 },
                 QdbMetaCol {
-                    column_type: ColumnType::new(ColumnTypeTag::Int, 0),
+                    column_type: ColumnTypeTag::Int.into_type(),
                     format: None,
                 },
             ],

@@ -62,7 +62,6 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final MemoryMARW ddlMem = Vm.getMARWInstance();
     private final short defaultFloatColumnType;
     private final short defaultIntegerColumnType;
-    private final boolean useLegacyStringDefault;
     private final CairoEngine engine;
     private final IntList geoHashBitsSizeByColIdx = new IntList(); // 0 if not a GeoHash, else bits precision
     private final FieldValueParser MY_NEW_TAG_VALUE = this::parseTagValueNewTable;
@@ -70,6 +69,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
     private final TableStructureAdapter tableStructureAdapter = new TableStructureAdapter();
     private final LineTimestampAdapter timestampAdapter;
     private final LineUdpReceiverConfiguration udpConfiguration;
+    private final boolean useLegacyStringDefault;
     private final CharSequenceObjHashMap<CacheEntry> writerCache = new CharSequenceObjHashMap<>();
     // state
     // cache entry index is always a negative value

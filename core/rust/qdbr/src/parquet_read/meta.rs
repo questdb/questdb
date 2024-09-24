@@ -67,7 +67,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             reader,
             metadata,
             qdb_meta,
-            decompress_buf: vec![],
+            decompress_buffer: vec![],
             columns_ptr: columns.as_ptr(),
             columns,
         })

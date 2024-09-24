@@ -751,12 +751,6 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
         assertStringTypes(varchar ? ColumnType.VARCHAR : ColumnType.STRING);
     }
 
-    private static void assertStringTypesNoTable(boolean varchar) throws Exception {
-        useLegacyString = !varchar;
-        assertStringTypes(ColumnType.UNDEFINED);
-        useLegacyString = true; // restore default
-    }
-
     private static void assertStringTypes(int columnType) throws Exception {
         assertType(columnType,
                 "value\ttimestamp\n" +
@@ -785,6 +779,12 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "@plant2", // discarded bad type symbol
                         "" // valid null
                 });
+    }
+
+    private static void assertStringTypesNoTable(boolean varchar) throws Exception {
+        useLegacyString = !varchar;
+        assertStringTypes(ColumnType.UNDEFINED);
+        useLegacyString = true; // restore default
     }
 
     private static void assertType(int columnType, String expected, String[] values) throws Exception {

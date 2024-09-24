@@ -56,6 +56,16 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
+    public int getPartitionEncoderParquetDataPageSize() {
+        return 1024; // 1KB
+    }
+
+    @Override
+    public int getPartitionEncoderParquetRowGroupSize() {
+        return 1000;
+    }
+
+    @Override
     public long getPartitionO3SplitMinSize() {
         return 512 * (1L << 10); // 512KiB
     }

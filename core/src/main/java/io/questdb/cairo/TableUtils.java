@@ -104,7 +104,7 @@ public final class TableUtils {
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(4);
     public static final int NULL_LEN = -1;
-    public static final String PARQUET_PARTITION_SUFFIX = ".parquet";
+    public static final String PARQUET_PARTITION_NAME = "data.parquet";
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
     public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';
@@ -1015,6 +1015,15 @@ public final class TableUtils {
         return address;
     }
 
+    public static long mapRO(FilesFacade ff, LPSZ path, Log log, long size, int memoryTag) {
+        final long fd = openRO(ff, path, log);
+        try {
+            return mapRO(ff, fd, size, memoryTag);
+        } finally {
+            ff.close(fd);
+        }
+    }
+
     public static long mapRW(FilesFacade ff, long fd, long size, int memoryTag) {
         return mapRW(ff, fd, size, 0, memoryTag);
     }
@@ -1527,7 +1536,8 @@ public final class TableUtils {
      * @param nameTxn     Partition txn suffix
      */
     public static void setPathForParquetPartition(Path path, int partitionBy, long timestamp, long nameTxn) {
-        setSinkForParquetPartition(path.slash(), partitionBy, timestamp, nameTxn);
+        setSinkForNativePartition(path.slash(), partitionBy, timestamp, nameTxn);
+        path.concat(PARQUET_PARTITION_NAME);
     }
 
     public static void setPathTable(@NotNull Path path, @NotNull CairoConfiguration configuration, @NotNull TableToken token) {
@@ -1561,11 +1571,7 @@ public final class TableUtils {
      * @param nameTxn     Partition txn suffix
      */
     public static void setSinkForParquetPartition(CharSink<?> sink, int partitionBy, long timestamp, long nameTxn) {
-        PartitionBy.setSinkForPartition(sink, partitionBy, timestamp);
-        if (nameTxn > -1L) {
-            sink.put('.').put(nameTxn);
-        }
-        sink.put(PARQUET_PARTITION_SUFFIX);
+
     }
 
     public static void setTxReaderPath(@NotNull TxReader reader, @NotNull Path path, int partitionBy) {

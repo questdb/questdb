@@ -55,9 +55,9 @@ public class AbstractO3Test extends AbstractTest {
     protected static final StringSink sink2 = new StringSink();
     protected static int commitMode = CommitMode.NOSYNC;
     protected static int dataAppendPageSize = -1;
-    protected static int o3ColumnMemorySize = -1;
     protected static boolean mixedIOEnabled;
     protected static boolean mixedIOEnabledFFDefault;
+    protected static int o3ColumnMemorySize = -1;
     protected static int o3MemMaxPages = -1;
     protected static long partitionO3SplitThreshold = -1;
 
@@ -331,6 +331,12 @@ public class AbstractO3Test extends AbstractTest {
                     }
 
                     @Override
+                    public CharSequence getSqlCopyInputRoot() {
+                        // reuse root as input root for tests
+                        return root;
+                    }
+
+                    @Override
                     public boolean isWriterMixedIOEnabled() {
                         // Allow enabling mixed I/O only if the ff allows it.
                         return mixedIOEnabledFFDefault && mixedIOEnabled;
@@ -402,6 +408,11 @@ public class AbstractO3Test extends AbstractTest {
                     @Override
                     public long getPartitionO3SplitMinSize() {
                         return partitionO3SplitThreshold > -1 ? partitionO3SplitThreshold : super.getPartitionO3SplitMinSize();
+                    }
+
+                    @Override
+                    public CharSequence getSqlCopyInputRoot() {
+                        return root;
                     }
 
                     @Override

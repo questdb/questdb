@@ -38,6 +38,7 @@ public class O3PartitionTask {
     private AtomicInteger columnCounter;
     private ObjList<MemoryMA> columns;
     private long dedupColSinkAddr;
+    private boolean isParquet;
     private boolean last;
     private long maxTimestamp; // table's max timestamp
     private long newPartitionSize;
@@ -146,6 +147,10 @@ public class O3PartitionTask {
         return last;
     }
 
+    public boolean isParquet() {
+        return isParquet;
+    }
+
     public void of(
             Path path,
             int partitionBy,
@@ -168,7 +173,8 @@ public class O3PartitionTask {
             long newPartitionSize,
             long oldPartitionSize,
             long partitionUpdateSinkAddr,
-            long dedupColSinkAddr
+            long dedupColSinkAddr,
+            boolean isParquet
     ) {
         this.pathToTable = path;
         this.txn = txn;
@@ -192,5 +198,6 @@ public class O3PartitionTask {
         this.oldPartitionSize = oldPartitionSize;
         this.partitionUpdateSinkAddr = partitionUpdateSinkAddr;
         this.dedupColSinkAddr = dedupColSinkAddr;
+        this.isParquet = isParquet;
     }
 }

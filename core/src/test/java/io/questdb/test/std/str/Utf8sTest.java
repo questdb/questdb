@@ -26,8 +26,6 @@ package io.questdb.test.std.str;
 
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryAR;
-import io.questdb.cairo.vm.api.MemoryCA;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.std.*;
 import io.questdb.std.str.*;

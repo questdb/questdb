@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -70,6 +71,10 @@ public interface MapWriter extends SymbolCountProvider {
     boolean getNullFlag();
 
     int getSymbolCapacity();
+
+    MemoryR getSymbolOffsetsMemory();
+
+    MemoryR getSymbolValuesMemory();
 
     boolean isCached();
 

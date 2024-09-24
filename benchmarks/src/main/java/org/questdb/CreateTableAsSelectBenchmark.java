@@ -45,14 +45,11 @@ public class CreateTableAsSelectBenchmark {
     // Should be set close enough to the cairo.max.uncommitted.rows default value.
     private static final int ROWS_PER_ITERATION = 1;
     private final CairoConfiguration configuration = new DefaultCairoConfiguration(".");
-
+    @Param({"8192", "16384", "32786", "131072"})
+    public String batchSize;
     //@Param({"10000", "1000000", "100000000", "1000000000"})
     @Param({"1000000000"})
     public String size;
-
-
-    @Param({"8192", "16384", "32786", "131072"})
-    public String batchSize;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()

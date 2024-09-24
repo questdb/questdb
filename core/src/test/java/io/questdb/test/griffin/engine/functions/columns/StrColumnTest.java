@@ -29,9 +29,9 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class StrColumnTest extends AbstractFunctionFactoryTest {

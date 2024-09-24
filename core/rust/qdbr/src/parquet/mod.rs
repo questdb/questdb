@@ -23,4 +23,5 @@
  ******************************************************************************/
 pub(crate) mod col_type;
 pub(crate) mod error;
+pub(crate) mod io;
 pub(crate) mod qdb_metadata;

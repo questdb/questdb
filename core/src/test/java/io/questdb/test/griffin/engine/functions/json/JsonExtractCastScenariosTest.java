@@ -257,35 +257,6 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
         }
     }
 
-    private void testScenarioVia3rdArgCall(
-            String json,
-            int type,
-            int index,
-            String expected,
-            String expectedValue
-    ) throws SqlException {
-        final String sql = "select json_extract('{\"x\":" + json + "}', '.x', " + type + ") as x from long_sequence(1)";
-        try {
-            assertSqlWithTypes(expected, sql);
-        } catch (AssertionError e) {
-            throw new AssertionError(
-                    "Failed JSON 3rd type arg call. Scenario: " + index +
-                            ", SQL: `" + sql + "`" +
-                            ", Cast Type: " + ColumnType.nameOf(type) +
-                            ", JSON: " + SCENARIOS[index][0] +
-                            ", Expected Value: " + expectedValue +
-                            ", Error: " + e.getMessage(), e);
-        } catch (CairoException e) {
-            throw new RuntimeException(
-                    "Failed JSON 3rd type arg call. Scenario: " + index +
-                            ", SQL: `" + sql + "`" +
-                            ", Cast Type: " + ColumnType.nameOf(type) +
-                            ", JSON: " + SCENARIOS[index][0] +
-                            ", Expected Value: " + expectedValue +
-                            ", Error: " + e.getMessage(), e);
-        }
-    }
-
     private void testScalarScenarioViaFunctionCast(
             String json,
             int type,
@@ -308,6 +279,35 @@ public class JsonExtractCastScenariosTest extends AbstractCairoTest {
         } catch (CairoException e) {
             throw new RuntimeException(
                     "Failed cast(.. as ..) call. Scenario: " + index +
+                            ", SQL: `" + sql + "`" +
+                            ", Cast Type: " + ColumnType.nameOf(type) +
+                            ", JSON: " + SCENARIOS[index][0] +
+                            ", Expected Value: " + expectedValue +
+                            ", Error: " + e.getMessage(), e);
+        }
+    }
+
+    private void testScenarioVia3rdArgCall(
+            String json,
+            int type,
+            int index,
+            String expected,
+            String expectedValue
+    ) throws SqlException {
+        final String sql = "select json_extract('{\"x\":" + json + "}', '.x', " + type + ") as x from long_sequence(1)";
+        try {
+            assertSqlWithTypes(expected, sql);
+        } catch (AssertionError e) {
+            throw new AssertionError(
+                    "Failed JSON 3rd type arg call. Scenario: " + index +
+                            ", SQL: `" + sql + "`" +
+                            ", Cast Type: " + ColumnType.nameOf(type) +
+                            ", JSON: " + SCENARIOS[index][0] +
+                            ", Expected Value: " + expectedValue +
+                            ", Error: " + e.getMessage(), e);
+        } catch (CairoException e) {
+            throw new RuntimeException(
+                    "Failed JSON 3rd type arg call. Scenario: " + index +
                             ", SQL: `" + sql + "`" +
                             ", Cast Type: " + ColumnType.nameOf(type) +
                             ", JSON: " + SCENARIOS[index][0] +

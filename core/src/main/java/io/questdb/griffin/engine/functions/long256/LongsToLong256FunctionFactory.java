@@ -29,7 +29,8 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.*;
+import io.questdb.griffin.engine.functions.Long256Function;
+import io.questdb.griffin.engine.functions.QuaternaryFunction;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.std.*;
 import io.questdb.std.str.CharSink;
@@ -80,11 +81,6 @@ public final class LongsToLong256FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getLong256(Record rec, CharSink<?> sink) {
-            Numbers.appendLong256(l0.getLong(rec), l1.getLong(rec), l2.getLong(rec), l3.getLong(rec), sink);
-        }
-
-        @Override
         public Function getFunc0() {
             return l0;
         }
@@ -102,6 +98,11 @@ public final class LongsToLong256FunctionFactory implements FunctionFactory {
         @Override
         public Function getFunc3() {
             return l3;
+        }
+
+        @Override
+        public void getLong256(Record rec, CharSink<?> sink) {
+            Numbers.appendLong256(l0.getLong(rec), l1.getLong(rec), l2.getLong(rec), l3.getLong(rec), sink);
         }
 
         @Override

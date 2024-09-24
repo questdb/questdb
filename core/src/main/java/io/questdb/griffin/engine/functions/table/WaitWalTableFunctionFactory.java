@@ -55,9 +55,9 @@ public class WaitWalTableFunctionFactory implements FunctionFactory {
 
     private static class WaitWalFunction extends BooleanFunction implements ScalarFunction {
         private final CharSequence tableName;
-        private SeqTxnTracker seqTxnTracker;
-        private long seqTxn;
         private SqlExecutionContext executionContext;
+        private long seqTxn;
+        private SeqTxnTracker seqTxnTracker;
 
         public WaitWalFunction(CharSequence tableName) {
             this.tableName = tableName;

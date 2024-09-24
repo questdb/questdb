@@ -26,9 +26,9 @@ package io.questdb.test.griffin.engine.functions.date;
 
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.date.ToDateFunctionFactory;
 import io.questdb.std.Numbers;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Test;
 
 public class ToDateVCFunctionFactoryTest extends AbstractFunctionFactoryTest {

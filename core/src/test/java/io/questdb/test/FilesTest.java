@@ -82,45 +82,6 @@ public class FilesTest {
     }
 
     @Test
-    public void testAllocateLoop() throws Exception {
-        assertMemoryLeak(() -> {
-            File temp = temporaryFolder.newFile();
-            TestUtils.writeStringToFile(temp, "abcde");
-            try (Path path = new Path().of(temp.getAbsolutePath())) {
-                Assert.assertTrue(Files.exists(path.$()));
-                Assert.assertEquals(5, Files.length(path.$()));
-                long fd = Files.openRW(path.$());
-
-                long M50 = 100 * 1024L * 1024L;
-                try {
-                    // If allocate tries to allocate by the given size
-                    // instead of to the size this will allocate 2TB and suppose to fail
-                    for (int i = 0; i < 20000; i++) {
-                        Files.allocate(fd, M50 + i);
-                        Assert.assertEquals(M50 + i, Files.length(path.$()));
-                    }
-                } finally {
-                    Files.close(fd);
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testDeleteOpenFile() throws Exception {
-        assertMemoryLeak(() -> {
-            try (Path path = new Path()) {
-                File f = temporaryFolder.newFile();
-                long fd = Files.openRW(path.of(f.getAbsolutePath()).$());
-                Assert.assertTrue(Files.exists(fd));
-                Assert.assertTrue(Files.remove(path.$()));
-                Assert.assertFalse(Files.exists(fd));
-                Files.close(fd);
-            }
-        });
-    }
-
-    @Test
     public void testAllocateConcurrent() throws IOException, InterruptedException {
         // This test allocates (but doesn't write to) potentially very large files
         // size of which will depend on free disk space of the host OS.
@@ -145,19 +106,23 @@ public class FilesTest {
     }
 
     @Test
-    public void testFailsToAllocateWhenNotEnoughSpace() throws Exception {
+    public void testAllocateLoop() throws Exception {
         assertMemoryLeak(() -> {
             File temp = temporaryFolder.newFile();
             TestUtils.writeStringToFile(temp, "abcde");
             try (Path path = new Path().of(temp.getAbsolutePath())) {
                 Assert.assertTrue(Files.exists(path.$()));
-                long fd = Files.openRW(path.$());
                 Assert.assertEquals(5, Files.length(path.$()));
+                long fd = Files.openRW(path.$());
 
+                long M50 = 100 * 1024L * 1024L;
                 try {
-                    long tb10 = 1024L * 1024L * 1024L * 1024L * 10; // 10TB
-                    boolean success = Files.allocate(fd, tb10);
-                    Assert.assertFalse("Allocation should fail on reasonable hard disk size", success);
+                    // If allocate tries to allocate by the given size
+                    // instead of to the size this will allocate 2TB and suppose to fail
+                    for (int i = 0; i < 20000; i++) {
+                        Files.allocate(fd, M50 + i);
+                        Assert.assertEquals(M50 + i, Files.length(path.$()));
+                    }
                 } finally {
                     Files.close(fd);
                 }
@@ -329,9 +294,17 @@ public class FilesTest {
     }
 
     @Test
-    public void testLongFd() throws Exception {
-        long unuqFd = Numbers.encodeLowHighInts(1000, -1);
-        Assert.assertTrue(unuqFd < 0);
+    public void testDeleteOpenFile() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                File f = temporaryFolder.newFile();
+                long fd = Files.openRW(path.of(f.getAbsolutePath()).$());
+                Assert.assertTrue(Files.exists(fd));
+                Assert.assertTrue(Files.remove(path.$()));
+                Assert.assertFalse(Files.exists(fd));
+                Files.close(fd);
+            }
+        });
     }
 
     @Test
@@ -469,9 +442,24 @@ public class FilesTest {
     }
 
     @Test
-    public void testLongFd2() throws Exception {
-        long unuqFd = Numbers.encodeLowHighInts(Integer.MAX_VALUE, 1000);
-        Assert.assertTrue(unuqFd > 0);
+    public void testFailsToAllocateWhenNotEnoughSpace() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+            TestUtils.writeStringToFile(temp, "abcde");
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                Assert.assertTrue(Files.exists(path.$()));
+                long fd = Files.openRW(path.$());
+                Assert.assertEquals(5, Files.length(path.$()));
+
+                try {
+                    long tb10 = 1024L * 1024L * 1024L * 1024L * 10; // 10TB
+                    boolean success = Files.allocate(fd, tb10);
+                    Assert.assertFalse("Allocation should fail on reasonable hard disk size", success);
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
     }
 
     @Test
@@ -590,6 +578,18 @@ public class FilesTest {
                 Assert.assertEquals("failed os=" + Os.errno(), 0, pFind);
             }
         });
+    }
+
+    @Test
+    public void testLongFd() throws Exception {
+        long unuqFd = Numbers.encodeLowHighInts(1000, -1);
+        Assert.assertTrue(unuqFd < 0);
+    }
+
+    @Test
+    public void testLongFd2() throws Exception {
+        long unuqFd = Numbers.encodeLowHighInts(Integer.MAX_VALUE, 1000);
+        Assert.assertTrue(unuqFd > 0);
     }
 
     @Test

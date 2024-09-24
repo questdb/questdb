@@ -25,8 +25,12 @@ use std::fs::File;
 use std::io;
 use std::mem::ManuallyDrop;
 
-fn from_raw_file_descriptor(raw: i32) -> File {
-    unsafe {
+pub trait FromRawFdI32Ext {
+    unsafe fn from_raw_fd_i32(raw: i32) -> Self;
+}
+
+impl FromRawFdI32Ext for File {
+    unsafe fn from_raw_fd_i32(raw: i32) -> Self {
         #[cfg(unix)]
         {
             use std::os::unix::io::{FromRawFd, RawFd};
@@ -47,10 +51,8 @@ pub struct NonOwningFile {
 }
 
 impl NonOwningFile {
-    pub(crate) fn from_raw_fd(raw_fd: i32) -> Self {
-        Self {
-            file: ManuallyDrop::new(from_raw_file_descriptor(raw_fd)),
-        }
+    pub fn new(file: File) -> Self {
+        Self { file: ManuallyDrop::new(file) }
     }
 }
 

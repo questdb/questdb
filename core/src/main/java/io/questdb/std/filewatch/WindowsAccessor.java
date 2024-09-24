@@ -32,11 +32,11 @@ public interface WindowsAccessor {
 
     long getFileName(long pWatch);
 
+    int getFileNameSize(long pWatch);
+
     long openDirectory(LPSZ dirName);
 
     boolean readDirectoryChanges(long pWatch);
 
     void stopWatch(long pWatch);
-
-    int getFileNameSize(long pWatch);
 }

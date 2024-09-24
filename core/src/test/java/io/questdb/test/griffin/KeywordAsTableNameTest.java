@@ -51,15 +51,6 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testVacuumTable() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table \"table\" (a int)");
-            assertException("vacuum table table", 13, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"table\"");
-            ddl("vacuum table \"table\"");
-        });
-    }
-
-    @Test
     public void testCreateTable() throws Exception {
         assertMemoryLeak(() -> {
             assertException("create table from (a int)", 13, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
@@ -277,6 +268,15 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             ddl("create table \"from\" (a int)");
             assertException("vacuum table from", 13, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
             ddl("vacuum table \"from\"");
+        });
+    }
+
+    @Test
+    public void testVacuumTable() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table \"table\" (a int)");
+            assertException("vacuum table table", 13, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"table\"");
+            ddl("vacuum table \"table\"");
         });
     }
 

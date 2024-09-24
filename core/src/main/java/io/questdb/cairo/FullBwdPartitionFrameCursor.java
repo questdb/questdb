@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 
 public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCursor {
     protected long rowGroupHi; // used for Parquet frames generation

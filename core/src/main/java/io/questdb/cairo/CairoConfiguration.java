@@ -306,6 +306,16 @@ public interface CairoConfiguration {
 
     int getParallelIndexThreshold();
 
+    int getPartitionEncoderParquetCompressionCodec();
+
+    int getPartitionEncoderParquetCompressionLevel();
+
+    int getPartitionEncoderParquetDataPageSize();
+
+    int getPartitionEncoderParquetRowGroupSize();
+
+    int getPartitionEncoderParquetVersion();
+
     long getPartitionO3SplitMinSize();
 
     int getPartitionPurgeListCapacity();
@@ -595,6 +605,8 @@ public interface CairoConfiguration {
     boolean isO3QuickSortEnabled();
 
     boolean isParallelIndexingEnabled();
+
+    boolean isPartitionEncoderParquetStatisticsEnabled();
 
     boolean isReadOnlyInstance();
 

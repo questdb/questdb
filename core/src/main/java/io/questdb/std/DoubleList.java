@@ -26,8 +26,8 @@ package io.questdb.std;
 
 import io.questdb.cairo.BinarySearch;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -107,10 +107,6 @@ public class DoubleList implements Mutable, Sinkable {
                 scanDown(value, low, high + 1);
     }
 
-    public void clear() {
-        pos = 0;
-    }
-
     public void checkCapacity(int capacity) {
         if (capacity < 0) {
             throw new IllegalArgumentException("Negative capacity. Integer overflow may be?");
@@ -123,6 +119,10 @@ public class DoubleList implements Mutable, Sinkable {
             System.arraycopy(data, 0, buf, 0, l);
             this.data = buf;
         }
+    }
+
+    public void clear() {
+        pos = 0;
     }
 
     @Override
