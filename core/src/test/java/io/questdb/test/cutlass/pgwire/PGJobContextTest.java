@@ -7606,12 +7606,10 @@ nodejs code:
     @Test
     public void testQueryTimeout() throws Exception {
         skipOnWalRun(); // non-partitioned table
-//        @Ignore("Instead of timing out, the test fails with 'limit of 16777216 memory exceeded in RedBlackTree'")
-        Assume.assumeFalse(testParamLegacyMode);
         assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_double() d from long_sequence(1000000))");
+            ddl("create table tab as (select rnd_double() d, rnd_long() l, rnd_int() i from long_sequence(500000))");
             try (
-                    final IPGWireServer server = createPGServer(1, Timestamps.SECOND_MILLIS);
+                    final IPGWireServer server = createPGServer(1, 300);
                     final WorkerPool workerPool = server.getWorkerPool()
             ) {
                 workerPool.start(LOG);
