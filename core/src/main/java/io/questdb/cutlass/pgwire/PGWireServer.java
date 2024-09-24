@@ -25,7 +25,7 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cutlass.pgwire.legacy.PGWireServerLegacy;
+import io.questdb.cutlass.pgwire.modern.PGWireServerModern;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.ObjectFactory;
@@ -43,8 +43,8 @@ public interface PGWireServer extends Closeable {
             ObjectFactory<SqlExecutionContextImpl> executionContextFactory
     ) {
         return configuration.isLegacyModeEnabled()
-                ? new PGWireServerLegacy(configuration, cairoEngine, workerPool, registry, executionContextFactory)
-                : new PGWireServerImpl(configuration, cairoEngine, workerPool, registry, executionContextFactory);
+                ? new PGWireServerImpl(configuration, cairoEngine, workerPool, registry, executionContextFactory)
+                : new PGWireServerModern(configuration, cairoEngine, workerPool, registry, executionContextFactory);
     }
 
     void clearSelectCache();

@@ -25,7 +25,6 @@
 package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
@@ -42,6 +41,8 @@ import io.questdb.std.str.Utf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.cairo.SecurityContext.AUTH_TYPE_CREDENTIALS;
+import static io.questdb.cairo.SecurityContext.AUTH_TYPE_NONE;
 import static io.questdb.cutlass.pgwire.PGConnectionContext.dumpBuffer;
 
 public class CleartextPasswordPgWireAuthenticator implements Authenticator {
@@ -66,6 +67,7 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
     private final CircuitBreakerRegistry registry;
     private final String serverVersion;
     private final ResponseSink sink;
+    private byte authType = AUTH_TYPE_NONE;
     private UsernamePasswordMatcher matcher;
     private long recvBufEnd;
     private long recvBufReadPos;
@@ -104,6 +106,8 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
 
     @Override
     public void clear() {
+        authType = AUTH_TYPE_NONE;
+
         circuitBreaker.setSecret(-1);
         circuitBreaker.resetMaxTimeToDefault();
         circuitBreaker.unsetTimer();
@@ -127,7 +131,7 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
 
     @Override
     public byte getAuthType() {
-        return SecurityContext.AUTH_TYPE_CREDENTIALS;
+        return authType;
     }
 
     public CharSequence getPrincipal() {
@@ -276,6 +280,8 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
     private void prepareBackendKeyData(ResponseSink responseSink) {
         responseSink.put('K');
         responseSink.putInt(Integer.BYTES * 3); // length of this message
+
+        // the below 8 bytes will not match when dumping PG traffic!
         responseSink.putInt(circuitBreakerId);
         responseSink.putInt(circuitBreaker.getSecret());
     }
@@ -406,8 +412,9 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
         // at this point we have a full message available ready to be processed
         recvBufReadPos += 1 + Integer.BYTES; // first move beyond the msgType and msgLen
 
-        long hi = PGConnectionContext.getUtf8StrSize(recvBufReadPos, msgLimit, "bad password length", null);
-        if (matcher.verifyPassword(username, recvBufReadPos, (int) (hi - recvBufReadPos))) {
+        long hi = PGConnectionContext.getStringLength(recvBufReadPos, msgLimit, "bad password length");
+        authType = verifyPassword(username, recvBufReadPos, (int) (hi - recvBufReadPos));
+        if (authType != AUTH_TYPE_NONE) {
             recvBufReadPos = msgLimit;
             state = State.AUTH_SUCCESS;
         } else {
@@ -425,9 +432,9 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
         // there is an extra byte at the end, and it has to be 0
         while (lo < msgLimit - 1) {
             final long nameLo = lo;
-            final long nameHi = PGConnectionContext.getUtf8StrSize(lo, msgLimit, "malformed property name", null);
+            final long nameHi = PGConnectionContext.getStringLength(lo, msgLimit, "malformed property name");
             final long valueLo = nameHi + 1;
-            final long valueHi = PGConnectionContext.getUtf8StrSize(valueLo, msgLimit, "malformed property value", null);
+            final long valueHi = PGConnectionContext.getStringLength(valueLo, msgLimit, "malformed property value");
             lo = valueHi + 1;
 
             // store user
@@ -441,8 +448,8 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
                 if (PGKeywords.startsWithTimeoutOption(valueLo, valueHi - valueLo)) {
                     try {
                         dus.of(valueLo + 21, valueHi, false);
-                        long statementTimeout = Numbers.parseLong(dus);
-                        optionsListener.setSqlTimeout(statementTimeout);
+                        long sqlTimeout = Numbers.parseLong(dus);
+                        optionsListener.setSqlTimeout(sqlTimeout);
                     } catch (NumericException ex) {
                         parsed = false;
                     }
@@ -492,6 +499,10 @@ public class CleartextPasswordPgWireAuthenticator implements Authenticator {
         return Authenticator.NEEDS_WRITE;
     }
 
+    // kept protected for ent
+    protected byte verifyPassword(CharSequence username, long passwordPtr, int passwordLen) {
+        return matcher.verifyPassword(username, passwordPtr, passwordLen) ? AUTH_TYPE_CREDENTIALS : AUTH_TYPE_NONE;
+    }
 
     private enum State {
         EXPECT_INIT_MESSAGE,

@@ -24,95 +24,29 @@
 
 package io.questdb.cutlass.pgwire;
 
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.InsertOperation;
-import io.questdb.std.AbstractSelfReturningObject;
-import io.questdb.std.IntList;
-import io.questdb.std.Transient;
 import io.questdb.std.WeakSelfReturningObjectPool;
 
-public class TypesAndInsert extends AbstractSelfReturningObject<TypesAndInsert> implements TypeContainer {
-    // Parameter types as received via "P" message. The client is liable to send
-    // arbitrary number of parameters, which does not have to match the number of actual
-    // bind variable used in the INSERT SQL. These are PostgresSQL OIDs in BigEndian.
-    private final IntList pgParameterTypeOIDs = new IntList();
-    // Bind variable columns types, typically scraped from BindVariableService after SQL is parsed. These are
-    // our column types and are LittleEndian.
-    private final IntList bindVariableColumnTypes = new IntList();
-    private boolean closing;
+public class TypesAndInsert extends AbstractTypeContainer<TypesAndInsert> {
     private boolean hasBindVariables;
     private InsertOperation insert;
-    private String sqlTag;
-    private short sqlType;
 
     public TypesAndInsert(WeakSelfReturningObjectPool<TypesAndInsert> parentPool) {
         super(parentPool);
-    }
-
-    @Override
-    public void close() {
-        if (!closing) {
-            closing = true;
-            super.close();
-            pgParameterTypeOIDs.clear();
-            bindVariableColumnTypes.clear();
-            closing = false;
-        }
     }
 
     public InsertOperation getInsert() {
         return insert;
     }
 
-    @Override
-    public IntList getPgParameterTypeOIDs() {
-        return pgParameterTypeOIDs;
-    }
-
-    public String getSqlTag() {
-        return sqlTag;
-    }
-
-    public short getSqlType() {
-        return sqlType;
-    }
-
     public boolean hasBindVariables() {
         return hasBindVariables;
     }
 
-    public void of(
-            InsertOperation insert,
-            short sqlType,
-            String sqlTag,
-            @Transient BindVariableService bindVariableService,
-            @Transient IntList pgParameterTypeOIDs
-    ) {
+    public void of(InsertOperation insert, BindVariableService bindVariableService) {
         this.insert = insert;
-        this.sqlType = sqlType;
-        this.sqlTag = sqlTag;
-        final int n = bindVariableService.getIndexedVariableCount();
-        this.hasBindVariables = n > 0;
-        for (int i = 0; i < n; i++) {
-            Function func = bindVariableService.getFunction(i);
-            // For bind variable find in vararg parameters functions are not
-            // created upfront. This is due to the type being unknown. On PG
-            // wire bind variable type and value are provided *after* the compilation.
-            if (func != null) {
-                this.bindVariableColumnTypes.add(func.getType());
-            } else {
-                this.bindVariableColumnTypes.add(ColumnType.UNDEFINED);
-            }
-        }
-
-        for (int i = 0, m = pgParameterTypeOIDs.size(); i < m; i++) {
-            this.pgParameterTypeOIDs.add(pgParameterTypeOIDs.getQuick(i));
-        }
-    }
-
-    public IntList getBindVariableColumnTypes() {
-        return bindVariableColumnTypes;
+        copyTypesFrom(bindVariableService);
+        this.hasBindVariables = bindVariableService.getIndexedVariableCount() > 0;
     }
 }

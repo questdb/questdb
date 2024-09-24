@@ -24,7 +24,7 @@
 
 package io.questdb.test.cutlass.pgwire;
 
-import io.questdb.cutlass.pgwire.TypesAndInsert;
+import io.questdb.cutlass.pgwire.modern.TypesAndInsert;
 import io.questdb.std.WeakSelfReturningObjectPool;
 import org.junit.Test;
 
