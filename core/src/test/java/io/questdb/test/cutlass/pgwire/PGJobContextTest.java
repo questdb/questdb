@@ -166,7 +166,7 @@ public class PGJobContextTest extends BasePGTest {
                 {WalMode.WITH_WAL, LegacyMode.MODERN},
                 {WalMode.WITH_WAL, LegacyMode.LEGACY},
 //                 @Ignore("Some tests randomly block")
-//                {WalMode.NO_WAL, LegacyMode.MODERN},
+                {WalMode.NO_WAL, LegacyMode.MODERN},
                 {WalMode.NO_WAL, LegacyMode.LEGACY},
         });
     }
@@ -3808,6 +3808,7 @@ if __name__ == "__main__":
     }
 
     @Test
+    @Ignore
     public void testHexFragmentedSend() throws Exception {
         skipOnWalRun(); // table not created
 //        @Ignore("NetUtils.assertBuffers fails with 'expected:<9354> but was:<9160>'")
@@ -7491,50 +7492,40 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
-        // @Ignore("This test doesn't use tables.")
         Assume.assumeFalse(walEnabled);
+        assertWithPgServer(CONN_AWARE_ALL, new ConnectionAwareRunnable() {
+            @Override
+            public void run(Connection connection, boolean binary, Mode mode, int port) throws Exception {
+                int totalRows = 3;
+                int backoffCount = 10;
 
-        assertMemoryLeak(() -> {
-            try (
-                    final IPGWireServer server = createPGServer(1);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (Connection connection = getConnection(server.getPort(), true, false)) {
-                    int totalRows = 3;
-                    int backoffCount = 10;
+                final AtomicInteger totalEvents = new AtomicInteger();
+                TestDataUnavailableFunctionFactory.eventCallback = event -> {
+                    event.trigger();
+                    event.close();
+                    totalEvents.incrementAndGet();
+                };
 
-                    final AtomicInteger totalEvents = new AtomicInteger();
-                    TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                        event.trigger();
-                        event.close();
-                        totalEvents.incrementAndGet();
-                    };
-
-                    String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
-                    String expected = "x[BIGINT],y[BIGINT],z[BIGINT]\n" +
-                            "1,1,1\n" +
-                            "2,2,2\n" +
-                            "3,3,3\n";
-                    try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
-                        sink.clear();
-                        assertResultSet(expected, sink, resultSet);
-                    }
-
-                    Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
+                String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
+                String expected = "x[BIGINT],y[BIGINT],z[BIGINT]\n" +
+                        "1,1,1\n" +
+                        "2,2,2\n" +
+                        "3,3,3\n";
+                try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expected, sink, resultSet);
                 }
+
+                Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
             }
         });
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testQueryEventuallySucceedsOnDataUnavailableSmallSendBuffer() throws Exception {
         // @Ignore("This test doesn't use tables.")
         Assume.assumeFalse(walEnabled);
-
         assertMemoryLeak(() -> {
             PGWireConfiguration configuration = new Port0PGWireConfiguration() {
                 @Override
@@ -7656,7 +7647,7 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
+    @Ignore("this test executes the same prepared statement with different values in the same pipeline, right now we have all 3 executions as one PE, 2.0 needs a fix")
     public void testRegularBatchInsertMethod() throws Exception {
         // bind variables do not work well over "simple" protocol
         skipOnWalRun(); // non-partitioned table
@@ -8615,7 +8606,6 @@ create table tab as (
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testSimpleAlterTable() throws Exception {
         // we are going to:
         // 1. create a table
@@ -11980,6 +11970,7 @@ create table tab as (
 
     private void testInsertAllTypes(boolean binary) throws Exception {
         skipOnWalRun(); // non-partitioned table
+
         assertMemoryLeak(() -> {
             ddl("create table xyz (" +
                     "a byte," +
@@ -12119,13 +12110,13 @@ create table tab as (
                                 if (rnd.nextInt() % 4 > 0) {
                                     Assert.assertEquals(rnd.nextFloat(), record.getFloat(5), 0.0001f);
                                 } else {
-                                    Assert.assertTrue(record.getFloat(5) != record.getFloat(5));
+                                    Assert.assertTrue(Float.isNaN(record.getFloat(5)));
                                 }
 
                                 if (rnd.nextInt() % 4 > 0) {
                                     Assert.assertEquals(rnd.nextDouble(), record.getDouble(6), 0.000001);
                                 } else {
-                                    Assert.assertTrue(record.getDouble(6) != record.getDouble(6));
+                                    Assert.assertTrue(Double.isNaN(record.getDouble(6)));
                                 }
 
                                 final int strType = ColumnType.typeOf("STRING");

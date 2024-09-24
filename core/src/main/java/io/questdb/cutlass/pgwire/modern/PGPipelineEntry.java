@@ -1461,7 +1461,6 @@ public class PGPipelineEntry implements QuietCloseable {
                 outRecord(utf8Sink, record, columnCount);
             }
         } catch (DataUnavailableException e) {
-            stateSync = 100; // query is paused
             utf8Sink.resetToBookmark();
             throw QueryPausedException.instance(e.getEvent(), sqlExecutionContext.getCircuitBreaker());
         } catch (NoSpaceLeftInResponseBufferException e) {
