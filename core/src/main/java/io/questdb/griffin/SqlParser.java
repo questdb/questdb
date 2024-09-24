@@ -101,8 +101,7 @@ public class SqlParser {
         this.expressionTreeBuilder = new ExpressionTreeBuilder();
         this.windowColumnPool = new ObjectPool<>(WindowColumn.FACTORY, configuration.getWindowColumnPoolCapacity());
         this.createTableModelPool = new ObjectPool<>(CreateTableModel.FACTORY, configuration.getCreateTableModelPoolCapacity());
-        // TODO: add configuration.getCreateMatViewModelPoolCapacity()
-        this.createMatViewModelPool = new ObjectPool<>(CreateMatViewModel.FACTORY, configuration.getCreateTableModelPoolCapacity());
+        this.createMatViewModelPool = new ObjectPool<>(CreateMatViewModel.FACTORY, configuration.getCreateMatViewModelPoolCapacity());
         this.columnCastModelPool = new ObjectPool<>(ColumnCastModel.FACTORY, configuration.getColumnCastModelPoolCapacity());
         this.renameTableModelPool = new ObjectPool<>(RenameTableModel.FACTORY, configuration.getRenameTableModelPoolCapacity());
         this.withClauseModelPool = new ObjectPool<>(WithClauseModel.FACTORY, configuration.getWithClauseModelPoolCapacity());
@@ -573,7 +572,7 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
         final CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch' or 'materialized'");
-        if (SqlKeywords.isMaterializedKeyword(tok)) {
+        if (SqlKeywords.isMaterializedKeyword(tok) && configuration.isMatViewEnabled()) {
             return parseCreateMatView(lexer, executionContext, sqlParserCallback);
         }
         return parseCreateTable(lexer, tok, executionContext, sqlParserCallback);

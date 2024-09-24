@@ -196,6 +196,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getCreateMatViewModelPoolCapacity() {
+        return getDelegate().getCreateMatViewModelPoolCapacity();
+    }
+
+    @Override
+    public int getCreateMatViewRetryCount() {
+        return getDelegate().getCreateMatViewRetryCount();
+    }
+
+    @Override
     public long getCreateTableModelBatchSize() {
         return getDelegate().getCreateTableModelBatchSize();
     }
@@ -518,6 +528,31 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getParallelIndexThreshold() {
         return getDelegate().getParallelIndexThreshold();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetCompressionCodec() {
+        return getDelegate().getPartitionEncoderParquetCompressionCodec();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetCompressionLevel() {
+        return getDelegate().getPartitionEncoderParquetCompressionLevel();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetDataPageSize() {
+        return getDelegate().getPartitionEncoderParquetDataPageSize();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetRowGroupSize() {
+        return getDelegate().getPartitionEncoderParquetRowGroupSize();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetVersion() {
+        return getDelegate().getPartitionEncoderParquetVersion();
     }
 
     @Override
@@ -1086,6 +1121,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewEnabled() {
+        return getDelegate().isMatViewEnabled();
+    }
+
+    @Override
     public boolean isMultiKeyDedupEnabled() {
         return getDelegate().isMultiKeyDedupEnabled();
     }
@@ -1098,6 +1138,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isParallelIndexingEnabled() {
         return getDelegate().isParallelIndexingEnabled();
+    }
+
+    @Override
+    public boolean isPartitionEncoderParquetStatisticsEnabled() {
+        return getDelegate().isPartitionEncoderParquetStatisticsEnabled();
     }
 
     @Override
@@ -1162,36 +1207,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean useFastAsOfJoin() {
         return getDelegate().useFastAsOfJoin();
-    }
-
-    @Override
-    public int getPartitionEncoderParquetVersion() {
-        return getDelegate().getPartitionEncoderParquetVersion();
-    }
-
-    @Override
-    public boolean isPartitionEncoderParquetStatisticsEnabled() {
-        return getDelegate().isPartitionEncoderParquetStatisticsEnabled();
-    }
-
-    @Override
-    public int getPartitionEncoderParquetCompressionCodec() {
-        return getDelegate().getPartitionEncoderParquetCompressionCodec();
-    }
-
-    @Override
-    public int getPartitionEncoderParquetCompressionLevel() {
-        return getDelegate().getPartitionEncoderParquetCompressionLevel();
-    }
-
-    @Override
-    public int getPartitionEncoderParquetRowGroupSize() {
-        return getDelegate().getPartitionEncoderParquetRowGroupSize();
-    }
-
-    @Override
-    public int getPartitionEncoderParquetDataPageSize() {
-        return getDelegate().getPartitionEncoderParquetDataPageSize();
     }
 
     protected CairoConfiguration getDelegate() {

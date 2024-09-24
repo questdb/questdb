@@ -2116,12 +2116,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void createMatViewWithRetries(
-            ExecutionModel executionModel,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        // TODO: add a separate max retry config for create mat view, do not use configuration.getCreateAsSelectRetryCount()
-        executeWithRetries(createMatViewMethod, executionModel, configuration.getCreateAsSelectRetryCount(), executionContext);
+    private void createMatViewWithRetries(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
+        executeWithRetries(createMatViewMethod, executionModel, configuration.getCreateMatViewRetryCount(), executionContext);
     }
 
     private void createTable(final ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {

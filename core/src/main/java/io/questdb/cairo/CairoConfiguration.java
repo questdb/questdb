@@ -131,6 +131,10 @@ public interface CairoConfiguration {
 
     int getCreateAsSelectRetryCount();
 
+    int getCreateMatViewModelPoolCapacity();
+
+    int getCreateMatViewRetryCount();
+
     long getCreateTableModelBatchSize();
 
     int getCreateTableModelPoolCapacity();
@@ -305,6 +309,16 @@ public interface CairoConfiguration {
     int getPageFrameReduceShardCount();
 
     int getParallelIndexThreshold();
+
+    int getPartitionEncoderParquetCompressionCodec();
+
+    int getPartitionEncoderParquetCompressionLevel();
+
+    int getPartitionEncoderParquetDataPageSize();
+
+    int getPartitionEncoderParquetRowGroupSize();
+
+    int getPartitionEncoderParquetVersion();
 
     long getPartitionO3SplitMinSize();
 
@@ -588,11 +602,15 @@ public interface CairoConfiguration {
 
     boolean isIOURingEnabled();
 
+    boolean isMatViewEnabled();
+
     boolean isMultiKeyDedupEnabled();
 
     boolean isO3QuickSortEnabled();
 
     boolean isParallelIndexingEnabled();
+
+    boolean isPartitionEncoderParquetStatisticsEnabled();
 
     boolean isReadOnlyInstance();
 
@@ -628,16 +646,4 @@ public interface CairoConfiguration {
     }
 
     boolean useFastAsOfJoin();
-
-    int getPartitionEncoderParquetVersion();
-
-    boolean isPartitionEncoderParquetStatisticsEnabled();
-
-    int getPartitionEncoderParquetCompressionCodec();
-
-    int getPartitionEncoderParquetCompressionLevel();
-
-    int getPartitionEncoderParquetRowGroupSize();
-
-    int getPartitionEncoderParquetDataPageSize();
 }

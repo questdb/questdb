@@ -35,7 +35,6 @@ import io.questdb.std.str.Sinkable;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.text.ParseException;
@@ -49,15 +48,11 @@ public class CreateMatViewTest extends AbstractCairoTest {
     private static final String TABLE2 = "table2";
     private static final String TABLE3 = "table3";
 
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
-        AbstractCairoTest.setUpStatic();
-    }
-
     @Before
     public void setUp() {
         super.setUp();
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         engine.getMaterializedViewGraph().clear();
     }
 
