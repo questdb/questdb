@@ -69,10 +69,7 @@ import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.StationaryMicrosClock;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.*;
 
 import java.util.Arrays;
 
@@ -83,6 +80,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public static void setUpStatic() throws Exception {
         testMicrosClock = StationaryMicrosClock.INSTANCE;
         AbstractCairoTest.setUpStatic();
+    }
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "true");
+        engine.getMaterializedViewGraph().clear();
     }
 
     @Test
