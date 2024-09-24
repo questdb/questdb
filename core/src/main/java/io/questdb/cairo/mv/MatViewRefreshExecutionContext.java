@@ -28,12 +28,15 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.model.IntrinsicModel;
 
 public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
     private final CairoEngine engine;
     private TableReader baseTableReader;
     private TableToken viewTableToken;
+    private final IndexedParameterLinkFunction fromFunction = new IndexedParameterLinkFunction(1, ColumnType.LONG, 0);
+    private final IndexedParameterLinkFunction toFunction = new IndexedParameterLinkFunction(2, ColumnType.LONG, 0);
 
     public MatViewRefreshExecutionContext(CairoEngine engine) {
         super(engine, 1);
@@ -81,7 +84,7 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
             return;
         }
 
-        intrinsicModel.setBetweenBoundary(getBindVariableService().getFunction(":from"));
-        intrinsicModel.setBetweenBoundary(getBindVariableService().getFunction(":to"));
+        intrinsicModel.setBetweenBoundary(fromFunction);
+        intrinsicModel.setBetweenBoundary(toFunction);
     }
 }
