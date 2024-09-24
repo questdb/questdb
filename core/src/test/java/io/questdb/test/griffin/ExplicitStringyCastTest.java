@@ -54,6 +54,7 @@ public class ExplicitStringyCastTest extends AbstractCairoTest {
             " from long_sequence(1))";
     private final String castType;
     private final String expectedCastValue;
+
     public ExplicitStringyCastTest(String castType, String expectedCastValue) {
         this.castType = castType;
         this.expectedCastValue = expectedCastValue;

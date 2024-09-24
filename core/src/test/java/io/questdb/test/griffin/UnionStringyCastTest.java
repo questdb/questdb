@@ -56,6 +56,7 @@ public class UnionStringyCastTest extends AbstractCairoTest {
     private final String expectedStringyValue;
     private final String selectFromCastTable;
     private final String stringyType;
+
     public UnionStringyCastTest(String stringyType, String castType, String expectedCastValue) {
         this.stringyType = stringyType;
         selectFromCastTable = "(select a_" + castType + " as a from cast_table)";
