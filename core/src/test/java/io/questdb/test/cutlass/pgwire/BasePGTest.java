@@ -48,12 +48,15 @@ import io.questdb.std.str.Utf16Sink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
+import org.checkerframework.checker.nullness.qual.NonNull;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.sql.*;
+import java.util.Arrays;
+import java.util.Collection;
 import java.util.Properties;
 import java.util.TimeZone;
 
@@ -93,11 +96,16 @@ public abstract class BasePGTest extends AbstractCairoTest {
                     | CONN_AWARE_EXTENDED_CACHED_BINARY
                     | CONN_AWARE_EXTENDED_CACHED_TEXT
                     | CONN_AWARE_QUIRKS;
+    protected final boolean testParamLegacyMode;
     protected CopyRequestJob copyRequestJob = null;
     protected int forceRecvFragmentationChunkSize = 1024 * 1024;
     protected int forceSendFragmentationChunkSize = 1024 * 1024;
     protected int recvBufferSize = 1024 * 1024;
     protected int sendBufferSize = 1024 * 1024;
+
+    protected BasePGTest(@NonNull LegacyMode legacyMode) {
+        this.testParamLegacyMode = legacyMode == LegacyMode.LEGACY;
+    }
 
     public static void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
         assertResultSet(null, expected, sink, rs);
@@ -137,7 +145,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
                 () -> new SqlExecutionContextImpl(cairoEngine, workerPool.getWorkerCount(), workerPool.getWorkerCount())
         );
     }
-
 
     public static PGWireServer createPGWireServer(
             PGWireConfiguration configuration,
@@ -347,6 +354,12 @@ public abstract class BasePGTest extends AbstractCairoTest {
         return DriverManager.getConnection(url, properties);
     }
 
+    static Collection<Object[]> legacyModeParams() {
+        return Arrays.asList(new Object[][]{
+                {LegacyMode.MODERN}, {LegacyMode.LEGACY}
+        });
+    }
+
     protected void assertWithPgServer(
             Mode mode,
             boolean binary,
@@ -488,7 +501,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
             }
         };
 
-        final PGWireConfiguration conf = new Port0PGWireConfiguration(connectionLimit) {
+        final PGWireConfiguration conf = new Port0PGWireConfiguration(connectionLimit, testParamLegacyMode) {
 
             @Override
             public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
@@ -645,6 +658,10 @@ public abstract class BasePGTest extends AbstractCairoTest {
                 return new Rnd();
             }
         };
+    }
+
+    public enum LegacyMode {
+        MODERN, LEGACY
     }
 
     public enum Mode {

@@ -350,7 +350,7 @@ public abstract class BasePGLegacyTest extends AbstractCairoTest {
     protected void assertWithPgServer(
             Mode mode,
             boolean binary,
-            PGJobContextLegacyTest.ConnectionAwareRunnable runnable,
+            ConnectionAwareRunnable runnable,
             int prepareThreshold,
             long queryTimeout
     ) throws Exception {
@@ -376,7 +376,7 @@ public abstract class BasePGLegacyTest extends AbstractCairoTest {
         }
     }
 
-    protected void assertWithPgServer(long bits, long queryTimeout, PGJobContextLegacyTest.ConnectionAwareRunnable runnable) throws Exception {
+    protected void assertWithPgServer(long bits, long queryTimeout, ConnectionAwareRunnable runnable) throws Exception {
         if ((bits & BasePGLegacyTest.CONN_AWARE_SIMPLE_BINARY) == BasePGLegacyTest.CONN_AWARE_SIMPLE_BINARY) {
             LOG.info().$("Mode: asserting simple binary").$();
 //            assertWithPgServer(Mode.SIMPLE, true, runnable, -2, queryTimeout);
@@ -434,7 +434,7 @@ public abstract class BasePGLegacyTest extends AbstractCairoTest {
         }
     }
 
-    protected void assertWithPgServer(long bits, PGJobContextLegacyTest.ConnectionAwareRunnable runnable) throws Exception {
+    protected void assertWithPgServer(long bits, ConnectionAwareRunnable runnable) throws Exception {
         assertWithPgServer(bits, Long.MAX_VALUE, runnable);
     }
 
@@ -668,5 +668,10 @@ public abstract class BasePGLegacyTest extends AbstractCairoTest {
         Mode(String value) {
             this.value = value;
         }
+    }
+
+    @FunctionalInterface
+    interface ConnectionAwareRunnable {
+        void run(Connection connection, boolean binary, Mode mode, int port) throws Exception;
     }
 }

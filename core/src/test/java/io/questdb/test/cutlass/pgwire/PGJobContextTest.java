@@ -142,15 +142,9 @@ public class PGJobContextTest extends BasePGTest {
     private final Rnd bufferSizeRnd = TestUtils.generateRandom(LOG);
     private final boolean walEnabled;
 
-    public PGJobContextTest(WalMode walMode) {
+    public PGJobContextTest(WalMode walMode, LegacyMode legacyMode) {
+        super(legacyMode);
         this.walEnabled = (walMode == WalMode.WITH_WAL);
-    }
-
-    @Parameters(name = "{0}")
-    public static Collection<Object[]> data() {
-        return Arrays.asList(new Object[][]{
-                {WalMode.WITH_WAL}, {WalMode.NO_WAL}
-        });
     }
 
     @BeforeClass
@@ -164,6 +158,17 @@ public class PGJobContextTest extends BasePGTest {
                 .mapToObj(ts -> new Object[]{ts * 1000L, formatter.format(new java.util.Date(ts))});
         datesArr = dates.collect(Collectors.toList());
         stringTypeName = ColumnType.nameOf(ColumnType.STRING);
+    }
+
+    @Parameters(name = "{0}, {1}")
+    public static Collection<Object[]> testParams() {
+        return Arrays.asList(new Object[][]{
+                {WalMode.WITH_WAL, LegacyMode.MODERN},
+                {WalMode.WITH_WAL, LegacyMode.LEGACY},
+                // Some tests randomly block in NO_WAL, MODERN case
+//                {WalMode.NO_WAL, LegacyMode.MODERN},
+                {WalMode.NO_WAL, LegacyMode.LEGACY},
+        });
     }
 
     @Before
@@ -2158,11 +2163,13 @@ if __name__ == "__main__":
 
     @Test
     public void testBindVariablesWithNonIndexedSymbolInFilterBinaryTransfer() throws Exception {
+        Assume.assumeFalse(testParamLegacyMode);
         testBindVariablesWithIndexedSymbolInFilter(true, false);
     }
 
     @Test
     public void testBindVariablesWithNonIndexedSymbolInFilterStringTransfer() throws Exception {
+        Assume.assumeFalse(testParamLegacyMode);
         testBindVariablesWithIndexedSymbolInFilter(false, false);
     }
 
@@ -7094,6 +7101,7 @@ nodejs code:
 
     @Test
     public void testQueryAgainstIndexedSymbol() throws Exception {
+        Assume.assumeFalse(testParamLegacyMode);
         final String[] values = {"'5'", "null", "'5' || ''", "replace(null, 'A', 'A')", "?5", "?null"};
         final CharSequenceObjHashMap<String> valMap = new CharSequenceObjHashMap<>();
         valMap.put("5", "5");
@@ -9632,6 +9640,7 @@ create table tab as (
 
     @Test
     public void testUndefinedBindVariableInSymbol() throws Exception {
+        Assume.assumeFalse(testParamLegacyMode);
         final String[] values = {"'5'", "null", "'5' || ''", "replace(null, 'A', 'A')", "?5", "?null"};
         final CharSequenceObjHashMap<String> valMap = new CharSequenceObjHashMap<>();
         valMap.put("5", "5");

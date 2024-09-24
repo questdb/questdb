@@ -41,10 +41,13 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
 import org.postgresql.util.PSQLException;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.util.Collection;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -52,13 +55,23 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT;
 
+@RunWith(Parameterized.class)
 public class PGUpdateConcurrentTest extends BasePGTest {
     private static final ThreadLocal<StringSink> readerSink = new ThreadLocal<>(StringSink::new);
+
+    public PGUpdateConcurrentTest(LegacyMode legacyMode) {
+        super(legacyMode);
+    }
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
         setProperty(PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 256);
         AbstractCairoTest.setUpStatic();
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> testParams() {
+        return legacyModeParams();
     }
 
     @Override
@@ -69,62 +82,62 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     }
 
     @Test
-    @Ignore
     public void testConcurrencyMultipleWriterMultipleReaderMultiPartitioned() throws Exception {
+        Assume.assumeTrue(testParamLegacyMode);
         testConcurrency(4, 10, 8, PartitionMode.MULTIPLE);
     }
 
     @Test
-    @Ignore
     public void testConcurrencyMultipleWriterMultipleReaderNonPartitioned() throws Exception {
+        Assume.assumeTrue(testParamLegacyMode);
         testConcurrency(4, 10, 8, PartitionMode.NONE);
     }
 
     @Test
-    @Ignore
     public void testConcurrencyMultipleWriterMultipleReaderSinglePartitioned() throws Exception {
+        Assume.assumeTrue(testParamLegacyMode);
         testConcurrency(4, 10, 8, PartitionMode.SINGLE);
     }
 
     @Test
-    @Ignore
     public void testConcurrencySingleWriterMultipleReaderMultiPartitioned() throws Exception {
+        Assume.assumeTrue(testParamLegacyMode);
         testConcurrency(1, 10, 25, PartitionMode.MULTIPLE);
     }
 
     @Test
-    @Ignore
     public void testConcurrencySingleWriterMultipleReaderNonPartitioned() throws Exception {
+        Assume.assumeTrue(testParamLegacyMode);
         testConcurrency(1, 10, 40, PartitionMode.NONE);
     }
 
     @Test
-    @Ignore
     public void testConcurrencySingleWriterMultipleReaderSinglePartitioned() throws Exception {
+        Assume.assumeTrue(testParamLegacyMode);
         testConcurrency(1, 10, 40, PartitionMode.SINGLE);
     }
 
     @Test
-    @Ignore
     public void testConcurrencySingleWriterSingleReaderMultiPartitioned() throws Exception {
+        Assume.assumeTrue(testParamLegacyMode);
         testConcurrency(1, 1, 30, PartitionMode.MULTIPLE);
     }
 
     @Test
-    @Ignore
     public void testConcurrencySingleWriterSingleReaderNonPartitioned() throws Exception {
+        Assume.assumeTrue(testParamLegacyMode);
         testConcurrency(1, 1, 50, PartitionMode.NONE);
     }
 
     @Test
-    @Ignore
     public void testConcurrencySingleWriterSingleReaderSinglePartitioned() throws Exception {
+        Assume.assumeTrue(testParamLegacyMode);
         testConcurrency(1, 1, 50, PartitionMode.SINGLE);
     }
 
     @Test
-    @Ignore
     public void testUpdateTimeout() throws Exception {
+        Assume.assumeTrue(testParamLegacyMode);
         assertMemoryLeak(() -> {
             try (
                     PGWireServer server1 = createPGServer(1);
