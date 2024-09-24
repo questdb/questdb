@@ -33,26 +33,16 @@ import io.questdb.std.str.Utf8Sequence;
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
 
 public class PartitionEncoder {
-    public static int COMPRESSION_BROTLI = 4;
-    public static int COMPRESSION_GZIP = 2;
-    public static int COMPRESSION_LZ4 = 5;
-    public static int COMPRESSION_LZ4_RAW = 7;
-    public static int COMPRESSION_LZO = 3;
-    public static int COMPRESSION_SNAPPY = 1;
-    public static int COMPRESSION_UNCOMPRESSED = 0;
-    public static int COMPRESSION_ZSTD = 6;
-    public static int PARQUET_VERSION_V1 = 1;
-    public static int PARQUET_VERSION_V2 = 2;
 
     public static void encode(PartitionDescriptor descriptor, Path destPath) {
         encodeWithOptions(
                 descriptor,
                 destPath,
-                COMPRESSION_UNCOMPRESSED,
+                ParquetCompression.COMPRESSION_UNCOMPRESSED,
                 true,
-                0, // DEFAULT_ROW_GROUP_SIZE
-                0, // DEFAULT_DATA_PAGE_SIZE
-                PARQUET_VERSION_V1
+                0, // DEFAULT_ROW_GROUP_SIZE (512 * 512) rows
+                0, // DEFAULT_DATA_PAGE_SIZE (1024 * 1024) bytes
+                ParquetVersion.PARQUET_VERSION_V1
         );
     }
 
@@ -75,18 +65,10 @@ public class PartitionEncoder {
                     tableName.size(),
                     columnCount,
                     descriptor.getColumnNamesPtr(),
-                    descriptor.getColumnNamesSize(),
-                    descriptor.getColumnNameLengthsPtr(),
-                    descriptor.getColumnTypesPtr(),
-                    descriptor.getColumnIdsPtr(),
+                    descriptor.getColumnNamesLen(),
+                    descriptor.getColumnDataPtr(),
+                    descriptor.getColumnDataLen(),
                     timestampIndex,
-                    descriptor.getColumnTopsPtr(),
-                    descriptor.getColumnAddressesPtr(),
-                    descriptor.getColumnSizesPtr(),
-                    descriptor.getColumnSecondaryAddressesPtr(),
-                    descriptor.getColumnSecondarySizesPtr(),
-                    descriptor.getSymbolOffsetsAddressesPtr(),
-                    descriptor.getSymbolOffsetsSizesPtr(),
                     partitionSize,
                     destPath.ptr(),
                     destPath.size(),
@@ -110,7 +92,7 @@ public class PartitionEncoder {
         final long partitionSize = tableReader.openPartition(partitionIndex);
         assert partitionSize != 0;
         final int timestampIndex = tableReader.getMetadata().getTimestampIndex();
-        descriptor.of(tableReader.getTableToken().getTableName(), partitionSize, timestampIndex, false);
+        descriptor.of(tableReader.getTableToken().getTableName(), partitionSize, timestampIndex);
 
         final TableReaderMetadata metadata = tableReader.getMetadata();
         final int columnCount = metadata.getColumnCount();
@@ -178,18 +160,10 @@ public class PartitionEncoder {
             int tableNameSize,
             int columnCount,
             long columnNamesPtr,
-            int columnNamesLength,
-            long columnNameLengthsPtr,
-            long columnTypesPtr,
-            long columnIdsPtr,
+            int columnNamesSize,
+            long columnDataPtr,
+            long columnDataSize,
             int timestampIndex,
-            long columnTopsPtr,
-            long columnAddrsPtr,
-            long columnSizesPtr,
-            long columnSecondaryAddrsPtr,
-            long columnSecondarySizesPtr,
-            long symbolOffsetsAddrsPtr,
-            long symbolOffsetsSizesPtr,
             long rowCount,
             long destPathPtr,
             int destPathLength,

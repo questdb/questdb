@@ -57,6 +57,7 @@ public class O3PartitionTask {
     private long srcOooMax;
     private TableWriter tableWriter;
     private long txn;
+    private boolean isParquet;
 
     public AtomicInteger getColumnCounter() {
         return columnCounter;
@@ -146,6 +147,10 @@ public class O3PartitionTask {
         return last;
     }
 
+    public boolean isParquet() {
+        return isParquet;
+    }
+
     public void of(
             Path path,
             int partitionBy,
@@ -168,7 +173,8 @@ public class O3PartitionTask {
             long newPartitionSize,
             long oldPartitionSize,
             long partitionUpdateSinkAddr,
-            long dedupColSinkAddr
+            long dedupColSinkAddr,
+            boolean isParquet
     ) {
         this.pathToTable = path;
         this.txn = txn;
@@ -192,5 +198,6 @@ public class O3PartitionTask {
         this.oldPartitionSize = oldPartitionSize;
         this.partitionUpdateSinkAddr = partitionUpdateSinkAddr;
         this.dedupColSinkAddr = dedupColSinkAddr;
+        this.isParquet = isParquet;
     }
 }

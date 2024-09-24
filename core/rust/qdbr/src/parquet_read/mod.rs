@@ -1,6 +1,7 @@
 use crate::parquet_write::schema::ColumnType;
 use parquet2::metadata::FileMetaData;
 use std::fs::File;
+use std::ptr;
 
 mod column_sink;
 mod decode;
@@ -20,6 +21,7 @@ pub struct ParquetDecoder {
     metadata: FileMetaData,
     decompress_buffer: Vec<u8>,
     column_buffers: Vec<ColumnChunkBuffers>,
+    column_chunk_stats: Vec<ColumnChunkStats>,
 }
 
 #[repr(C)]
@@ -42,4 +44,20 @@ pub struct ColumnChunkBuffers {
     pub aux_size: usize,
     pub data_vec: Vec<u8>,
     pub aux_vec: Vec<u8>,
+}
+#[repr(C)]
+pub struct ColumnChunkStats {
+    pub min_value_ptr: *mut u8,
+    pub min_value_size: usize,
+    pub min_value: Vec<u8>,
+}
+
+impl ColumnChunkStats {
+    pub fn new() -> Self {
+        Self {
+            min_value_ptr: ptr::null_mut(),
+            min_value_size: 0,
+            min_value: Vec::new(),
+        }
+    }
 }
