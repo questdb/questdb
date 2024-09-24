@@ -73,17 +73,17 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
                 long sampleByPeriod = viewDefinition.getSampleByPeriodMicros();
                 long sampleByFromEpoch = viewDefinition.getSampleByFromEpochMicros();
                 minTs = sampleByFromEpoch + (minTs - sampleByFromEpoch) / sampleByPeriod * sampleByPeriod;
-                maxTs = sampleByFromEpoch + ((maxTs - sampleByFromEpoch + sampleByPeriod - 1) / sampleByPeriod) * sampleByPeriod;
+                maxTs = sampleByFromEpoch + ((maxTs - sampleByFromEpoch + sampleByPeriod) / sampleByPeriod) * sampleByPeriod;
 
                 executionContext.getBindVariableService().setTimestamp("from", minTs);
-                executionContext.getBindVariableService().setTimestamp("to", maxTs);
+                executionContext.getBindVariableService().setTimestamp("to", maxTs - 1);
 
                 LOG.info().$("refreshing materialized view [view=").$(viewDefinition.getTableToken())
                         .$(", base=").$(baseTableReader.getTableToken())
                         .$(", fromTxn=").$(lastRefreshTxn)
                         .$(", toTxn=").$(lastTxn)
-                        .$(", from=").$ts(minTs)
-                        .$(", to=").$ts(maxTs)
+                        .$(", ts>=").$ts(minTs)
+                        .$(", ts<").$ts(maxTs)
                         .I$();
 
                 return true;
@@ -190,6 +190,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
     }
 
     private boolean refreshAll() {
+        LOG.info().$("refreshing ALL materialized views").$();
         baseTables.clear();
         MatViewGraph viewGraph = engine.getMaterializedViewGraph();
         viewGraph.getAllBaseTables(baseTables);
@@ -247,7 +248,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
         boolean refreshed = false;
         do {
             cursor = subSequence.next();
-            if (cursor > 0) {
+            if (cursor > -1) {
                 TableToken baseTable, viewTable;
                 try {
                     MvRefreshTask refreshTask = refreshTaskQueue.get(cursor);
@@ -257,6 +258,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
                     subSequence.done(cursor);
                 }
 
+                LOG.info().$("refreshing materialized views dependent on after notification [table=").$(baseTable).I$();
                 refreshed |= refreshDependentViews(baseTable, materializedViewGraph);
             }
         } while (cursor != -1);
@@ -323,5 +325,6 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
             this.queueFullCount = queueFullCount;
         }
         return refreshed;
+//        return refreshAll();
     }
 }

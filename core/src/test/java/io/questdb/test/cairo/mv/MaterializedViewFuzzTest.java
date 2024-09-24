@@ -49,7 +49,7 @@ public class MaterializedViewFuzzTest extends AbstractFuzzTest {
             String mvName = testName.getMethodName() + "_mv";
             String mv2Name = testName.getMethodName() + "_mv2";
             TableToken baseToken = fuzzer.createInitialTable(tableName, true);
-            Rnd rnd = fuzzer.generateRandom(LOG);
+            Rnd rnd = fuzzer.generateRandom(LOG, 217362487404625L, 1727112976045L);
 
             String viewSql = "select min(c3), max(c3), ts from  " + tableName + " sample by 1h";
             createMatView(

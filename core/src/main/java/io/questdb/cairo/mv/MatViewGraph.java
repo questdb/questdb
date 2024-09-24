@@ -116,8 +116,9 @@ public class MatViewGraph implements QuietCloseable {
         if (state != null) {
             if (state.notifyOnBaseTableCommitNoLock(seqTxn)) {
                 addToRefreshQueue(tableToken);
+                LOG.info().$("refresh notified table=").$(tableToken.getTableName()).$();
             } else {
-                LOG.info().$("no need to refresh table=").$(tableToken.getTableName()).$();
+                LOG.info().$("no need to notify to refresh table=").$(tableToken.getTableName()).$();
             }
         }
     }
