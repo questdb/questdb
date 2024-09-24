@@ -54,7 +54,8 @@ tests:
   - name: Smoke Test
     description: Testing another test-case inside the same file
     steps:
-      - action: query truncated table
+      - action: query a pseudo table
+        iterations: 2
         query: "SELECT x FROM long_sequence(5)"
         expect:
           result:

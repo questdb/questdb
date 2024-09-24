@@ -187,7 +187,9 @@ async def main(yaml_file):
     tests = data.get('tests', [])
 
     for test in tests:
-        await run_test(test, global_variables)
+        iterations = test.get('iterations', 50)
+        for _ in range(iterations):
+            await run_test(test, global_variables)
 
 
 if __name__ == '__main__':

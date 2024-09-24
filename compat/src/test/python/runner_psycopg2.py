@@ -196,15 +196,17 @@ def main(yaml_file):
     tests = data.get('tests', [])
 
     for test in tests:
-        connection = psycopg2.connect(
-            host='localhost',
-            port=8812,
-            user='admin',
-            password='quest',
-            database='qdb'
-        )
-        run_test(test, global_variables, connection)
-        connection.close()
+        iterations = test.get('iterations', 50)
+        for i in range(iterations):
+            connection = psycopg2.connect(
+                host='localhost',
+                port=8812,
+                user='admin',
+                password='quest',
+                database='qdb'
+            )
+            run_test(test, global_variables, connection)
+            connection.close()
 
 
 if __name__ == '__main__':
