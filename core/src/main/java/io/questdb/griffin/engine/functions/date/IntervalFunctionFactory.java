@@ -27,25 +27,22 @@ package io.questdb.griffin.engine.functions.date;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntervalFunction;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 
-public class YesterdayFunctionFactory implements FunctionFactory {
-    private static final String SIGNATURE = "yesterday()";
+
+public class IntervalFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return SIGNATURE;
+        return "interval(NN)";
     }
 
     @Override
@@ -56,43 +53,43 @@ public class YesterdayFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func();
+        return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class Func extends IntervalFunction implements Function {
+    private static class Func extends IntervalFunction implements BinaryFunction {
+        private final Function hi;
         private final Interval interval = new Interval();
+        private final Function lo;
+
+        public Func(Function lo, Function hi) {
+            this.lo = lo;
+            this.hi = hi;
+        }
 
         @Override
         public @NotNull Interval getInterval(Record rec) {
+            long l = lo.getTimestamp(rec);
+            long r = hi.getTimestamp(rec);
+            if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL) {
+                return Interval.NULL;
+            }
+            interval.of(lo.getTimestamp(rec), hi.getTimestamp(rec));
             return interval;
         }
 
         @Override
+        public Function getLeft() {
+            return lo;
+        }
+
+        @Override
         public String getName() {
-            return "yesterday";
+            return "interval";
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            final long now = executionContext.getNow();
-            final long yesterdayStart = Timestamps.floorDD(Timestamps.addDays(now, -1));
-            final long yesterdayEnd = Timestamps.floorDD(now) - 1;
-            interval.of(yesterdayStart, yesterdayEnd);
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return true;
-        }
-
-        @Override
-        public boolean isRuntimeConstant() {
-            return true;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(SIGNATURE);
+        public Function getRight() {
+            return hi;
         }
     }
 }

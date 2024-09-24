@@ -34,12 +34,7 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
-public abstract class IntervalFunction implements BinaryFunction, ScalarFunction {
-
-    @Override
-    public int getArrayLength() {
-        throw new UnsupportedOperationException();
-    }
+public abstract class IntervalFunction implements ScalarFunction {
 
     @Override
     public BinarySequence getBin(Record rec) {
@@ -142,11 +137,6 @@ public abstract class IntervalFunction implements BinaryFunction, ScalarFunction
     }
 
     @Override
-    public Record getRecord(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public RecordCursorFactory getRecordCursorFactory() {
         throw new UnsupportedOperationException();
     }
@@ -162,27 +152,12 @@ public abstract class IntervalFunction implements BinaryFunction, ScalarFunction
     }
 
     @Override
-    public CharSequence getStrA(Record rec, int arrayIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public CharSequence getStrB(Record rec) {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    public CharSequence getStrB(Record rec, int arrayIndex) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public int getStrLen(Record rec) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public int getStrLen(Record rec, int arrayIndex) {
         throw new UnsupportedOperationException();
     }
 

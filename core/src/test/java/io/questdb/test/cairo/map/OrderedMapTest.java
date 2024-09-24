@@ -61,6 +61,7 @@ public class OrderedMapTest extends AbstractCairoTest {
             keyTypes.add(ColumnType.TIMESTAMP);
             keyTypes.add(ColumnType.getGeoHashTypeWithBits(13));
             keyTypes.add(ColumnType.LONG256);
+            keyTypes.add(ColumnType.INTERVAL);
 
             ArrayColumnTypes valueTypes = new ArrayColumnTypes();
             valueTypes.add(ColumnType.BYTE);
@@ -94,6 +95,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                     Long256Impl long256 = new Long256Impl();
                     long256.fromRnd(rnd);
                     key.putLong256(long256);
+                    key.putInterval(new Interval().of(rnd.nextPositiveInt(), rnd.nextPositiveInt()));
 
                     MapValue value = key.createValue();
                     Assert.assertTrue(value.isNew());
@@ -131,6 +133,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                     Long256Impl long256 = new Long256Impl();
                     long256.fromRnd(rnd);
                     key.putLong256(long256);
+                    key.putInterval(new Interval().of(rnd.nextPositiveInt(), rnd.nextPositiveInt()));
 
                     MapValue value = key.createValue();
                     Assert.assertFalse(value.isNew());
@@ -301,6 +304,7 @@ public class OrderedMapTest extends AbstractCairoTest {
             keyTypes.add(ColumnType.getGeoHashTypeWithBits(13));
             keyTypes.add(ColumnType.LONG256);
             keyTypes.add(ColumnType.UUID);
+            keyTypes.add(ColumnType.INTERVAL);
 
             ArrayColumnTypes valueTypes = new ArrayColumnTypes();
             valueTypes.add(ColumnType.BYTE);
@@ -351,6 +355,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                     );
                     key.putLong256(long256);
                     key.putLong128(rnd.nextLong(), rnd.nextLong()); // UUID
+                    key.putInterval(new Interval().of(rnd.nextPositiveInt(), rnd.nextPositiveInt()));
 
                     MapValue value = key.createValue();
                     Assert.assertTrue(value.isNew());
@@ -404,6 +409,7 @@ public class OrderedMapTest extends AbstractCairoTest {
                     );
                     key.putLong256(long256);
                     key.putLong128(rnd.nextLong(), rnd.nextLong()); // UUID
+                    key.putInterval(new Interval().of(rnd.nextPositiveInt(), rnd.nextPositiveInt()));
 
                     MapValue value = key.createValue();
                     Assert.assertFalse(value.isNew());
@@ -2033,7 +2039,10 @@ public class OrderedMapTest extends AbstractCairoTest {
             long256.fromRnd(rnd);
             Assert.assertEquals(long256, record.getLong256A(col++));
             Assert.assertEquals(rnd.nextLong(), record.getLong128Lo(col));
-            Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col));
+            Assert.assertEquals(rnd.nextLong(), record.getLong128Hi(col++));
+            Interval interval = record.getInterval(col);
+            Assert.assertEquals(rnd.nextPositiveInt(), interval.getLo());
+            Assert.assertEquals(rnd.nextPositiveInt(), interval.getHi());
 
             // value part, it comes first in record
             col = 0;

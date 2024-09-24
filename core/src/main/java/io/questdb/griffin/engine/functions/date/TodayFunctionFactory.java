@@ -31,12 +31,14 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntervalFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Timestamps;
+import org.jetbrains.annotations.NotNull;
 
 public class TodayFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = "today()";
@@ -47,32 +49,22 @@ public class TodayFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new TodayFunction(sqlExecutionContext);
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new Func();
     }
 
-    private static class TodayFunction extends IntervalFunction implements Function {
+    private static class Func extends IntervalFunction implements Function {
         private final Interval interval = new Interval();
-        private SqlExecutionContext context;
-
-        public TodayFunction(SqlExecutionContext context) {
-            this.context = context;
-        }
 
         @Override
-        public Interval getInterval(Record rec) {
-            long todayStart = Timestamps.floorDD(context.getNow());
-            long todayEnd = Timestamps.floorDD(Timestamps.addDays(context.getNow(), 1)) - 1;
-            interval.of(
-                    todayStart,
-                    todayEnd
-            );
+        public @NotNull Interval getInterval(Record rec) {
             return interval;
-        }
-
-        @Override
-        public Function getLeft() {
-            return new TimestampConstant(interval.getLo());
         }
 
         @Override
@@ -81,14 +73,11 @@ public class TodayFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public Function getRight() {
-            return new TimestampConstant(interval.getHi());
-        }
-
-        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            executionContext.initNow();
-            context = executionContext;
+            final long now = executionContext.getNow();
+            final long todayStart = Timestamps.floorDD(now);
+            final long todayEnd = Timestamps.floorDD(Timestamps.addDays(now, 1)) - 1;
+            interval.of(todayStart, todayEnd);
         }
 
         @Override

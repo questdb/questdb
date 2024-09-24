@@ -39,7 +39,6 @@ public class FunctionFactoryDescriptor {
     private final int openBraceIndex;
     private final int sigArgCount;
 
-
     public FunctionFactoryDescriptor(FunctionFactory factory) throws SqlException {
         this.factory = factory;
 
@@ -339,6 +338,7 @@ public class FunctionFactoryDescriptor {
         typeNameMap.put('z', "uuid");
         typeNameMap.put('x', "ipv4");
         typeNameMap.put('ø', "varchar");
+        typeNameMap.put('δ', "interval");
         typeNameMap.put('[' | 32, "[]");
     }
 }

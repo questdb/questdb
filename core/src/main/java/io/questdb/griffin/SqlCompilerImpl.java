@@ -1575,6 +1575,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         if (!circuitBreaker.isTimerSet()) {
             circuitBreaker.resetTimer();
+            executionContext.initNow();
         }
         final CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok == null) {

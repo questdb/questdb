@@ -27,9 +27,7 @@ package io.questdb.griffin.engine.functions.eq;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -47,24 +45,24 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new EqTimestampFunction(args.getQuick(0), args.getQuick(1));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class EqTimestampFunction extends AbstractEqBinaryFunction {
-        public EqTimestampFunction(Function left, Function right) {
+    private static class Func extends AbstractEqBinaryFunction {
+        public Func(Function left, Function right) {
             super(left, right);
         }
 
         @Override
         public boolean getBool(Record rec) {
             return negated != (left.getTimestamp(rec) == right.getTimestamp(rec));
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            left.init(symbolTableSource, executionContext);
-            right.init(symbolTableSource, executionContext);
         }
     }
 }

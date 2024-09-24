@@ -226,6 +226,11 @@ public class RecordChain implements Closeable, RecordCursor, Mutable, RecordSink
     }
 
     @Override
+    public void putInterval(Interval interval) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void putLong(long value) {
         mem.putLong(value);
     }

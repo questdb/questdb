@@ -39,21 +39,28 @@ import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
 
 public class IntervalEndFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "interval_end(Δ)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new IntervalEndFunction(args.getQuick(0));
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new Func(args.getQuick(0));
     }
 
-    private static class IntervalEndFunction extends TimestampFunction implements ScalarFunction {
-        private final Function interval;
+    private static class Func extends TimestampFunction implements ScalarFunction {
+        private final Function intervalFunc;
 
-        public IntervalEndFunction(Function interval) {
-            this.interval = interval;
+        public Func(Function intervalFunc) {
+            this.intervalFunc = intervalFunc;
         }
 
         @Override
@@ -63,13 +70,12 @@ public class IntervalEndFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
-            Interval i = interval.getInterval(rec);
-            return i.getHi();
+            return intervalFunc.getInterval(rec).getHi();
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            interval.init(symbolTableSource, executionContext);
+            intervalFunc.init(symbolTableSource, executionContext);
         }
     }
 }

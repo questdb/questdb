@@ -151,7 +151,8 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testBoolNull() throws Exception {
-        testUnionAllWithNull("a\tc\n" +
+        testUnionAllWithNull(
+                "a\tc\n" +
                         "false\tfalse\n" +
                         "true\tfalse\n" +
                         "true\tfalse\n" +
@@ -1507,6 +1508,17 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInterval() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "i\ttypeOf\n" +
+                        "('1970-01-01T00:00:00.100Z', '1970-01-01T00:00:00.200Z')\tINTERVAL\n" +
+                        "('1970-01-01T00:00:00.300Z', '1970-01-01T00:00:00.400Z')\tINTERVAL\n" +
+                        "\tINTERVAL\n",
+                "select i, typeOf(i) from ((select interval(100000,200000) i) union all (select interval(300000,400000) i) union all (select null::interval i))"
+        ));
+    }
+
+    @Test
     public void testLong256Long256() throws Exception {
         testUnionAll(
                 "a\tn\ttypeOf\n" +
@@ -2310,7 +2322,6 @@ public class UnionAllCastTest extends AbstractCairoTest {
         ddl("create table x as (select " + function + " a from long_sequence(5))");
         engine.releaseAllWriters();
 
-
         assertQuery(
                 expected,
                 "(select a, null c from x) union all (select null b, c from y)",
@@ -2339,7 +2350,8 @@ public class UnionAllCastTest extends AbstractCairoTest {
     private void assertFailure(String ddlX, String ddlY, int pos) throws Exception {
         compile(ddlY);
         engine.releaseAllWriters();
-        assertException("x union all y",
+        assertException(
+                "x union all y",
                 ddlX,
                 pos,
                 "unsupported cast"

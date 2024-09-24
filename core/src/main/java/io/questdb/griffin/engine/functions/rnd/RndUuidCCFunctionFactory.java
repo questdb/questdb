@@ -22,69 +22,74 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.date;
+package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.IntervalFunction;
+import io.questdb.griffin.engine.functions.UuidFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 
-
-public class ConstructIntervalFunctionFactory implements FunctionFactory {
+public class RndUuidCCFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "interval(NN)";
+        return "rnd_uuid4(i)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new ConstructIntervalFunction(args.getQuick(0), args.getQuick(1));
+        return new RndFunction(args.getQuick(0).getInt(null));
     }
 
-    private static class ConstructIntervalFunction extends IntervalFunction implements BinaryFunction {
-        private final Function hi;
-        private final Interval interval = new Interval();
-        private final Function lo;
+    private static class RndFunction extends UuidFunction implements Function {
+        private final int nanRate;
+        private boolean isNull = false;
+        private Rnd rnd;
 
-        public ConstructIntervalFunction(Function lo, Function hi) {
-            this.lo = lo;
-            this.hi = hi;
+        public RndFunction(int nanRate) {
+            this.nanRate = nanRate + 1;
         }
 
         @Override
-        public Interval getInterval(Record rec) {
-            long l = lo.getTimestamp(rec);
-            long r = hi.getTimestamp(rec);
-            if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL) {
-                return Interval.EMPTY;
+        public long getLong128Hi(Record rec) {
+            if (isNull) {
+                isNull = false;
+                return Numbers.LONG_NULL;
             }
-            interval.of(
-                    lo.getTimestamp(rec),
-                    hi.getTimestamp(rec)
-            );
-            return interval;
+            long hi = rnd.nextLong();
+            // set version to 4
+            hi &= 0xffffffffffff0fffL;
+            hi |= 0x0000000000004000L;
+            return hi;
         }
 
         @Override
-        public Function getLeft() {
+        public long getLong128Lo(Record rec) {
+            long lo = rnd.nextLong();
+            if ((lo % nanRate) == 1) {
+                isNull = true;
+                return Numbers.LONG_NULL;
+            }
+            // set variant to 1
+            lo &= 0x3fffffffffffffffL;
+            lo |= 0x8000000000000000L;
             return lo;
         }
 
         @Override
         public String getName() {
-            return "interval";
+            return "rnd_uuid4";
         }
 
         @Override
-        public Function getRight() {
-            return hi;
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            rnd = executionContext.getRandom();
         }
     }
 }

@@ -86,7 +86,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test2686LeftJoinDoesntMoveOtherInnerJoinPredicate() throws Exception {
+    public void test2686LeftJoinDoesNotMoveOtherInnerJoinPredicate() throws Exception {
         test2686Prepare();
 
         assertMemoryLeak(() -> assertPlanNoLeakCheck(
@@ -115,7 +115,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test2686LeftJoinDoesntMoveOtherLeftJoinPredicate() throws Exception {
+    public void test2686LeftJoinDoesNotMoveOtherLeftJoinPredicate() throws Exception {
         test2686Prepare();
 
         assertMemoryLeak(() -> assertPlanNoLeakCheck(
@@ -143,7 +143,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test2686LeftJoinDoesntMoveOtherTwoTableEqJoinPredicate() throws Exception {
+    public void test2686LeftJoinDoesNotMoveOtherTwoTableEqJoinPredicate() throws Exception {
         test2686Prepare();
 
         assertMemoryLeak(() -> assertPlanNoLeakCheck(
@@ -172,7 +172,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test2686LeftJoinDoesntPushJoinPredicateToLeftTable() throws Exception {
+    public void test2686LeftJoinDoesNotPushJoinPredicateToLeftTable() throws Exception {
         test2686Prepare();
 
         assertMemoryLeak(() -> assertPlanNoLeakCheck(
@@ -194,7 +194,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test2686LeftJoinDoesntPushJoinPredicateToRightTable() throws Exception {
+    public void test2686LeftJoinDoesNotPushJoinPredicateToRightTable() throws Exception {
         test2686Prepare();
 
         assertMemoryLeak(() -> assertPlanNoLeakCheck(
@@ -214,7 +214,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test2686LeftJoinDoesntPushWherePredicateToRightTable() throws Exception {
+    public void test2686LeftJoinDoesNotPushWherePredicateToRightTable() throws Exception {
         test2686Prepare();
 
         assertMemoryLeak(() -> assertPlanNoLeakCheck(
@@ -2302,8 +2302,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
                     FunctionFactoryDescriptor descriptor = value.get(i);
                     FunctionFactory factory = descriptor.getFactory();
-                    if (factory instanceof ReadParquetFunctionFactory
-                            || factory instanceof ParquetScanFunctionFactory) {
+                    if (factory instanceof ReadParquetFunctionFactory) {
                         continue;
                     }
                     int sigArgCount = descriptor.getSigArgCount();
@@ -2375,7 +2374,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                     args.add(new IntConstant(2));
                                     args.add(new StrConstant("a"));
                                     args.add(new StrConstant("b"));
-                                } else if ((factory instanceof EqIntervalFunctionFactory)) {
+                                } else if (factory instanceof EqIntervalFunctionFactory) {
                                     args.add(IntervalConstant.NULL);
                                 } else if (factory instanceof CoalesceFunctionFactory) {
                                     args.add(new FloatColumn(1));
@@ -2444,15 +2443,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 } else if (factory instanceof LeastNumericFunctionFactory) {
                                     args.add(new DoubleConstant(1.5));
                                     args.add(new DoubleConstant(3.2));
-                                } else if ((factory instanceof JsonExtractTypedFunctionFactory)) {
+                                } else if (factory instanceof JsonExtractTypedFunctionFactory) {
                                     if (p == 0) {
                                         args.add(new VarcharConstant("{\"a\": 1}"));
                                         args.add(new VarcharConstant(".a"));
                                         args.add(new IntConstant(ColumnType.INT));
                                     }
-                                } else if ((factory instanceof HydrateTableMetadataFunctionFactory)) {
+                                } else if (factory instanceof HydrateTableMetadataFunctionFactory) {
                                     args.add(new StrConstant("*"));
-                                } else if ((factory instanceof InTimestampIntervalFunctionFactory)) {
+                                } else if (factory instanceof InTimestampIntervalFunctionFactory) {
                                     args.add(new TimestampConstant(123141));
                                     args.add(new IntervalConstant(1231, 123146));
                                 } else if (Chars.equals(key, "approx_count_distinct") && sigArgCount == 2 && p == 1 && sigArgType == ColumnType.INT) {

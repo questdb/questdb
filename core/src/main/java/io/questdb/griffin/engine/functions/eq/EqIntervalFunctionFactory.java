@@ -32,6 +32,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
@@ -78,18 +79,18 @@ public class EqIntervalFunctionFactory implements FunctionFactory {
     }
 
     private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
-        Interval constValue = constFunc.getInterval(null);
-        if (constValue.equals(Interval.EMPTY)) {
+        final Interval constValue = constFunc.getInterval(null);
+        if (Interval.NULL.equals(constValue)) {
             return new NullCheckFunc(varFunc);
         }
         return new ConstCheckFunc(varFunc, constValue);
     }
 
-    static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
+    private static class ConstCheckFunc extends NegatableBooleanFunction implements UnaryFunction {
         private final Function arg;
         private final Interval constant;
 
-        ConstCheckFunc(Function arg, @NotNull Interval constant) {
+        public ConstCheckFunc(Function arg, @NotNull Interval constant) {
             this.arg = arg;
             this.constant = constant;
         }
@@ -101,12 +102,7 @@ public class EqIntervalFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != arg.getInterval(rec).equals(constant);
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            this.arg.init(symbolTableSource, executionContext);
+            return negated != constant.equals(arg.getInterval(rec));
         }
 
         @Override
@@ -119,15 +115,14 @@ public class EqIntervalFunctionFactory implements FunctionFactory {
         }
     }
 
-    static class Func extends AbstractEqBinaryFunction {
-        Func(Function left, Function right) {
+    private static class Func extends AbstractEqBinaryFunction {
+
+        public Func(Function left, Function right) {
             super(left, right);
         }
 
         @Override
         public boolean getBool(Record rec) {
-            // getVarcharA/B returns a reusable sequence object.
-            // When using two at once, it's important to use both A and B.
             final Interval a = left.getInterval(rec);
             final Interval b = right.getInterval(rec);
             return negated != a.equals(b);
@@ -143,10 +138,10 @@ public class EqIntervalFunctionFactory implements FunctionFactory {
         }
     }
 
-    static class HalfRuntimeConstFunc extends AbstractEqBinaryFunction {
+    private static class HalfRuntimeConstFunc extends AbstractEqBinaryFunction {
         private Interval cachedRuntimeConst;
 
-        HalfRuntimeConstFunc(Function runtimeConst, Function arg) {
+        public HalfRuntimeConstFunc(Function runtimeConst, Function arg) {
             super(arg, runtimeConst);
         }
 
@@ -190,12 +185,7 @@ public class EqIntervalFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated != (arg.getInterval(rec).equals(Interval.EMPTY));
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            this.arg.init(symbolTableSource, executionContext);
+            return negated != (Interval.NULL.equals(arg.getInterval(rec)));
         }
 
         @Override

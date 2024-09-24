@@ -30,15 +30,17 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntervalFunction;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import org.jetbrains.annotations.NotNull;
 
 public class TomorrowWithTimezoneFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = "tomorrow(S)";
@@ -49,55 +51,116 @@ public class TomorrowWithTimezoneFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new TomorrowWithTimezoneFunction(args.getQuick(0), sqlExecutionContext);
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        final Function tzFunc = args.getQuick(0);
+        if (tzFunc.isConstant() || tzFunc.isRuntimeConstant()) {
+            return new RuntimeConstFunc(tzFunc);
+        }
+        return new Func(tzFunc);
     }
 
-    private static class TomorrowWithTimezoneFunction extends IntervalFunction implements Function {
+    private static class Func extends IntervalFunction implements UnaryFunction {
         private final Interval interval = new Interval();
-        private final Function timezone;
-        private SqlExecutionContext context;
+        private final Function tzFunc;
+        private long now;
 
-        public TomorrowWithTimezoneFunction(Function timezone, SqlExecutionContext context) {
-            this.timezone = timezone;
-            this.context = context;
-            context.initNow();
+        public Func(Function tzFunc) {
+            this.tzFunc = tzFunc;
         }
 
         @Override
-        public Interval getInterval(Record rec) {
-            final CharSequence tz = timezone.getStrA(rec);
-            long now = context.getNow();
+        public Function getArg() {
+            return tzFunc;
+        }
+
+        @Override
+        public @NotNull Interval getInterval(Record rec) {
+            long nowWithTz = now;
+            final CharSequence tz = tzFunc.getStrA(rec);
             if (tz != null) {
                 try {
-                    now = Timestamps.toTimezone(now, TimestampFormatUtils.EN_LOCALE, tz);
+                    nowWithTz = Timestamps.toTimezone(nowWithTz, TimestampFormatUtils.EN_LOCALE, tz);
                 } catch (NumericException e) {
-                    return Interval.EMPTY;
+                    return Interval.NULL;
                 }
             }
-            long tomorrowStart = Timestamps.floorDD(Timestamps.addDays(now, 1));
-            long tomorrowEnd = Timestamps.floorDD(Timestamps.addDays(now, 2)) - 1;
-            interval.of(
-                    tomorrowStart,
-                    tomorrowEnd
-            );
+            final long tomorrowStart = Timestamps.floorDD(Timestamps.addDays(nowWithTz, 1));
+            final long tomorrowEnd = Timestamps.floorDD(Timestamps.addDays(nowWithTz, 2)) - 1;
+            return interval.of(tomorrowStart, tomorrowEnd);
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            now = executionContext.getNow();
+        }
+
+        @Override
+        public boolean isConstant() {
+            return false;
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return UnaryFunction.super.isReadThreadSafe();
+        }
+
+        @Override
+        public boolean isRuntimeConstant() {
+            return UnaryFunction.super.isRuntimeConstant();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
+        }
+    }
+
+    private static class RuntimeConstFunc extends IntervalFunction implements UnaryFunction {
+        private final Interval interval = new Interval();
+        private final Function tzFunc;
+
+        public RuntimeConstFunc(Function tzFunc) {
+            this.tzFunc = tzFunc;
+        }
+
+        @Override
+        public Function getArg() {
+            return tzFunc;
+        }
+
+        @Override
+        public @NotNull Interval getInterval(Record rec) {
             return interval;
         }
 
         @Override
-        public Function getLeft() {
-            return new TimestampConstant(interval.getLo());
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            UnaryFunction.super.init(symbolTableSource, executionContext);
+            long now = executionContext.getNow();
+            final CharSequence tz = tzFunc.getStrA(null);
+            if (tz != null) {
+                try {
+                    now = Timestamps.toTimezone(now, TimestampFormatUtils.EN_LOCALE, tz);
+                } catch (NumericException e) {
+                    interval.of(Interval.NULL.getLo(), Interval.NULL.getHi());
+                    return;
+                }
+            }
+            final long tomorrowStart = Timestamps.floorDD(Timestamps.addDays(now, 1));
+            final long tomorrowEnd = Timestamps.floorDD(Timestamps.addDays(now, 2)) - 1;
+            interval.of(tomorrowStart, tomorrowEnd);
         }
 
         @Override
-        public Function getRight() {
-            return new TimestampConstant(interval.getHi());
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            executionContext.initNow();
-            context = executionContext;
+        public boolean isConstant() {
+            return false;
         }
 
         @Override

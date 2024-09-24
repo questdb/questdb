@@ -30,15 +30,13 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 
-public class Interval implements Sinkable {
-    public static final Interval EMPTY = new Interval(Long.MIN_VALUE, Long.MIN_VALUE);
-    public static final Interval MAX_VALUE = new Interval(Long.MAX_VALUE, Long.MAX_VALUE);
+public class Interval implements Sinkable, Mutable {
+    public static final Interval NULL = new Interval(Numbers.LONG_NULL, Numbers.LONG_NULL);
 
-    long hi = Long.MIN_VALUE;
-    long lo = Long.MIN_VALUE;
+    private long hi = Numbers.LONG_NULL;
+    private long lo = Numbers.LONG_NULL;
 
     public Interval() {
     }
@@ -47,15 +45,22 @@ public class Interval implements Sinkable {
         this.of(lo, hi);
     }
 
+    @Override
     public void clear() {
-        lo = Long.MIN_VALUE;
-        hi = Long.MIN_VALUE;
+        lo = Numbers.LONG_NULL;
+        hi = Numbers.LONG_NULL;
     }
 
     @Override
-    public boolean equals(Object obj) {
-        assert obj instanceof Interval;
-        return lo == ((Interval) obj).lo && hi == ((Interval) obj).hi;
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (o == null || o.getClass() != Interval.class) {
+            return false;
+        }
+        Interval that = (Interval) o;
+        return lo == that.lo && hi == that.hi;
     }
 
     public long getHi() {
@@ -66,9 +71,15 @@ public class Interval implements Sinkable {
         return lo;
     }
 
-    public void of(long lo, long hi) {
+    @Override
+    public int hashCode() {
+        return Hash.hashLong128_32(lo, hi);
+    }
+
+    public Interval of(long lo, long hi) {
         this.lo = lo;
         this.hi = hi;
+        return this;
     }
 
     public void of(CharSequence seq, LongList list) throws NumericException, SqlException {
@@ -83,25 +94,22 @@ public class Interval implements Sinkable {
 
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
-        sink.put('(');
+        sink.putAscii('(');
         if (lo != Long.MIN_VALUE) {
-            sink.put('\'');
+            sink.putAscii('\'');
             sink.put(Timestamps.toString(lo));
-            sink.put('\'');
-            if (hi != Long.MIN_VALUE) {
-                sink.put(", ");
-                sink.put('\'');
-                sink.put(Timestamps.toString(hi));
-                sink.put('\'');
-            }
+            sink.putAscii('\'');
+        } else {
+            sink.putAscii("null");
+        }
+        sink.putAscii(", ");
+        if (hi != Long.MIN_VALUE) {
+            sink.putAscii('\'');
+            sink.put(Timestamps.toString(hi));
+            sink.putAscii('\'');
+        } else {
+            sink.putAscii("null");
         }
         sink.put(')');
-    }
-
-    @Override
-    public String toString() {
-        StringSink sink = new StringSink();
-        toSink(sink);
-        return sink.toString();
     }
 }

@@ -159,12 +159,11 @@ public class CursorPrinter {
                 }
                 break;
             case ColumnType.INTERVAL:
-                Interval interval = (Interval) record.getInterval(columnIndex);
-                if (interval != null) {
+                Interval interval = record.getInterval(columnIndex);
+                if (!Interval.NULL.equals(interval)) {
                     interval.toSink(sink);
-                } else {
-                    sink.put(nullStringValue);
                 }
+                break;
             default:
                 break;
         }

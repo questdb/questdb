@@ -1533,6 +1533,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return select(selectSql, sqlExecutionContext);
     }
 
+    protected static void setCurrentMicros(long currentMicros) {
+        AbstractCairoTest.currentMicros = currentMicros;
+        sqlExecutionContext.initNow();
+    }
+
     protected static void setProperty(PropertyKey propertyKey, long maxValue) {
         staticOverrides.setProperty(propertyKey, maxValue);
     }

@@ -34,6 +34,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 class NullCaseFunction implements CaseFunction {
@@ -124,7 +125,7 @@ class NullCaseFunction implements CaseFunction {
     }
 
     @Override
-    public Interval getInterval(Record rec) {
+    public @NotNull Interval getInterval(Record rec) {
         throw new UnsupportedOperationException();
     }
 

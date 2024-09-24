@@ -39,6 +39,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class InTimestampIntervalFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "in(NΔ)";
@@ -52,30 +53,28 @@ public class InTimestampIntervalFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new InTimestampIntervalFunction(args.getQuick(0), args.getQuick(1));
+        return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-
-    public static class InTimestampIntervalFunction extends NegatableBooleanFunction implements BinaryFunction {
+    public static class Func extends NegatableBooleanFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 
-        public InTimestampIntervalFunction(Function left, Function right) {
+        public Func(Function left, Function right) {
             this.left = left;
             this.right = right;
         }
 
         @Override
         public boolean getBool(Record rec) {
-            long ts = left.getTimestamp(rec);
+            final long ts = left.getTimestamp(rec);
             if (ts == Numbers.LONG_NULL) {
                 return negated;
             }
-            Interval interval = right.getInterval(rec);
-            if (interval == Interval.EMPTY) {
+            final Interval interval = right.getInterval(rec);
+            if (Interval.NULL.equals(interval)) {
                 return negated;
             }
-
             return negated != (ts >= interval.getLo() && ts <= interval.getHi());
         }
 

@@ -50,11 +50,11 @@ import static io.questdb.griffin.SqlKeywords.isNoneKeyword;
 import static io.questdb.griffin.model.ExpressionNode.*;
 
 public class SqlOptimiser implements Mutable {
-    public static final Log LOG = LogFactory.getLog(SqlOptimiser.class);
     private static final int JOIN_OP_AND = 2;
     private static final int JOIN_OP_EQUAL = 1;
     private static final int JOIN_OP_OR = 3;
     private static final int JOIN_OP_REGEX = 4;
+    private static final Log LOG = LogFactory.getLog(SqlOptimiser.class);
     private static final String LONG_MAX_VALUE_STR = "" + Long.MAX_VALUE;
     private static final int NOT_OP_AND = 2;
     private static final int NOT_OP_EQUAL = 8;
@@ -6271,7 +6271,6 @@ public class SqlOptimiser implements Mutable {
     }
 
     private static class RewriteTodayTomorrowYesterdayVisitor implements PostOrderTreeTraversalAlgo.Visitor {
-        private static final ThreadLocal<StringSink> sink = ThreadLocal.withInitial(StringSink::new);
 
         @Override
         public void visit(ExpressionNode node) {
@@ -6279,19 +6278,23 @@ public class SqlOptimiser implements Mutable {
                 if (node.type == FUNCTION) {
                     if (Chars.equalsIgnoreCase(node.token, "today")) {
                         node.type = CONSTANT;
-                        long today = adjustTimezoneIfNeeded(Timestamps.today(), node.lhs);
+                        long today = Timestamps.floorDD(Os.currentTimeMicros());
+                        today = adjustTimezoneIfNeeded(today, node.lhs);
                         node.token = formatDate(today);
                     } else if (Chars.equalsIgnoreCase(node.token, "tomorrow")) {
                         node.type = CONSTANT;
-                        long tomorrow = adjustTimezoneIfNeeded(Timestamps.tomorrow(), node.lhs);
+                        long tomorrow = Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), 1));
+                        tomorrow = adjustTimezoneIfNeeded(tomorrow, node.lhs);
                         node.token = formatDate(tomorrow);
                     } else if (Chars.equalsIgnoreCase(node.token, "yesterday")) {
                         node.type = CONSTANT;
-                        long yesterday = adjustTimezoneIfNeeded(Timestamps.yesterday(), node.lhs);
+                        long yesterday = Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), -1));
+                        yesterday = adjustTimezoneIfNeeded(yesterday, node.lhs);
                         node.token = formatDate(yesterday);
                     }
                 }
             } catch (NumericException nex) {
+                // TODO(puzpuzpuz): we can't just swallow the error here
                 LOG.error().$(nex);
             }
         }

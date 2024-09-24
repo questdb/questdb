@@ -152,7 +152,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
     public void execute0(
             JsonQueryProcessorState state
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException, QueryPausedException {
-
         OperationFuture fut = state.getOperationFuture();
         final HttpConnectionContext context = state.getHttpConnectionContext();
         circuitBreaker.resetTimer();
@@ -163,6 +162,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             // do not set random for new request to avoid copying random from previous request into next one
             // the only time we need to copy random from state is when we resume request execution
             sqlExecutionContext.with(context.getSecurityContext(), null, null, context.getFd(), circuitBreaker.of(context.getFd()));
+            sqlExecutionContext.initNow();
             if (state.getStatementTimeout() > 0L) {
                 circuitBreaker.setTimeout(state.getStatementTimeout());
             } else {
@@ -620,6 +620,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             CharSequence keepAliveHeader
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, SqlException {
         circuitBreaker.resetTimer();
+        sqlExecutionContext.initNow();
         OperationFuture fut = null;
         boolean isAsyncWait = false;
         try {

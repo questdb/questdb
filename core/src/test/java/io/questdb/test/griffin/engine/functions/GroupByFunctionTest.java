@@ -34,6 +34,7 @@ import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Test;
 
 public class GroupByFunctionTest {
@@ -122,8 +123,8 @@ public class GroupByFunctionTest {
         }
 
         @Override
-        public Interval getInterval(Record rec) {
-            return Interval.EMPTY;
+        public @NotNull Interval getInterval(Record rec) {
+            return Interval.NULL;
         }
 
         @Override

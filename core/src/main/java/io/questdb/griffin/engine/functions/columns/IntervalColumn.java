@@ -22,55 +22,49 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.constants;
+package io.questdb.griffin.engine.functions.columns;
 
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.IntervalFunction;
+import io.questdb.griffin.engine.functions.VarcharFunction;
 import io.questdb.std.Interval;
-import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
 
-public class IntervalConstant extends IntervalFunction implements ConstantFunction {
-    public static final IntervalConstant NULL = new IntervalConstant(Numbers.LONG_NULL, Numbers.LONG_NULL);
+import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COLUMN_COUNT;
 
-    private final Interval interval = new Interval();
+public class IntervalColumn extends IntervalFunction implements ScalarFunction {
+    private static final ObjList<IntervalColumn> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
+    private final int columnIndex;
 
-    public IntervalConstant(long lo, long hi) {
-        interval.of(lo, hi);
+    public IntervalColumn(int columnIndex) {
+        this.columnIndex = columnIndex;
     }
 
-    public static IntervalConstant newInstance(long lo, long hi) {
-        return lo != Numbers.LONG_NULL || hi != Numbers.LONG_NULL ? new IntervalConstant(lo, hi) : NULL;
-    }
-
-    @Override
-    public void close() {
-        super.close();
-    }
-
-    @Override
-    public void cursorClosed() {
-        super.cursorClosed();
+    public static IntervalColumn newInstance(int columnIndex) {
+        if (columnIndex < STATIC_COLUMN_COUNT) {
+            return COLUMNS.getQuick(columnIndex);
+        }
+        return new IntervalColumn(columnIndex);
     }
 
     @Override
     public @NotNull Interval getInterval(Record rec) {
-        return interval;
-    }
-
-    @Override
-    public boolean isNullConstant() {
-        return interval.equals(Interval.NULL);
+        return rec.getInterval(columnIndex);
     }
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val(interval);
+        sink.putColumnName(columnIndex);
     }
 
-    @Override
-    public void toTop() {
-        super.toTop();
+    static {
+        COLUMNS.setPos(STATIC_COLUMN_COUNT);
+        for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
+            COLUMNS.setQuick(i, new IntervalColumn(i));
+        }
     }
 }

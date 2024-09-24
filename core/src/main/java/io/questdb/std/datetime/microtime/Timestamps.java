@@ -1170,14 +1170,6 @@ public final class Timestamps {
         return timestampWithTimezone - offset;
     }
 
-    public static long today() {
-        return Timestamps.floorDD(Os.currentTimeMicros());
-    }
-
-    public static long tomorrow() {
-        return Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), 1));
-    }
-
     /**
      * Calculated start of year in millis. For example of year 2008 this is
      * equivalent to parsing "2008-01-01T00:00:00.000Z", except this method is faster.
@@ -1203,10 +1195,6 @@ public final class Timestamps {
             return Long.MIN_VALUE;
         }
         return micros;
-    }
-
-    public static long yesterday() {
-        return Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), -1));
     }
 
     private static long getTimeMicros(long micros) {

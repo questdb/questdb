@@ -322,26 +322,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.rnd.RndLongCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndLongFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndUuidFunctionFactory,
-            io.questdb.griffin.engine.functions.rnd.RndUUIDCFunctionFactory,
-            io.questdb.griffin.engine.functions.date.TimestampSequenceFunctionFactory,
-            io.questdb.griffin.engine.functions.long128.LongsToLong128FunctionFactory,
-            io.questdb.griffin.engine.functions.long256.LongsToLong256FunctionFactory,
-            io.questdb.griffin.engine.functions.uuid.LongsToUuidFunctionFactory,
-            io.questdb.griffin.engine.functions.date.TimestampShuffleFunctionFactory,
-            io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory,
-            io.questdb.griffin.engine.functions.date.TimestampFloorOffsetFunctionFactory,
-            io.questdb.griffin.engine.functions.date.TimestampCeilFunctionFactory,
-            io.questdb.griffin.engine.functions.date.DateTruncFunctionFactory,
-            io.questdb.griffin.engine.functions.date.TodayFunctionFactory,
-            io.questdb.griffin.engine.functions.date.TodayWithTimezoneFunctionFactory,
-            io.questdb.griffin.engine.functions.date.TomorrowFunctionFactory,
-            io.questdb.griffin.engine.functions.date.TomorrowWithTimezoneFunctionFactory,
-            io.questdb.griffin.engine.functions.date.YesterdayFunctionFactory,
-            io.questdb.griffin.engine.functions.date.YesterdayWithTimezoneFunctionFactory,
-            io.questdb.griffin.engine.functions.date.ConstructIntervalFunctionFactory,
-            io.questdb.griffin.engine.functions.date.IntervalStartFunctionFactory,
-            io.questdb.griffin.engine.functions.date.IntervalEndFunctionFactory,
-
+            io.questdb.griffin.engine.functions.rnd.RndUuidCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndByteCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndBinCCCFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory,
@@ -356,7 +337,22 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.rnd.ListFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndGeoHashFunctionFactory,
             io.questdb.griffin.engine.functions.rnd.RndLogFunctionFactory,
+            io.questdb.griffin.engine.functions.rnd.RndIntervalFunctionFactory,
 //                  date conversion functions,
+            io.questdb.griffin.engine.functions.date.TimestampShuffleFunctionFactory,
+            io.questdb.griffin.engine.functions.date.TimestampFloorFunctionFactory,
+            io.questdb.griffin.engine.functions.date.TimestampFloorOffsetFunctionFactory,
+            io.questdb.griffin.engine.functions.date.TimestampCeilFunctionFactory,
+            io.questdb.griffin.engine.functions.date.DateTruncFunctionFactory,
+            io.questdb.griffin.engine.functions.date.TodayFunctionFactory,
+            io.questdb.griffin.engine.functions.date.TodayWithTimezoneFunctionFactory,
+            io.questdb.griffin.engine.functions.date.TomorrowFunctionFactory,
+            io.questdb.griffin.engine.functions.date.TomorrowWithTimezoneFunctionFactory,
+            io.questdb.griffin.engine.functions.date.YesterdayFunctionFactory,
+            io.questdb.griffin.engine.functions.date.YesterdayWithTimezoneFunctionFactory,
+            io.questdb.griffin.engine.functions.date.IntervalFunctionFactory,
+            io.questdb.griffin.engine.functions.date.IntervalStartFunctionFactory,
+            io.questdb.griffin.engine.functions.date.IntervalEndFunctionFactory,
             io.questdb.griffin.engine.functions.date.SysdateFunctionFactory,
             io.questdb.griffin.engine.functions.date.ToTimestampVCFunctionFactory,
             io.questdb.griffin.engine.functions.date.VarcharToTimestampVCFunctionFactory,
@@ -385,6 +381,7 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.date.ToPgDateFunctionFactory,
             io.questdb.griffin.engine.functions.date.VarcharToPgDateFunctionFactory,
             io.questdb.griffin.engine.functions.date.PgPostmasterStartTimeFunctionFactory,
+            io.questdb.griffin.engine.functions.date.TimestampSequenceFunctionFactory,
 //                  cast functions,
 //                  cast double to ...,
             io.questdb.griffin.engine.functions.cast.CastDoubleToBooleanFunctionFactory,
@@ -1035,6 +1032,13 @@ open module io.questdb {
             io.questdb.griffin.engine.functions.math.IPv4VarcharNetmaskFunctionFactory,
 
             io.questdb.griffin.engine.functions.date.ToTimezoneTimestampFunctionFactory,
-            io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory
+            io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory,
+
+            // long128 functions
+            io.questdb.griffin.engine.functions.long128.LongsToLong128FunctionFactory,
+            io.questdb.griffin.engine.functions.long256.LongsToLong256FunctionFactory,
+
+            // uuid functions
+            io.questdb.griffin.engine.functions.uuid.LongsToUuidFunctionFactory
             ;
 }

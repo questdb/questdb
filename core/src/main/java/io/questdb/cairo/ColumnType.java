@@ -178,6 +178,10 @@ public final class ColumnType {
         return columnType == CHAR;
     }
 
+    public static boolean isComparable(int columnType) {
+        return columnType != BINARY && columnType != INTERVAL;
+    }
+
     public static boolean isCursor(int columnType) {
         return columnType == CURSOR;
     }
@@ -575,6 +579,7 @@ public final class ColumnType {
         TYPE_SIZE_POW2[NULL] = -1;
         TYPE_SIZE_POW2[LONG128] = 4;
         TYPE_SIZE_POW2[UUID] = 4;
+        TYPE_SIZE_POW2[INTERVAL] = 4;
 
         TYPE_SIZE[UNDEFINED] = -1;
         TYPE_SIZE[BOOLEAN] = Byte.BYTES;
@@ -604,5 +609,6 @@ public final class ColumnType {
         TYPE_SIZE[UUID] = 2 * Long.BYTES;
         TYPE_SIZE[NULL] = 0;
         TYPE_SIZE[LONG128] = 2 * Long.BYTES;
+        TYPE_SIZE[INTERVAL] = 2 * Long.BYTES;
     }
 }

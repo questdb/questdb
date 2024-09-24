@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.functions.date;
 
 import io.questdb.std.Interval;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -34,109 +35,167 @@ public class TodayTomorrowYesterdayTest extends AbstractCairoTest {
 
     @Test
     public void testIntervalStartEnd() throws Exception {
-        assertSql("column\n" +
-                "true\n", "select interval_start(today()) = date_trunc('day', now()) from long_sequence(1)");
-        assertSql("column\n" +
-                "true\n", "select interval_end(today()) = dateadd('d', 1, date_trunc('day', now()))-1 from long_sequence(1)\n");
+        assertMemoryLeak(() -> {
+            assertSql(
+                    "column\n" +
+                            "true\n",
+                    "select interval_start(today()) = date_trunc('day', now()) from long_sequence(1)"
+            );
+            assertSql(
+                    "column\n" +
+                            "true\n",
+                    "select interval_end(today()) = dateadd('d', 1, date_trunc('day', now()))-1 from long_sequence(1)\n"
+            );
+        });
     }
 
     @Test
     public void testIntrinsics1() throws Exception {
-        assertSql("bool\n" +
-                        "true\n",
-                "select true as bool from long_sequence(1) where now() in today()");
-        // no interval scan with now()
-        long todayStart = Timestamps.today();
-        long todayEnd = Timestamps.tomorrow() - 1;
-        assertPlanNoLeakCheck("select true as bool from long_sequence(1) where now() in today()"
-                , "VirtualRecord\n" +
-                        "  functions: [true]\n" +
-                        "    Filter filter: now() in [" + todayStart + "," + todayEnd + "]\n" +
-                        "        long_sequence count: 1\n");
+        assertMemoryLeak(() -> {
+            assertSql(
+                    "bool\n" +
+                            "true\n",
+                    "select true as bool from long_sequence(1) where now() in today()"
+            );
+            // no interval scan with now()
+            long todayStart = today();
+            long todayEnd = tomorrow() - 1;
+            assertPlanNoLeakCheck(
+                    "select true as bool from long_sequence(1) where now() in today()",
+                    "VirtualRecord\n" +
+                            "  functions: [true]\n" +
+                            "    Filter filter: now() in [" + todayStart + "," + todayEnd + "]\n" +
+                            "        long_sequence count: 1\n"
+            );
+        });
     }
 
     @Test
     public void testIntrinsics2() throws Exception {
-
         assertMemoryLeak(() -> {
             ddl("CREATE TABLE x (ts TIMESTAMP) timestamp(ts) PARTITION BY DAY WAL;");
             drainWalQueue();
             // should have interval scans despite use of function
             // due to optimisation step to convert it to a constant
-            long today = Timestamps.today();
-            long tomorrow = Timestamps.tomorrow();
-            long yesterday = Timestamps.yesterday();
+            long today = today();
+            long tomorrow = tomorrow();
+            long yesterday = yesterday();
             long tomorrowAndOne = Timestamps.addDays(tomorrow, 1);
             StringSink sink = new StringSink();
             buildPlan(sink, today, tomorrow - 1);
-            assertPlanNoLeakCheck("select true as bool from x where ts in today()",
-                    sink.toString());
+            assertPlanNoLeakCheck(
+                    "select true as bool from x where ts in today()",
+                    sink.toString()
+            );
             sink.clear();
             buildPlan(sink, tomorrow, tomorrowAndOne - 1);
-            assertPlanNoLeakCheck("select true as bool from x where ts in tomorrow()",
-                    sink.toString());
+            assertPlanNoLeakCheck(
+                    "select true as bool from x where ts in tomorrow()",
+                    sink.toString()
+            );
             sink.clear();
             buildPlan(sink, yesterday, today - 1);
-            assertPlanNoLeakCheck("select true as bool from x where ts in yesterday()",
-                    sink.toString());
+            assertPlanNoLeakCheck(
+                    "select true as bool from x where ts in yesterday()",
+                    sink.toString()
+            );
             sink.clear();
         });
     }
 
     @Test
     public void testTimestampInInterval() throws Exception {
-        assertSql("result\n", "select true as result from long_sequence(1)\n" +
-                "where now() in tomorrow()");
-        assertSql("result\n" +
-                "true\n", "select true as result from long_sequence(1)\n" +
-                "where now() in today()");
-//        assertSql("result\n", "select true as result from long_sequence(1)\n" +
-//                "where now() in yesterday()");
+        assertMemoryLeak(() -> {
+            assertSql(
+                    "result\n",
+                    "select true as result from long_sequence(1)\n" +
+                            "where now() in tomorrow()"
+            );
+            assertSql(
+                    "result\n" +
+                            "true\n",
+                    "select true as result from long_sequence(1)\n" +
+                            "where now() in today()"
+            );
+            assertSql(
+                    "result\n",
+                    "select true as result from long_sequence(1)\n" +
+                            "where now() in yesterday()"
+            );
+        });
     }
 
     @Test
     public void testToday() throws Exception {
-        long todayStart = Timestamps.today();
-        long todayEnd = Timestamps.tomorrow() - 1;
-        final Interval interval = new Interval(todayStart, todayEnd);
-        assertSql("today\n" + interval + "\n", "select today()");
+        assertMemoryLeak(() -> {
+            long todayStart = today();
+            long todayEnd = tomorrow() - 1;
+            final Interval interval = new Interval(todayStart, todayEnd);
+            assertSql("today\n" + intervalAsString(interval) + "\n", "select today()");
+        });
     }
 
     @Test
     public void testTodayWithTimezone() throws Exception {
-        assertSql("column\n" +
+        assertMemoryLeak(() -> assertSql(
+                "column\n" +
                         "true\n",
-                "select today('Antarctica/McMurdo') = interval(date_trunc('day', to_timezone(now(), 'Antarctica/McMurdo')), date_trunc('day', to_timezone(dateadd('d', 1, now()), 'Antarctica/McMurdo')) - 1)\n");
+                "select today('Antarctica/McMurdo') = interval(date_trunc('day', to_timezone(now(), 'Antarctica/McMurdo')), date_trunc('day', to_timezone(dateadd('d', 1, now()), 'Antarctica/McMurdo')) - 1)\n"
+        ));
     }
 
     @Test
     public void testTomorrow() throws Exception {
-        long tomorrowStart = Timestamps.tomorrow();
-        long tomorrowEnd = Timestamps.addDays(tomorrowStart, 1) - 1;
-        final Interval interval = new Interval(tomorrowStart, tomorrowEnd);
-        assertSql("tomorrow\n" + interval + "\n", "select tomorrow()");
+        assertMemoryLeak(() -> {
+            long tomorrowStart = tomorrow();
+            long tomorrowEnd = Timestamps.addDays(tomorrowStart, 1) - 1;
+            final Interval interval = new Interval(tomorrowStart, tomorrowEnd);
+            assertSql("tomorrow\n" + intervalAsString(interval) + "\n", "select tomorrow()");
+        });
     }
 
     @Test
     public void testTomorrowWithTimezone() throws Exception {
-        assertSql("column\n" +
+        assertMemoryLeak(() -> assertSql(
+                "column\n" +
                         "true\n",
-                "select tomorrow('Antarctica/McMurdo') = interval(date_trunc('day', to_timezone(dateadd('d', 1, now()), 'Antarctica/McMurdo')), date_trunc('day', to_timezone(dateadd('d', 2, now()), 'Antarctica/McMurdo')) - 1)\n");
+                "select tomorrow('Antarctica/McMurdo') = interval(date_trunc('day', to_timezone(dateadd('d', 1, now()), 'Antarctica/McMurdo')), date_trunc('day', to_timezone(dateadd('d', 2, now()), 'Antarctica/McMurdo')) - 1)\n"
+        ));
     }
 
     @Test
     public void testYesterday() throws Exception {
-        long yesterdayStart = Timestamps.yesterday();
-        long yesterdayEnd = Timestamps.today() - 1;
-        final Interval interval = new Interval(yesterdayStart, yesterdayEnd);
-        assertSql("yesterday\n" + interval + "\n", "select yesterday()");
+        assertMemoryLeak(() -> {
+            long yesterdayStart = yesterday();
+            long yesterdayEnd = today() - 1;
+            final Interval interval = new Interval(yesterdayStart, yesterdayEnd);
+            assertSql("yesterday\n" + intervalAsString(interval) + "\n", "select yesterday()");
+        });
     }
 
     @Test
     public void testYesterdayWithTimezone() throws Exception {
-        assertSql("column\n" +
+        assertMemoryLeak(() -> assertSql(
+                "column\n" +
                         "true\n",
-                "select yesterday('Antarctica/McMurdo') = interval(date_trunc('day', to_timezone(dateadd('d', -1, now()), 'Antarctica/McMurdo')), date_trunc('day', to_timezone(now(), 'Antarctica/McMurdo')) - 1)\n");
+                "select yesterday('Antarctica/McMurdo') = interval(date_trunc('day', to_timezone(dateadd('d', -1, now()), 'Antarctica/McMurdo')), date_trunc('day', to_timezone(now(), 'Antarctica/McMurdo')) - 1)\n"
+        ));
+    }
+
+    private static String intervalAsString(Interval interval) {
+        return new StringSink().put(interval).toString();
+    }
+
+    private static long today() {
+        return Timestamps.floorDD(Os.currentTimeMicros());
+    }
+
+    private static long tomorrow() {
+        return Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), 1));
+    }
+
+    private static long yesterday() {
+        return Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), -1));
     }
 
     private void buildPlan(StringSink sink, long lo, long hi) {
@@ -151,5 +210,4 @@ public class TodayTomorrowYesterdayTest extends AbstractCairoTest {
         sink.putISODate(hi);
         sink.put("\")]\n");
     }
-
 }
