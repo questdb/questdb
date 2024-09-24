@@ -26,6 +26,7 @@ package io.questdb.cairo.mv;
 
 import io.questdb.cairo.*;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
@@ -86,5 +87,10 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
 
         intrinsicModel.setBetweenBoundary(fromFunction);
         intrinsicModel.setBetweenBoundary(toFunction);
+    }
+
+    public void setRanges(long minTs, long maxTs) throws SqlException {
+        getBindVariableService().setTimestamp(1, minTs);
+        getBindVariableService().setTimestamp(2, maxTs - 1);
     }
 }

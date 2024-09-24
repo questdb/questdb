@@ -75,8 +75,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
                 minTs = sampleByFromEpoch + (minTs - sampleByFromEpoch) / sampleByPeriod * sampleByPeriod;
                 maxTs = sampleByFromEpoch + ((maxTs - sampleByFromEpoch + sampleByPeriod) / sampleByPeriod) * sampleByPeriod;
 
-                executionContext.getBindVariableService().setTimestamp(1, minTs);
-                executionContext.getBindVariableService().setTimestamp(2, maxTs - 1);
+                executionContext.setRanges(minTs, maxTs - 1);
 
                 LOG.info().$("refreshing materialized view [view=").$(viewDefinition.getTableToken())
                         .$(", base=").$(baseTableReader.getTableToken())
@@ -89,8 +88,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
                 return true;
             }
         } else {
-            executionContext.getBindVariableService().setTimestamp(1, Long.MIN_VALUE + 1);
-            executionContext.getBindVariableService().setTimestamp(2, Long.MAX_VALUE - 1);
+            executionContext.setRanges(Long.MIN_VALUE + 1, Long.MAX_VALUE);
 
             LOG.info().$("refreshing materialized view, full refresh [view=").$(viewDefinition.getTableToken())
                     .$(", base=").$(baseTableReader.getTableToken())
