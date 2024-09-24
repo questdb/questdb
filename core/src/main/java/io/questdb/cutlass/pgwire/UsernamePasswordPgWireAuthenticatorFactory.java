@@ -26,7 +26,7 @@ package io.questdb.cutlass.pgwire;
 
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.Authenticator;
-import io.questdb.cutlass.pgwire.modern.CleartextPasswordPgWireAuthenticator;
+import io.questdb.cutlass.pgwire.modern.CleartextPasswordPgWireAuthenticatorModern;
 
 public class UsernamePasswordPgWireAuthenticatorFactory implements PgWireAuthenticatorFactory {
 
@@ -43,6 +43,6 @@ public class UsernamePasswordPgWireAuthenticatorFactory implements PgWireAuthent
             CircuitBreakerRegistry registry,
             OptionsListener optionsListener
     ) {
-        return new CleartextPasswordPgWireAuthenticator(configuration, circuitBreaker, registry, optionsListener, matcher, false);
+        return new CleartextPasswordPgWireAuthenticatorModern(configuration, circuitBreaker, registry, optionsListener, matcher, false);
     }
 }

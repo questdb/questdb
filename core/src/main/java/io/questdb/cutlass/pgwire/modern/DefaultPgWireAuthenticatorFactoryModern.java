@@ -31,11 +31,11 @@ import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.pgwire.*;
 import org.jetbrains.annotations.Nullable;
 
-public final class DefaultPgWireAuthenticatorFactory implements PgWireAuthenticatorFactory {
-    public static final PgWireAuthenticatorFactory INSTANCE = new DefaultPgWireAuthenticatorFactory(null);
+public final class DefaultPgWireAuthenticatorFactoryModern implements PgWireAuthenticatorFactory {
+    public static final PgWireAuthenticatorFactory INSTANCE = new DefaultPgWireAuthenticatorFactoryModern(null);
     private final ServerConfiguration serverConfiguration;
 
-    public DefaultPgWireAuthenticatorFactory(@Nullable ServerConfiguration serverConfiguration) {
+    public DefaultPgWireAuthenticatorFactoryModern(@Nullable ServerConfiguration serverConfiguration) {
         this.serverConfiguration = serverConfiguration;
     }
 
@@ -53,7 +53,7 @@ public final class DefaultPgWireAuthenticatorFactory implements PgWireAuthentica
         // and the authenticator will be responsible for closing them.
         final UsernamePasswordMatcher matcher = new DynamicUsernamePasswordMatcher(serverConfiguration, configuration);
 
-        return new CleartextPasswordPgWireAuthenticator(
+        return new CleartextPasswordPgWireAuthenticatorModern(
                 configuration,
                 circuitBreaker,
                 registry,

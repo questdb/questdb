@@ -33,7 +33,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Transient;
 import io.questdb.std.WeakSelfReturningObjectPool;
 
-public class TypesAndInsert extends AbstractSelfReturningObject<TypesAndInsert> implements TypeContainer {
+public class TypesAndInsertModern extends AbstractSelfReturningObject<TypesAndInsertModern> implements TypeContainer {
     // Bind variable columns types, typically scraped from BindVariableService after SQL is parsed. These are
     // our column types and are LittleEndian.
     private final IntList bindVariableColumnTypes = new IntList();
@@ -47,7 +47,7 @@ public class TypesAndInsert extends AbstractSelfReturningObject<TypesAndInsert> 
     private String sqlTag;
     private short sqlType;
 
-    public TypesAndInsert(WeakSelfReturningObjectPool<TypesAndInsert> parentPool) {
+    public TypesAndInsertModern(WeakSelfReturningObjectPool<TypesAndInsertModern> parentPool) {
         super(parentPool);
     }
 

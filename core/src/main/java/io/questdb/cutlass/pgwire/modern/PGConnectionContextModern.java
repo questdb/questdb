@@ -34,7 +34,10 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.Authenticator;
 import io.questdb.cutlass.auth.AuthenticatorException;
-import io.questdb.cutlass.pgwire.*;
+import io.questdb.cutlass.pgwire.BadProtocolException;
+import io.questdb.cutlass.pgwire.OptionsListener;
+import io.questdb.cutlass.pgwire.PGResponseSink;
+import io.questdb.cutlass.pgwire.PGWireConfiguration;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
@@ -52,7 +55,7 @@ import java.util.ArrayDeque;
  * <a href="https://www.postgresql.org/docs/current/protocol-flow.html">Wire protocol</a><br>
  * <a href="https://www.postgresql.org/docs/current/protocol-message-formats.html">Message formats</a>
  */
-public class PGConnectionContext extends IOContext<PGConnectionContext> implements WriterSource, OptionsListener {
+public class PGConnectionContextModern extends IOContext<PGConnectionContextModern> implements WriterSource, OptionsListener {
 
     public static final byte STATUS_IDLE = 'I';
     public static final byte STATUS_IN_ERROR = 'E';
@@ -88,7 +91,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     static final byte MESSAGE_TYPE_PORTAL_SUSPENDED = 's';
     static final byte MESSAGE_TYPE_ROW_DESCRIPTION = 'T';
     static final int NO_TRANSACTION = 0;
-    private static final Log LOG = LogFactory.getLog(PGConnectionContext.class);
+    private static final Log LOG = LogFactory.getLog(PGConnectionContextModern.class);
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
     private static final byte MESSAGE_TYPE_SSL_SUPPORTED_RESPONSE = 'S';
     private static final int PREFIXED_MESSAGE_HEADER_LEN = 5;
@@ -117,7 +120,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private final SecurityContextFactory securityContextFactory;
     private final int sendBufferSize;
     private final SqlExecutionContextImpl sqlExecutionContext;
-    private final WeakSelfReturningObjectPool<TypesAndInsert> taiPool;
+    private final WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool;
     private final DirectUtf8String utf8String = new DirectUtf8String();
     private Authenticator authenticator;
     private int bufferRemainingOffset = 0;
@@ -137,18 +140,18 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private long sendBufferPtr;
     private SuspendEvent suspendEvent;
     // insert 'statements' are cached only for the duration of user session
-    private SimpleAssociativeCache<TypesAndInsert> taiCache;
-    private AssociativeCache<TypesAndSelect> tasCache;
+    private SimpleAssociativeCache<TypesAndInsertModern> taiCache;
+    private AssociativeCache<TypesAndSelectModern> tasCache;
     private boolean tlsSessionStarting = false;
     private long totalReceived = 0;
     private int transactionState = NO_TRANSACTION;
 
-    public PGConnectionContext(
+    public PGConnectionContextModern(
             CairoEngine engine,
             PGWireConfiguration configuration,
             SqlExecutionContextImpl sqlExecutionContext,
             NetworkSqlExecutionCircuitBreaker circuitBreaker,
-            AssociativeCache<TypesAndSelect> tasCache
+            AssociativeCache<TypesAndSelectModern> tasCache
     ) {
         super(
                 configuration.getFactoryProvider().getPGWireSocketFactory(),
@@ -181,7 +184,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             final int insertBlockCount = enableInsertCache ? configuration.getInsertCacheBlockCount() : 1;
             final int insertRowCount = enableInsertCache ? configuration.getInsertCacheRowCount() : 1;
             this.taiCache = new SimpleAssociativeCache<>(insertBlockCount, insertRowCount);
-            this.taiPool = new WeakSelfReturningObjectPool<>(TypesAndInsert::new, insertBlockCount * insertRowCount);
+            this.taiPool = new WeakSelfReturningObjectPool<>(TypesAndInsertModern::new, insertBlockCount * insertRowCount);
 
             this.batchCallback = new PGConnectionBatchCallback();
             FactoryProvider factoryProvider = configuration.getFactoryProvider();
@@ -382,7 +385,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     @Override
-    public PGConnectionContext of(int fd, @NotNull IODispatcher<PGConnectionContext> dispatcher) {
+    public PGConnectionContextModern of(int fd, @NotNull IODispatcher<PGConnectionContextModern> dispatcher) {
         super.of(fd, dispatcher);
         sqlExecutionContext.with(fd);
         if (recvBuffer == 0) {
@@ -944,7 +947,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // 2 - hit "insert" cache and using it
 
         int cachedHit = 0;
-        final TypesAndInsert tai = taiCache.peek(utf16SqlText);
+        final TypesAndInsertModern tai = taiCache.peek(utf16SqlText);
         if (tai != null) {
             if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tai)) {
                 pipelineCurrentEntry.ofInsert(utf16SqlText, tai);
@@ -952,7 +955,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             } else {
                 //todo: find more efficient way to remove from cache what we have already looked up
                 // remove cached item, we will create it again, may be
-                TypesAndInsert tai2 = taiCache.poll(utf16SqlText);
+                TypesAndInsertModern tai2 = taiCache.poll(utf16SqlText);
                 assert tai2 == tai;
                 tai.close();
                 cachedHit = 1;
@@ -960,7 +963,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         if (cachedHit == 0) {
-            final TypesAndSelect tas = tasCache.poll(utf16SqlText);
+            final TypesAndSelectModern tas = tasCache.poll(utf16SqlText);
             if (tas != null) {
                 if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tas)) {
                     pipelineCurrentEntry.ofSelect(utf16SqlText, tas);
@@ -1358,7 +1361,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     transactionState,
                     taiCache,
                     pendingWriters,
-                    PGConnectionContext.this,
+                    PGConnectionContextModern.this,
                     characterStore,
                     utf8String,
                     binarySequenceParamsPool

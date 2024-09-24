@@ -37,7 +37,7 @@ import io.questdb.std.Transient;
  * Unlike other TypesAnd* classes, this one doesn't self-return to a pool. That's because
  * it's used for multithreaded calls to {@link io.questdb.std.ConcurrentAssociativeCache}.
  */
-public class TypesAndSelect implements QuietCloseable, TypeContainer {
+public class TypesAndSelectModern implements QuietCloseable, TypeContainer {
     // The QuestDB bind variable types (see ColumnType) as scraped from the
     // BindVariableService after SQL compilation.
     //
@@ -61,7 +61,7 @@ public class TypesAndSelect implements QuietCloseable, TypeContainer {
     private final short sqlType;
     private RecordCursorFactory factory;
 
-    public TypesAndSelect(
+    public TypesAndSelectModern(
             RecordCursorFactory factory,
             short sqlType,
             String sqlTag,

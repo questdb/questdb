@@ -29,7 +29,9 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
-import io.questdb.cutlass.pgwire.*;
+import io.questdb.cutlass.pgwire.BadProtocolException;
+import io.questdb.cutlass.pgwire.PGOids;
+import io.questdb.cutlass.pgwire.PGResponseSink;
 import io.questdb.griffin.*;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.QueryPausedException;
@@ -42,7 +44,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cutlass.pgwire.PGOids.*;
-import static io.questdb.cutlass.pgwire.modern.PGConnectionContext.*;
+import static io.questdb.cutlass.pgwire.modern.PGConnectionContextModern.*;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
 public class PGPipelineEntry implements QuietCloseable {
@@ -108,8 +110,8 @@ public class PGPipelineEntry implements QuietCloseable {
     private boolean stateParse;
     private boolean stateParseExecuted = false;
     private int stateSync = 0;
-    private TypesAndInsert tai = null;
-    private TypesAndSelect tas = null;
+    private TypesAndInsertModern tai = null;
+    private TypesAndSelectModern tas = null;
 
     public PGPipelineEntry(CairoEngine engine) {
         this.engine = engine;
@@ -120,7 +122,7 @@ public class PGPipelineEntry implements QuietCloseable {
         portalNames.add(portalName);
     }
 
-    public void cacheIfPossible(AssociativeCache<TypesAndSelect> tasCache, SimpleAssociativeCache<TypesAndInsert> taiCache) {
+    public void cacheIfPossible(AssociativeCache<TypesAndSelectModern> tasCache, SimpleAssociativeCache<TypesAndInsertModern> taiCache) {
         if (isPortal() || isPreparedStatement()) {
             // must not cache prepared statements etc; we must only cache abandoned pipeline entries (their contents)
             return;
@@ -158,7 +160,7 @@ public class PGPipelineEntry implements QuietCloseable {
             CharSequence sqlText,
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
-            WeakSelfReturningObjectPool<TypesAndInsert> taiPool
+            WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
     ) throws BadProtocolException {
         // pipeline entries begin life as anonymous, typical pipeline length is 1-3 entries
         // we do not need to create new objects until we know we're caching the entry
@@ -205,7 +207,7 @@ public class PGPipelineEntry implements QuietCloseable {
     public int execute(
             SqlExecutionContext sqlExecutionContext,
             int transactionState,
-            SimpleAssociativeCache<TypesAndInsert> taiCache,
+            SimpleAssociativeCache<TypesAndInsertModern> taiCache,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             WriterSource writerSource,
             CharacterStore characterStore,
@@ -438,7 +440,7 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
-    public void ofInsert(CharSequence utf16SqlText, TypesAndInsert tai) {
+    public void ofInsert(CharSequence utf16SqlText, TypesAndInsertModern tai) {
         this.sqlText = utf16SqlText;
         this.insertOp = tai.getInsert();
         this.sqlTag = tai.getSqlTag();
@@ -448,7 +450,7 @@ public class PGPipelineEntry implements QuietCloseable {
         copyColumnTypesToParameterTypeOIDs(tai.getBindVariableColumnTypes());
     }
 
-    public void ofSelect(CharSequence utf16SqlText, TypesAndSelect tas) {
+    public void ofSelect(CharSequence utf16SqlText, TypesAndSelectModern tas) {
         this.sqlText = utf16SqlText;
         this.factory = tas.getFactory();
         this.sqlTag = tas.getSqlTag();
@@ -463,7 +465,7 @@ public class PGPipelineEntry implements QuietCloseable {
             CharSequence sqlText,
             SqlExecutionContext sqlExecutionContext,
             CompiledQuery cq,
-            WeakSelfReturningObjectPool<TypesAndInsert> taiPool
+            WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
     ) throws BadProtocolException {
         // pipeline entries begin life as anonymous, typical pipeline length is 1-3 entries
         // we do not need to create new objects until we know we're caching the entry
@@ -558,7 +560,7 @@ public class PGPipelineEntry implements QuietCloseable {
     public int sync(
             SqlExecutionContext sqlExecutionContext,
             int transactionState,
-            SimpleAssociativeCache<TypesAndInsert> taiCache,
+            SimpleAssociativeCache<TypesAndInsertModern> taiCache,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             WriterSource writerSource,
             CharSequenceObjHashMap<PGPipelineEntry> namedStatements,
@@ -973,7 +975,7 @@ public class PGPipelineEntry implements QuietCloseable {
             int transactionState,
             // todo: WriterSource is the interface used exclusively in PG Wire. We should not need to pass
             //    around heaps of state in very long call stacks
-            SimpleAssociativeCache<TypesAndInsert> taiCache,
+            SimpleAssociativeCache<TypesAndInsertModern> taiCache,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             WriterSource writerSource,
             CharacterStore characterStore,
@@ -1842,7 +1844,7 @@ public class PGPipelineEntry implements QuietCloseable {
 
     private void setupEntryAfterSQLCompilation(
             SqlExecutionContext sqlExecutionContext,
-            WeakSelfReturningObjectPool<TypesAndInsert> taiPool,
+            WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool,
             CompiledQuery cq
     ) {
         sqlExecutionContext.storeTelemetry(cq.getType(), TelemetryOrigin.POSTGRES);
@@ -1856,7 +1858,7 @@ public class PGPipelineEntry implements QuietCloseable {
             case CompiledQuery.EXPLAIN:
                 this.sqlTag = TAG_EXPLAIN;
                 this.factory = cq.getRecordCursorFactory();
-                tas = new TypesAndSelect(
+                tas = new TypesAndSelectModern(
                         this.factory,
                         sqlType,
                         TAG_EXPLAIN,
@@ -1867,7 +1869,7 @@ public class PGPipelineEntry implements QuietCloseable {
             case CompiledQuery.SELECT:
                 this.sqlTag = TAG_SELECT;
                 this.factory = cq.getRecordCursorFactory();
-                tas = new TypesAndSelect(
+                tas = new TypesAndSelectModern(
                         factory,
                         sqlType,
                         sqlTag,

@@ -29,7 +29,10 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cutlass.auth.Authenticator;
-import io.questdb.cutlass.pgwire.*;
+import io.questdb.cutlass.pgwire.BadProtocolException;
+import io.questdb.cutlass.pgwire.CircuitBreakerRegistry;
+import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.PGWireServer;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -44,12 +47,12 @@ import static io.questdb.network.IODispatcher.*;
 
 public class PGWireServerModern implements PGWireServer {
     private static final Log LOG = LogFactory.getLog(PGWireServerModern.class);
-    private static final NoOpAssociativeCache<TypesAndSelect> NO_OP_CACHE = new NoOpAssociativeCache<>();
+    private static final NoOpAssociativeCache<TypesAndSelectModern> NO_OP_CACHE = new NoOpAssociativeCache<>();
     private final PGConnectionContextFactory contextFactory;
-    private final IODispatcher<PGConnectionContext> dispatcher;
+    private final IODispatcher<PGConnectionContextModern> dispatcher;
     private final Metrics metrics;
     private final CircuitBreakerRegistry registry;
-    private final AssociativeCache<TypesAndSelect> typesAndSelectCache;
+    private final AssociativeCache<TypesAndSelectModern> typesAndSelectCache;
     private final WorkerPool workerPool;
 
     public PGWireServerModern(
@@ -86,7 +89,7 @@ public class PGWireServerModern implements PGWireServer {
 
         for (int i = 0, n = workerPool.getWorkerCount(); i < n; i++) {
             workerPool.assign(i, new Job() {
-                private final IORequestProcessor<PGConnectionContext> processor = (operation, context, dispatcher) -> {
+                private final IORequestProcessor<PGConnectionContextModern> processor = (operation, context, dispatcher) -> {
                     try {
                         if (operation == IOOperation.HEARTBEAT) {
                             dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
@@ -156,14 +159,14 @@ public class PGWireServerModern implements PGWireServer {
         return workerPool;
     }
 
-    private static class PGConnectionContextFactory extends IOContextFactoryImpl<PGConnectionContext> {
+    private static class PGConnectionContextFactory extends IOContextFactoryImpl<PGConnectionContextModern> {
 
         public PGConnectionContextFactory(
                 CairoEngine engine,
                 PGWireConfiguration configuration,
                 CircuitBreakerRegistry registry,
                 ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory,
-                AssociativeCache<TypesAndSelect> typesAndSelectCache
+                AssociativeCache<TypesAndSelectModern> typesAndSelectCache
         ) {
             super(
                     () -> {
@@ -171,7 +174,7 @@ public class PGWireServerModern implements PGWireServer {
                                 configuration.getCircuitBreakerConfiguration(),
                                 MemoryTag.NATIVE_CB5
                         );
-                        PGConnectionContext pgConnectionContext = new PGConnectionContext(
+                        PGConnectionContextModern pgConnectionContext = new PGConnectionContextModern(
                                 engine,
                                 configuration,
                                 executionContextObjectFactory.newInstance(),
