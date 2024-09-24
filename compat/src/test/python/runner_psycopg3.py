@@ -1,26 +1,4 @@
-#      ___                  _   ____  ____
-#     / _ \ _   _  ___  ___| |_|  _ \| __ )
-#    | | | | | | |/ _ \/ __| __| | | |  _ \
-#    | |_| | |_| |  __/\__ \ |_| |_| | |_) |
-#     \__\_\\__,_|\___||___/\__|____/|____/
-#
-#   Copyright (c) 2014-2019 Appsicle
-#   Copyright (c) 2019-2024 QuestDB
-#
-#   Licensed under the Apache License, Version 2.0 (the "License");
-#   you may not use this file except in compliance with the License.
-#   You may obtain a copy of the License at
-#
-#   http://www.apache.org/licenses/LICENSE-2.0
-#
-#   Unless required by applicable law or agreed to in writing, software
-#   distributed under the License is distributed on an "AS IS" BASIS,
-#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#   See the License for the specific language governing permissions and
-#   limitations under the License.
-#
-
-import psycopg2
+import psycopg
 import re
 import sys
 import yaml
@@ -40,7 +18,7 @@ def substitute_variables(text, variables):
 
 
 def replace_param_placeholders(query):
-    # Replace $[n] with %s for psycopg2
+    # Replace $[n] with %s for psycopg
     # Matches $[1], $[2], etc.
     return re.sub(r'\$\[\d+\]', '%s', query)
 
@@ -70,7 +48,7 @@ def execute_query(cursor, query, parameters):
         cursor.execute(query)
     try:
         return cursor.fetchall()
-    except psycopg2.ProgrammingError:
+    except psycopg.errors.ProgrammingError:
         # No results to fetch (e.g., for INSERT, UPDATE)
         return cursor.statusmessage
 
@@ -145,6 +123,7 @@ def run_test(test, global_variables, connection):
 
     cursor = connection.cursor()
 
+    test_failed = False
     try:
         # Prepare phase
         prepare_steps = test.get('prepare', [])
@@ -169,7 +148,6 @@ def run_test(test, global_variables, connection):
             execute_steps(teardown_steps, variables, cursor, connection)
         except Exception as teardown_exception:
             print(f"Teardown for test '{test['name']}' failed: {str(teardown_exception)}")
-            # Optionally handle teardown exceptions (e.g., logging)
         cursor.close()
         if test_failed:
             sys.exit(1)
@@ -181,12 +159,12 @@ def main(yaml_file):
     tests = data.get('tests', [])
 
     for test in tests:
-        connection = psycopg2.connect(
+        connection = psycopg.connect(
             host='localhost',
             port=8812,
             user='admin',
             password='quest',
-            database='qdb'
+            dbname='qdb'
         )
         run_test(test, global_variables, connection)
         connection.close()

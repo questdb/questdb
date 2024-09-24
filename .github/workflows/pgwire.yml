@@ -16,19 +16,33 @@ jobs:
           java-version: '17'
           cache: 'maven'
       - name: Build distribution
-        run: mvn -B clean install -DskipTests -Pbuild-binaries
+        run: mvn -B clean install -Dmaven.test.skip=true -Pbuild-binaries
       - name: Unpack distribution
         run: tar -xzf core/target/questdb-*-no-jre-bin.tar.gz
       - name: Start QuestDB
         run: ./questdb-*bin/questdb.sh start
-      - name: Install Python environment
+      - name: Setup Python version
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.8
+      - name: Create and start virtual environment for psycopg2
         run: |
-          sudo apt-get update
-          sudo apt-get install -y python3 python3-pip
-          pip3 install --user -r compat/src/test/python/requirements.txt
-      - name: Run tests
+          python3 -m venv venv_psycopg2
+          source venv_psycopg2/bin/activate
+          pip install -r compat/src/test/python/requirements_psycopg2.txt
+      - name: Run tests with psycopg2
         run: |
-          python3 compat/src/test/python/runner.py compat/src/test/resources/test_cases.yaml
+          source venv_psycopg2/bin/activate
+          python compat/src/test/python/runner_psycopg2.py compat/src/test/resources/test_cases.yaml
+      - name: Create and start virtual environment for psycopg3
+        run: |
+          python3 -m venv venv_psycopg3
+          source venv_psycopg3/bin/activate
+          pip install -r compat/src/test/python/requirements_psycopg3.txt
+      - name: Run tests with psycopg3
+        run: |
+          source venv_psycopg3/bin/activate
+          python compat/src/test/python/runner_psycopg3.py compat/src/test/resources/test_cases.yaml
       - name: Stop QuestDB
         run: ./questdb-*bin/questdb.sh stop
 
