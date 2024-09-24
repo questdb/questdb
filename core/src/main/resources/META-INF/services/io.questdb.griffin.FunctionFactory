@@ -786,6 +786,11 @@ io.questdb.griffin.engine.functions.catalogue.PgGetSITExprFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PrefixedPgGetSITExprFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.FormatTypeFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PgProcFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.PgEnumFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.ReferentialConstraintsFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.TableConstraintsFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.KeyColumnUsageFunctionFactory
+io.questdb.griffin.engine.functions.catalogue.InformationSchemaCharacterSetsFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PgRangeFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.PgGetKeywordsFunctionFactory
 io.questdb.griffin.engine.functions.catalogue.FunctionListFunctionFactory

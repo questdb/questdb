@@ -1556,6 +1556,17 @@ public final class Numbers {
         return i<<24 | i>>8 & 0xff00 | i<<8 & 0xff0000 | i>>>24;
     }
 
+    public static boolean isDecimal(CharSequence value, int start) {
+        int len = value.length();
+        for (int i = start; i < len; i++) {
+            char c = value.charAt(i);
+            if (c < '0' || c > '9') {
+                return false;
+            }
+        }
+        return len > start;
+    }
+
     public static double roundDown(double value, int scale) throws NumericException {
         if (scale < pow10max && scale > -pow10max) {
             return roundDown0(value, scale);

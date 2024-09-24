@@ -8148,83 +8148,62 @@ nodejs code:
     @Test
     public void testSchemasCall() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertMemoryLeak(() -> {
-            sink.clear();
-            recvBufferSize = 2048;
-            try (
-                    final IPGWireServer server = createPGServer(2);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (
-                        final Connection connection = getConnection(server.getPort(), false, true)
-                ) {
-                    try (Statement statement = connection.createStatement()) {
-                        statement.executeUpdate("create table test (id long,val int)");
-                        statement.executeUpdate("create table test2(id long,val int)");
-                    }
+        recvBufferSize = 2048;
+        assertWithPgServer(CONN_AWARE_ALL, new ConnectionAwareRunnable() {
+            @Override
+            public void run(Connection connection, boolean binary, Mode mode, int port) throws Exception {
+                try (Statement statement = connection.createStatement()) {
+                    statement.executeUpdate("create table test (id long,val int)");
+                    statement.executeUpdate("create table test2(id long,val int)");
+                }
 
-                    final DatabaseMetaData metaData = connection.getMetaData();
-                    try (ResultSet rs = metaData.getCatalogs()) {
-                        assertResultSet(
-                                "TABLE_CAT[VARCHAR]\n" +
-                                        "questdb\n",
-                                sink,
-                                rs
-                        );
-                    }
-
-                    sink.clear();
-
-                    try (ResultSet rs = metaData.getSchemas()) {
-                        assertResultSet(
-                                "TABLE_SCHEM[VARCHAR],TABLE_CATALOG[VARCHAR]\n" +
-                                        "pg_catalog,null\n" +
-                                        "public,null\n",
-                                sink,
-                                rs
-                        );
-                    }
-
-                    sink.clear();
-
-                    try (ResultSet rs = metaData.getTables(
-                            "qdb", null, null, null
-                    )) {
-                        assertResultSet(
-                                "TABLE_CAT[VARCHAR],TABLE_SCHEM[VARCHAR],TABLE_NAME[VARCHAR],TABLE_TYPE[VARCHAR],REMARKS[VARCHAR],TYPE_CAT[VARCHAR],TYPE_SCHEM[VARCHAR],TYPE_NAME[VARCHAR],SELF_REFERENCING_COL_NAME[VARCHAR],REF_GENERATION[VARCHAR]\n" +
-                                        "null,pg_catalog,pg_class,SYSTEM TABLE,null,,,,,\n" +
-                                        "null,public,sys.text_import_log,TABLE,null,,,,,\n" +
-                                        "null,public,test,TABLE,null,,,,,\n" +
-                                        "null,public,test2,TABLE,null,,,,,\n",
-                                sink,
-                                rs
-                        );
-                    }
-
-                    sink.clear();
-                    try (ResultSet rs = metaData.getColumns("qdb", null, "test", null)) {
-                        assertResultSet(
-                                "TABLE_CAT[VARCHAR],TABLE_SCHEM[VARCHAR],TABLE_NAME[VARCHAR],COLUMN_NAME[VARCHAR],DATA_TYPE[SMALLINT],TYPE_NAME[VARCHAR],COLUMN_SIZE[INTEGER],BUFFER_LENGTH[VARCHAR],DECIMAL_DIGITS[INTEGER],NUM_PREC_RADIX[INTEGER],NULLABLE[INTEGER],REMARKS[VARCHAR],COLUMN_DEF[VARCHAR],SQL_DATA_TYPE[INTEGER],SQL_DATETIME_SUB[INTEGER],CHAR_OCTET_LENGTH[VARCHAR],ORDINAL_POSITION[INTEGER],IS_NULLABLE[VARCHAR],SCOPE_CATALOG[VARCHAR],SCOPE_SCHEMA[VARCHAR],SCOPE_TABLE[VARCHAR],SOURCE_DATA_TYPE[SMALLINT],IS_AUTOINCREMENT[VARCHAR],IS_GENERATEDCOLUMN[VARCHAR]\n" +
-                                        "null,public,test,id,-5,int8,19,null,0,10,1,null,null,null,null,19,1,YES,null,null,null,0,NO,NO\n" +
-                                        "null,public,test,val,4,int4,10,null,0,10,1,null,null,null,null,10,2,YES,null,null,null,0,NO,NO\n",
-                                sink,
-                                rs
-                        );
-                    }
-
-                    // todo:  does not work
-                    //    trim() function syntax is not supported (https://w3resource.com/PostgreSQL/trim-function.php)
-                /*
-                sink.clear();
-                try (ResultSet rs = metaData.getIndexInfo("qdb", "public", "test", true, false)) {
+                final DatabaseMetaData metaData = connection.getMetaData();
+                try (ResultSet rs = metaData.getCatalogs()) {
                     assertResultSet(
-                            "",
+                            "TABLE_CAT[VARCHAR]\n" +
+                                    "qdb\n",
                             sink,
                             rs
                     );
                 }
-                */
+
+                sink.clear();
+
+                try (ResultSet rs = metaData.getSchemas()) {
+                    assertResultSet(
+                            "TABLE_SCHEM[VARCHAR],TABLE_CATALOG[VARCHAR]\n" +
+                                    "pg_catalog,null\n" +
+                                    "public,null\n",
+                            sink,
+                            rs
+                    );
+                }
+
+                sink.clear();
+
+                try (ResultSet rs = metaData.getTables(
+                        "qdb", null, null, null
+                )) {
+                    assertResultSet(
+                            "TABLE_CAT[VARCHAR],TABLE_SCHEM[VARCHAR],TABLE_NAME[VARCHAR],TABLE_TYPE[VARCHAR],REMARKS[VARCHAR],TYPE_CAT[VARCHAR],TYPE_SCHEM[VARCHAR],TYPE_NAME[VARCHAR],SELF_REFERENCING_COL_NAME[VARCHAR],REF_GENERATION[VARCHAR]\n" +
+                                    "null,pg_catalog,pg_class,SYSTEM TABLE,null,,,,,\n" +
+                                    "null,public,sys.text_import_log,TABLE,null,,,,,\n" +
+                                    "null,public,test,TABLE,null,,,,,\n" +
+                                    "null,public,test2,TABLE,null,,,,,\n",
+                            sink,
+                            rs
+                    );
+                }
+
+                sink.clear();
+                try (ResultSet rs = metaData.getColumns("qdb", null, "test", null)) {
+                    assertResultSet(
+                            "TABLE_CAT[VARCHAR],TABLE_SCHEM[VARCHAR],TABLE_NAME[VARCHAR],COLUMN_NAME[VARCHAR],DATA_TYPE[SMALLINT],TYPE_NAME[VARCHAR],COLUMN_SIZE[INTEGER],BUFFER_LENGTH[VARCHAR],DECIMAL_DIGITS[INTEGER],NUM_PREC_RADIX[INTEGER],NULLABLE[INTEGER],REMARKS[VARCHAR],COLUMN_DEF[VARCHAR],SQL_DATA_TYPE[INTEGER],SQL_DATETIME_SUB[INTEGER],CHAR_OCTET_LENGTH[VARCHAR],ORDINAL_POSITION[INTEGER],IS_NULLABLE[VARCHAR],SCOPE_CATALOG[VARCHAR],SCOPE_SCHEMA[VARCHAR],SCOPE_TABLE[VARCHAR],SOURCE_DATA_TYPE[SMALLINT],IS_AUTOINCREMENT[VARCHAR],IS_GENERATEDCOLUMN[VARCHAR]\n" +
+                                    "null,public,test,id,-5,int8,19,null,0,10,1,null,null,null,null,19,1,YES,null,null,null,0,NO,NO\n" +
+                                    "null,public,test,val,4,int4,10,null,0,10,1,null,null,null,null,10,2,YES,null,null,null,0,NO,NO\n",
+                            sink,
+                            rs
+                    );
                 }
             }
         });
@@ -11274,7 +11253,7 @@ create table tab as (
             mayDrainWalQueue();
             try (
                     PreparedStatement select = connection.prepareStatement("SELECT date FROM x WHERE ts = '2023-02-11T11:12:22.116234Z'");
-                    ResultSet rs = select.executeQuery();
+                    ResultSet rs = select.executeQuery()
             ) {
                 Assert.assertTrue(rs.next());
                 try (PreparedStatement dropPartition = connection.prepareStatement("ALTER TABLE x DROP PARTITION LIST '" + rs.getDate("date") + "';")) {

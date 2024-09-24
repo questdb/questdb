@@ -22,36 +22,8 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions.catalogue;
+package io.questdb.std;
 
-import io.questdb.test.AbstractCairoTest;
-import org.junit.Test;
-
-public class CurrentDatabaseFunctionFactoryTest extends AbstractCairoTest {
-
-    @Test
-    public void testCurrentDatabaseFunc() throws Exception {
-        assertQuery(
-                "current_database\n" +
-                        "qdb\n",
-                "select current_database();",
-                null,
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testPrefixedCurrentDatabaseFunc() throws Exception {
-        assertQuery(
-                "current_database\n" +
-                        "qdb\n",
-                "select pg_catalog.current_database();",
-                null,
-                null,
-                true,
-                true
-        );
-    }
+public interface BufferWindowCharSequence extends CharSequence {
+    void shiftLo(int positiveOffset);
 }

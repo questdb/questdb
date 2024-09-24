@@ -22,36 +22,36 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions.catalogue;
+package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.test.AbstractCairoTest;
-import org.junit.Test;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.RecordMetadata;
 
-public class CurrentDatabaseFunctionFactoryTest extends AbstractCairoTest {
+public class PgEnumFunctionFactory extends AbstractEmptyCatalogueFunctionFactory {
+    private static final RecordMetadata METADATA;
 
-    @Test
-    public void testCurrentDatabaseFunc() throws Exception {
-        assertQuery(
-                "current_database\n" +
-                        "qdb\n",
-                "select current_database();",
-                null,
-                null,
-                true,
-                true
-        );
+    public PgEnumFunctionFactory() {
+        this("pg_enum()");
     }
 
-    @Test
-    public void testPrefixedCurrentDatabaseFunc() throws Exception {
-        assertQuery(
-                "current_database\n" +
-                        "qdb\n",
-                "select pg_catalog.current_database();",
-                null,
-                null,
-                true,
-                true
-        );
+    protected PgEnumFunctionFactory(String signature) {
+        super(signature, METADATA);
+    }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
+
+    static {
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("oid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("enumtypid", ColumnType.INT));
+        metadata.add(new TableColumnMetadata("enumsortorder", ColumnType.FLOAT));
+        metadata.add(new TableColumnMetadata("enumlabel", ColumnType.STRING));
+        METADATA = metadata;
     }
 }
