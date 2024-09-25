@@ -24,6 +24,8 @@
 use std::alloc::{AllocError, Allocator, Global, Layout};
 use std::ptr::NonNull;
 use std::sync::atomic::AtomicUsize;
+use jni::JNIEnv;
+use jni::objects::JClass;
 
 #[derive(Clone, Copy)]
 pub struct QdbWatermarkAllocator {
@@ -130,3 +132,37 @@ pub type QdbAllocator = QdbWatermarkAllocator;
 
 #[cfg(test)]
 pub type QdbAllocator = QdbTestAllocator;
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_std_Unsafe_QdbAllocator_create(
+    _env: JNIEnv,
+    _class: JClass,
+    rss_mem_limit: *const AtomicUsize,
+    rss_mem_used: *mut AtomicUsize,
+    mem_used: *mut AtomicUsize,
+    tagged_used: *mut AtomicUsize,
+    malloc_count: *mut AtomicUsize,
+) -> *mut QdbWatermarkAllocator {
+    Box::into_raw(Box::new(QdbWatermarkAllocator::new(
+        rss_mem_limit,
+        rss_mem_used,
+        mem_used,
+        tagged_used,
+        malloc_count,
+    )))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_std_Unsafe_QdbAllocator_destroy(
+    _env: JNIEnv,
+    _class: JClass,
+    allocator: *mut QdbWatermarkAllocator,
+) {
+    if allocator.is_null() {
+        panic!("allocator pointer is null");
+    }
+
+    drop(unsafe {
+        Box::from_raw(allocator)
+    })
+}

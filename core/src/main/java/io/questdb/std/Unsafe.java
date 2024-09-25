@@ -212,7 +212,7 @@ public final class Unsafe {
     }
 
     public static long getRssMemUsed() {
-        return RSS_MEM_USED.get();
+        return UNSAFE.getLongVolatile(null, RSS_MEM_USED_ADDR);
     }
 
     public static sun.misc.Unsafe getUnsafe() {
@@ -255,7 +255,7 @@ public final class Unsafe {
         } catch (OutOfMemoryError oom) {
             CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.allocateMemory() OutOfMemoryError [RSS_MEM_USED=")
-                    .put(RSS_MEM_USED.get())
+                    .put(getRssMemUsed())
                     .put(", size=")
                     .put(size)
                     .put(", memoryTag=").put(memoryTag)
@@ -296,7 +296,7 @@ public final class Unsafe {
         assert memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
         COUNTERS[memoryTag].add(size);
         if (memoryTag >= MemoryTag.NATIVE_DEFAULT) {
-            RSS_MEM_USED.addAndGet(size);
+            UNSAFE.getAndAddLong(null, RSS_MEM_USED_ADDR, size);
         }
     }
 
@@ -328,7 +328,7 @@ public final class Unsafe {
         // Don't check limits for mmap'd memory
         final long rssMemLimit = UNSAFE.getLongVolatile(null, RSS_MEM_LIMIT_ADDR);
         if (rssMemLimit > 0 && memoryTag >= NATIVE_DEFAULT) {
-            long usage = RSS_MEM_USED.get();
+            long usage = getRssMemUsed();
             if (usage + size > rssMemLimit) {
                 throw CairoException.nonCritical().setOutOfMemory(true)
                         .put("global RSS memory limit exceeded [usage=")
@@ -478,9 +478,6 @@ public final class Unsafe {
             theUnsafe.setAccessible(true);
             UNSAFE = (sun.misc.Unsafe) theUnsafe.get(null);
 
-            MEM_USED_ADDR = UNSAFE.allocateMemory(8);
-            RSS_MEM_LIMIT_ADDR = UNSAFE.allocateMemory(8);
-
             BYTE_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(byte[].class);
             BYTE_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(byte[].class));
 
@@ -510,9 +507,19 @@ public final class Unsafe {
         makeAccessible(implAddExports);
         //#endif
 
+        // A single allocation for all the off-heap native memory counters.
+        // Might help with locality, given they're often incremented together.
+        long nativeMemCountersArray = UNSAFE.allocateMemory((3 + COUNTERS.length) * 8);
+        MEM_USED_ADDR = nativeMemCountersArray;
+        nativeMemCountersArray += 8;
+        RSS_MEM_USED_ADDR = nativeMemCountersArray;
+        nativeMemCountersArray += 8;
+        RSS_MEM_LIMIT_ADDR = nativeMemCountersArray;
+        nativeMemCountersArray += 8;
         for (int i = 0; i < COUNTERS.length; i++) {
             COUNTERS[i] = new LongAdder();
-            NATIVE_MEM_COUNTER_ADDRS[i] = UNSAFE.allocateMemory(8);
+            NATIVE_MEM_COUNTER_ADDRS[i] = nativeMemCountersArray;
+            nativeMemCountersArray += 8;
         }
     }
 }
