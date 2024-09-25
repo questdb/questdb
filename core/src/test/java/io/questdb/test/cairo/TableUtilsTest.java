@@ -223,7 +223,6 @@ public class TableUtilsTest extends AbstractTest {
         long mem2 = Unsafe.malloc(32, MemoryTag.NATIVE_DEFAULT);
         try {
             for (int columnType = 0; columnType < ColumnType.NULL; columnType++) {
-
                 if (!ColumnType.isVarSize(columnType)) {
                     int size = ColumnType.sizeOf(columnType);
                     if (size > 0) {
@@ -238,7 +237,8 @@ public class TableUtilsTest extends AbstractTest {
                             Assert.assertEquals(
                                     type,
                                     Unsafe.getUnsafe().getByte(mem1 + b),
-                                    Unsafe.getUnsafe().getByte(mem1 + b));
+                                    Unsafe.getUnsafe().getByte(mem1 + b)
+                            );
                         }
                     }
                 }
