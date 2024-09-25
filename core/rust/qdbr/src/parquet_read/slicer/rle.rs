@@ -207,7 +207,7 @@ impl DataPageSlicer for RleLocalIsGlobalSymbolDecoder<'_, '_> {
     }
 
     fn data_size(&self) -> usize {
-        self.row_count * size_of::<u32>()
+        self.row_count * std::mem::size_of::<u32>()
     }
 
     fn result(&self) -> ParquetResult<()> {
@@ -272,7 +272,7 @@ impl<'a, 'b> RleLocalIsGlobalSymbolDecoder<'a, 'b> {
                 Ok(())
             }
             HybridEncoded::Rle(pack, repeat) => {
-                let mut bytes = [0u8; size_of::<u32>()];
+                let mut bytes = [0u8; std::mem::size_of::<u32>()];
                 pack.iter().zip(bytes.iter_mut()).for_each(|(src, dst)| {
                     *dst = *src;
                 });
