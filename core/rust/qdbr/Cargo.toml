@@ -23,7 +23,7 @@ tokio = "1.38.0"
 log = "0.4.22"
 serde_json = "1.0.128"
 serde = { version = "1.0.210", features = ["derive"] }
-alloc-checked = { git = "https://github.com/questdb/alloc-checked.git", rev = "05df9364c1ba6745c1d3622fc82cceab7f8aee0f", version = "0.1.0" }
+alloc-checked = { git = "https://github.com/questdb/alloc-checked.git", rev = "6650c3969b2c7c65e5a77ed47b4df22736781396", version = "0.1.0" }
 
 [dev-dependencies]
 parquet = "51.0.0"

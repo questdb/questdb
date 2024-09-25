@@ -49,20 +49,29 @@ public final class Unsafe {
     public static final long LONG_OFFSET;
     public static final long LONG_SCALE;
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
+    // Memory-tagged counters we use in native code.
+    // Each long in the array is effectively a `* mut usize` in Rust, or `size_t*` in C.
+    // We do this because we want to preserve the better performance of `LongAdder` for Java code.
+    private static final long[] NATIVE_MEM_COUNTER_ADDRS = new long[MemoryTag.SIZE];
     private static final AtomicLong FREE_COUNT = new AtomicLong(0);
     private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
-    private static final AtomicLong MEM_USED = new AtomicLong(0);
+    // Total count of the memory we've allocated. This is maintained off-heap so
+    // native code can access it too. The `long` type in Java is a `* mut usize` in Rust, or `size_t*` in C.
+    private static final long MEM_USED_ADDR;
     //#if jdk.version!=8
     private static final long OVERRIDE;
     //#endif
     private static final AtomicLong REALLOC_COUNT = new AtomicLong(0);
-    private static final AtomicLong RSS_MEM_USED = new AtomicLong(0);
+    private static final long RSS_MEM_USED_ADDR;
     private static final sun.misc.Unsafe UNSAFE;
     private static final AnonymousClassDefiner anonymousClassDefiner;
     //#if jdk.version!=8
     private static final Method implAddExports;
     //#endif
-    private static long RSS_MEM_LIMIT = 0;
+    // Global RSS memory limit in bytes. Zero means no limit.
+    // This is maintained off-heap so native code can access it too.
+    // The long type in Java is a `* mut usize` in Rust, or `size_t*` in C.
+    private static long RSS_MEM_LIMIT_ADDR = 0;
 
     private Unsafe() {
     }
@@ -185,12 +194,17 @@ public final class Unsafe {
     }
 
     public static long getMemUsed() {
-        return MEM_USED.get();
+        return UNSAFE.getLongVolatile(null, MEM_USED_ADDR);
     }
 
     public static long getMemUsedByTag(int memoryTag) {
         assert memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
-        return COUNTERS[memoryTag].sum();
+        return COUNTERS[memoryTag].sum() + UNSAFE.getLongVolatile(null, NATIVE_MEM_COUNTER_ADDRS[memoryTag]);
+    }
+
+    public static long getNativeMemCounterAddrByTag(int memoryTag) {
+        assert memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
+        return NATIVE_MEM_COUNTER_ADDRS[memoryTag];
     }
 
     public static long getReallocCount() {
@@ -263,7 +277,7 @@ public final class Unsafe {
         } catch (OutOfMemoryError oom) {
             CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.reallocateMemory() OutOfMemoryError [RSS_MEM_USED=")
-                    .put(RSS_MEM_USED.get())
+                    .put(UNSAFE.getLongVolatile(null, RSS_MEM_USED_ADDR))
                     .put(", oldSize=")
                     .put(oldSize)
                     .put(", newSize=")
@@ -277,7 +291,7 @@ public final class Unsafe {
     }
 
     public static void recordMemAlloc(long size, int memoryTag) {
-        long mem = MEM_USED.addAndGet(size);
+        final long mem = UNSAFE.getAndAddLong(null, MEM_USED_ADDR, size) + size;
         assert mem >= 0;
         assert memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
         COUNTERS[memoryTag].add(size);
@@ -287,7 +301,7 @@ public final class Unsafe {
     }
 
     public static void setRssMemLimit(long limit) {
-        RSS_MEM_LIMIT = limit;
+        UNSAFE.putLongVolatile(null, RSS_MEM_LIMIT_ADDR, limit);
     }
 
     //#if jdk.version!=8
@@ -311,13 +325,15 @@ public final class Unsafe {
         if (size <= 0) {
             return;
         }
-        if (RSS_MEM_LIMIT > 0 && memoryTag >= NATIVE_DEFAULT) {
+        // Don't check limits for mmap'd memory
+        final long rssMemLimit = UNSAFE.getLongVolatile(null, RSS_MEM_LIMIT_ADDR);
+        if (rssMemLimit > 0 && memoryTag >= NATIVE_DEFAULT) {
             long usage = RSS_MEM_USED.get();
-            if (usage + size > RSS_MEM_LIMIT) {
+            if (usage + size > rssMemLimit) {
                 throw CairoException.nonCritical().setOutOfMemory(true)
                         .put("global RSS memory limit exceeded [usage=")
                         .put(usage)
-                        .put(", RSS_MEM_LIMIT=").put(RSS_MEM_LIMIT)
+                        .put(", RSS_MEM_LIMIT=").put(rssMemLimit)
                         .put(", size=").put(size)
                         .put(", memoryTag=").put(memoryTag)
                         .put(']');
@@ -462,6 +478,9 @@ public final class Unsafe {
             theUnsafe.setAccessible(true);
             UNSAFE = (sun.misc.Unsafe) theUnsafe.get(null);
 
+            MEM_USED_ADDR = UNSAFE.allocateMemory(8);
+            RSS_MEM_LIMIT_ADDR = UNSAFE.allocateMemory(8);
+
             BYTE_OFFSET = Unsafe.getUnsafe().arrayBaseOffset(byte[].class);
             BYTE_SCALE = msb(Unsafe.getUnsafe().arrayIndexScale(byte[].class));
 
@@ -493,6 +512,7 @@ public final class Unsafe {
 
         for (int i = 0; i < COUNTERS.length; i++) {
             COUNTERS[i] = new LongAdder();
+            NATIVE_MEM_COUNTER_ADDRS[i] = UNSAFE.allocateMemory(8);
         }
     }
 }
