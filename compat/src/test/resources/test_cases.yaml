@@ -113,3 +113,61 @@ tests:
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS ${table_name};"
+  - name: Alter table test
+    description: Test altering a table
+    iterations: 10
+    prepare:
+      - action: execute
+        query: "CREATE TABLE ${table_name} (id INT, temperature DOUBLE, timestamp timestamp);"
+    steps:
+      - loop:
+          range:
+            start: 1
+            end: 1000
+          as: id
+          steps:
+            - action: execute
+              query: "INSERT INTO ${table_name} (id, temperature, timestamp) VALUES ($[1], $[2], $[3]);"
+              parameters:
+                - value: "${id}"
+                  type: "INT4"
+                - value: "${id}.5"
+                  type: "FLOAT8"
+                - value: "2023-10-01T10:00:00.${id}Z"
+                  type: "TIMESTAMP"
+              expect:
+                result: "INSERT 0 1"
+      - action: execute
+        query: "ALTER TABLE ${table_name} ADD COLUMN ts2 timestamp;"
+        expect:
+          result: "OK"
+      - action: execute
+        query: "UPDATE ${table_name} SET ts2 = timestamp;"
+        expect:
+          result: "UPDATE 1000"
+      - action: query
+        query: "SELECT * FROM ${table_name} WHERE ts2 = $[1];"
+        parameters:
+          - value: "2023-10-01T10:00:00.999000Z"
+            type: "TIMESTAMP"
+        expect:
+          result:
+            - [ 999, 999.5, '2023-10-01T10:00:00.999000Z', '2023-10-01T10:00:00.999000Z' ]
+      - action: execute
+        query: "ALTER TABLE ${table_name} DROP COLUMN timestamp;"
+        expect:
+          result: "OK"
+        # The action bellow is currently failing with: cached query plan cannot be used because table schema has changed
+        # The action should be re-enabled once the issue is fixed
+    #      - action: query
+    #        query: "SELECT * FROM ${table_name} WHERE ts2 = $[1];"
+    #        parameters:
+    #          - value: "2023-10-01T10:00:00.999000Z"
+    #            type: "TIMESTAMP"
+    #        expect:
+    #          result:
+    #            - [ 999, 999.5, '2023-10-01T10:00:00.999000Z' ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS ${table_name};"
+
