@@ -1265,7 +1265,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExplainCreateMatView() throws Exception {
         assertPlan(
-                "create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day",
+                "create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal",
                 "create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day",
                 "Create materialized table: test\n" +
                         "    Radix sort light\n" +
