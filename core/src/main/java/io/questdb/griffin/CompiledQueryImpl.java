@@ -30,6 +30,7 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.DoneOperationFuture;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
@@ -156,7 +157,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     public CompiledQuery of(short type) {
-        return of(type, null, null);
+        return of(type, new EmptyTableRecordCursorFactory(EmptyRecordMetadata.INSTANCE), null);
     }
 
     public CompiledQuery of(short type, RecordCursorFactory recordCursorFactory) {
