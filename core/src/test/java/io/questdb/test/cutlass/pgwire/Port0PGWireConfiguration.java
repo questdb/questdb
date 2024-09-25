@@ -33,7 +33,7 @@ import io.questdb.std.Rnd;
 public class Port0PGWireConfiguration extends DefaultPGWireConfiguration {
 
     private final DefaultIODispatcherConfiguration ioDispatcherConfiguration;
-    private final boolean isLegacyMode;
+    boolean isLegacyMode;
 
     public Port0PGWireConfiguration() {
         this(-1, false);

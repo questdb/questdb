@@ -456,6 +456,9 @@ public abstract class BasePGTest extends AbstractCairoTest {
     }
 
     protected IPGWireServer createPGServer(PGWireConfiguration configuration, boolean fixedClientIdAndSecret) throws SqlException {
+        if (configuration.isLegacyModeEnabled() != testParamLegacyMode) {
+            ((Port0PGWireConfiguration) configuration).isLegacyMode = testParamLegacyMode;
+        }
         TestWorkerPool workerPool = new TestWorkerPool(configuration.getWorkerCount(), metrics);
         copyRequestJob = new CopyRequestJob(engine, configuration.getWorkerCount());
 
@@ -637,6 +640,11 @@ public abstract class BasePGTest extends AbstractCairoTest {
             public Rnd getRandom() {
                 return new Rnd();
             }
+
+            @Override
+            public boolean isLegacyModeEnabled() {
+                return testParamLegacyMode;
+            }
         };
     }
 
@@ -656,6 +664,11 @@ public abstract class BasePGTest extends AbstractCairoTest {
             @Override
             public Rnd getRandom() {
                 return new Rnd();
+            }
+
+            @Override
+            public boolean isLegacyModeEnabled() {
+                return testParamLegacyMode;
             }
         };
     }
