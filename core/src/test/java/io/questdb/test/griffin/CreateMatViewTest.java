@@ -57,6 +57,19 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewBaseTableDoesNotExist() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                ddl("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist [table=" + TABLE1 + "]");
+            }
+            assertNull(engine.getMaterializedViewGraph().getView("test"));
+        });
+    }
+
+    @Test
     public void testCreateMatViewGroupByTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);

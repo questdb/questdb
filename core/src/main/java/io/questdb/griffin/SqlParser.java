@@ -24,10 +24,7 @@
 
 package io.questdb.griffin;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
 import io.questdb.griffin.model.*;
@@ -719,6 +716,13 @@ public class SqlParser {
                 throw SqlException.$(lexer.lastTokenPosition(), "More than one table used in query, base table has to be set using 'WITH BASE'");
             }
             baseTableName = matViewTables.get(0);
+        }
+        final TableToken baseTableToken = executionContext.getTableTokenIfExists(baseTableName);
+        if (baseTableToken == null) {
+            throw SqlException.tableDoesNotExist(lexer.lastTokenPosition(), baseTableName);
+        }
+        if (!baseTableToken.isWal()) {
+            throw SqlException.$(lexer.lastTokenPosition(), "The base table has to be WAL enabled");
         }
         matViewModel.setBaseTableName(baseTableName.toString());
 

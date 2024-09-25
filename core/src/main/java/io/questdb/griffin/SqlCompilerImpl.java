@@ -2088,14 +2088,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             final MaterializedViewDefinition matViewDefinition = matViewModel.generateDefinition();
 
-            final TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
-            if (!baseTableToken.isWal()) {
-                throw SqlException.$(0, "The base table has to be WAL enabled");
-            }
-
             // TODO: persist view definition, i.e. save mat view metadata
             //  load them back on startup
 
+            final TableToken baseTableToken = engine.getTableTokenIfExists(matViewDefinition.getBaseTableName());
             engine.getMaterializedViewGraph().upsertView(baseTableToken, matViewDefinition);
             compiledQuery.ofCreateMatView(matViewToken);
         }
