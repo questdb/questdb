@@ -75,3 +75,19 @@ tests:
         expect:
           result_contains:
             - [ 'BTC-USD', 'buy', 66991.56, 0.00014933, '2024-07-26T07:52:48.243272Z' ]
+  - name: Large Result Set test
+    description: Fetches a large result set
+    iterations: 2
+    prepare:
+      - action: execute
+        query: "CREATE TABLE ${table_name} as (SELECT x, x::varchar FROM long_sequence(1000000));"
+    steps:
+      - action: query
+        query: "SELECT 0, * FROM ${table_name};"
+        expect:
+          result_contains:
+            - [ 0, 1, "1" ]
+            - [ 0, 1000000, "1000000" ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS ${table_name};"
