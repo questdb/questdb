@@ -2217,6 +2217,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         queryContainsSecret = false;
 
         switch (cq.getType()) {
+            case CompiledQuery.EMPTY:
+                isEmptyQuery = true;
+                break;
             case CompiledQuery.CREATE_TABLE_AS_SELECT:
                 queryTag = TAG_CTAS;
                 rowCount = cq.getAffectedRowsCount();

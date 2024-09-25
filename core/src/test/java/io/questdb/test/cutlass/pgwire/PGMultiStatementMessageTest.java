@@ -50,6 +50,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
 import static org.junit.Assert.*;
 
 /**
@@ -315,6 +316,15 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     pstmt.close();
                 }
             }
+        });
+    }
+
+    @Test
+    public void testCommentOnlyQuery() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("/*comment*/");
+            assertResults(statement, hasResult, Result.ZERO);
         });
     }
 

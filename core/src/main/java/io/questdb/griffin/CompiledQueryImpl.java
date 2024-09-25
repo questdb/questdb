@@ -79,7 +79,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
 
     @Override
     public void clear() {
-        this.type = 0;
+        this.type = NONE;
         this.recordCursorFactory = null;
         this.tableToken = null;
         this.affectedRowsCount = -1;
@@ -225,6 +225,10 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
 
     public void ofDrop() {
         of(DROP);
+    }
+
+    public void ofEmpty() {
+        of(EMPTY);
     }
 
     public void ofExplain(RecordCursorFactory recordCursorFactory) {
