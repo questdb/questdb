@@ -30,6 +30,28 @@ tests:
         expect:
           result:
             - [ 1, 10 ]
+      - action: execute
+        description: Insert a row with a unique timestamp so we can query it later
+        query: "INSERT INTO ${table_name} (id, temperature, timestamp) VALUES ($[1], $[2], $[3]);"
+        parameters:
+          - value: "11"
+            type: "INT4"
+          - value: "11.5"
+            type: "FLOAT8"
+          - value: "2024-10-01T10:00:00.000000Z"
+            type: "TIMESTAMP"
+        expect:
+          result: "INSERT 0 1"
+      - action: query with a timestamp parameter
+        description: Query the row we inserted with a unique timestamp
+        query: "SELECT * FROM ${table_name} WHERE timestamp = $[1];"
+        parameters:
+          - value: "2024-10-01T10:00:00.000000Z"
+            type: "TIMESTAMP"
+        # let's use the exact match here since it only returns one row
+        expect:
+          result:
+            - [ 11, 11.5, "2024-10-01T10:00:00.000000Z" ]
       - action: query all rows
         query: "SELECT id, temperature, timestamp FROM ${table_name};"
         expect:
