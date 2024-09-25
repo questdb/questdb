@@ -36,8 +36,6 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
     private final CairoEngine engine;
     private TableReader baseTableReader;
     private TableToken viewTableToken;
-    private final IndexedParameterLinkFunction fromFunction = new IndexedParameterLinkFunction(1, ColumnType.LONG, 0);
-    private final IndexedParameterLinkFunction toFunction = new IndexedParameterLinkFunction(2, ColumnType.LONG, 0);
 
     public MatViewRefreshExecutionContext(CairoEngine engine) {
         super(engine, 1);
@@ -85,8 +83,10 @@ public class MatViewRefreshExecutionContext extends SqlExecutionContextImpl {
             return;
         }
 
-        intrinsicModel.setBetweenBoundary(fromFunction);
-        intrinsicModel.setBetweenBoundary(toFunction);
+        // Cannot re-use function instances, they will be cached in the query plan
+        // and then can be re-used in another execution context.
+        intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(1, ColumnType.TIMESTAMP, 0));
+        intrinsicModel.setBetweenBoundary(new IndexedParameterLinkFunction(2, ColumnType.TIMESTAMP, 0));
     }
 
     public void setRanges(long minTs, long maxTs) throws SqlException {

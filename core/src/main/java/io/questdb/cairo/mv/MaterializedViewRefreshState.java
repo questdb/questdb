@@ -33,16 +33,16 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.StringSink;
 
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
 
 public class MaterializedViewRefreshState implements QuietCloseable {
     private final AtomicBoolean locked = new AtomicBoolean(false);
+    private final AtomicBoolean newNotification = new AtomicBoolean();
     private RecordCursorFactory cursorFactory;
     private StringSink error;
     private int errorCode;
     private long lastRefreshRowCount;
+    private long recordRowCopierMetadataVersion;
     private RecordToRowCopier recordToRowCopier;
-    private final AtomicBoolean newNotification = new AtomicBoolean();
 
     @Override
     public void close() {
@@ -52,10 +52,15 @@ public class MaterializedViewRefreshState implements QuietCloseable {
     public void compilationFail(SqlException e) {
         getSink().put(e.getFlyweightMessage());
         errorCode = e.getPosition();
+        Misc.free(cursorFactory);
     }
 
     public RecordCursorFactory getFactory() {
         return cursorFactory;
+    }
+
+    public long getRecordRowCopierMetadataVersion() {
+        return recordRowCopierMetadataVersion;
     }
 
     public RecordToRowCopier getRecordToRowCopier() {
@@ -81,9 +86,10 @@ public class MaterializedViewRefreshState implements QuietCloseable {
         }
     }
 
-    public void refreshSuccess(RecordCursorFactory factory, RecordToRowCopier copier, long rowCount) {
+    public void refreshSuccess(RecordCursorFactory factory, RecordToRowCopier copier, long recordRowCopierMetadataVersion, long rowCount) {
         this.cursorFactory = factory;
         this.recordToRowCopier = copier;
+        this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
         this.lastRefreshRowCount = rowCount;
     }
 

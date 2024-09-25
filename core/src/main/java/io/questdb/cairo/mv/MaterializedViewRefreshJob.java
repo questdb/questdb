@@ -120,6 +120,21 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
         return columnFilter;
     }
 
+    private RecordToRowCopier getRecordToRowCopier(TableWriterAPI tableWriter, RecordCursorFactory factory, SqlCompiler compiler) throws SqlException {
+        RecordToRowCopier copier;
+        ColumnFilter entityColumnFilter = generatedColumnFilter(
+                factory.getMetadata(),
+                tableWriter.getMetadata()
+        );
+        copier = RecordToRowCopierUtils.generateCopier(
+                compiler.getAsm(),
+                factory.getMetadata(),
+                tableWriter.getMetadata(),
+                entityColumnFilter
+        );
+        return copier;
+    }
+
     private boolean insertAsSelect(MatViewGraph viewGraph, MaterializedViewDefinition viewDef, TableWriterAPI tableWriter) throws SqlException {
         MaterializedViewRefreshState refreshState = viewGraph.getViewRefreshState(viewDef.getTableToken());
         RecordCursorFactory factory;
@@ -138,18 +153,12 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
                         }
                         factory = compiledQuery.getRecordCursorFactory();
 
-                        ColumnFilter entityColumnFilter = generatedColumnFilter(
-                                factory.getMetadata(),
-                                tableWriter.getMetadata()
-                        );
-                        copier = RecordToRowCopierUtils.generateCopier(
-                                compiler.getAsm(),
-                                factory.getMetadata(),
-                                tableWriter.getMetadata(),
-                                entityColumnFilter
-                        );
+                        if (copier == null || tableWriter.getMetadata().getMetadataVersion() != refreshState.getRecordRowCopierMetadataVersion()) {
+                            copier = getRecordToRowCopier(tableWriter, factory, compiler);
+                        }
                     } catch (SqlException e) {
                         refreshState.compilationFail(e);
+                        return false;
                     }
                 }
 
@@ -173,7 +182,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
                 }
                 rowCount = tableWriter.getUncommittedRowCount();
                 tableWriter.commit();
-                refreshState.refreshSuccess(factory, copier, rowCount);
+                refreshState.refreshSuccess(factory, copier, tableWriter.getMetadata().getMetadataVersion(), rowCount);
             } catch (Throwable th) {
                 LOG.error().$("error refreshing materialized view [view=").$(viewDef.getTableToken()).$(", error=").$(th).I$();
                 refreshState.refreshFail(th);
