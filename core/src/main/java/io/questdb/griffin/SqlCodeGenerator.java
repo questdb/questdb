@@ -3756,7 +3756,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             RecordMetadata metadata = factory.getMetadata();
 
-            final boolean enableParallelGroupBy = configuration.isSqlParallelGroupByEnabled();
+            //final boolean enableParallelGroupBy = configuration.isSqlParallelGroupByEnabled();
+            final boolean enableParallelGroupBy = false;
             // Inspect model for possibility of vector aggregate intrinsics.
             if (enableParallelGroupBy && pageFramingSupported && assembleKeysAndFunctionReferences(columns, metadata, hourIndex)) {
                 // Create metadata from everything we've gathered.

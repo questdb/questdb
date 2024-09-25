@@ -5640,6 +5640,98 @@ public class SqlOptimiser implements Mutable {
         }
         return root;
     }
+    /*
+        Transform:
+        SELECT to_str(timestamp, 'yyyy-MM-dd'), .... FROM t ->
+
+        Into:
+        SELECT to_str(timestamp, 'yyyy-MM-dd'), avg FROM (
+          SELECT date_trunc('day', timestamp) as timestamp, .... FROM t
+        );
+
+        TODO: Only 'yyy-MM-dd' supported for now. Extend to date_trunc('month') and more
+     */
+
+    private void rewriteTimestampToString(QueryModel model) throws SqlException {
+        final QueryModel nested = model.getNestedModel();
+        ExpressionNode toStrExpr;
+
+        if (
+                nested != null
+                        && nested.getJoinModels().size() == 1
+                        && nested.getNestedModel() == null
+                        && nested.getTableName() != null
+                        && model.getSampleBy() == null
+                        && (toStrExpr = model.getColumns().getQuick(0).getAst()).type == ExpressionNode.FUNCTION
+                        && Chars.equalsIgnoreCase("to_str", toStrExpr.token)
+                        && Chars.equalsIgnoreCase("'yyyy-MM-dd'", toStrExpr.rhs.token )
+        ) {
+            if (nested.getTimestamp() == null ) {
+                rewriteTimestampToString(nested);
+                return;
+            }
+
+            ExpressionNode ts = nested.getTimestamp();
+
+            // We want to transform from
+            // model ->
+            //   nestedModel
+            //
+            // To:
+            // model ->
+            //   nestedModel ->
+            //     nested2Model ->
+            //       nestest3Model
+            
+            final QueryModel nested2Model  = queryModelPool.next();
+            nested2Model.setTableNameExpr(model.getTableNameExpr());
+            nested2Model.setModelType(model.getModelType());
+            nested2Model.setWhereClause(model.getWhereClause());
+            nested2Model.setNestedModel(model.getNestedModel());
+
+            // Copy columns from model to nested2Model with some caveats:
+            // 1/ If column is "to_str" column, then make new node containing date_trunc in nested2Model
+            // 2/ If column is non-literal, then copy column to nested2Model, and leave alias in model
+            // 3. If column is literal, then just copy column to nested2Model
+            final ObjList<CharSequence> aliases = model.getAliasToColumnMap().keys();
+            for (int i = 0, n = aliases.size(); i < n; i++) {
+                final CharSequence alias = aliases.getQuick(i);
+                QueryColumn qc = model.getAliasToColumnMap().get(alias);
+                if (qc.getAst().token == toStrExpr.token)
+                {
+                    ExpressionNode dateTruncExpr = expressionNodePool.next();
+                    dateTruncExpr.token = "date_trunc";
+                    dateTruncExpr.paramCount = 2;
+                    dateTruncExpr.lhs = expressionNodePool.next().of(CONSTANT, "'day'", 0, 0);;
+                    dateTruncExpr.rhs = ts;
+                    qc = queryColumnPool.next().of("timestamp",dateTruncExpr,qc.isIncludeIntoWildcard());
+                    nested2Model.getAliasToColumnMap().put("timestamp", qc);
+                }
+                else if (qc.getAst().type != ExpressionNode.LITERAL) {
+                    QueryColumn new_qc = queryColumnPool.next().of(
+                            alias,
+                            expressionNodePool.next().of(
+                                    ExpressionNode.LITERAL,
+                                    alias,
+                                    0,
+                                    qc.getAst().position
+                            ),
+                            qc.isIncludeIntoWildcard()
+                    );
+                    nested2Model.getAliasToColumnMap().put(alias, qc);
+                    model.getAliasToColumnMap().put(alias, new_qc);
+                }
+                else {
+                    nested2Model.getAliasToColumnMap().put(alias, qc);
+                }
+            }
+
+            final QueryModel nested3Model  = queryModelPool.next();
+            nested3Model.copyColumnsFrom(model.getNestedModel(),queryColumnPool, expressionNodePool);
+            nested2Model.setNestedModel( nested3Model );
+            nested.setNestedModel(nested2Model);
+        }
+    }
 
     /**
      * Rewrites queries like
@@ -6072,6 +6164,7 @@ public class SqlOptimiser implements Mutable {
             rewriteCount(rewrittenModel);
             resolveJoinColumns(rewrittenModel);
             optimiseBooleanNot(rewrittenModel);
+            rewriteTimestampToString(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);
             rewrittenModel = rewriteSelectClause(rewrittenModel, true, sqlExecutionContext, sqlParserCallback);
             optimiseJoins(rewrittenModel);

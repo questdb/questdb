@@ -33,6 +33,32 @@ import java.util.Arrays;
 public class GroupByTest extends AbstractCairoTest {
 
     @Test
+    public void testGroupByTimestampTrunkAsString() throws Exception {
+        assertMemoryLeak(() -> {
+            compile(
+                    "create table t as (" +
+                            "    select cast(x as double) as price, " +
+                            "    timestamp_sequence('2020-01-01', 15*60*1000000) as timestamp" +
+                            "    from long_sequence(100)" +
+                            "    ) timestamp(timestamp)"
+            );
+
+            String query="SELECT to_str(timestamp, 'yyyy-MM-dd'), avg(price) FROM t";
+            //String query = "SELECT date_trunc('day', timestamp) as timestamp, avg(price) FROM t;";
+            //String query = "select to_str(timestamp, 'yyyy-MM-dd'), avg FROM (SELECT date_trunc('day', timestamp) as timestamp, avg(price) FROM t);";
+            assertQueryNoLeakCheck(
+                    "to_str\tavg\n" +
+                            "2020-01-01\t48.5\n" +
+                            "2020-01-02\t98.5\n",
+                    query,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void test1GroupByWithoutAggregateFunctionsReturnsUniqueKeys() throws Exception {
         assertMemoryLeak(() -> {
             compile("create table t as (" +
