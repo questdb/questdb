@@ -116,7 +116,7 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
         if (!tail.TryEnqueue(item)) {
             // If we're unable to, we need to take a slow path that will
             // try to add a new tail segment.
-            EnqueueSlow(item);
+            enqueueSlow(item);
         }
     }
 
@@ -147,8 +147,8 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
         return tryDequeueSlow(result); // slow path that needs to fix up segments
     }
 
-    // Adds to the end of the queue, adding a new segment if necessary.</summary>
-    private void EnqueueSlow(T item) {
+    // Adds to the end of the queue, adding a new segment if necessary.
+    private void enqueueSlow(T item) {
         while (true) {
             ConcurrentQueueSegment<T> tail = this.tail;
 
@@ -179,7 +179,7 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
         }
     }
 
-    // Tries to dequeue an item, removing empty segments as needed.</summary>
+    // Tries to dequeue an item, removing empty segments as needed.
     private boolean tryDequeueSlow(T item) {
         while (true) {
             // Get the current head
