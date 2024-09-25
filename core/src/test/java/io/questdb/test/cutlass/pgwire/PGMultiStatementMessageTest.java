@@ -57,63 +57,6 @@ import static org.junit.Assert.*;
  */
 public class PGMultiStatementMessageTest extends BasePGTest {
 
-    @Test
-    public void testRestartDueToStaleCompilationDoesNotDuplicate() throws Exception {
-        assertMemoryLeak(() -> {
-            node1.setProperty(PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, Integer.MAX_VALUE - 1);
-            engine.ddl("create table x (ts timestamp, i int) timestamp(ts) partition by day wal", sqlExecutionContext);
-
-            CyclicBarrier barrier = new CyclicBarrier(2);
-            long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-            new Thread(() -> {
-                try {
-                    while (System.nanoTime() < deadlineNanos && barrier.getNumberWaiting() == 0) {
-                        engine.ddl("alter table x add column distraction int", sqlExecutionContext);
-                        Os.sleep(1); // give compiler a chance to compile and execute
-                        if (barrier.getNumberWaiting() != 0) {
-                            break;
-                        }
-                        engine.ddl("alter table x drop column distraction", sqlExecutionContext);
-                        Os.sleep(1);
-                    }
-                } catch (SqlException e) {
-                    throw new RuntimeException(e);
-                } finally {
-                    Path.clearThreadLocals();
-                    try {
-                        barrier.await();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        e.printStackTrace();
-                    } catch (BrokenBarrierException e) {
-                        e.printStackTrace();
-                    }
-                }
-            }).start();
-
-            // the SQL includes INSERT can later test that we don't get duplicate rows
-            // when SQL execution is re-started
-            try (PGTestSetup test = new PGTestSetup()) {
-                Statement statement = test.statement;
-                for (int i = 0; i < 1000; i++) {
-                    statement.execute(
-                            "INSERT INTO x (ts, i) VALUES(now(), 1); " +
-                                    "SELECT * FROM x; ");
-                }
-            } finally {
-                barrier.await();
-            }
-            drainWalQueue();
-            try (RecordCursorFactory factory = select("select count() from x", sqlExecutionContext)) {
-                assertCursor("count\n" +
-                                "1000\n",
-                        factory,
-                        false, false, true
-                );
-            }
-        });
-    }
-
     // https://github.com/questdb/questdb/issues/1777
     // all of these commands are no-op (at the moment)
     @Test
@@ -1114,6 +1057,63 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
+    public void testRestartDueToStaleCompilationDoesNotDuplicate() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, Integer.MAX_VALUE - 1);
+            engine.ddl("create table x (ts timestamp, i int) timestamp(ts) partition by day wal", sqlExecutionContext);
+
+            CyclicBarrier barrier = new CyclicBarrier(2);
+            long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            new Thread(() -> {
+                try {
+                    while (System.nanoTime() < deadlineNanos && barrier.getNumberWaiting() == 0) {
+                        engine.ddl("alter table x add column distraction int", sqlExecutionContext);
+                        Os.sleep(1); // give compiler a chance to compile and execute
+                        if (barrier.getNumberWaiting() != 0) {
+                            break;
+                        }
+                        engine.ddl("alter table x drop column distraction", sqlExecutionContext);
+                        Os.sleep(1);
+                    }
+                } catch (SqlException e) {
+                    throw new RuntimeException(e);
+                } finally {
+                    Path.clearThreadLocals();
+                    try {
+                        barrier.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        e.printStackTrace();
+                    } catch (BrokenBarrierException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }).start();
+
+            // the SQL includes INSERT can later test that we don't get duplicate rows
+            // when SQL execution is re-started
+            try (PGTestSetup test = new PGTestSetup()) {
+                Statement statement = test.statement;
+                for (int i = 0; i < 1000; i++) {
+                    statement.execute(
+                            "INSERT INTO x (ts, i) VALUES(now(), 1); " +
+                                    "SELECT * FROM x; ");
+                }
+            } finally {
+                barrier.await();
+            }
+            drainWalQueue();
+            try (RecordCursorFactory factory = select("select count() from x", sqlExecutionContext)) {
+                assertCursor("count\n" +
+                                "1000\n",
+                        factory,
+                        false, false, true
+                );
+            }
+        });
+    }
+
+    @Test
     public void testRunBEGINWithSemicolonReturnsNextQueryResultOnly() throws Exception {
         assertMemoryLeak(() -> {
             try (PGTestSetup test = new PGTestSetup()) {
@@ -1660,9 +1660,9 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     // TODOs:
     //test when no earlier transaction nor begin/commit/rollback then block is wrapped in implicit transaction and committed at the end
     //test when there's rollback/commit in middle and rest is wrapped in transaction
-    //test when there's error in the middle then implicit transaction is rolled back 
+    //test when there's error in the middle then implicit transaction is rolled back
 
-    //test when there's earlier transaction then block is not committed at the end 
+    //test when there's earlier transaction then block is not committed at the end
     //test if there's begin in the middle then this piece of block is not committed
     //test if there's earlier transaction with commit or rollback then later begin includes lines wrapped in implicit transactions
 

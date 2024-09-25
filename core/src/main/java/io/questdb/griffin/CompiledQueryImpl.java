@@ -189,6 +189,14 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         of(CANCEL_QUERY);
     }
 
+    public void ofCheckpointCreate() {
+        of(CHECKPOINT_CREATE);
+    }
+
+    public void ofCheckpointRelease() {
+        of(CHECKPOINT_RELEASE);
+    }
+
     public void ofCommit() {
         of(COMMIT);
     }
@@ -260,14 +268,6 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
 
     public void ofSet() {
         of(SET);
-    }
-
-    public void ofCheckpointRelease() {
-        of(CHECKPOINT_RELEASE);
-    }
-
-    public void ofCheckpointCreate() {
-        of(CHECKPOINT_CREATE);
     }
 
     public void ofTableResume() {
