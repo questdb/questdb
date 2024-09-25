@@ -157,7 +157,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     public CompiledQuery of(short type) {
-        return of(type, new EmptyTableRecordCursorFactory(EmptyRecordMetadata.INSTANCE), null);
+        return of(type, null, null);
     }
 
     public CompiledQuery of(short type, RecordCursorFactory recordCursorFactory) {
@@ -229,7 +229,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     public void ofEmpty() {
-        of(EMPTY);
+        of(EMPTY, new EmptyTableRecordCursorFactory(EmptyRecordMetadata.INSTANCE), null);
     }
 
     public void ofExplain(RecordCursorFactory recordCursorFactory) {
