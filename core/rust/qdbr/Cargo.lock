@@ -41,6 +41,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "alloc-checked"
+version = "0.1.0"
+source = "git+https://github.com/questdb/alloc-checked.git?rev=05df9364c1ba6745c1d3622fc82cceab7f8aee0f#05df9364c1ba6745c1d3622fc82cceab7f8aee0f"
+
+[[package]]
 name = "alloc-no-stdlib"
 version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1102,6 +1107,7 @@ dependencies = [
 name = "qdbr"
 version = "0.1.0"
 dependencies = [
+ "alloc-checked",
  "arrow",
  "async-trait",
  "bytes",
