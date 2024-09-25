@@ -115,7 +115,15 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         let mut row_group_size = 0usize;
         for (dest_col_idx, &(column_idx, to_column_type)) in columns.iter().enumerate() {
             let column_idx = column_idx as usize;
-            let column_type = self.columns[column_idx].column_type;
+            let mut column_type = self.columns[column_idx].column_type;
+
+            // Special case for handling symbol columns in QuestDB-created Parquet files.
+            // The `read_parquet` function does not support symbol columns,
+            // so this workaround allows them to be read as varchar columns.
+            if column_type.tag() == ColumnTypeTag::Symbol && to_column_type.tag() == ColumnTypeTag::Varchar {
+                column_type = to_column_type;
+            }
+
             if column_type != to_column_type {
                 return Err(fmt_err!(
                     Invalid,

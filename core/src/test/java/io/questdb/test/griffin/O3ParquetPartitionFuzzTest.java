@@ -101,7 +101,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
         String sql = "create table x as (" +
                 "select" +
                 " cast(x as int) i," +
-                // " rnd_symbol('msft','ibm', 'googl') sym," +  // TODO(eugenels): Re-enable symbols
+                " rnd_symbol('msft','ibm', 'googl') sym," +
                 " round(rnd_double(0)*100, 3) amt," +
                 " to_timestamp('2018-01', 'yyyy-MM') + x * 720000000 timestamp," +
                 " rnd_boolean() b," +
@@ -110,7 +110,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
                 " rnd_float(2) e," +
                 " rnd_short(10,1024) f," +
                 " rnd_date(to_date('2015', 'yyyy'), to_date('2016', 'yyyy'), 0) g," +
-                // " rnd_symbol(4,4,4,2) ik," +  // TODO(eugenels): Re-enable symbols
+                " rnd_symbol(4,4,4,2) ik," +
                 " rnd_long() j," +
                 " timestamp_sequence(500000000000L, " + microsBetweenRows + "L) ts," +
                 " rnd_byte(2,50) l," +
@@ -215,8 +215,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
 
     static void assertEquals(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String expectedSql, String parquetSql) throws SqlException {
         try (RecordCursorFactory f1 = compiler.compile(expectedSql, sqlExecutionContext).getRecordCursorFactory(); RecordCursorFactory f2 = compiler.compile(parquetSql, sqlExecutionContext).getRecordCursorFactory(); RecordCursor c1 = f1.getCursor(sqlExecutionContext); RecordCursor c2 = f2.getCursor(sqlExecutionContext)) {
-            RecordMetadata parquetMetadata = symbolAsVarcharCopy(f2.getMetadata());
-            TestUtils.assertEquals(c1, f1.getMetadata(), c2, parquetMetadata, true);
+            TestUtils.assertEquals(c1, f1.getMetadata(), c2, f2.getMetadata(), true);
         }
     }
 

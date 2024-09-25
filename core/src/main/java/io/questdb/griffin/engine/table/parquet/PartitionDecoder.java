@@ -186,14 +186,14 @@ public class PartitionDecoder implements QuietCloseable {
             return columnNames.getQuick(columnIndex);
         }
 
-        public void copyTo(GenericRecordMetadata metadata) {
+        public void copyTo(GenericRecordMetadata metadata, boolean treatSymbolsAsVarchar) {
             metadata.clear();
             final int columnCount = columnCount();
             for (int i = 0; i < columnCount; i++) {
                 final String columnName = Chars.toString(columnName(i));
                 final int columnType = getColumnType(i);
-                if (ColumnType.isSymbol(columnType)) {
-                    metadata.add(new TableColumnMetadata(columnName, columnType, true, 1024, true, null));
+                if (ColumnType.isSymbol(columnType) && treatSymbolsAsVarchar) {
+                    metadata.add(new TableColumnMetadata(columnName, ColumnType.VARCHAR));
                 } else {
                     metadata.add(new TableColumnMetadata(columnName, columnType));
                 }

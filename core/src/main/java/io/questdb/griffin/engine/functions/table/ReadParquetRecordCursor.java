@@ -24,10 +24,7 @@
 
 package io.questdb.griffin.engine.functions.table;
 
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.DataUnavailableException;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.VarcharTypeDriver;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -140,11 +137,22 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         return dataPtr + dataOffset;
     }
 
+    private boolean symbolToVarcharRemappingDetected(int metadataType, int decoderType) {
+        return metadataType == ColumnType.VARCHAR && decoderType == ColumnType.SYMBOL;
+    }
+
     private boolean metadataHasChanged(RecordMetadata metadata, PartitionDecoder decoder) {
         if (metadata.getColumnCount() != decoder.getMetadata().columnCount()) {
             return true;
         }
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            final int metadataType = metadata.getColumnType(i);
+            final int decoderType = decoder.getMetadata().getColumnType(i);
+
+            boolean remappingDetected = symbolToVarcharRemappingDetected(metadataType, decoderType);
+            if (remappingDetected) {
+                continue;
+            }
             if (metadata.getColumnType(i) != decoder.getMetadata().getColumnType(i)) {
                 return true;
             }

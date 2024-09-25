@@ -1290,44 +1290,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 }
 
-                if (ColumnType.isSymbol(columnType)) {
-
-                    final long srcOooFixAddr = oooMem1.addressOf(0);
-
-                    final MapWriter symbolMapWriter = tableWriter.getSymbolMapWriter(i);
-                    final MemoryR offsetsMem = symbolMapWriter.getSymbolOffsetsMemory();
-                    final MemoryR valuesMem = symbolMapWriter.getSymbolValuesMemory();
-
-                    final MemoryCARWImpl dstFixMem = dstColumnsMemory.getQuick(columnOffset);
-                    dstFixMem.clear();
-                    final MemoryCARWImpl dstVarMem = dstColumnsMemory.getQuick(columnOffset + 1);
-                    dstVarMem.clear();
-
-                    O3CopyJob.mergeSymbols(
-                            timestampMergeIndexAddr,
-                            mergeRowCount,
-                            columnAuxPtr,
-                            columnDataPtr,
-                            srcOooFixAddr,
-                            offsetsMem,
-                            valuesMem,
-                            dstFixMem,
-                            dstVarMem
-                    );
-
-                    partitionDescriptor.addColumn(
-                            columnName,
-                            ColumnType.VARCHAR,
-                            columnId,
-                            0,
-                            dstVarMem.addressOf(0),
-                            dstVarMem.getAppendOffset(),
-                            dstFixMem.addressOf(0),
-                            dstFixMem.getAppendOffset(),
-                            0,
-                            0
-                    );
-                } else if (ColumnType.isVarSize(columnType)) {
+                if (ColumnType.isVarSize(columnType)) {
                     final ColumnTypeDriver ctd = ColumnType.getDriver(columnType);
                     final long srcOooFixAddr = oooMem2.addressOf(0);
                     final long srcOooVarAddr = oooMem1.addressOf(0);
@@ -1386,18 +1349,45 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             0,
                             0
                     );
-                    partitionDescriptor.addColumn(
-                            columnName,
-                            columnType,
-                            columnId,
-                            0,
-                            dstFixMem.addressOf(0),
-                            dstFixSize,
-                            0,
-                            0,
-                            0,
-                            0
-                    );
+
+                    if (ColumnType.isSymbol(columnType)) {
+                        final MapWriter symbolMapWriter = tableWriter.getSymbolMapWriter(i);
+                        final MemoryR offsetsMem = symbolMapWriter.getSymbolOffsetsMemory();
+                        final MemoryR valuesMem = symbolMapWriter.getSymbolValuesMemory();
+
+                        final int symbolCount = symbolMapWriter.getSymbolCount();
+                        final long offset = SymbolMapWriter.keyToOffset(symbolCount);
+                        final long offsetsMemSize = offset - SymbolMapWriter.HEADER_SIZE;
+                        assert offsetsMemSize <= offsetsMem.size();
+                        final long valuesMemSize = offsetsMem.getLong(offset);
+                        assert valuesMemSize <= valuesMem.size();
+
+                        partitionDescriptor.addColumn(
+                                columnName,
+                                columnType,
+                                columnId,
+                                0,
+                                dstFixMem.addressOf(0),
+                                dstFixSize,
+                                valuesMem.addressOf(0),
+                                valuesMemSize,
+                                offsetsMem.addressOf(SymbolMapWriter.HEADER_SIZE),
+                                offsetsMemSize
+                        );
+                    } else {
+                        partitionDescriptor.addColumn(
+                                columnName,
+                                columnType,
+                                columnId,
+                                0,
+                                dstFixMem.addressOf(0),
+                                dstFixSize,
+                                0,
+                                0,
+                                0,
+                                0
+                        );
+                    }
                 }
             }
             partitionUpdater.updateRowGroup((short) rowGroupIndex, partitionDescriptor);
