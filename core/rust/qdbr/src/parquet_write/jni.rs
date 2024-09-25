@@ -210,10 +210,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
 
         let file: ParquetResult<_> = File::create(dest_path).map_err(|e| e.into());
         let mut file = file.with_context(|_| {
-            format!(
-                "Could not create parquet file for {}",
-                dest_path.display()
-            )
+            format!("Could not create parquet file for {}", dest_path.display())
         })?;
 
         let sorting_columns = if timestamp_index != -1 {

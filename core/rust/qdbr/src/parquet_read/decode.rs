@@ -120,7 +120,9 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             // Special case for handling symbol columns in QuestDB-created Parquet files.
             // The `read_parquet` function does not support symbol columns,
             // so this workaround allows them to be read as varchar columns.
-            if column_type.tag() == ColumnTypeTag::Symbol && to_column_type.tag() == ColumnTypeTag::Varchar {
+            if column_type.tag() == ColumnTypeTag::Symbol
+                && to_column_type.tag() == ColumnTypeTag::Varchar
+            {
                 column_type = to_column_type;
             }
 
