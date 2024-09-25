@@ -127,7 +127,7 @@ public class InsertTest extends AbstractCairoTest {
                 insert("insert into curr_view values ('SEK', 3, '2019-03-10T03:00:00.000000Z')");
                 Assert.fail("INSERT should fail");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "cannot insert into materialized view [view=curr_view]");
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot modify materialized view [view=curr_view]");
                 Assert.assertEquals(12, e.getPosition());
             }
         });

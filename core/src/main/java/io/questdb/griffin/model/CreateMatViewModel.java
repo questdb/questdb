@@ -88,6 +88,11 @@ public class CreateMatViewModel implements Mutable, ExecutionModel, Sinkable {
         return tableModel.getTableName();
     }
 
+    @Override
+    public ExpressionNode getTableNameExpr() {
+        return tableModel.getTableNameExpr();
+    }
+
     public void setBaseTableName(String baseTableName) {
         this.baseTableName = baseTableName;
     }

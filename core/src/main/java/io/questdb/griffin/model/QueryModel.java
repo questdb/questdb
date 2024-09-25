@@ -911,6 +911,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return tableId;
     }
 
+    @Override
     public CharSequence getTableName() {
         return tableNameExpr != null ? tableNameExpr.token : null;
     }

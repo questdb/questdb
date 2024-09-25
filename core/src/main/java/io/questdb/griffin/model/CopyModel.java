@@ -84,7 +84,8 @@ public class CopyModel implements ExecutionModel, Mutable, Sinkable {
         return target.token;
     }
 
-    public ExpressionNode getTarget() {
+    @Override
+    public ExpressionNode getTableNameExpr() {
         return target;
     }
 

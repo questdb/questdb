@@ -408,14 +408,14 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 ddl("create materialized view " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "A view or a table already exists with this name");
+                TestUtils.assertContains(e.getFlyweightMessage(), "a table already exists with the requested name");
             }
 
             try {
                 ddl("create materialized view if not exists " + TABLE2 + " as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "A table already exists with this name");
+                TestUtils.assertContains(e.getFlyweightMessage(), "a table already exists with the requested name");
             }
 
             final String query = "select ts, avg(v) from " + TABLE2 + " sample by 4h";
@@ -426,12 +426,19 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 ddl("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
                 fail("Expected SqlException missing");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "A view or a table already exists with this name");
+                TestUtils.assertContains(e.getFlyweightMessage(), "view already exists");
             }
 
             // with IF NOT EXISTS
             ddl("create materialized view if not exists test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day");
             assertMaterializedViewDefinition("test", query, TABLE2, 4, 'h');
+
+            try {
+                ddl("create table test(ts timestamp, col varchar) timestamp(ts) partition by day wal");
+                fail("Expected SqlException missing");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "a view already exists with the requested name");
+            }
         });
     }
 

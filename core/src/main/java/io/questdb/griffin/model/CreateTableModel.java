@@ -192,6 +192,11 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         return name.token;
     }
 
+    @Override
+    public ExpressionNode getTableNameExpr() {
+        return name;
+    }
+
     public ExpressionNode getTimestamp() {
         return timestamp;
     }

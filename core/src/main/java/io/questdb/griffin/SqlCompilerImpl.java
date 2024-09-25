@@ -1416,7 +1416,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private CharSequence authorizeInsertForCopy(SecurityContext securityContext, CopyModel model) {
-        final CharSequence tableName = GenericLexer.unquote(model.getTarget().token);
+        final CharSequence tableName = GenericLexer.unquote(model.getTableName());
         final TableToken tt = engine.getTableTokenIfExists(tableName);
         if (tt != null) {
             // for existing table user have to have INSERT permission
@@ -1450,6 +1450,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compiledQuery.ofCancelQuery();
         } catch (NumericException e) {
             throw SqlException.$(position, "non-negative integer literal expected as query id");
+        }
+    }
+
+    private void checkMatViewModification(ExecutionModel executionModel) throws SqlException {
+        final CharSequence name = executionModel.getTableName();
+        final TableToken tt = engine.getTableTokenIfExists(name);
+        if (tt != null && tt.isMatView()) {
+            throw SqlException.position(executionModel.getTableNameExpr().position).put("cannot modify materialized view [view=").put(name).put(']');
         }
     }
 
@@ -1506,7 +1514,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         assert model.isCancel();
 
         long cancelCopyID;
-        String cancelCopyIDStr = Chars.toString(GenericLexer.unquote(model.getTarget().token));
+        String cancelCopyIDStr = Chars.toString(GenericLexer.unquote(model.getTableName()));
         try {
             cancelCopyID = Numbers.parseHexLong(cancelCopyIDStr);
         } catch (NumericException e) {
@@ -1664,7 +1672,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         ExecutionModel executionModel = null;
         try {
             executionModel = compileExecutionModel(executionContext);
-            // TODO: use TableToken::isMatView() to reject INSERT, UPDATE, RENAME, COPY
             switch (executionModel.getModelType()) {
                 case ExecutionModel.QUERY:
                     QueryModel queryModel = (QueryModel) executionModel;
@@ -1679,18 +1686,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     break;
                 case ExecutionModel.COPY:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    checkMatViewModification(executionModel);
                     copy(executionContext, (CopyModel) executionModel);
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
                     break;
                 case ExecutionModel.RENAME_TABLE:
                     sqlId = queryRegistry.register(sqlText, executionContext);
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    checkMatViewModification(executionModel);
                     final RenameTableModel rtm = (RenameTableModel) executionModel;
                     engine.rename(executionContext.getSecurityContext(), path, mem, GenericLexer.unquote(rtm.getFrom().token), renamePath, GenericLexer.unquote(rtm.getTo().token));
                     compiledQuery.ofRenameTable();
                     break;
                 case ExecutionModel.UPDATE:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    checkMatViewModification(executionModel);
                     final QueryModel updateQueryModel = (QueryModel) executionModel;
                     TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
                     try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
@@ -1713,13 +1723,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos, false);
                     break;
                 default:
-                    final InsertModel insertModel = (InsertModel) executionModel;
-                    CharSequence tableName = insertModel.getTableName();
-                    TableToken tt = engine.getTableTokenIfExists(tableName);
-                    if (tt != null && tt.isMatView()) {
-                        throw SqlException.position(insertModel.getTableNameExpr().position).put("cannot insert into materialized view [view=").put(tableName).put(']');
-                    }
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
+                    checkMatViewModification(executionModel);
+                    final InsertModel insertModel = (InsertModel) executionModel;
                     if (insertModel.getQueryModel() != null) {
                         sqlId = queryRegistry.register(sqlText, executionContext);
                         executeWithRetries(
@@ -2063,14 +2069,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final ExpressionNode name = viewTableModel.getName();
         final int status = executionContext.getTableStatus(path, name.token);
-        if (viewTableModel.isIgnoreIfExists() && status == TableUtils.TABLE_EXISTS) {
-            final TableToken tt = engine.getTableTokenIfExists(name.token);
-            if (!tt.isMatView()) {
-                throw SqlException.$(name.position, "A table already exists with this name");
+        if (status == TableUtils.TABLE_EXISTS) {
+            final TableToken tt = executionContext.getTableTokenIfExists(name.token);
+            if (tt != null && !tt.isMatView()) {
+                throw SqlException.$(name.position, "a table already exists with the requested name");
             }
-            compiledQuery.ofCreateMatView(tt);
-        } else if (status == TableUtils.TABLE_EXISTS) {
-            throw SqlException.$(name.position, "A view or a table already exists with this name");
+            if (viewTableModel.isIgnoreIfExists()) {
+                compiledQuery.ofCreateMatView(tt);
+            } else {
+                throw SqlException.$(name.position, "view already exists");
+            }
         } else {
             final TableToken matViewToken;
             this.insertCount = -1;
@@ -2126,10 +2134,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
         final int status = executionContext.getTableStatus(path, name.token);
-        if (createTableModel.isIgnoreIfExists() && status == TableUtils.TABLE_EXISTS) {
-            compiledQuery.ofCreateTable(executionContext.getTableTokenIfExists(name.token));
-        } else if (status == TableUtils.TABLE_EXISTS) {
-            throw SqlException.$(name.position, "table already exists");
+        if (status == TableUtils.TABLE_EXISTS) {
+            final TableToken tt = executionContext.getTableTokenIfExists(name.token);
+            if (tt != null && tt.isMatView()) {
+                throw SqlException.$(name.position, "a view already exists with the requested name");
+            }
+            if (createTableModel.isIgnoreIfExists()) {
+                compiledQuery.ofCreateTable(tt);
+            } else {
+                throw SqlException.$(name.position, "table already exists");
+            }
         } else {
             // create table (...) ... in volume volumeAlias;
             CharSequence volumeAlias = createTableModel.getVolumeAlias();
