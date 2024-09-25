@@ -1974,23 +1974,195 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
-    public void testBindVariableIsNotNullBinaryTransfer() throws Exception {
-        testBindVariableIsNotNull(true);
+    public void testBindVariableIsNotNull() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary, mode, port) -> {
+            connection.setAutoCommit(false);
+            connection.prepareStatement("create table tab1 (value int, ts timestamp) timestamp(ts) partition by DAY").execute();
+            connection.prepareStatement("insert into tab1 (value, ts) values (100, 0)").execute();
+            connection.prepareStatement("insert into tab1 (value, ts) values (null, 1)").execute();
+            connection.commit();
+            connection.setAutoCommit(true);
+
+            mayDrainWalQueue();
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where 3 is not null")) {
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "value[INTEGER],ts[TIMESTAMP]\n" +
+                                    "100,1970-01-01 00:00:00.0\n" +
+                                    "null,1970-01-01 00:00:00.000001\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where coalesce(3.14, 12.37) is not null")) {
+                // 'is not' is an alias for '!=', the matching type for this operator
+                // (with null on the right) is DOUBLE
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "value[INTEGER],ts[TIMESTAMP]\n" +
+                                    "100,1970-01-01 00:00:00.0\n" +
+                                    "null,1970-01-01 00:00:00.000001\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
+                // 'is not' is an alias for '!=', the matching type for this operator
+                // (with null on the right) is DOUBLE
+                ps.setDouble(1, 3.14);
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "value[INTEGER],ts[TIMESTAMP]\n" +
+                                    "100,1970-01-01 00:00:00.0\n" +
+                                    "null,1970-01-01 00:00:00.000001\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
+                ps.setDouble(1, Double.NaN);
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "value[INTEGER],ts[TIMESTAMP]\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
+                ps.setInt(1, Numbers.INT_NULL);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (binary || !testParamLegacyMode) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n",
+                                sink,
+                                rs
+                        );
+                    } else {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n" +
+                                        "null,1970-01-01 00:00:00.000001\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+            }
+
+            sink.clear();
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
+                ps.setInt(1, 12);
+                try (ResultSet rs = ps.executeQuery()) {
+                    assertResultSet(
+                            "value[INTEGER],ts[TIMESTAMP]\n" +
+                                    "100,1970-01-01 00:00:00.0\n" +
+                                    "null,1970-01-01 00:00:00.000001\n",
+                            sink,
+                            rs
+                    );
+                }
+            }
+
+            if (testParamLegacyMode) {
+                // this would be an error on old PGWire
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
+                    ps.setString(1, "");
+                    try (ResultSet ignore1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "inconvertible value: `` [" + stringTypeName + " -> DOUBLE]");
+                    }
+                }
+
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
+                    ps.setString(1, "cah-cha-cha");
+                    try (ResultSet ignore1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "inconvertible value: `cah-cha-cha` [" + stringTypeName + " -> DOUBLE]");
+                    }
+                }
+
+            } else {
+                // not an error in PGWire 2.0
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
+                    ps.setString(1, "");
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n" +
+                                        "null,1970-01-01 00:00:00.000001\n",
+                                sink,
+                                rs
+                        );
+                    }
+                    ps.setString(1, "cah-cha-cha");
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n" +
+                                        "100,1970-01-01 00:00:00.0\n" +
+                                        "null,1970-01-01 00:00:00.000001\n",
+                                sink,
+                                rs
+                        );
+                    }
+                }
+            }
+
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where null is not ?")) {
+                ps.setString(1, "NULL");
+                try (ResultSet ignore1 = ps.executeQuery()) {
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "IS NOT must be followed by NULL");
+                }
+            }
+
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where null is not ?")) {
+                ps.setDouble(1, Double.NaN);
+                try (ResultSet ignore1 = ps.executeQuery()) {
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "IS NOT must be followed by NULL");
+                }
+            }
+
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where null is not ?")) {
+                ps.setNull(1, Types.NULL);
+                try (ResultSet ignored1 = ps.executeQuery()) {
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "IS NOT must be followed by NULL");
+                }
+            }
+
+            try (PreparedStatement ps = connection.prepareStatement("tab1 where value is not ?")) {
+                ps.setString(1, "NULL");
+                try (ResultSet ignored1 = ps.executeQuery()) {
+                    Assert.fail();
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "IS NOT must be followed by NULL");
+                }
+            }
+        });
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
-    public void testBindVariableIsNotNullStringTransfer() throws Exception {
-        testBindVariableIsNotNull(false);
-    }
-
-    @Test
-    @Ignore("TODO PGWire 2.0")
     public void testBindVariableIsNull() throws Exception {
-        // todo: in "simple" mode we do not support this SQL:
-        //    tab1 where 'NaN'::double precision is null
-        assertWithPgServer(CONN_AWARE_ALL & ~(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY), (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             connection.prepareStatement("create table tab1 (value int, ts timestamp) timestamp(ts) partition by YEAR").execute();
             connection.prepareStatement("insert into tab1 (value, ts) values (100, 0)").execute();
@@ -2050,7 +2222,7 @@ if __name__ == "__main__":
                 // server cannot assume that the client is sending null
                 ps.setInt(1, Numbers.INT_NULL);
                 try (ResultSet rs = ps.executeQuery()) {
-                    if (binary) {
+                    if (binary || !testParamLegacyMode) {
                         // in binary protocol DOUBLE.null == INT.null
                         assertResultSet(
                                 "value[INTEGER],ts[TIMESTAMP]\n" +
@@ -2085,21 +2257,42 @@ if __name__ == "__main__":
                 }
             }
 
-            try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
-                ps.setString(1, "");
-                try (ResultSet ignore1 = ps.executeQuery()) {
-                    Assert.fail();
-                } catch (PSQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "inconvertible value: `` [" + stringTypeName + " -> DOUBLE]");
+            if (testParamLegacyMode) {
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                    ps.setString(1, "");
+                    try (ResultSet ignore1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "inconvertible value: `` [" + stringTypeName + " -> DOUBLE]");
+                    }
                 }
-            }
 
-            try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
-                ps.setString(1, "cha-cha-cha");
-                try (ResultSet ignore1 = ps.executeQuery()) {
-                    Assert.fail();
-                } catch (PSQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "inconvertible value: `cha-cha-cha` [" + stringTypeName + " -> DOUBLE]");
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                    ps.setString(1, "cha-cha-cha");
+                    try (ResultSet ignore1 = ps.executeQuery()) {
+                        Assert.fail();
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "inconvertible value: `cha-cha-cha` [" + stringTypeName + " -> DOUBLE]");
+                    }
+                }
+            } else {
+                try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is null")) {
+                    ps.setString(1, "");
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n",
+                                sink,
+                                rs
+                        );
+                    }
+                    ps.setString(1, "cha-cha-cha");
+                    try (ResultSet rs = ps.executeQuery()) {
+                        assertResultSet(
+                                "value[INTEGER],ts[TIMESTAMP]\n",
+                                sink,
+                                rs
+                        );
+                    }
                 }
             }
 
@@ -2211,21 +2404,31 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testBrokenUtf8QueryInParseMessage() throws Exception {
         skipOnWalRun(); // non-partitioned
-        assertHexScript(
-                NetworkFacadeImpl.INSTANCE,
-                ">0000000804d2162f\n" +
-                        "<4e\n" +
-                        ">0000007500030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
-                        "<520000000800000003\n" +
-                        ">700000000a717565737400\n" +
-                        "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
-                        ">50000000220053ac542065787472615f666c6f61745f646967697473203d2033000000420000000c0000000000000000450000000900000000015300000004\n" +
-                        "<!!"
-                , new Port0PGWireConfiguration()
-        );
+        final String script;
+        if (testParamLegacyMode) {
+            // legacy mode will disconnect if UTF8 string is bad
+            script = ">0000000804d2162f\n" +
+                    "<4e\n" +
+                    ">0000007500030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
+                    "<520000000800000003\n" +
+                    ">700000000a717565737400\n" +
+                    "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
+                    ">50000000220053ac542065787472615f666c6f61745f646967697473203d2033000000420000000c0000000000000000450000000900000000015300000004\n" +
+                    "<!!";
+        } else {
+            // the modern server will return actionable error message to the client
+            script = ">0000000804d2162f\n" +
+                    "<4e\n" +
+                    ">0000007500030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
+                    "<520000000800000003\n" +
+                    ">700000000a717565737400\n" +
+                    "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
+                    ">50000000220053ac542065787472615f666c6f61745f646967697473203d2033000000420000000c0000000000000000450000000900000000015300000004\n" +
+                    "<4500000039433030303030004d696e76616c6964205554463820627974657320696e20706172736520717565727900534552524f5200503100005a0000000549\n";
+        }
+        assertHexScript(NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration());
     }
 
     @Test
@@ -2483,38 +2686,62 @@ if __name__ == "__main__":
     @Test
     public void testCloseMessageForSelectWithParamsHex() throws Exception {
         skipOnWalRun();
-        // old behaviour:
-        //   - the client supplies parameter types, server ignores them and sends VARCHAR in the 'T' message
-        // new bahviour:
-        //   - the server respects the parameter types sent by the client
-        String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
-                "<520000000800000003\n" +
-                ">70000000076f6800\n" +
-                "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
-                ">5000000022005345542065787472615f666c6f61745f646967697473203d2033000000420000000c0000000000000000450000000900000000015300000004\n" +
-                "<310000000432000000044300000008534554005a0000000549\n" +
-                ">500000003700534554206170706c69636174696f6e5f6e616d65203d2027506f737467726553514c204a4442432044726976657227000000420000000c0000000000000000450000000900000000015300000004\n" +
-                "<310000000432000000044300000008534554005a0000000549\n" +
-                ">500000003b0073656c65637420782c24312c24322c24332066726f6d206c6f6e675f73657175656e63652832290000030000001700000014000002bd420000002600000003000000000000000300000001340000000331323300000004352e3433000044000000065000450000000900000000005300000004\n" +
-                "<31000000043200000004540000005900047800000000000001000000140008ffffffff0000243100000000000002000000170004ffffffff0000243200000000000003000000140008ffffffff0000243300000000000004000002bd0008ffffffff0000440000001f0004000000013100000001340000000331323300000004352e3433440000001f0004000000013200000001340000000331323300000004352e3433430000000d53454c4543542032005a0000000549\n" +
-                ">500000003b0073656c65637420782c24312c24322c24332066726f6d206c6f6e675f73657175656e63652832290000030000001700000014000002bd420000002600000003000000000000000300000001340000000331323300000004352e3433000044000000065000450000000900000000005300000004\n" +
-                "<31000000043200000004540000005900047800000000000001000000140008ffffffff0000243100000000000002000000170004ffffffff0000243200000000000003000000140008ffffffff0000243300000000000004000002bd0008ffffffff0000440000001f0004000000013100000001340000000331323300000004352e3433440000001f0004000000013200000001340000000331323300000004352e3433430000000d53454c4543542032005a0000000549\n" +
-                ">500000003b0073656c65637420782c24312c24322c24332066726f6d206c6f6e675f73657175656e63652832290000030000001700000014000002bd420000002600000003000000000000000300000001340000000331323300000004352e3433000044000000065000450000000900000000005300000004\n" +
-                "<31000000043200000004540000005900047800000000000001000000140008ffffffff0000243100000000000002000000170004ffffffff0000243200000000000003000000140008ffffffff0000243300000000000004000002bd0008ffffffff0000440000001f0004000000013100000001340000000331323300000004352e3433440000001f0004000000013200000001340000000331323300000004352e3433430000000d53454c4543542032005a0000000549\n" +
-                ">500000003b0073656c65637420782c24312c24322c24332066726f6d206c6f6e675f73657175656e63652832290000030000001700000014000002bd420000002600000003000000000000000300000001340000000331323300000004352e3433000044000000065000450000000900000000005300000004\n" +
-                "<31000000043200000004540000005900047800000000000001000000140008ffffffff0000243100000000000002000000170004ffffffff0000243200000000000003000000140008ffffffff0000243300000000000004000002bd0008ffffffff0000440000001f0004000000013100000001340000000331323300000004352e3433440000001f0004000000013200000001340000000331323300000004352e3433430000000d53454c4543542032005a0000000549\n" +
-                ">500000003e535f310073656c65637420782c24312c24322c24332066726f6d206c6f6e675f73657175656e63652832290000030000001700000014000002bd420000002900535f31000003000000000000000300000001340000000331323300000004352e3433000044000000065000450000000900000000005300000004\n" +
-                "<31000000043200000004540000005900047800000000000001000000140008ffffffff0000243100000000000002000000170004ffffffff0000243200000000000003000000140008ffffffff0000243300000000000004000002bd0008ffffffff0000440000001f0004000000013100000001340000000331323300000004352e3433440000001f0004000000013200000001340000000331323300000004352e3433430000000d53454c4543542032005a0000000549\n" +
-                ">420000002900535f31000003000000000000000300000001340000000331323300000004352e34330000450000000900000000005300000004\n" +
-                "<3200000004440000001f0004000000013100000001340000000331323300000004352e3433440000001f0004000000013200000001340000000331323300000004352e3433430000000d53454c4543542032005a0000000549\n" +
-                ">430000000953535f31005300000004\n" +
-                "<33000000045a0000000549\n" +
-                ">5800000004\n";
-        assertHexScript(
-                NetworkFacadeImpl.INSTANCE,
-                script,
-                getHexPgWireConfig()
-        );
+        final String script;
+        if (testParamLegacyMode) {
+            // old behaviour:
+            //   - the client supplies parameter types, server ignores them and sends VARCHAR in the 'T' message
+            script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
+                    "<520000000800000003\n" +
+                    ">70000000076f6800\n" +
+                    "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
+                    ">5000000022005345542065787472615f666c6f61745f646967697473203d2033000000420000000c0000000000000000450000000900000000015300000004\n" +
+                    "<310000000432000000044300000008534554005a0000000549\n" +
+                    ">500000003700534554206170706c69636174696f6e5f6e616d65203d2027506f737467726553514c204a4442432044726976657227000000420000000c0000000000000000450000000900000000015300000004\n" +
+                    "<310000000432000000044300000008534554005a0000000549\n" +
+                    ">500000003b0073656c65637420782c24312c24322c24332066726f6d206c6f6e675f73657175656e63652832290000030000001700000014000002bd420000002600000003000000000000000300000001340000000331323300000004352e3433000044000000065000450000000900000000005300000004\n" +
+                    "<31000000043200000004540000005900047800000000000001000000140008ffffffff000024310000000000000200000413ffffffffffff000024320000000000000300000413ffffffffffff000024330000000000000400000413ffffffffffff0000440000001f0004000000013100000001340000000331323300000004352e3433440000001f0004000000013200000001340000000331323300000004352e3433430000000d53454c4543542032005a0000000549\n" +
+                    ">500000003b0073656c65637420782c24312c24322c24332066726f6d206c6f6e675f73657175656e63652832290000030000001700000014000002bd420000002600000003000000000000000300000001340000000331323300000004352e3433000044000000065000450000000900000000005300000004\n" +
+                    "<31000000043200000004540000005900047800000000000001000000140008ffffffff000024310000000000000200000413ffffffffffff000024320000000000000300000413ffffffffffff000024330000000000000400000413ffffffffffff0000440000001f0004000000013100000001340000000331323300000004352e3433440000001f0004000000013200000001340000000331323300000004352e3433430000000d53454c4543542032005a0000000549\n" +
+                    ">500000003b0073656c65637420782c24312c24322c24332066726f6d206c6f6e675f73657175656e63652832290000030000001700000014000002bd420000002600000003000000000000000300000001340000000331323300000004352e3433000044000000065000450000000900000000005300000004\n" +
+                    "<31000000043200000004540000005900047800000000000001000000140008ffffffff000024310000000000000200000413ffffffffffff000024320000000000000300000413ffffffffffff000024330000000000000400000413ffffffffffff0000440000001f0004000000013100000001340000000331323300000004352e3433440000001f0004000000013200000001340000000331323300000004352e3433430000000d53454c4543542032005a0000000549\n" +
+                    ">500000003b0073656c65637420782c24312c24322c24332066726f6d206c6f6e675f73657175656e63652832290000030000001700000014000002bd420000002600000003000000000000000300000001340000000331323300000004352e3433000044000000065000450000000900000000005300000004\n" +
+                    "<31000000043200000004540000005900047800000000000001000000140008ffffffff000024310000000000000200000413ffffffffffff000024320000000000000300000413ffffffffffff000024330000000000000400000413ffffffffffff0000440000001f0004000000013100000001340000000331323300000004352e3433440000001f0004000000013200000001340000000331323300000004352e3433430000000d53454c4543542032005a0000000549\n" +
+                    ">500000003e535f310073656c65637420782c24312c24322c24332066726f6d206c6f6e675f73657175656e63652832290000030000001700000014000002bd420000002900535f31000003000000000000000300000001340000000331323300000004352e3433000044000000065000450000000900000000005300000004\n" +
+                    "<31000000043200000004540000005900047800000000000001000000140008ffffffff000024310000000000000200000413ffffffffffff000024320000000000000300000413ffffffffffff000024330000000000000400000413ffffffffffff0000440000001f0004000000013100000001340000000331323300000004352e3433440000001f0004000000013200000001340000000331323300000004352e3433430000000d53454c4543542032005a0000000549\n" +
+                    ">420000002900535f31000003000000000000000300000001340000000331323300000004352e34330000450000000900000000005300000004\n" +
+                    "<3200000004440000001f0004000000013100000001340000000331323300000004352e3433440000001f0004000000013200000001340000000331323300000004352e3433430000000d53454c4543542032005a0000000549\n" +
+                    ">430000000953535f31005300000004\n" +
+                    "<33000000045a0000000549\n" +
+                    ">5800000004\n";
+
+        } else {
+            // new bahviour:
+            //   - the server respects the parameter types sent by the client
+            script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
+                    "<520000000800000003\n" +
+                    ">70000000076f6800\n" +
+                    "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
+                    ">5000000022005345542065787472615f666c6f61745f646967697473203d2033000000420000000c0000000000000000450000000900000000015300000004\n" +
+                    "<310000000432000000044300000008534554005a0000000549\n" +
+                    ">500000003700534554206170706c69636174696f6e5f6e616d65203d2027506f737467726553514c204a4442432044726976657227000000420000000c0000000000000000450000000900000000015300000004\n" +
+                    "<310000000432000000044300000008534554005a0000000549\n" +
+                    ">500000003b0073656c65637420782c24312c24322c24332066726f6d206c6f6e675f73657175656e63652832290000030000001700000014000002bd420000002600000003000000000000000300000001340000000331323300000004352e3433000044000000065000450000000900000000005300000004\n" +
+                    "<31000000043200000004540000005900047800000000000001000000140008ffffffff0000243100000000000002000000170004ffffffff0000243200000000000003000000140008ffffffff0000243300000000000004000002bd0008ffffffff0000440000001f0004000000013100000001340000000331323300000004352e3433440000001f0004000000013200000001340000000331323300000004352e3433430000000d53454c4543542032005a0000000549\n" +
+                    ">500000003b0073656c65637420782c24312c24322c24332066726f6d206c6f6e675f73657175656e63652832290000030000001700000014000002bd420000002600000003000000000000000300000001340000000331323300000004352e3433000044000000065000450000000900000000005300000004\n" +
+                    "<31000000043200000004540000005900047800000000000001000000140008ffffffff0000243100000000000002000000170004ffffffff0000243200000000000003000000140008ffffffff0000243300000000000004000002bd0008ffffffff0000440000001f0004000000013100000001340000000331323300000004352e3433440000001f0004000000013200000001340000000331323300000004352e3433430000000d53454c4543542032005a0000000549\n" +
+                    ">500000003b0073656c65637420782c24312c24322c24332066726f6d206c6f6e675f73657175656e63652832290000030000001700000014000002bd420000002600000003000000000000000300000001340000000331323300000004352e3433000044000000065000450000000900000000005300000004\n" +
+                    "<31000000043200000004540000005900047800000000000001000000140008ffffffff0000243100000000000002000000170004ffffffff0000243200000000000003000000140008ffffffff0000243300000000000004000002bd0008ffffffff0000440000001f0004000000013100000001340000000331323300000004352e3433440000001f0004000000013200000001340000000331323300000004352e3433430000000d53454c4543542032005a0000000549\n" +
+                    ">500000003b0073656c65637420782c24312c24322c24332066726f6d206c6f6e675f73657175656e63652832290000030000001700000014000002bd420000002600000003000000000000000300000001340000000331323300000004352e3433000044000000065000450000000900000000005300000004\n" +
+                    "<31000000043200000004540000005900047800000000000001000000140008ffffffff0000243100000000000002000000170004ffffffff0000243200000000000003000000140008ffffffff0000243300000000000004000002bd0008ffffffff0000440000001f0004000000013100000001340000000331323300000004352e3433440000001f0004000000013200000001340000000331323300000004352e3433430000000d53454c4543542032005a0000000549\n" +
+                    ">500000003e535f310073656c65637420782c24312c24322c24332066726f6d206c6f6e675f73657175656e63652832290000030000001700000014000002bd420000002900535f31000003000000000000000300000001340000000331323300000004352e3433000044000000065000450000000900000000005300000004\n" +
+                    "<31000000043200000004540000005900047800000000000001000000140008ffffffff0000243100000000000002000000170004ffffffff0000243200000000000003000000140008ffffffff0000243300000000000004000002bd0008ffffffff0000440000001f0004000000013100000001340000000331323300000004352e3433440000001f0004000000013200000001340000000331323300000004352e3433430000000d53454c4543542032005a0000000549\n" +
+                    ">420000002900535f31000003000000000000000300000001340000000331323300000004352e34330000450000000900000000005300000004\n" +
+                    "<3200000004440000001f0004000000013100000001340000000331323300000004352e3433440000001f0004000000013200000001340000000331323300000004352e3433430000000d53454c4543542032005a0000000549\n" +
+                    ">430000000953535f31005300000004\n" +
+                    "<33000000045a0000000549\n" +
+                    ">5800000004\n";
+        }
+        assertHexScript(NetworkFacadeImpl.INSTANCE, script, getHexPgWireConfig());
     }
 
     @Test
@@ -8996,70 +9223,40 @@ create table tab as (
 
     @Test
     public void testSmallSendBufferForRowData() throws Exception {
-        assertMemoryLeak(() -> {
-            PGWireConfiguration configuration = new Port0PGWireConfiguration() {
-                @Override
-                public IODispatcherConfiguration getDispatcherConfiguration() {
-                    return new DefaultIODispatcherConfiguration() {
-                        @Override
-                        public int getBindPort() {
-                            return 0; // Bind to ANY port.
-                        }
+        sendBufferSize = 300;
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("create table x as (" +
+                        "select" +
+                        " rnd_str(5,16,2) i," +
+                        " rnd_str(5,16,2) sym," +
+                        " rnd_str(5,16,2) amt," +
+                        " rnd_str(5,16,2) timestamp," +
+                        " rnd_str(5,16,2) b," +
+                        " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
+                        " rnd_str(5,16,2) d," +
+                        " rnd_str(5,16,2) e," +
+                        " rnd_str(300,300,2) f," + // <-- really long string
+                        " rnd_str(5,16,2) g," +
+                        " rnd_str(5,16,2) ik," +
+                        " rnd_str(5,16,2) j," +
+                        " timestamp_sequence(500000000000L,100000000L) ts," +
+                        " rnd_str(5,16,2) l," +
+                        " rnd_str(5,16,2) m," +
+                        " rnd_str(5,16,2) n," +
+                        " rnd_str(5,16,2) t," +
+                        " rnd_str(5,16,2) l256" +
+                        " from long_sequence(10000)" +
+                        ") timestamp (ts) partition by DAY");
 
-                        @Override
-                        public String getDispatcherLogName() {
-                            return "pg-server";
-                        }
-                    };
-                }
+                mayDrainWalQueue();
 
-                @Override
-                public int getSendBufferSize() {
-                    return 300;
-                }
-            };
-
-            try (
-                    IPGWireServer server = createPGServer(configuration);
-                    WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (
-                        Connection connection = getConnection(server.getPort(), false, true);
-                        Statement statement = connection.createStatement()
-                ) {
-                    statement.executeUpdate("create table x as (" +
-                            "select" +
-                            " rnd_str(5,16,2) i," +
-                            " rnd_str(5,16,2) sym," +
-                            " rnd_str(5,16,2) amt," +
-                            " rnd_str(5,16,2) timestamp," +
-                            " rnd_str(5,16,2) b," +
-                            " rnd_str('ABC', 'CDE', null, 'XYZ') c," +
-                            " rnd_str(5,16,2) d," +
-                            " rnd_str(5,16,2) e," +
-                            " rnd_str(300,300,2) f," + // <-- really long string
-                            " rnd_str(5,16,2) g," +
-                            " rnd_str(5,16,2) ik," +
-                            " rnd_str(5,16,2) j," +
-                            " timestamp_sequence(500000000000L,100000000L) ts," +
-                            " rnd_str(5,16,2) l," +
-                            " rnd_str(5,16,2) m," +
-                            " rnd_str(5,16,2) n," +
-                            " rnd_str(5,16,2) t," +
-                            " rnd_str(5,16,2) l256" +
-                            " from long_sequence(10000)" +
-                            ") timestamp (ts) partition by DAY");
-
-                    mayDrainWalQueue();
-
-                    String sql = "SELECT * FROM x";
-                    try {
-                        statement.execute(sql);
-                        Assert.fail();
-                    } catch (SQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "ERROR: not enough space in send buffer [sendBufferSize=512]");
-                    }
+                String sql = "SELECT * FROM x";
+                try {
+                    statement.execute(sql);
+                    Assert.fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "not enough space in send buffer");
                 }
             }
         });
@@ -9067,24 +9264,13 @@ create table tab as (
 
     @Test
     public void testSmallSendBufferForRowDescription() throws Exception {
-        assertMemoryLeak(() -> {
-
-            PGWireConfiguration configuration = new Port0PGWireConfiguration() {
-                @Override
-                public int getSendBufferSize() {
-                    return 256;
-                }
-            };
-
-            try (
-                    final IPGWireServer server = createPGServer(configuration);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (
-                        Connection connection = getConnection(server.getPort(), false, true);
-                        Statement statement = connection.createStatement()
-                ) {
+        skipOnWalRun();
+        // WAL is irrelevant here, we are checking result sending codepath
+        sendBufferSize = 256;
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            if (!testParamLegacyMode) {
+                // legacy code fails this test in SIMPLE protocol, modern code does not
+                try (Statement statement = connection.createStatement()) {
                     statement.executeUpdate("create table x as (" +
                             "select" +
                             " rnd_str(5,16,2) i," +
@@ -9108,12 +9294,11 @@ create table tab as (
                             " from long_sequence(10000)" +
                             ") timestamp (ts) partition by DAY");
                     String sql = "SELECT * FROM x";
-
                     try {
                         statement.execute(sql);
                         Assert.fail();
                     } catch (SQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "ERROR: not enough space in send buffer [sendBufferSize=256]");
+                        TestUtils.assertContains(e.getMessage(), "not enough space in send buffer");
                     }
                 }
             }
@@ -9269,18 +9454,34 @@ create table tab as (
      */
     public void testSyncAfterLoginSendsRNQ() throws Exception {
         skipOnWalRun();
-        String script =
-                ">0000006b00030000757365720061646d696e0064617461626173650071646200446174655374796c650049534f2c204d445900636c69656e745f656e636f64696e6700555446380054696d655a6f6e65005554430065787472615f666c6f61745f64696769747300320000\n" +
-                        "<520000000800000003\n" +
-                        ">700000000a717565737400\n" +
-                        "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
-                        ">5300000004\n" +
-                        "<5a0000000549\n" +
-                        ">500000003373716c785f735f310053454c4543542024312066726f6d206c6f6e675f73657175656e636528322900000100000017440000000e5373716c785f735f31005300000004\n" +
-                        "<3100000004740000000a000100000017540000001b0001243100000000000001000000170004ffffffff00005a0000000549\n" +
-                        ">42000000200073716c785f735f310000010001000100000004000000010001000145000000090000000000430000000650005300000004\n" +
-                        "<3200000004440000000e00010000000400000001440000000e00010000000400000001430000000d53454c45435420320033000000045a0000000549\n";
-
+        final String script;
+        if (testParamLegacyMode) {
+            script = ">0000000804d2162f\n" +
+                    "<4e\n" +
+                    ">0000006b00030000757365720061646d696e0064617461626173650071646200446174655374796c650049534f2c204d445900636c69656e745f656e636f64696e6700555446380054696d655a6f6e65005554430065787472615f666c6f61745f64696769747300330000\n" +
+                    "<520000000800000003\n" +
+                    ">700000000a717565737400\n" +
+                    "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
+                    ">5300000004\n" +
+                    "<5a0000000549\n" +
+                    ">500000003373716c785f735f310053454c4543542024312066726f6d206c6f6e675f73657175656e636528322900000100000017440000000e5373716c785f735f31005300000004\n" +
+                    "<3100000004740000000a000100000017540000001b000124310000000000000100000413ffffffffffff00005a0000000549\n" +
+                    ">42000000200073716c785f735f310000010001000100000004000000010001000145000000090000000000430000000650005300000004\n" +
+                    "<3200000004440000000b00010000000131440000000b00010000000131430000000d53454c45435420320033000000045a0000000549\n" +
+                    ">5800000004";
+        } else {
+            script =
+                    ">0000006b00030000757365720061646d696e0064617461626173650071646200446174655374796c650049534f2c204d445900636c69656e745f656e636f64696e6700555446380054696d655a6f6e65005554430065787472615f666c6f61745f64696769747300320000\n" +
+                            "<520000000800000003\n" +
+                            ">700000000a717565737400\n" +
+                            "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
+                            ">5300000004\n" +
+                            "<5a0000000549\n" +
+                            ">500000003373716c785f735f310053454c4543542024312066726f6d206c6f6e675f73657175656e636528322900000100000017440000000e5373716c785f735f31005300000004\n" +
+                            "<3100000004740000000a000100000017540000001b0001243100000000000001000000170004ffffffff00005a0000000549\n" +
+                            ">42000000200073716c785f735f310000010001000100000004000000010001000145000000090000000000430000000650005300000004\n" +
+                            "<3200000004440000000e00010000000400000001440000000e00010000000400000001430000000d53454c45435420320033000000045a0000000549\n";
+        }
         assertHexScript(NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration());
     }
 
@@ -9941,6 +10142,10 @@ create table tab as (
         });
     }
 
+    //
+    // Tests for ResultSet.setFetchSize().
+    //
+
     @Test
     @Ignore("TODO PGWire 2.0")
     public void testUpdateNoAutoCommit() throws Exception {
@@ -10147,10 +10352,6 @@ create table tab as (
 
         });
     }
-
-    //
-    // Tests for ResultSet.setFetchSize().
-    //
 
     @Test
     public void testUpdateWithNowAndSystimestamp() throws Exception {
@@ -11153,172 +11354,6 @@ create table tab as (
                         sink,
                         rs
                 );
-            }
-        });
-    }
-
-    private void testBindVariableIsNotNull(boolean binary) throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final IPGWireServer server = createPGServer(1);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (final Connection connection = getConnection(server.getPort(), false, binary)) {
-                    connection.setAutoCommit(false);
-                    connection.prepareStatement("create table tab1 (value int, ts timestamp) timestamp(ts) partition by DAY").execute();
-                    connection.prepareStatement("insert into tab1 (value, ts) values (100, 0)").execute();
-                    connection.prepareStatement("insert into tab1 (value, ts) values (null, 1)").execute();
-                    connection.commit();
-                    connection.setAutoCommit(true);
-
-                    mayDrainWalQueue();
-                    sink.clear();
-                    try (PreparedStatement ps = connection.prepareStatement("tab1 where 3 is not null")) {
-                        try (ResultSet rs = ps.executeQuery()) {
-                            assertResultSet(
-                                    "value[INTEGER],ts[TIMESTAMP]\n" +
-                                            "100,1970-01-01 00:00:00.0\n" +
-                                            "null,1970-01-01 00:00:00.000001\n",
-                                    sink,
-                                    rs
-                            );
-                        }
-                    }
-
-                    sink.clear();
-                    try (PreparedStatement ps = connection.prepareStatement("tab1 where coalesce(3.14, 12.37) is not null")) {
-                        // 'is not' is an alias for '!=', the matching type for this operator
-                        // (with null on the right) is DOUBLE
-                        try (ResultSet rs = ps.executeQuery()) {
-                            assertResultSet(
-                                    "value[INTEGER],ts[TIMESTAMP]\n" +
-                                            "100,1970-01-01 00:00:00.0\n" +
-                                            "null,1970-01-01 00:00:00.000001\n",
-                                    sink,
-                                    rs
-                            );
-                        }
-                    }
-
-                    sink.clear();
-                    try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
-                        // 'is not' is an alias for '!=', the matching type for this operator
-                        // (with null on the right) is DOUBLE
-                        ps.setDouble(1, 3.14);
-                        try (ResultSet rs = ps.executeQuery()) {
-                            assertResultSet(
-                                    "value[INTEGER],ts[TIMESTAMP]\n" +
-                                            "100,1970-01-01 00:00:00.0\n" +
-                                            "null,1970-01-01 00:00:00.000001\n",
-                                    sink,
-                                    rs
-                            );
-                        }
-                    }
-
-                    sink.clear();
-                    try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
-                        ps.setDouble(1, Double.NaN);
-                        try (ResultSet rs = ps.executeQuery()) {
-                            assertResultSet(
-                                    "value[INTEGER],ts[TIMESTAMP]\n",
-                                    sink,
-                                    rs
-                            );
-                        }
-                    }
-
-                    sink.clear();
-                    try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
-                        ps.setInt(1, Numbers.INT_NULL);
-                        try (ResultSet rs = ps.executeQuery()) {
-                            if (binary) {
-                                assertResultSet(
-                                        "value[INTEGER],ts[TIMESTAMP]\n",
-                                        sink,
-                                        rs
-                                );
-                            } else {
-                                assertResultSet(
-                                        "value[INTEGER],ts[TIMESTAMP]\n" +
-                                                "100,1970-01-01 00:00:00.0\n" +
-                                                "null,1970-01-01 00:00:00.000001\n",
-                                        sink,
-                                        rs
-                                );
-                            }
-                        }
-                    }
-
-                    sink.clear();
-                    try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
-                        ps.setInt(1, 12);
-                        try (ResultSet rs = ps.executeQuery()) {
-                            assertResultSet(
-                                    "value[INTEGER],ts[TIMESTAMP]\n" +
-                                            "100,1970-01-01 00:00:00.0\n" +
-                                            "null,1970-01-01 00:00:00.000001\n",
-                                    sink,
-                                    rs
-                            );
-                        }
-                    }
-
-                    try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
-                        ps.setString(1, "");
-                        try (ResultSet ignore1 = ps.executeQuery()) {
-                            Assert.fail();
-                        } catch (PSQLException e) {
-                            TestUtils.assertContains(e.getMessage(), "inconvertible value: `` [" + stringTypeName + " -> DOUBLE]");
-                        }
-                    }
-
-                    try (PreparedStatement ps = connection.prepareStatement("tab1 where ? is not null")) {
-                        ps.setString(1, "cah-cha-cha");
-                        try (ResultSet ignore1 = ps.executeQuery()) {
-                            Assert.fail();
-                        } catch (PSQLException e) {
-                            TestUtils.assertContains(e.getMessage(), "inconvertible value: `cah-cha-cha` [" + stringTypeName + " -> DOUBLE]");
-                        }
-                    }
-
-                    try (PreparedStatement ps = connection.prepareStatement("tab1 where null is not ?")) {
-                        ps.setString(1, "NULL");
-                        try (ResultSet ignore1 = ps.executeQuery()) {
-                            Assert.fail();
-                        } catch (PSQLException e) {
-                            TestUtils.assertContains(e.getMessage(), "IS NOT must be followed by NULL");
-                        }
-                    }
-
-                    try (PreparedStatement ps = connection.prepareStatement("tab1 where null is not ?")) {
-                        ps.setDouble(1, Double.NaN);
-                        try (ResultSet ignore1 = ps.executeQuery()) {
-                            Assert.fail();
-                        } catch (PSQLException e) {
-                            TestUtils.assertContains(e.getMessage(), "IS NOT must be followed by NULL");
-                        }
-                    }
-
-                    try (PreparedStatement ps = connection.prepareStatement("tab1 where null is not ?")) {
-                        ps.setNull(1, Types.NULL);
-                        try (ResultSet ignored1 = ps.executeQuery()) {
-                            Assert.fail();
-                        } catch (PSQLException e) {
-                            TestUtils.assertContains(e.getMessage(), "IS NOT must be followed by NULL");
-                        }
-                    }
-
-                    try (PreparedStatement ps = connection.prepareStatement("tab1 where value is not ?")) {
-                        ps.setString(1, "NULL");
-                        try (ResultSet ignored1 = ps.executeQuery()) {
-                            Assert.fail();
-                        } catch (PSQLException e) {
-                            TestUtils.assertContains(e.getMessage(), "IS NOT must be followed by NULL");
-                        }
-                    }
-                }
             }
         });
     }
