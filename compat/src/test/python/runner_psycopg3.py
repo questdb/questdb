@@ -25,6 +25,7 @@ import psycopg
 import re
 import sys
 import yaml
+from psycopg import Connection, Cursor
 from string import Template
 
 
@@ -77,15 +78,19 @@ def convert_and_push_parameters(value, type, resolved_parameters):
         resolved_parameters.append(value)
 
 
-def execute_query(cursor, query, parameters):
+def execute_query(cursor: Cursor, query, parameters):
     if parameters:
         cursor.execute(query, parameters)
     else:
         cursor.execute(query)
     try:
-        return cursor.fetchall()
+        if cursor.description:
+            return cursor.fetchall()
+        else:
+            if cursor.rowcount == -1:
+                return None
+            return [(cursor.rowcount,)]
     except psycopg.errors.ProgrammingError:
-        # No results to fetch (e.g., for INSERT, UPDATE)
         return cursor.statusmessage
 
 
@@ -115,7 +120,7 @@ def assert_result(expect, actual):
             assert expected_row in actual_converted, f"Expected row {expected_row} not found in actual results."
 
 
-def execute_steps(steps, variables, cursor, connection):
+def execute_steps(steps, variables, cursor: Cursor, connection: Connection):
     for step in steps:
         if 'loop' in step:
             execute_loop(step['loop'], variables, cursor, connection)
@@ -123,7 +128,7 @@ def execute_steps(steps, variables, cursor, connection):
             execute_step(step, variables, cursor, connection)
 
 
-def execute_loop(loop_def, variables, cursor, connection):
+def execute_loop(loop_def, variables, cursor: Cursor, connection: Connection):
     loop_var_name = loop_def['as']
     loop_variables = variables.copy()
 
@@ -141,7 +146,7 @@ def execute_loop(loop_def, variables, cursor, connection):
         execute_steps(loop_def['steps'], loop_variables, cursor, connection)
 
 
-def execute_step(step, variables, cursor, connection):
+def execute_step(step, variables, cursor: Cursor, connection: Connection):
     action = step['action']
     query_template = step.get('query')
     parameters = step.get('parameters', [])

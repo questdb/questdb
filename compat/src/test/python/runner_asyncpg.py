@@ -4,6 +4,7 @@ import datetime
 import re
 import sys
 import yaml
+from asyncpg import Connection
 from string import Template
 
 
@@ -56,7 +57,7 @@ def convert_and_push_parameters(value, type, resolved_parameters):
         resolved_parameters.append(value)
 
 
-async def execute_query(connection, query, parameters):
+async def execute_query(connection: Connection, query, parameters):
     query_type = query.strip().split()[0].lower()
     if query_type == 'select':
         if parameters:
@@ -69,7 +70,14 @@ async def execute_query(connection, query, parameters):
             status = await connection.execute(query, *parameters)
         else:
             status = await connection.execute(query)
-        return status
+
+        # parse status string to update count (if any) as a result
+        status_parts = status.split()
+        if status_parts[0] == 'INSERT' or status_parts[0] == 'UPDATE':
+            row_count = int(status_parts[-1])
+            return [{'count': row_count}]
+        else:
+            return None
 
 
 def assert_result(expect, actual):

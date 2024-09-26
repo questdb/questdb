@@ -84,9 +84,13 @@ def execute_query(cursor, query, parameters):
     else:
         cursor.execute(query)
     try:
-        return cursor.fetchall()
+        if cursor.description:
+            return cursor.fetchall()
+        else:
+            if cursor.rowcount == -1:
+                return None
+            return [(cursor.rowcount,)]
     except psycopg2.ProgrammingError:
-        # No results to fetch (e.g., for INSERT, UPDATE)
         return cursor.statusmessage
 
 

@@ -24,7 +24,8 @@ tests:
                 - value: "2023-10-01T10:00:00.000000Z"
                   type: "TIMESTAMP"
               expect:
-                result: "INSERT 0 1"
+                result:
+                  - [ 1 ]
       - action: query
         query: "SELECT 1, COUNT(*) FROM ${table_name};"
         expect:
@@ -41,8 +42,9 @@ tests:
           - value: "2024-10-01T10:00:00.000000Z"
             type: "TIMESTAMP"
         expect:
-          result: "INSERT 0 1"
-      - action: query with a timestamp parameter
+          result:
+            - [ 1 ]
+      - action: query
         description: Query the row we inserted with a unique timestamp
         query: "SELECT * FROM ${table_name} WHERE timestamp = $[1];"
         parameters:
@@ -52,7 +54,7 @@ tests:
         expect:
           result:
             - [ 11, 11.5, "2024-10-01T10:00:00.000000Z" ]
-      - action: query all rows
+      - action: query
         query: "SELECT id, temperature, timestamp FROM ${table_name};"
         expect:
           result_contains:
@@ -61,11 +63,9 @@ tests:
             - [ 3, 3.5, "2023-10-01T10:00:00.000000Z" ]
             - [ 4, 4.5, "2023-10-01T10:00:00.000000Z" ]
             - [ 5, 5.5, "2023-10-01T10:00:00.000000Z" ]
-      - action: truncate table
+      - action: query
         query: "truncate table ${table_name};"
-        expect:
-          result: "OK"
-      - action: query truncated table
+      - action: query
         query: "SELECT COUNT(*) FROM ${table_name};"
         expect:
           result:
@@ -77,7 +77,7 @@ tests:
     description: Testing another test-case inside the same file
     iterations: 2
     steps:
-      - action: query truncated table
+      - action: query
         query: "SELECT x FROM long_sequence(5)"
         expect:
           result:
@@ -136,15 +136,17 @@ tests:
                 - value: "2023-10-01T10:00:00.${id}Z"
                   type: "TIMESTAMP"
               expect:
-                result: "INSERT 0 1"
+                result:
+                  - [ 1 ]
       - action: execute
         query: "ALTER TABLE ${table_name} ADD COLUMN ts2 timestamp;"
         expect:
-          result: "OK"
+          result:
       - action: execute
         query: "UPDATE ${table_name} SET ts2 = timestamp;"
         expect:
-          result: "UPDATE 1000"
+          result:
+            - [ 1000 ]
       - action: query
         query: "SELECT * FROM ${table_name} WHERE ts2 = $[1];"
         parameters:
@@ -155,10 +157,8 @@ tests:
             - [ 999, 999.5, '2023-10-01T10:00:00.999000Z', '2023-10-01T10:00:00.999000Z' ]
       - action: execute
         query: "ALTER TABLE ${table_name} DROP COLUMN timestamp;"
-        expect:
-          result: "OK"
-        # The action bellow is currently failing with: cached query plan cannot be used because table schema has changed
-        # The action should be re-enabled once the issue is fixed
+    #        # The action bellow is currently failing with: cached query plan cannot be used because table schema has changed
+    #        # The action should be re-enabled once the issue is fixed
     #      - action: query
     #        query: "SELECT * FROM ${table_name} WHERE ts2 = $[1];"
     #        parameters:
@@ -170,4 +170,3 @@ tests:
     teardown:
       - action: execute
         query: "DROP TABLE IF EXISTS ${table_name};"
-
