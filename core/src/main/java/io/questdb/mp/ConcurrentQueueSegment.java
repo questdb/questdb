@@ -50,7 +50,7 @@ final class ConcurrentQueueSegment<T> {
     // The array of items in this queue.  Each slot contains the item in that slot and its "sequence number".
     private final Slot<T>[] slots;
     /// Mask for quickly accessing a position within the queue's array.
-    private final int slotsMask;
+    private final long slotsMask;
     volatile boolean frozenForEnqueues;
     // The segment following this one in the queue, or null if this segment is the last in the queue.
     ConcurrentQueueSegment<T> nextSegment;
@@ -105,26 +105,26 @@ final class ConcurrentQueueSegment<T> {
         // Loop in case of contention...
         while (true) {
             // Get the head at which to try to dequeue.
-            int currentHead = Unsafe.getUnsafe().getIntVolatile(headAndTail, paddedHeadOffset);
-            int slotsIndex = currentHead & slotsMask;
+            long currentHead = Unsafe.getUnsafe().getLongVolatile(headAndTail, paddedHeadOffset);
+            int slotsIndex = (int) (currentHead & slotsMask);
 
             // Read the sequence number for the head position.
-            int sequenceNumber = Unsafe.getUnsafe().getIntVolatile(slots[slotsIndex], slotSequenceNumberOffset);
+            long sequenceNumber = Unsafe.getUnsafe().getLongVolatile(slots[slotsIndex], slotSequenceNumberOffset);
 
             // We can dequeue from this slot if it's been filled by an enqueuer, which
             // would have left the sequence number at pos+1.
-            int diff = sequenceNumber - (currentHead + 1);
+            long diff = sequenceNumber - (currentHead + 1);
             if (diff == 0) {
                 // We may be racing with other dequeuers.  Try to reserve the slot by incrementing
                 // the head.  Once we've done that, no one else will be able to read from this slot,
                 // and no enqueuer will be able to read from this slot until we've written the new
                 // sequence number.
-                if (Unsafe.getUnsafe().compareAndSwapInt(headAndTail, paddedHeadOffset, currentHead, currentHead + 1)) {
-                    // Successfully reserved the slot.  Note that after the above compareAndSwapInt, other threads
+                if (Unsafe.getUnsafe().compareAndSwapLong(headAndTail, paddedHeadOffset, currentHead, currentHead + 1)) {
+                    // Successfully reserved the slot.  Note that after the above compareAndSwapLong, other threads
                     // trying to dequeue from this slot will end up spinning until we do the subsequent Write.
                     T item = slots[slotsIndex].item;
                     assert item != null;
-                    Unsafe.getUnsafe().putIntVolatile(slots[slotsIndex], slotSequenceNumberOffset, currentHead + slots.length);
+                    Unsafe.getUnsafe().putLongVolatile(slots[slotsIndex], slotSequenceNumberOffset, currentHead + slots.length);
                     return item;
                 }
 
@@ -141,7 +141,7 @@ final class ConcurrentQueueSegment<T> {
                     // empty or if we're just waiting for items in flight or after this one to become available.
 
                     boolean frozen = frozenForEnqueues;
-                    int currentTail = Unsafe.getUnsafe().getIntVolatile(headAndTail, paddedTailOffset);
+                    long currentTail = Unsafe.getUnsafe().getLongVolatile(headAndTail, paddedTailOffset);
                     if (currentTail - currentHead <= 0 || (frozen && (currentTail - freezeOffset - currentHead <= 0))) {
                         return null;
                     }
@@ -173,29 +173,29 @@ final class ConcurrentQueueSegment<T> {
         // Loop in case of contention...
         while (true) {
             // Get the tail at which to try to insert.
-            int currentTail = Unsafe.getUnsafe().getIntVolatile(headAndTail, paddedTailOffset);
-            int slotsIndex = currentTail & slotsMask;
+            long currentTail = Unsafe.getUnsafe().getLongVolatile(headAndTail, paddedTailOffset);
+            int slotsIndex = (int) (currentTail & slotsMask);
 
             // Read the sequence number for the tail position.
-            int sequenceNumber = Unsafe.getUnsafe().getIntVolatile(slots[slotsIndex], slotSequenceNumberOffset);
+            long sequenceNumber = Unsafe.getUnsafe().getLongVolatile(slots[slotsIndex], slotSequenceNumberOffset);
 
             // The slot is empty and ready for us to enqueue into it if its sequence
             // number matches the slot.
-            int diff = sequenceNumber - currentTail;
+            long diff = sequenceNumber - currentTail;
             if (diff == 0) {
                 // We may be racing with other enqueuers.  Try to reserve the slot by incrementing
                 // the tail.  Once we've done that, no one else will be able to write to this slot,
                 // and no dequeuer will be able to read from this slot until we've written the new
                 // sequence number. WARNING: The next few lines are not reliable on a runtime that
-                // supports thread aborts. If a thread abort were to sneak in after the compareAndSwapInt
-                // but before the putIntVolatile, other threads will spin trying to access this slot.
+                // supports thread aborts. If a thread abort were to sneak in after the compareAndSwapLong
+                // but before the putLongVolatile, other threads will spin trying to access this slot.
                 // If this implementation is ever used on such a platform, this if block should be
                 // wrapped in a finally / prepared region.
-                if (Unsafe.getUnsafe().compareAndSwapInt(headAndTail, paddedTailOffset, currentTail, currentTail + 1)) {
+                if (Unsafe.getUnsafe().compareAndSwapLong(headAndTail, paddedTailOffset, currentTail, currentTail + 1)) {
                     // Successfully reserved the slot.  Note that after the above CompareExchange, other threads
                     // trying to return will end up spinning until we do the subsequent Write.
                     slots[slotsIndex].item = item;
-                    Unsafe.getUnsafe().putIntVolatile(slots[slotsIndex], slotSequenceNumberOffset, currentTail + 1);
+                    Unsafe.getUnsafe().putLongVolatile(slots[slotsIndex], slotSequenceNumberOffset, currentTail + 1);
                     return true;
                 }
 
@@ -234,18 +234,18 @@ final class ConcurrentQueueSegment<T> {
         if (!frozenForEnqueues) // flag used to ensure we don't increase the Tail more than once if frozen more than once
         {
             frozenForEnqueues = true;
-            int tail;
+            long tail;
             do {
                 tail = headAndTail.tail;
-            } while (!Unsafe.getUnsafe().compareAndSwapInt(headAndTail, paddedTailOffset, tail, tail + freezeOffset));
+            } while (!Unsafe.getUnsafe().compareAndSwapLong(headAndTail, paddedTailOffset, tail, tail + freezeOffset));
         }
     }
 
     // Padded head and tail indices, to avoid false sharing between producers and consumers.
     private static class PaddedHeadAndTail {
-        public int head;
+        public long head;
         public long head1, head2, head3, head4, headp, head6, head7; // 7 long fields to pad to 64 bytes
-        public int tail;
+        public long tail;
         public long tail1, tail2, tail3, tail4, tail5, tail6, tail7; // 7 long fields to pad to 64 bytes
     }
 
@@ -253,6 +253,6 @@ final class ConcurrentQueueSegment<T> {
     private static class Slot<T> {
         // The item.
         public T item;
-        public int sequenceNumber;
+        public long sequenceNumber;
     }
 }
