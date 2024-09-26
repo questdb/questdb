@@ -145,41 +145,56 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
                 factory = refreshState.getFactory();
                 copier = refreshState.getRecordToRowCopier();
 
-                if (factory == null) {
-                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                        CompiledQuery compiledQuery = compiler.compile(viewDef.getViewSql(), matViewRefreshExecutionContext);
-                        if (compiledQuery.getType() != CompiledQuery.SELECT) {
-                            throw SqlException.$(0, "materialized view query must be a SELECT statement");
-                        }
-                        factory = compiledQuery.getRecordCursorFactory();
+                int maxRecompileAttempts = 10;
+                for (int i = 0; i < maxRecompileAttempts; i++) {
+                    try {
+                        if (factory == null) {
+                            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                                CompiledQuery compiledQuery = compiler.compile(viewDef.getViewSql(), matViewRefreshExecutionContext);
+                                if (compiledQuery.getType() != CompiledQuery.SELECT) {
+                                    throw SqlException.$(0, "materialized view query must be a SELECT statement");
+                                }
+                                factory = compiledQuery.getRecordCursorFactory();
 
-                        if (copier == null || tableWriter.getMetadata().getMetadataVersion() != refreshState.getRecordRowCopierMetadataVersion()) {
-                            copier = getRecordToRowCopier(tableWriter, factory, compiler);
+                                if (copier == null || tableWriter.getMetadata().getMetadataVersion() != refreshState.getRecordRowCopierMetadataVersion()) {
+                                    copier = getRecordToRowCopier(tableWriter, factory, compiler);
+                                }
+                            } catch (SqlException e) {
+                                refreshState.compilationFail(e);
+                                return false;
+                            }
                         }
-                    } catch (SqlException e) {
-                        refreshState.compilationFail(e);
-                        return false;
+
+                        int cursorTimestampIndex = factory.getMetadata().getColumnIndex(
+                                tableWriter.getMetadata().getColumnName(tableWriter.getMetadata().getTimestampIndex())
+                        );
+
+                        if (cursorTimestampIndex < 0) {
+                            throw SqlException.invalidColumn(0, "timestamp column '")
+                                    .put(tableWriter.getMetadata().getColumnName(tableWriter.getMetadata().getTimestampIndex()))
+                                    .put("' not found in view select query");
+                        }
+
+                        try (RecordCursor cursor = factory.getCursor(matViewRefreshExecutionContext)) {
+                            final Record record = cursor.getRecord();
+                            while (cursor.hasNext()) {
+                                TableWriter.Row row = tableWriter.newRow(record.getTimestamp(cursorTimestampIndex));
+                                copier.copy(record, row);
+                                row.append();
+                            }
+                        }
+                        break;
+                    } catch (TableReferenceOutOfDateException e) {
+                        factory = null;
+                        if (i == maxRecompileAttempts - 1) {
+                            LOG.error().$("error refreshing materialized view, base table is under heavy DDL changes [view=")
+                                    .$(viewDef.getTableToken()).$(", recompileAttempts=").$(maxRecompileAttempts).I$();
+                            refreshState.refreshFail(e);
+                            return false;
+                        }
                     }
                 }
 
-                int cursorTimestampIndex = factory.getMetadata().getColumnIndex(
-                        tableWriter.getMetadata().getColumnName(tableWriter.getMetadata().getTimestampIndex())
-                );
-
-                if (cursorTimestampIndex < 0) {
-                    throw SqlException.invalidColumn(0, "timestamp column '")
-                            .put(tableWriter.getMetadata().getColumnName(tableWriter.getMetadata().getTimestampIndex()))
-                            .put("' not found in view select query");
-                }
-
-                try (RecordCursor cursor = factory.getCursor(matViewRefreshExecutionContext)) {
-                    final Record record = cursor.getRecord();
-                    while (cursor.hasNext()) {
-                        TableWriter.Row row = tableWriter.newRow(record.getTimestamp(cursorTimestampIndex));
-                        copier.copy(record, row);
-                        row.append();
-                    }
-                }
                 rowCount = tableWriter.getUncommittedRowCount();
                 tableWriter.commit();
                 refreshState.refreshSuccess(factory, copier, tableWriter.getMetadata().getMetadataVersion(), rowCount);

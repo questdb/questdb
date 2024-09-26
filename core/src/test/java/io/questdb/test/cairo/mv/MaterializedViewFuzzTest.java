@@ -72,7 +72,7 @@ public class MaterializedViewFuzzTest extends AbstractFuzzTest {
             AtomicBoolean stop = new AtomicBoolean();
             Thread refreshJob = startRefreshJob(stop, rnd);
 
-            setFuzzParams(rnd);
+            setFuzzParams(rnd, 0);
 
             ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableName, rnd);
             ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
@@ -110,12 +110,22 @@ public class MaterializedViewFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testBaseTableCanHaveColumnsAdded() throws Exception {
+        assertMemoryLeak(() -> {
+            Rnd rnd = fuzzer.generateRandom(LOG);
+            setFuzzParams(rnd, 0.2);
+            setFuzzProperties(rnd);
+            runMvFuzz(rnd, getTestName(), 1);
+        });
+    }
+
+    @Test
     public void testManyTablesViewFuzz() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = fuzzer.generateRandom(LOG);
-            setFuzzParams(rnd);
+            setFuzzParams(rnd, 0);
             setFuzzProperties(rnd);
-            runMvFuzz(rnd, getTestName(), 1 + rnd.nextInt(4)); //
+            runMvFuzz(rnd, getTestName(), 1 + rnd.nextInt(4));
         });
     }
 
@@ -139,7 +149,7 @@ public class MaterializedViewFuzzTest extends AbstractFuzzTest {
             AtomicBoolean stop = new AtomicBoolean();
             Thread refreshJob = startRefreshJob(stop, rnd);
 
-            setFuzzParams(rnd);
+            setFuzzParams(rnd, 0);
 
             ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableName, rnd);
             ObjList<ObjList<FuzzTransaction>> fuzzTransactions = new ObjList<>();
@@ -251,7 +261,7 @@ public class MaterializedViewFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    private void setFuzzParams(Rnd rnd) {
+    private void setFuzzParams(Rnd rnd, double collAddProb) {
         fuzzer.setFuzzCounts(
                 rnd.nextBoolean(),
                 rnd.nextInt(2_000_000),
@@ -269,7 +279,7 @@ public class MaterializedViewFuzzTest extends AbstractFuzzTest {
                 0,
                 0,
                 0,
-                0,
+                collAddProb,
                 0,
                 0,
                 0.5,
