@@ -35,6 +35,7 @@ pub struct QdbWatermarkAllocator {
     malloc_count: *mut AtomicUsize,
 }
 
+const RSS_ORDERING: Ordering = Ordering::SeqCst;
 const COUNTER_ORDERING: Ordering = Ordering::AcqRel;
 
 impl QdbWatermarkAllocator {
@@ -64,9 +65,9 @@ impl QdbWatermarkAllocator {
     }
 
     fn check_alloc_limit(&self, layout: Layout) -> Result<(), AllocError> {
-        let rss_mem_limit = self.rss_mem_limit().load(std::sync::atomic::Ordering::SeqCst);
+        let rss_mem_limit = self.rss_mem_limit().load(RSS_ORDERING);
         if rss_mem_limit > 0 {
-            let rss_mem_used = self.rss_mem_used().load(std::sync::atomic::Ordering::SeqCst);
+            let rss_mem_used = self.rss_mem_used().load(RSS_ORDERING);
             let new_rss_mem_used = rss_mem_used + layout.size();
             if new_rss_mem_used > rss_mem_limit {
                 return Err(AllocError);
