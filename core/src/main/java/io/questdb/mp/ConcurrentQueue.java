@@ -42,8 +42,7 @@ import io.questdb.std.ObjectFactory;
  */
 public class ConcurrentQueue<T extends QueueValueHolder<T>> {
     // This implementation provides an unbounded, multi-producer multi-consumer queue
-    // that supports the standard Enqueue/TryDequeue operations, as well as support for
-    // snapshot enumeration (GetEnumerator, ToArray, CopyTo), peeking, and Count/IsEmpty.
+    // that supports the standard Enqueue/TryDequeue operations.
     // It is composed of a linked list of bounded ring buffers, each of which has a head
     // and a tail index, isolated from each other to minimize false sharing.  As long as
     // the number of elements in the queue remains less than the size of the current
@@ -52,12 +51,7 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
     // "frozen" to prevent further enqueues, and a new segment is linked from it and set
     // as the new tail segment for subsequent enqueues.  As old segments are consumed by
     // dequeues, the head reference is updated to point to the segment that dequeuers should
-    // try next.  To support snapshot enumeration, segments also support the notion of
-    // preserving for observation, whereby they avoid overwriting state as part of dequeues.
-    // Any operation that requires a snapshot results in all current segments being
-    // both frozen for enqueues and preserved for observation: any new enqueues will go
-    // to new segments, and dequeuers will consume from the existing segments but without
-    // overwriting the existing data.
+    // try next.
 
     // Initial length of the segments used in the queue.
     private final static int InitialSegmentLength = 32;

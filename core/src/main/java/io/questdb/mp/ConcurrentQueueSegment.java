@@ -128,7 +128,8 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
 
                 // The tail was already advanced by another thread. A newer tail has already been observed and the next
                 // iteration would make forward progress, so there's no need to spin-wait before trying again.
-            } else if (diff < 0) {
+            } else //noinspection StatementWithEmptyBody
+                if (diff < 0) {
                 // The sequence number was less than what we needed, which means this slot still
                 // contains a value, i.e. the segment is full.  Technically it's possible that multiple
                 // dequeuers could have read concurrently, with those getting later slots actually
@@ -188,7 +189,8 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
 
                 // The head was already advanced by another thread. A newer head has already been observed and the next
                 // iteration would make forward progress, so there's no need to spin-wait before trying again.
-            } else if (diff < 0) {
+            } else //noinspection StatementWithEmptyBody
+                if (diff < 0) {
                 // The sequence number was less than what we needed, which means this slot doesn't
                 // yet contain a value we can dequeue, i.e. the segment is empty.  Technically it's
                 // possible that multiple enqueuers could have written concurrently, with those
@@ -245,18 +247,15 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
     // Padded head and tail indices, to avoid false sharing between producers and consumers.
     private static class PaddedHeadAndTail {
         public int Head;
+        public long Head1, Head2, Head3, Head4, Headp, Head6, Head7; // 7 long fields to pad to 64 bytes
         public int Tail;
-        private long p1, p2, p3, p4, p5, p6, p7; // 7 long fields to pad to 64 bytes
-        private long p8, p9, p10, p11, p12, p13, p14; // Another 7 long fields to pad
+        public long Tail8, Tail9, Tail10, Tail11, Tail12, Tail13, Tail14; // Another 7 long fields to pad
     }
 
     // Represents a slot in the queue.
     private static class Slot<T extends QueueValueHolder<T>> {
         // The item.
         public T Item;
-        // The sequence number for this slot, used to synchronize between enqueuers and dequeuers.
         public int SequenceNumber;
-        private long p1, p2, p3, p4, p5, p6, p7; // 7 long fields to pad to 64 bytes
-        private long p8, p9, p10, p11, p12, p13, p14; // Another 7 long fields to pad
     }
 }
