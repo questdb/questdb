@@ -26,7 +26,8 @@ package io.questdb.mp;
 
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
+
+import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 
 // This is stripped down version taken from the .NET Core source code at
 // https://github.com/dotnet/runtime/blob/main/src/libraries/System.Private.CoreLib/src/System/Collections/Concurrent/ConcurrentQueueSegment.cs
@@ -40,16 +41,18 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
     // Segment design is inspired by the algorithm outlined at:
     // http://www.1024cores.net/home/lock-free-algorithms/queues/bounded-mpmc-queue
 
-    private static final long paddedHeadOffset = Unsafe.getFieldOffset(PaddedHeadAndTail.class, "head");
-    private static final long paddedTailOffset = Unsafe.getFieldOffset(PaddedHeadAndTail.class, "tail");
-    private static final long slotSequenceNumberOffset = Unsafe.getFieldOffset(Slot.class, "sequenceNumber");
+    private static final AtomicLongFieldUpdater<PaddedHeadAndTail> HEAD =
+            AtomicLongFieldUpdater.newUpdater(PaddedHeadAndTail.class, "head");
+    private static final AtomicLongFieldUpdater<PaddedHeadAndTail> TAIL =
+            AtomicLongFieldUpdater.newUpdater(PaddedHeadAndTail.class, "tail");
+
     private final int freezeOffset;
     // The head and tail positions, with padding to help avoid false sharing contention.
-    /// Dequeuing happens from the head, enqueuing happens at the tail.
+    // Dequeuing happens from the head, enqueuing happens at the tail.
     private final PaddedHeadAndTail headAndTail = new PaddedHeadAndTail();
     // The array of items in this queue.  Each slot contains the item in that slot and its "sequence number".
     private final Slot<T>[] slots;
-    /// Mask for quickly accessing a position within the queue's array.
+    // Mask for quickly accessing a position within the queue's array.
     private final long slotsMask;
     volatile boolean frozenForEnqueues;
     // The segment following this one in the queue, or null if this segment is the last in the queue.
@@ -108,11 +111,11 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
         // Loop in case of contention...
         while (true) {
             // Get the head at which to try to dequeue.
-            long currentHead = Unsafe.getUnsafe().getLongVolatile(headAndTail, paddedHeadOffset);
+            long currentHead = headAndTail.head;
             int slotsIndex = (int) (currentHead & slotsMask);
 
             // Read the sequence number for the head position.
-            long sequenceNumber = Unsafe.getUnsafe().getLongVolatile(slots[slotsIndex], slotSequenceNumberOffset);
+            long sequenceNumber = slots[slotsIndex].sequenceNumber;
 
             // We can dequeue from this slot if it's been filled by an enqueuer, which
             // would have left the sequence number at pos+1.
@@ -122,11 +125,11 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
                 // the head.  Once we've done that, no one else will be able to read from this slot,
                 // and no enqueuer will be able to read from this slot until we've written the new
                 // sequence number.
-                if (Unsafe.getUnsafe().compareAndSwapLong(headAndTail, paddedHeadOffset, currentHead, currentHead + 1)) {
+                if (HEAD.compareAndSet(headAndTail, currentHead, currentHead + 1)) {
                     // Successfully reserved the slot.  Note that after the above compareAndSwapLong, other threads
                     // trying to dequeue from this slot will end up spinning until we do the subsequent Write.
                     slots[slotsIndex].item.copyTo(item);
-                    Unsafe.getUnsafe().putLongVolatile(slots[slotsIndex], slotSequenceNumberOffset, currentHead + slots.length);
+                    slots[slotsIndex].sequenceNumber = currentHead + slots.length;
                     return true;
                 }
 
@@ -143,7 +146,7 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
                     // empty or if we're just waiting for items in flight or after this one to become available.
 
                     boolean frozen = frozenForEnqueues;
-                    long currentTail = Unsafe.getUnsafe().getLongVolatile(headAndTail, paddedTailOffset);
+                    long currentTail = headAndTail.tail;
                     if (currentTail - currentHead <= 0 || (frozen && (currentTail - freezeOffset - currentHead <= 0))) {
                         return false;
                     }
@@ -175,11 +178,12 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
         // Loop in case of contention...
         while (true) {
             // Get the tail at which to try to insert.
-            long currentTail = Unsafe.getUnsafe().getLongVolatile(headAndTail, paddedTailOffset);
+            long currentTail = headAndTail.tail;
             int slotsIndex = (int) (currentTail & slotsMask);
 
             // Read the sequence number for the tail position.
-            long sequenceNumber = Unsafe.getUnsafe().getLongVolatile(slots[slotsIndex], slotSequenceNumberOffset);
+            long sequenceNumber = slots[slotsIndex].sequenceNumber;
+            ;
 
             // The slot is empty and ready for us to enqueue into it if its sequence
             // number matches the slot.
@@ -193,11 +197,11 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
                 // but before the putLongVolatile, other threads will spin trying to access this slot.
                 // If this implementation is ever used on such a platform, this if block should be
                 // wrapped in a finally / prepared region.
-                if (Unsafe.getUnsafe().compareAndSwapLong(headAndTail, paddedTailOffset, currentTail, currentTail + 1)) {
+                if (TAIL.compareAndSet(headAndTail, currentTail, currentTail + 1)) {
                     // Successfully reserved the slot.  Note that after the above CompareExchange, other threads
                     // trying to return will end up spinning until we do the subsequent Write.
                     item.copyTo(slots[slotsIndex].item);
-                    Unsafe.getUnsafe().putLongVolatile(slots[slotsIndex], slotSequenceNumberOffset, currentTail + 1);
+                    slots[slotsIndex].sequenceNumber = currentTail + 1;
                     return true;
                 }
 
@@ -239,15 +243,15 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
             long tail;
             do {
                 tail = headAndTail.tail;
-            } while (!Unsafe.getUnsafe().compareAndSwapLong(headAndTail, paddedTailOffset, tail, tail + freezeOffset));
+            } while (!TAIL.compareAndSet(headAndTail, tail, tail + freezeOffset));
         }
     }
 
     // Padded head and tail indices, to avoid false sharing between producers and consumers.
     private static class PaddedHeadAndTail {
-        public long head;
+        public volatile long head;
         public long head1, head2, head3, head4, headp, head6, head7; // 7 long fields to pad to 64 bytes
-        public long tail;
+        public volatile long tail;
         public long tail1, tail2, tail3, tail4, tail5, tail6, tail7; // 7 long fields to pad to 64 bytes
     }
 
@@ -255,6 +259,6 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
     private static class Slot<T extends QueueValueHolder<T>> {
         // The item.
         public T item;
-        public long sequenceNumber;
+        public volatile long sequenceNumber;
     }
 }
