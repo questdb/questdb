@@ -219,7 +219,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
             int errorStartPos = error.length();
             error.put("\nerror in line ").put(errorLine).put(": ");
             error.put(e.getFlyweightMessage());
-            logError(parser, errorStartPos, false);
+            logError(parser, errorStartPos);
             return Status.APPEND_ERROR;
         } catch (CommitFailedException ex) {
             if (ex.isTableDropped()) {
@@ -319,7 +319,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 error.put(": ").put(String.valueOf(parser.getErrorCode()));
                 break;
         }
-        logError(parser, errorPos, false);
+        logError(parser, errorPos);
         return Status.PARSE_ERROR;
     }
 
@@ -334,7 +334,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         if (ex.getToken() != null) {
             error.put(": ").put(ex.getToken());
         }
-        logError(parser, errorPos, false);
+        logError(parser, errorPos);
         return Status.PARSE_ERROR;
     }
 
@@ -369,6 +369,10 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 .put(", error: ").put(ex.getClass().getCanonicalName());
         errorLine = line + 1;
         return Status.INTERNAL_ERROR;
+    }
+
+    private void logError(LineTcpParser parser, int errorPos) {
+        logError(parser, errorPos, false);
     }
 
     private void logError(LineTcpParser parser, int errorPos, boolean isError) {
