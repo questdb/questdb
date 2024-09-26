@@ -123,36 +123,6 @@ public class InfluxDBClientTest extends AbstractTest {
     }
 
     @Test
-    public void testLastEmptyLineIsOk() throws Exception {
-        int count = 10;
-        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
-            put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
-            put(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS.getEnvVarName(), String.valueOf(count));
-        }})) {
-            serverMain.start();
-            serverMain.getEngine().compile(
-                    "create table wal_low_max_uncomitted(sym symbol, ts timestamp) " +
-                            "timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=100"
-            );
-            List<String> lines = new ArrayList<>();
-            String goodLine = "wal_low_max_uncomitted,sym=aaa";
-            for (int i = 0; i < count; i++) {
-                lines.add(goodLine);
-            }
-
-            // \n added twice, automatically after every line in "lines" list and manually at the end of last line
-            lines.add("wal_low_max_uncomitted i=123\n");
-            try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
-                influxDB.write(lines);
-            }
-
-            serverMain.awaitTable("wal_low_max_uncomitted");
-            serverMain.getEngine().print("SELECT count() FROM wal_low_max_uncomitted", sink);
-            Assert.assertTrue(Chars.equals(sink, "count\n11\n"));
-        }
-    }
-
-    @Test
     public void testCreateTableError() throws Exception {
         try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
@@ -357,6 +327,36 @@ public class InfluxDBClientTest extends AbstractTest {
             serverMain.awaitTxn(tableName, 2);
             assertSql(serverMain.getEngine(), "SELECT count() FROM h2o_feet", "count\n" + count + "\n");
             assertSql(serverMain.getEngine(), "SELECT sum(water_level) FROM h2o_feet", "sum\n" + (count * (count - 1) / 2) + "\n");
+        }
+    }
+
+    @Test
+    public void testLastEmptyLineIsOk() throws Exception {
+        int count = 10000;
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
+            put(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS.getEnvVarName(), String.valueOf(count));
+        }})) {
+            serverMain.start();
+            serverMain.getEngine().compile(
+                    "create table wal_low_max_uncomitted(sym symbol, ts timestamp) " +
+                            "timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=100"
+            );
+            List<String> lines = new ArrayList<>();
+            String goodLine = "wal_low_max_uncomitted,sym=aaa\n";
+            for (int i = 0; i < count; i++) {
+                lines.add(goodLine);
+            }
+
+            // New column added
+            lines.add("wal_low_max_uncomitted i=123i\n");
+            try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
+                influxDB.write(lines);
+            }
+
+            serverMain.awaitTable("wal_low_max_uncomitted");
+            serverMain.getEngine().print("SELECT count() FROM wal_low_max_uncomitted", sink);
+            Assert.assertTrue(Chars.equals(sink, "count\n10001\n"));
         }
     }
 
