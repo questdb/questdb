@@ -114,7 +114,7 @@ public class ConcurrentQueue<T> {
      * Attempts to remove and return the object at the beginning of the ConcurrentQueue.
      *
      * @return a non-null value if an element was removed and returned from the beginning of the
-     *          ConcurrentQueue successfully; otherwise, null.
+     * ConcurrentQueue successfully; otherwise, null.
      */
     public @Nullable T tryDequeue() {
         // Get the current head
