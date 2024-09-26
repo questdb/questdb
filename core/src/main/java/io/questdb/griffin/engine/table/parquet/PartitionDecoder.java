@@ -82,21 +82,27 @@ public class PartitionDecoder implements QuietCloseable {
         }
     }
 
-    public long getColumnChunkMinTimestamp(
-            RowGroupBuffers rowGroupBuffers,
-            int rowGroupIndex,
-            int timestampColumnIndex
+    public void getRowGroupStats(
+            RowGroupStatBuffers rowGroupStatBuffers,
+            DirectIntList columns,
+            int rowGroupIndex
     ) {
-        final long chunkStatsPtr = getColumnChunkStats(
-                ptr,
-                rowGroupBuffers.ptr(),
-                rowGroupIndex,
-                timestampColumnIndex);
-        final long size = RowGroupBuffers.getChunkStatsMinValueSize(chunkStatsPtr);
-        assert size == Long.BYTES;
-        final long ptr = RowGroupBuffers.getChunkStatsMinValuePtr(chunkStatsPtr);
         assert ptr != 0;
-        return Unsafe.getUnsafe().getLong(ptr);
+        try {
+            getRowGroupStats(
+                    ptr,
+                    rowGroupStatBuffers.ptr(),
+                    columns.getAddress(),
+                    (int) (columns.size() >>> 1),
+                    rowGroupIndex
+            );
+        } catch (Throwable th) {
+            LOG.error().$("could not get row group stats [fd=").$(fd)
+                    .$(", rowGroup=").$(rowGroupIndex)
+                    .$(", msg=").$(th.getMessage())
+                    .I$();
+            throw CairoException.nonCritical().put(th.getMessage());
+        }
     }
 
     public long getFd() {
@@ -150,11 +156,13 @@ public class PartitionDecoder implements QuietCloseable {
     private static native void destroy(long impl);
 
 
-    private static native long getColumnChunkStats(
+    private static native long getRowGroupStats(
             long decoderPtr,
-            long rowGroupBuffersPtr,
-            int rowGroupIndex,
-            int columnId);
+            long rowGroupStatBuffersPtr,
+            long requestedColumnsPtr,
+            int requestedColumnCount,
+            int rowGroup
+    );
 
     private static native long rowCountOffset();
 

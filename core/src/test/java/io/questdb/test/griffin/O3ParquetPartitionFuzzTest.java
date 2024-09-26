@@ -49,30 +49,6 @@ import java.util.zip.CRC32;
 
 public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
 
-    public static GenericRecordMetadata symbolAsVarcharCopy(RecordMetadata that) {
-        if (that != null) {
-            GenericRecordMetadata metadata = new GenericRecordMetadata();
-            for (int i = 0, n = that.getColumnCount(); i < n; i++) {
-                final int columnType = that.getColumnType(i);
-                metadata.add(
-                        new TableColumnMetadata(
-                                that.getColumnName(i),
-                                columnType == ColumnType.SYMBOL ? ColumnType.VARCHAR : columnType,
-                                that.isColumnIndexed(i),
-                                that.getIndexValueBlockCapacity(i),
-                                that.isSymbolTableStatic(i),
-                                that.getMetadata(i),
-                                that.getWriterIndex(i),
-                                that.isDedupKey(i)
-                        )
-                );
-            }
-            metadata.setTimestampIndex(that.getTimestampIndex());
-            return metadata;
-        }
-        return null;
-    }
-
     @Test
     public void testFuzz() throws Exception {
         executeWithPool(0, this::testFuzz0);

@@ -16,7 +16,9 @@ use crate::parquet_read::slicer::{
     BooleanBitmapSlicer, DataPageFixedSlicer, DeltaBinaryPackedSlicer, DeltaBytesArraySlicer,
     DeltaLengthArraySlicer, PlainVarSlicer, ValueConvertSlicer,
 };
-use crate::parquet_read::{ColumnChunkBuffers, ColumnChunkStats, ParquetDecoder, RowGroupBuffers};
+use crate::parquet_read::{
+    ColumnChunkBuffers, ColumnChunkStats, ParquetDecoder, RowGroupBuffers, RowGroupStatBuffers,
+};
 use parquet2::deserialize::{
     FilteredHybridEncoded, FilteredHybridRleDecoderIter, HybridDecoderBitmapIter,
 };
@@ -38,8 +40,6 @@ impl RowGroupBuffers {
         Self {
             column_bufs_ptr: ptr::null_mut(),
             column_bufs: Vec::new(),
-            column_chunk_stats_ptr: ptr::null_mut(),
-            column_chunk_stats: Vec::new(),
         }
     }
 
@@ -47,11 +47,23 @@ impl RowGroupBuffers {
         if self.column_bufs.len() < required_cols {
             self.column_bufs
                 .resize_with(required_cols, ColumnChunkBuffers::new);
+            self.column_bufs_ptr = self.column_bufs.as_mut_ptr();
+        }
+    }
+}
+
+impl RowGroupStatBuffers {
+    pub fn new() -> Self {
+        Self {
+            column_chunk_stats_ptr: ptr::null_mut(),
+            column_chunk_stats: Vec::new(),
+        }
+    }
+
+    pub fn ensure_n_columns(&mut self, required_cols: usize) {
+        if self.column_chunk_stats.len() < required_cols {
             self.column_chunk_stats
                 .resize_with(required_cols, ColumnChunkStats::new);
-
-            // refresh ptrs
-            self.column_bufs_ptr = self.column_bufs.as_mut_ptr();
             self.column_chunk_stats_ptr = self.column_chunk_stats.as_mut_ptr();
         }
     }
@@ -75,6 +87,16 @@ impl ColumnChunkBuffers {
 
         self.aux_size = self.aux_vec.len();
         self.aux_ptr = self.aux_vec.as_mut_ptr();
+    }
+}
+
+impl ColumnChunkStats {
+    pub fn new() -> Self {
+        Self {
+            min_value_ptr: ptr::null_mut(),
+            min_value_size: 0,
+            min_value: Vec::new(),
+        }
     }
 }
 
@@ -109,8 +131,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             ));
         }
 
-        let col_count = self.col_count as usize;
-        row_group_bufs.ensure_n_columns(col_count);
+        row_group_bufs.ensure_n_columns(columns.len());
 
         let mut row_group_size = 0usize;
         for (dest_col_idx, &(column_idx, to_column_type)) in columns.iter().enumerate() {
@@ -232,31 +253,53 @@ impl<R: Read + Seek> ParquetDecoder<R> {
 
     pub fn update_column_chunk_stats(
         &mut self,
-        row_group_buffers: &mut RowGroupBuffers,
-        row_group: usize,
-        file_column_index: usize,
-        column: usize,
-    ) {
-        let col_count = self.col_count as usize;
-        row_group_buffers.ensure_n_columns(col_count);
-
-        let columns = self.metadata.row_groups[row_group].columns();
-        let column_metadata = &columns[file_column_index];
-        let column_chunk = column_metadata.column_chunk();
-        let stats = &mut row_group_buffers.column_chunk_stats[column];
-
-        stats.min_value.clear();
-
-        if let Some(meta_data) = &column_chunk.meta_data {
-            if let Some(statistics) = &meta_data.statistics {
-                if let Some(min) = statistics.min_value.as_ref() {
-                    stats.min_value.extend_from_slice(min);
-                }
-            }
+        row_group_stat_buffers: &mut RowGroupStatBuffers,
+        columns: &[(ParquetColumnIndex, ColumnType)],
+        row_group_index: u32,
+    ) -> ParquetResult<()> {
+        if row_group_index > self.row_group_count {
+            return Err(fmt_err!(
+                Invalid,
+                "row group index {} out of range [0,{})",
+                row_group_index,
+                self.row_group_count
+            ));
         }
 
-        stats.min_value_ptr = stats.min_value.as_mut_ptr();
-        stats.min_value_size = stats.min_value.len();
+        row_group_stat_buffers.ensure_n_columns(columns.len());
+        let row_group_index = row_group_index as usize;
+        for (dest_col_idx, &(column_idx, to_column_type)) in columns.iter().enumerate() {
+            let column_idx = column_idx as usize;
+            let column_type = self.columns[column_idx].column_type;
+            if column_type != to_column_type {
+                return Err(fmt_err!(
+                    Invalid,
+                    "requested column type {} does not match file column type {}, column index: {}",
+                    to_column_type,
+                    column_type,
+                    column_idx
+                ));
+            }
+
+            let columns_meta = self.metadata.row_groups[row_group_index].columns();
+            let column_metadata = &columns_meta[column_idx];
+            let column_chunk = column_metadata.column_chunk();
+            let stats = &mut row_group_stat_buffers.column_chunk_stats[dest_col_idx];
+
+            stats.min_value.clear();
+
+            if let Some(meta_data) = &column_chunk.meta_data {
+                if let Some(statistics) = &meta_data.statistics {
+                    if let Some(min) = statistics.min_value.as_ref() {
+                        stats.min_value.extend_from_slice(min);
+                    }
+                }
+            }
+
+            stats.min_value_ptr = stats.min_value.as_mut_ptr();
+            stats.min_value_size = stats.min_value.len();
+        }
+        Ok(())
     }
 }
 
@@ -1479,7 +1522,7 @@ mod tests {
         let (symbol_chars_buff, symbol_offsets_buff) = serialize_as_symbols(&str_values);
 
         let mut i = 0;
-        let null_sym_value = (i32::MIN).to_le_bytes();
+        let null_sym_value = i32::MIN.to_le_bytes();
         while i < row_count {
             let symbol_value = i % distinct_values;
             symbol_data_buff.extend_from_slice(&(symbol_value as i32).to_le_bytes());

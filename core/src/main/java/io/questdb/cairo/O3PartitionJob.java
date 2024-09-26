@@ -86,6 +86,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         FilesFacade ff = tableWriter.getFilesFacade();
         try (PartitionDecoder partitionDecoder = new PartitionDecoder();
              RowGroupBuffers rowGroupBuffers = new RowGroupBuffers();
+             RowGroupStatBuffers rowGroupStatBuffers = new RowGroupStatBuffers();
              PartitionUpdater partitionUpdater = new PartitionUpdater(ff);
              DirectIntList columnsIdsAndTypes = new DirectIntList(2, MemoryTag.NATIVE_O3);
              PartitionDescriptor partitionDescriptor = new OwnedMemoryPartitionDescriptor()) {
@@ -176,10 +177,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
             long mergeRangeLo = srcOooLo;
             for (int rowGroup = 1; rowGroup < rowGroupCount; rowGroup++) {
-                final long min = partitionDecoder.getColumnChunkMinTimestamp(
-                        rowGroupBuffers,
-                        rowGroup,
-                        timestampIndex);
+
+                columnsIdsAndTypes.clear();
+                columnsIdsAndTypes.add(timestampIndex);
+                columnsIdsAndTypes.add(timestampColumnType);
+                partitionDecoder.getRowGroupStats(rowGroupStatBuffers, columnsIdsAndTypes, rowGroup);
+                final long min = rowGroupStatBuffers.getMinValueLong(0);
                 final long mergeRangeHi = Vect.boundedBinarySearchIndexT(
                         sortedTimestampsAddr,
                         min,

@@ -21,11 +21,11 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+use jni::objects::JClass;
+use jni::JNIEnv;
 use std::alloc::{AllocError, Allocator, Global, Layout};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use jni::JNIEnv;
-use jni::objects::JClass;
 
 #[derive(Clone, Copy)]
 pub struct QdbWatermarkAllocator {
@@ -44,7 +44,12 @@ impl QdbWatermarkAllocator {
         tagged_used: *mut AtomicUsize,
         malloc_count: *mut AtomicUsize,
     ) -> Self {
-        Self { rss_mem_limit, rss_mem_used, tagged_used, malloc_count }
+        Self {
+            rss_mem_limit,
+            rss_mem_used,
+            tagged_used,
+            malloc_count,
+        }
     }
 
     fn rss_mem_limit(&self) -> &AtomicUsize {
@@ -64,9 +69,13 @@ impl QdbWatermarkAllocator {
     }
 
     fn check_alloc_limit(&self, layout: Layout) -> Result<(), AllocError> {
-        let rss_mem_limit = self.rss_mem_limit().load(std::sync::atomic::Ordering::SeqCst);
+        let rss_mem_limit = self
+            .rss_mem_limit()
+            .load(std::sync::atomic::Ordering::SeqCst);
         if rss_mem_limit > 0 {
-            let rss_mem_used = self.rss_mem_used().load(std::sync::atomic::Ordering::SeqCst);
+            let rss_mem_used = self
+                .rss_mem_used()
+                .load(std::sync::atomic::Ordering::SeqCst);
             let new_rss_mem_used = rss_mem_used + layout.size();
             if new_rss_mem_used > rss_mem_limit {
                 return Err(AllocError);
@@ -118,7 +127,7 @@ unsafe impl Allocator for QdbTestAllocator {
     }
 }
 
-#[allow(dead_code)]  // TODO(amunra): remove once in use
+#[allow(dead_code)] // TODO(amunra): remove once in use
 #[cfg(not(test))]
 pub type QdbAllocator = QdbWatermarkAllocator;
 
@@ -152,7 +161,5 @@ pub extern "system" fn Java_io_questdb_std_Unsafe_QdbAllocator_destroy(
         panic!("allocator pointer is null");
     }
 
-    drop(unsafe {
-        Box::from_raw(allocator)
-    })
+    drop(unsafe { Box::from_raw(allocator) })
 }

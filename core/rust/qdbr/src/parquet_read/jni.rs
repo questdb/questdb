@@ -2,7 +2,7 @@ use std::fs::File;
 use std::slice;
 
 use crate::parquet::col_type::ColumnType;
-use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
+use crate::parquet::error::{ParquetErrorExt, ParquetResult};
 use crate::parquet::io::{FromRawFdI32Ext, NonOwningFile};
 use crate::parquet::qdb_metadata::ParquetFieldId;
 use crate::parquet_read::decode::ParquetColumnIndex;
@@ -12,6 +12,7 @@ use std::mem::{offset_of, size_of};
 
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnChunkStats, ColumnMeta, ParquetDecoder, RowGroupBuffers,
+    RowGroupStatBuffers,
 };
 use crate::utils;
 
@@ -82,42 +83,34 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_getColumnChunkStats(
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_getRowGroupStats(
     mut env: JNIEnv,
     _class: JClass,
     decoder: *mut ParquetDecoder<NonOwningFile>,
-    row_group_bufs: *mut RowGroupBuffers,
+    row_group_stat_bufs: *mut RowGroupStatBuffers,
+    columns: *const (ParquetColumnIndex, ColumnType),
+    column_count: u32,
     row_group_index: u32,
-    column: u32,
-) -> *const ColumnChunkStats {
-    let row_group_index = row_group_index as usize;
-    let column = column as usize;
-
+) {
     assert!(!decoder.is_null(), "decoder pointer is null");
-    let decoder = unsafe { &mut *decoder };
-
-    assert!(!row_group_bufs.is_null(), "row_group_bufs pointer is null");
-    let row_group_bufs = unsafe { &mut *row_group_bufs };
-
-    if column >= decoder.columns.len() {
-        let err = fmt_err!(
-            Invalid,
-            "column index {} out of range [0,{})",
-            column,
-            decoder.columns.len()
-        );
-        return utils::throw_java_ex(&mut env, "getColumnChunkStats", &err);
-    }
-
-    let column_file_index = decoder.columns[column].id;
-    decoder.update_column_chunk_stats(
-        row_group_bufs,
-        row_group_index,
-        column_file_index as usize,
-        column,
+    assert!(
+        !row_group_stat_bufs.is_null(),
+        "row group stat buffers pointer is null"
     );
-    let stats = &row_group_bufs.column_chunk_stats[column];
-    stats as *const ColumnChunkStats
+    assert!(!columns.is_null(), "columns pointer is null");
+
+    let decoder = unsafe { &mut *decoder };
+    let row_group_stat_bufs = unsafe { &mut *row_group_stat_bufs };
+    let columns = unsafe { slice::from_raw_parts(columns, column_count as usize) };
+
+    let res = validate_jni_column_types(columns).and_then(|()| {
+        decoder.update_column_chunk_stats(row_group_stat_bufs, columns, row_group_index)
+    });
+
+    match res {
+        Ok(_) => {}
+        Err(err) => utils::throw_java_ex(&mut env, "getRowGroupStats", &err),
+    }
 }
 
 #[no_mangle]
@@ -271,8 +264,48 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
     offset_of!(ColumnChunkBuffers, aux_size)
 }
 
+// RowGroupStatsBuffers
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuffers_chunkStatMinValuePtrOffset(
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_create(
+    _env: JNIEnv,
+    _class: JClass,
+) -> *mut RowGroupStatBuffers {
+    Box::into_raw(Box::new(RowGroupStatBuffers::new()))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_destroy(
+    _env: JNIEnv,
+    _class: JClass,
+    stat_buffers: *mut RowGroupStatBuffers,
+) {
+    if stat_buffers.is_null() {
+        panic!("row group stat buffers pointer is null");
+    }
+
+    unsafe {
+        drop(Box::from_raw(stat_buffers));
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_buffersPtrOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(RowGroupStatBuffers, column_chunk_stats_ptr)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_buffersSize(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    size_of::<ColumnChunkStats>()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_minValuePtrOffset(
     _env: JNIEnv,
     _class: JClass,
 ) -> usize {
@@ -280,7 +313,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuffers_chunkStatMinValueSizeOffset(
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_minValueSizeOffset(
     _env: JNIEnv,
     _class: JClass,
 ) -> usize {

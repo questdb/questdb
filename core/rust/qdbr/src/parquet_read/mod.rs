@@ -2,7 +2,6 @@ use crate::parquet::col_type::ColumnType;
 use crate::parquet::qdb_metadata::QdbMeta;
 use parquet2::metadata::FileMetaData;
 use std::io::{Read, Seek};
-use std::ptr;
 
 mod column_sink;
 mod decode;
@@ -44,6 +43,10 @@ pub struct ColumnMeta {
 pub struct RowGroupBuffers {
     column_bufs_ptr: *const ColumnChunkBuffers,
     column_bufs: Vec<ColumnChunkBuffers>,
+}
+
+#[repr(C)]
+pub struct RowGroupStatBuffers {
     column_chunk_stats_ptr: *const ColumnChunkStats,
     column_chunk_stats: Vec<ColumnChunkStats>,
 }
@@ -70,16 +73,6 @@ pub struct ColumnChunkStats {
     pub min_value_ptr: *mut u8,
     pub min_value_size: usize,
     pub min_value: Vec<u8>,
-}
-
-impl ColumnChunkStats {
-    pub fn new() -> Self {
-        Self {
-            min_value_ptr: ptr::null_mut(),
-            min_value_size: 0,
-            min_value: Vec::new(),
-        }
-    }
 }
 
 #[cfg(test)]
