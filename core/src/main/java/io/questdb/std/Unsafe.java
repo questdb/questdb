@@ -162,7 +162,7 @@ public final class Unsafe {
     public static long free(long ptr, long size, int memoryTag) {
         if (ptr != 0) {
             Unsafe.getUnsafe().freeMemory(ptr);
-            UNSAFE.getAndAddLong(null, FREE_COUNT_ADDR, 1);
+            incrFreeCount();
             recordMemAlloc(-size, memoryTag);
         }
         return 0;
@@ -277,7 +277,7 @@ public final class Unsafe {
         } catch (OutOfMemoryError oom) {
             CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.reallocateMemory() OutOfMemoryError [RSS_MEM_USED=")
-                    .put(UNSAFE.getLongVolatile(null, RSS_MEM_USED_ADDR))
+                    .put(getRssMemUsed())
                     .put(", oldSize=")
                     .put(oldSize)
                     .put(", newSize=")
@@ -324,12 +324,16 @@ public final class Unsafe {
     }
     //#endif
 
+    private static long getRssMemLimit() {
+        return UNSAFE.getLongVolatile(null, RSS_MEM_LIMIT_ADDR);
+    }
+
     private static void checkAllocLimit(long size, int memoryTag) {
         if (size <= 0) {
             return;
         }
         // Don't check limits for mmap'd memory
-        final long rssMemLimit = UNSAFE.getLongVolatile(null, RSS_MEM_LIMIT_ADDR);
+        final long rssMemLimit = getRssMemLimit();
         if (rssMemLimit > 0 && memoryTag >= NATIVE_DEFAULT) {
             long usage = getRssMemUsed();
             if (usage + size > rssMemLimit) {
@@ -512,7 +516,11 @@ public final class Unsafe {
 
         // A single allocation for all the off-heap native memory counters.
         // Might help with locality, given they're often incremented together.
-        long nativeMemCountersArray = UNSAFE.allocateMemory((5 + COUNTERS.length) * 8);
+        // All initial values set to 0.
+        final long nativeMemCountersArraySize = (5 + COUNTERS.length) * 8;
+        long nativeMemCountersArray = UNSAFE.allocateMemory(nativeMemCountersArraySize);
+        Vect.memset(nativeMemCountersArray, nativeMemCountersArraySize, 0);
+
         RSS_MEM_USED_ADDR = nativeMemCountersArray;
         nativeMemCountersArray += 8;
         RSS_MEM_LIMIT_ADDR = nativeMemCountersArray;

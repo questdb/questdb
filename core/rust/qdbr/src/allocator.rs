@@ -35,6 +35,7 @@ pub struct QdbWatermarkAllocator {
     malloc_count: *mut AtomicUsize,
 }
 
+const RSS_ORDERING: Ordering = Ordering::SeqCst;
 const COUNTER_ORDERING: Ordering = Ordering::AcqRel;
 
 impl QdbWatermarkAllocator {
@@ -69,13 +70,9 @@ impl QdbWatermarkAllocator {
     }
 
     fn check_alloc_limit(&self, layout: Layout) -> Result<(), AllocError> {
-        let rss_mem_limit = self
-            .rss_mem_limit()
-            .load(std::sync::atomic::Ordering::SeqCst);
+        let rss_mem_limit = self.rss_mem_limit().load(RSS_ORDERING);
         if rss_mem_limit > 0 {
-            let rss_mem_used = self
-                .rss_mem_used()
-                .load(std::sync::atomic::Ordering::SeqCst);
+            let rss_mem_used = self.rss_mem_used().load(RSS_ORDERING);
             let new_rss_mem_used = rss_mem_used + layout.size();
             if new_rss_mem_used > rss_mem_limit {
                 return Err(AllocError);
@@ -113,8 +110,9 @@ unsafe impl Allocator for QdbWatermarkAllocator {
     }
 }
 
+#[allow(dead_code)] // TODO(amunra): remove once in use
 #[cfg(test)]
-struct QdbTestAllocator;
+pub struct QdbTestAllocator;
 
 #[cfg(test)]
 unsafe impl Allocator for QdbTestAllocator {
@@ -131,6 +129,7 @@ unsafe impl Allocator for QdbTestAllocator {
 #[cfg(not(test))]
 pub type QdbAllocator = QdbWatermarkAllocator;
 
+#[allow(dead_code)] // TODO(amunra): remove once in use
 #[cfg(test)]
 pub type QdbAllocator = QdbTestAllocator;
 

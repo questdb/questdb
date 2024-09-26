@@ -36,7 +36,7 @@ public class OwnedMemoryPartitionDescriptor extends PartitionDescriptor {
         final int columnCount = getColumnCount();
         for (long columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             final long rawIndex = columnIndex * COLUMN_ENTRY_SIZE;
-            final int columnType = (int)columnData.get(rawIndex + COLUMN_ID_AND_TYPE_OFFSET);
+            final int columnType = (int) columnData.get(rawIndex + COLUMN_ID_AND_TYPE_OFFSET);
 
             final long columnAddr = columnData.get(rawIndex + COLUMN_ADDR_OFFSET);
             final long columnSize = columnData.get(rawIndex + COLUMN_SIZE_OFFSET);
