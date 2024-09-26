@@ -42,17 +42,17 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class ConcurrentQueueFuzzTest {
     @Test
     public void testManyConsumers() throws InterruptedException {
-        runFuzz(-1, 5);
+        runFuzz(-3, 5);
     }
 
     @Test
     public void testManyProducers() throws InterruptedException {
-        runFuzz(5, -1);
+        runFuzz(5, -3);
     }
 
     @Test
     public void testRandomBalance() throws InterruptedException {
-        runFuzz(-1, -1);
+        runFuzz(-3, -3);
     }
 
     private static void runFuzz(int producerMultiplier, int consumerMultiplier) throws InterruptedException {
