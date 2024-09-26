@@ -11,4 +11,4 @@ serde_yaml = "0.9"
 regex = "1.5"
 serde_json = "1.0"
 chrono = "0.4"
-
+thiserror = "1.0.64"
