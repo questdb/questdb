@@ -283,7 +283,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             intervals.clear();
             // This is a specific function, which accepts "in interval" as bind variable.
             // For this reason only STRING and VARCHAR bind variables are supported. Other types,
-            // such as INT, LONG etc will require two or move values to represent the interval
+            // such as INT, LONG etc. will require two or move values to represent the interval
             switch (intervalFunc.getType()) {
                 case ColumnType.STRING:
                 case ColumnType.VARCHAR:

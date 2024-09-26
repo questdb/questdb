@@ -229,6 +229,10 @@ public final class ColumnType {
         return columnType == ColumnType.INT;
     }
 
+    public static boolean isInterval(int columnType) {
+        return columnType == INTERVAL;
+    }
+
     public static boolean isNull(int columnType) {
         return columnType == NULL;
     }

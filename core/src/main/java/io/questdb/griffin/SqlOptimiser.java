@@ -35,15 +35,12 @@ import io.questdb.griffin.model.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.FlyweightCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.lang.ThreadLocal;
 import java.util.ArrayDeque;
 
 import static io.questdb.griffin.SqlKeywords.isNoneKeyword;
@@ -112,7 +109,6 @@ public class SqlOptimiser implements Mutable {
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
     private final RewriteSampleByFromToVisitor rewriteSampleByFromToVisitor = new RewriteSampleByFromToVisitor();
-    private final RewriteTodayTomorrowYesterdayVisitor rewriteTodayTomorrowYesterdayVisitor = new RewriteTodayTomorrowYesterdayVisitor();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
@@ -5740,17 +5736,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void rewriteTodayTomorrowYesterday(QueryModel model) throws SqlException {
-        QueryModel curr = model;
-
-        while (curr != null) {
-            if (curr.getWhereClause() != null) {
-                traversalAlgo.traverse(curr.getWhereClause(), rewriteTodayTomorrowYesterdayVisitor);
-            }
-            curr = curr.getNestedModel();
-        }
-    }
-
     // the intent is to either validate top-level columns in select columns or replace them with function calls
     // if columns do not exist
     private void rewriteTopLevelLiteralsToFunctions(QueryModel model) {
@@ -6083,7 +6068,6 @@ public class SqlOptimiser implements Mutable {
             optimiseExpressionModels(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             enumerateTableColumns(rewrittenModel, sqlExecutionContext, sqlParserCallback);
             rewriteTopLevelLiteralsToFunctions(rewrittenModel);
-            rewriteTodayTomorrowYesterday(rewrittenModel);
             rewriteSampleByFromTo(rewrittenModel);
             rewrittenModel = rewriteSampleBy(rewrittenModel);
             rewrittenModel = moveOrderByFunctionsIntoOuterSelect(rewrittenModel);
@@ -6267,44 +6251,6 @@ public class SqlOptimiser implements Mutable {
             this.timestamp = timestamp;
             this.timestampAppears = false;
             return this;
-        }
-    }
-
-    private static class RewriteTodayTomorrowYesterdayVisitor implements PostOrderTreeTraversalAlgo.Visitor {
-
-        @Override
-        public void visit(ExpressionNode node) {
-            try {
-                if (node.type == FUNCTION) {
-                    if (Chars.equalsIgnoreCase(node.token, "today")) {
-                        node.type = CONSTANT;
-                        long today = Timestamps.floorDD(Os.currentTimeMicros());
-                        today = adjustTimezoneIfNeeded(today, node.lhs);
-                        node.token = formatDate(today);
-                    } else if (Chars.equalsIgnoreCase(node.token, "tomorrow")) {
-                        node.type = CONSTANT;
-                        long tomorrow = Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), 1));
-                        tomorrow = adjustTimezoneIfNeeded(tomorrow, node.lhs);
-                        node.token = formatDate(tomorrow);
-                    } else if (Chars.equalsIgnoreCase(node.token, "yesterday")) {
-                        node.type = CONSTANT;
-                        long yesterday = Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), -1));
-                        yesterday = adjustTimezoneIfNeeded(yesterday, node.lhs);
-                        node.token = formatDate(yesterday);
-                    }
-                }
-            } catch (NumericException nex) {
-                // TODO(puzpuzpuz): we can't just swallow the error here
-                LOG.error().$(nex);
-            }
-        }
-
-        private long adjustTimezoneIfNeeded(long ts, ExpressionNode tzNode) throws NumericException {
-            return tzNode != null ? Timestamps.toTimezone(ts, TimestampFormatUtils.EN_LOCALE, tzNode.token) : ts;
-        }
-
-        private CharSequence formatDate(long micros) {
-            return '\'' + Timestamps.toString(micros).substring(0, 10) + '\'';
         }
     }
 
