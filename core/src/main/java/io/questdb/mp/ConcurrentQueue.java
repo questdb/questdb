@@ -24,7 +24,7 @@
 
 package io.questdb.mp;
 
-import io.questdb.std.ObjectFactory;
+import org.jetbrains.annotations.Nullable;
 
 // This is stripped down version taken from the .NET Core source code at
 // https://github.com/dotnet/runtime/blob/main/src/libraries/System.Private.CoreLib/src/System/Collections/Concurrent/ConcurrentQueue.cs
@@ -40,7 +40,7 @@ import io.questdb.std.ObjectFactory;
  * those queues are limited to the number of tables in the database that can be quite large,
  * but still considered to be in thousands rather than millions.
  */
-public class ConcurrentQueue<T extends QueueValueHolder<T>> {
+public class ConcurrentQueue<T> {
     // This implementation provides an unbounded, multi-producer multi-consumer queue
     // that supports the standard Enqueue/TryDequeue operations.
     // It is composed of a linked list of bounded ring buffers, each of which has a head
@@ -67,7 +67,6 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
     // and any operations that need to get a consistent view of them.
     //
     private final Object crossSegmentLock = new Object();
-    private final ObjectFactory<T> factory;
     //The current head segment.
     private volatile ConcurrentQueueSegment<T> head;
     //The current tail segment.
@@ -75,22 +74,19 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
 
     /***
      * Initializes a new instance of the ConcurrentQueue class with default initial capacity.
-     * @param factory The factory to use to create new items.
      */
-    public ConcurrentQueue(ObjectFactory<T> factory) {
-        this(factory, INITIAL_SEGMENT_LENGTH);
+    public ConcurrentQueue() {
+        this(INITIAL_SEGMENT_LENGTH);
     }
 
 
     /***
      * Initializes a new instance of the ConcurrentQueue class with the specified initial capacity.
-     * @param factory The factory to use to create new items.
      * @param size The initial capacity of the queue, must be a power of 2.
      */
-    public ConcurrentQueue(ObjectFactory<T> factory, int size) {
+    public ConcurrentQueue(int size) {
         assert (size & (size - 1)) == 0; // must be a power of 2
-        this.factory = factory;
-        tail = head = new ConcurrentQueueSegment<T>(factory, INITIAL_SEGMENT_LENGTH);
+        tail = head = new ConcurrentQueueSegment<T>(INITIAL_SEGMENT_LENGTH);
     }
 
     /***
@@ -117,28 +113,27 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
     /**
      * Attempts to remove and return the object at the beginning of the ConcurrentQueue.
      *
-     * @param result When this method returns, if the operation was successful, param "result"
-     *               contains the object removed. If no object was available to be removed, the value is unspecified.
-     * @return true if an element was removed and returned from the beginning of the ConcurrentQueue successfully;
-     * otherwise, false.
+     * @return a non-null value if an element was removed and returned from the beginning of the
+     *          ConcurrentQueue successfully; otherwise, null.
      */
-    public boolean tryDequeue(T result) {
+    public @Nullable T tryDequeue() {
         // Get the current head
         ConcurrentQueueSegment<T> head = this.head;
 
         // Try to take.  If we're successful, we're done.
-        if (head.tryDequeue(result)) {
-            return true;
+        T item = head.tryDequeue();
+        if (item != null) {
+            return item;
         }
 
         // Check to see whether this segment is the last. If it is, we can consider
         // this to be a moment-in-time empty condition (even though between the TryDequeue
         // check and this check, another item could have arrived).
         if (head.nextSegment == null) {
-            return false;
+            return null;
         }
 
-        return tryDequeueSlow(result); // slow path that needs to fix up segments
+        return tryDequeueSlow(); // slow path that needs to fix up segments
     }
 
     // Adds to the end of the queue, adding a new segment if necessary.
@@ -163,7 +158,7 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
                     // In general, we double the size of the segment, to make it less likely
                     // that we'll need to grow again.
                     int nextSize = Math.min(tail.getCapacity() * 2, MAX_SEGMENT_LENGTH);
-                    ConcurrentQueueSegment<T> newTail = new ConcurrentQueueSegment<T>(factory, nextSize);
+                    ConcurrentQueueSegment<T> newTail = new ConcurrentQueueSegment<T>(nextSize);
 
                     // Hook up the new tail.
                     tail.nextSegment = newTail;
@@ -174,31 +169,33 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
     }
 
     // Tries to dequeue an item, removing empty segments as needed.
-    private boolean tryDequeueSlow(T item) {
+    private @Nullable T tryDequeueSlow() {
         while (true) {
             // Get the current head
             ConcurrentQueueSegment<T> head = this.head;
 
-            // Try to take.  If we're successful, we're done.
-            if (head.tryDequeue(item)) {
-                return true;
+            // Try to take. If we're successful, we're done.
+            T item = head.tryDequeue();
+            if (item != null) {
+                return item;
             }
 
             // Check to see whether this segment is the last. If it is, we can consider
-            // this to be a moment-in-time empty condition (even though between the TryDequeue
+            // this to be a moment-in-time empty condition (even though between the tryDequeue
             // check and this check, another item could have arrived).
             if (head.nextSegment == null) {
-                return false;
+                return null;
             }
 
             // At this point we know that head.Next != null, which means
             // this segment has been frozen for additional enqueues. But between
-            // the time that we ran TryDequeue and checked for a next segment,
+            // the time that we ran tryDequeue and checked for a next segment,
             // another item could have been added.  Try to dequeue one more time
             // to confirm that the segment is indeed empty.
             assert head.frozenForEnqueues;
-            if (head.tryDequeue(item)) {
-                return true;
+            item = head.tryDequeue();
+            if (item != null) {
+                return item;
             }
 
             // This segment is frozen (nothing more can be added) and empty (nothing is in it).
