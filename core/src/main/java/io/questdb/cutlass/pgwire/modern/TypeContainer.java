@@ -27,5 +27,5 @@ package io.questdb.cutlass.pgwire.modern;
 import io.questdb.std.IntList;
 
 public interface TypeContainer {
-    IntList getPgParameterTypeOIDs();
+    IntList getPgInParameterTypeOIDs();
 }

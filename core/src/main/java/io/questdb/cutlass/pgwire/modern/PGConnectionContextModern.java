@@ -825,7 +825,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         lo = hi + 1;
         pipelineCurrentEntry.setReturnRowCountLimit(pipelineCurrentEntry.getInt(lo, msgLimit, "could not read max rows value"));
         pipelineCurrentEntry.setStateExec(true);
-        transactionState = pipelineCurrentEntry.execute(
+        transactionState = pipelineCurrentEntry.msgExecute(
                 sqlExecutionContext,
                 transactionState,
                 taiCache,
@@ -837,7 +837,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         );
     }
 
-    private void msgFlush() throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, BadProtocolException {
+    private void msgFlush() throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException {
         addPipelineEntry();
         // "The Flush message does not cause any specific output to be generated, but forces the backend to deliver any data pending in its output buffers.
         //  A Flush must be sent after any extended-query command except Sync, if the frontend wishes to examine the results of that command before issuing more commands.
@@ -850,7 +850,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         msgFlush0();
     }
 
-    private void msgFlush0() throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, BadProtocolException {
+    private void msgFlush0() throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException {
         syncPipeline();
         resumeCallback = null;
         responseUtf8Sink.sendBufferAndReset();
@@ -1018,7 +1018,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         }
     }
 
-    private void msgSync() throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, BadProtocolException {
+    private void msgSync() throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException {
         addPipelineEntry();
 
         // the sync0 is liable to get interrupted due to:
@@ -1030,7 +1030,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         msgSync0();
     }
 
-    private void msgSync0() throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException, BadProtocolException {
+    private void msgSync0() throws PeerIsSlowToReadException, PeerDisconnectedException, QueryPausedException {
         syncPipeline();
 
         // flush the buffer in case response message does not fit the buffer
@@ -1180,18 +1180,14 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     }
 
     // Send responses from the pipeline entries we have accumulated so far.
-    private void syncPipeline() throws PeerIsSlowToReadException, QueryPausedException, BadProtocolException, PeerDisconnectedException {
+    private void syncPipeline() throws PeerIsSlowToReadException, QueryPausedException, PeerDisconnectedException {
         while (pipelineCurrentEntry != null || (pipelineCurrentEntry = pipeline.poll()) != null) {
             // with the sync call the existing pipeline entry will assign its own completion hooks (resume callbacks)
             do {
                 try {
-                    transactionState = pipelineCurrentEntry.sync(
+                    pipelineCurrentEntry.msgSync(
                             sqlExecutionContext,
-                            transactionState,
-                            taiCache,
                             pendingWriters,
-                            this,
-                            namedStatements,
                             responseUtf8Sink
                     );
                     break;
@@ -1203,13 +1199,9 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                         pipelineCurrentEntry.getErrorMessageSink()
                                 .put("not enough space in send buffer [sendBufferSize=").put(responseUtf8Sink.getSendBufferSize())
                                 .put(']');
-                        pipelineCurrentEntry.sync(
+                        pipelineCurrentEntry.msgSync(
                                 sqlExecutionContext,
-                                transactionState,
-                                taiCache,
                                 pendingWriters,
-                                this,
-                                namedStatements,
                                 responseUtf8Sink
                         );
                         break;
@@ -1357,7 +1349,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                     cq,
                     taiPool
             );
-            transactionState = pipelineCurrentEntry.execute(
+            transactionState = pipelineCurrentEntry.msgExecute(
                     sqlExecutionContext,
                     transactionState,
                     taiCache,

@@ -7137,27 +7137,19 @@ nodejs code:
 
     @Test
     public void testPreparedStatementWithBindVariablesOnDifferentConnection() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    final IPGWireServer server = createPGServer(1);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (final Connection connection = getConnection(server.getPort(), false, false)) {
-                    try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
+        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement statement = connection.prepareStatement(createDatesTblStmt)) {
+                statement.execute();
+            }
+            mayDrainWalQueue();
+            queryTimestampsInRange(connection);
+
+            try (final Connection connection2 = getConnection(port, false, binary)) {
+                queryTimestampsInRange(connection2);
+
+                if (isEnabledForWalRun()) {
+                    try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
                         statement.execute();
-                    }
-                    mayDrainWalQueue();
-                    queryTimestampsInRange(connection);
-                }
-
-                try (final Connection connection = getConnection(server.getPort(), false, false)) {
-                    queryTimestampsInRange(connection);
-
-                    if (isEnabledForWalRun()) {
-                        try (PreparedStatement statement = connection.prepareStatement("drop table xts")) {
-                            statement.execute();
-                        }
                     }
                 }
             }
@@ -7165,7 +7157,6 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testPreparedStatementWithBindVariablesSetWrongOnDifferentConnection() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -7185,12 +7176,12 @@ nodejs code:
                 try (final Connection connection = getConnection(server.getPort(), false, false)) {
                     try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts <= dateadd('d', -1, ?) and ts >= dateadd('d', -2, ?)")) {
                         sink.clear();
-                        statement.setString(1, "abcd");
-                        statement.setString(2, "abdc");
+                        statement.setString(1, "2024-01-05");
+                        statement.setString(2, "b2222");
                         statement.executeQuery();
                     } catch (PSQLException ex) {
                         caught = true;
-                        Assert.assertEquals("ERROR: inconvertible value: `abcd` [" + stringTypeName + " -> TIMESTAMP]", ex.getMessage());
+                        TestUtils.assertContains(ex.getMessage(), "ERROR: inconvertible value: `b2222` [" + stringTypeName + " -> TIMESTAMP]");
                     }
                 }
 

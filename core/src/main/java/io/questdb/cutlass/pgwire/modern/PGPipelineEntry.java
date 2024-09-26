@@ -196,94 +196,6 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
-    public void copyColumnTypesToParameterTypeOIDs(IntList bindVariableColumnTypes) {
-        outParameterTypeDescriptionTypeOIDs.clear();
-        for (int i = 0, n = bindVariableColumnTypes.size(); i < n; i++) {
-            outParameterTypeDescriptionTypeOIDs.add(Numbers.bswap(PGOids.getTypeOid(bindVariableColumnTypes.getQuick(i))));
-        }
-    }
-
-    // return transaction state
-    public int execute(
-            SqlExecutionContext sqlExecutionContext,
-            int transactionState,
-            SimpleAssociativeCache<TypesAndInsertModern> taiCache,
-            ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
-            WriterSource writerSource,
-            CharacterStore characterStore,
-            DirectUtf8String utf8String,
-            ObjectPool<DirectBinarySequence> binarySequenceParamsPool
-    ) throws BadProtocolException {
-        // do not execute anything, that has been parse-executed
-        if (stateParseExecuted) {
-            stateParseExecuted = false;
-            return transactionState;
-        }
-        sqlExecutionContext.containsSecret(sqlTextHasSecret);
-        try {
-            switch (this.sqlType) {
-                case CompiledQuery.EXPLAIN:
-                case CompiledQuery.SELECT:
-                case CompiledQuery.PSEUDO_SELECT:
-                    executeSelect(sqlExecutionContext, characterStore, utf8String, binarySequenceParamsPool);
-                    break;
-                case CompiledQuery.INSERT:
-                    executeInsert(
-                            sqlExecutionContext,
-                            transactionState,
-                            taiCache,
-                            pendingWriters,
-                            writerSource,
-                            characterStore,
-                            utf8String,
-                            binarySequenceParamsPool
-                    );
-                    break;
-                case CompiledQuery.ALTER:
-                case CompiledQuery.ALTER_USER:
-                case CompiledQuery.CREATE_USER:
-                case CompiledQuery.UPDATE:
-                    executeCompiledQuery(sqlExecutionContext, transactionState, characterStore, utf8String, binarySequenceParamsPool);
-                    break;
-                case CompiledQuery.DEALLOCATE:
-                    // this is supposed to work instead of sending 'close' message via the
-                    // network protocol. My latest understanding is that this is meant to close either
-                    // prepared statement or portal, depending on the name provided. The difference perhaps would be
-                    // in the way we have to reply back to the client. Reply format out of 'execute' message is
-                    // different from that of 'close' message.
-
-                    preparedStatementNameToDeallocate = Chars.toString(compiledQuery.getStatementName());
-                    throw kaput().put("unsupported for now");
-                case CompiledQuery.BEGIN:
-                    return IN_TRANSACTION;
-                case CompiledQuery.COMMIT:
-                case CompiledQuery.ROLLBACK:
-                    freePendingWriters(pendingWriters, this.sqlType == CompiledQuery.COMMIT);
-                    return NO_TRANSACTION;
-                default:
-                    // execute DDL that has not been parse-executed
-                    if (!empty) {
-                        engine.ddl(sqlText, sqlExecutionContext);
-                    }
-                    break;
-            }
-        } catch (BadProtocolException e) {
-            throw e;
-        } catch (Throwable e) {
-            if (e instanceof FlyweightMessageContainer) {
-                getErrorMessageSink().put(((FlyweightMessageContainer) e).getFlyweightMessage());
-            } else {
-                String message = e.getMessage();
-                if (message != null) {
-                    getErrorMessageSink().put(message);
-                } else {
-                    getErrorMessageSink().put("Internal error. Assert?");
-                }
-            }
-        }
-        return transactionState;
-    }
-
     public int getErrorMessagePosition() {
         return errorMessagePosition;
     }
@@ -433,11 +345,243 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
+    // return transaction state
+    public int msgExecute(
+            SqlExecutionContext sqlExecutionContext,
+            int transactionState,
+            SimpleAssociativeCache<TypesAndInsertModern> taiCache,
+            ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
+            WriterSource writerSource,
+            CharacterStore characterStore,
+            DirectUtf8String utf8String,
+            ObjectPool<DirectBinarySequence> binarySequenceParamsPool
+    ) throws BadProtocolException {
+        // do not execute anything, that has been parse-executed
+        if (stateParseExecuted) {
+            stateParseExecuted = false;
+            return transactionState;
+        }
+        sqlExecutionContext.containsSecret(sqlTextHasSecret);
+        try {
+            switch (this.sqlType) {
+                case CompiledQuery.EXPLAIN:
+                case CompiledQuery.SELECT:
+                case CompiledQuery.PSEUDO_SELECT:
+                    executeSelect(sqlExecutionContext, characterStore, utf8String, binarySequenceParamsPool);
+                    break;
+                case CompiledQuery.INSERT:
+                    executeInsert(
+                            sqlExecutionContext,
+                            transactionState,
+                            taiCache,
+                            pendingWriters,
+                            writerSource,
+                            characterStore,
+                            utf8String,
+                            binarySequenceParamsPool
+                    );
+                    break;
+                case CompiledQuery.ALTER:
+                case CompiledQuery.ALTER_USER:
+                case CompiledQuery.CREATE_USER:
+                case CompiledQuery.UPDATE:
+                    executeCompiledQuery(sqlExecutionContext, transactionState, characterStore, utf8String, binarySequenceParamsPool);
+                    break;
+                case CompiledQuery.DEALLOCATE:
+                    // this is supposed to work instead of sending 'close' message via the
+                    // network protocol. My latest understanding is that this is meant to close either
+                    // prepared statement or portal, depending on the name provided. The difference perhaps would be
+                    // in the way we have to reply back to the client. Reply format out of 'execute' message is
+                    // different from that of 'close' message.
+
+                    preparedStatementNameToDeallocate = Chars.toString(compiledQuery.getStatementName());
+                    throw kaput().put("unsupported for now");
+                case CompiledQuery.BEGIN:
+                    return IN_TRANSACTION;
+                case CompiledQuery.COMMIT:
+                case CompiledQuery.ROLLBACK:
+                    freePendingWriters(pendingWriters, this.sqlType == CompiledQuery.COMMIT);
+                    return NO_TRANSACTION;
+                default:
+                    // execute DDL that has not been parse-executed
+                    if (!empty) {
+                        engine.ddl(sqlText, sqlExecutionContext);
+                    }
+                    break;
+            }
+        } catch (BadProtocolException e) {
+            throw e;
+        } catch (Throwable e) {
+            if (e instanceof FlyweightMessageContainer) {
+                getErrorMessageSink().put(((FlyweightMessageContainer) e).getFlyweightMessage());
+            } else {
+                String message = e.getMessage();
+                if (message != null) {
+                    getErrorMessageSink().put(message);
+                } else {
+                    getErrorMessageSink().put("Internal error. Assert?");
+                }
+            }
+        }
+        return transactionState;
+    }
+
     public void msgParseCopyParameterTypesFromMsg(long lo, short parameterTypeCount) {
         msgParseParameterTypeOIDs.setPos(parameterTypeCount);
         for (int i = 0; i < parameterTypeCount; i++) {
             msgParseParameterTypeOIDs.setQuick(i, Unsafe.getUnsafe().getInt(lo + i * 4L));
         }
+    }
+
+    /**
+     * This method writes the response to the provided sink. The response is typically
+     * larger than the available buffer. For that reason this method also flushes the buffers. During the
+     * buffer flush it is entirely possible that nothing is receiving our data on the other side of the
+     * network. For that reason this method maintains state and is re-entrant. If it is to throw an exception
+     * pertaining network difficulties, the calling party must fix those difficulties and call this method
+     * again.
+     *
+     * @param sqlExecutionContext the execution context used to optionally execute SQL and send result set out.
+     * @param pendingWriters      per connection write cache to be used by "insert" SQL. This is also part of the
+     *                            optional "execute"
+     * @param utf8Sink            the response buffer
+     * @throws QueryPausedException                 exception is thrown by SQL fetch, which could be in the middle of the fetch.
+     *                                              The exception indicates that SQL engine has to wait for the data to be retrieved
+     *                                              from cold storage, and it might take a while. The convention is to enqueue the
+     *                                              connection (fd) with the IODispatcher and deque this connection when data is ready.
+     *                                              When connection is dequeued the sync process should be resumed. Which is done by
+     *                                              calling this method again.
+     * @throws NoSpaceLeftInResponseBufferException exception is thrown when sync runs out of space in the
+     *                                              response buffer. When this happens the caller has to flush the buffer
+     *                                              and call sync again, unless the flush was ineffective (had 0 bytes to flush).
+     *                                              The latter means that the response buffer is too small for an atomic write
+     *                                              and the protocol has to error out.
+     */
+    public void msgSync(
+            SqlExecutionContext sqlExecutionContext,
+            ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
+            PGResponseSink utf8Sink
+    ) throws QueryPausedException, NoSpaceLeftInResponseBufferException {
+        if (isError()) {
+            outError(utf8Sink, pendingWriters);
+        } else {
+            switch (stateSync) {
+                case 0:
+                    if (stateParse) {
+                        outParseComplete(utf8Sink);
+                    }
+                    stateSync = 1;
+                case 1:
+                    if (stateBind) {
+                        outBindComplete(utf8Sink);
+                    }
+                    stateSync = 2;
+                case 2:
+                    switch (stateDesc) {
+                        case 3:
+                            // named prepared statement
+                            outParameterTypeDescription(utf8Sink);
+                            // fall through
+                        case 2:
+                        case 1:
+                            // portal
+                            if (factory != null) {
+                                outRowDescription(utf8Sink);
+                            } else {
+                                outNoData(utf8Sink);
+                            }
+                            break;
+                    }
+                    stateSync = 4;
+                case 4:
+                case 5:
+                    // state goes deeper
+                    if (empty && !preparedStatement && !portal) {
+                        // strangely, Java driver does not need the server to produce
+                        // empty query if his query was "prepared"
+                        outEmptyQuery(utf8Sink);
+                        stateSync = 6;
+                    } else {
+                        if (stateExec) {
+                            // the flow when the pipeline entry was executed
+                            switch (sqlType) {
+                                case CompiledQuery.EXPLAIN:
+                                case CompiledQuery.SELECT:
+                                case CompiledQuery.PSEUDO_SELECT:
+                                    // This is a long response (data set) and because of
+                                    // this we are entering the interruptible state machine here. In that,
+                                    // this call may end up in an exception and the code will have to be re-entered
+                                    // at some point. Our own completion callback will invoke the pipeline callback
+                                    outCursor(sqlExecutionContext, utf8Sink);
+                                    // the above method changes state
+                                    break;
+                                case CompiledQuery.INSERT_AS_SELECT:
+                                case CompiledQuery.INSERT: {
+                                    utf8Sink.bookmark();
+                                    // todo: if we get sent a lot of inserts as the pipeline, we might run out of buffer
+                                    //           sending the replies. We should handle this
+                                    utf8Sink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
+                                    long addr = utf8Sink.skipInt();
+                                    utf8Sink.put(sqlTag).putAscii(" 0 ").put(sqlAffectedRowCount).put((byte) 0);
+                                    utf8Sink.putLen(addr);
+                                    stateSync = 6;
+                                    break;
+                                }
+                                case CompiledQuery.UPDATE: {
+                                    outCommandComplete(utf8Sink, sqlAffectedRowCount);
+                                    stateSync = 6;
+                                    break;
+                                }
+                                default:
+                                    // create table is just "OK"
+                                    utf8Sink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
+                                    long addr = utf8Sink.skipInt();
+                                    utf8Sink.put(sqlTag).put((byte) 0);
+                                    utf8Sink.putLen(addr);
+                                    stateSync = 6;
+                                    break;
+                            }
+                        }
+                    }
+                case 20:
+                case 30:
+                    // ignore these, they are set by outCursor() call and should be processed outside of this
+                    // switch statement
+                    break;
+                default:
+                    assert false;
+            }
+
+            // this is a separate switch because there is no way to-recheck the stateSync that
+            // is set withing the top switch. These values are set by outCursor()
+
+            switch (stateSync) {
+                case 20:
+                    cursor = Misc.free(cursor);
+                    outCommandComplete(utf8Sink, sqlReturnRowCount);
+                    break;
+                case 30:
+                    outPortalSuspended(utf8Sink);
+                    if (!portal) {
+                        // if this is not a named portal
+                        // then we have to close the cursor even if we didn't fully exhaust it
+                        cursor = Misc.free(cursor);
+                    }
+                    break;
+            }
+
+            if (stateClosed) {
+                outSimpleMsg(utf8Sink, MESSAGE_TYPE_CLOSE_COMPLETE);
+            }
+
+            if (isError()) {
+                outError(utf8Sink, pendingWriters);
+            }
+        }
+
+        // after the pipeline entry is synchronized we should prepare it for the next
+        // execution iteration, in case the entry is a prepared statement or a portal
+        clearState();
     }
 
     public void ofInsert(CharSequence utf16SqlText, TypesAndInsertModern tai) {
@@ -447,7 +591,8 @@ public class PGPipelineEntry implements QuietCloseable {
         this.sqlType = tai.getSqlType();
         this.cacheHit = true;
         this.tai = tai;
-        copyColumnTypesToParameterTypeOIDs(tai.getBindVariableColumnTypes());
+        this.outParameterTypeDescriptionTypeOIDs.clear();
+        this.outParameterTypeDescriptionTypeOIDs.addAll(tai.getPgOutParameterTypeOIDs());
     }
 
     public void ofSelect(CharSequence utf16SqlText, TypesAndSelectModern tas) {
@@ -458,7 +603,8 @@ public class PGPipelineEntry implements QuietCloseable {
         this.tas = tas;
         this.cacheHit = true;
         copyPgResultSetColumnTypes();
-        copyColumnTypesToParameterTypeOIDs(tas.getBindVariableColumnTypes());
+        this.outParameterTypeDescriptionTypeOIDs.clear();
+        this.outParameterTypeDescriptionTypeOIDs.addAll(tas.getOutPgParameterTypeOIDs());
     }
 
     public void ofSimpleQuery(
@@ -537,165 +683,6 @@ public class PGPipelineEntry implements QuietCloseable {
 
     public void setStateParse(boolean stateParse) {
         this.stateParse = stateParse;
-    }
-
-    /**
-     * This method writes the response to the provided sink. The response is typically
-     * larger than the available buffer. For that reason this method also flushes the buffers. During the
-     * buffer flush it is entirely possible that nothing is receiving our data on the other side of the
-     * network. For that reason this method maintains state and is re-entrant. If it is to throw an exception
-     * pertaining network difficulties, the calling party must fix those difficulties and call this method
-     * again.
-     *
-     * @param sqlExecutionContext the execution context used to optionally execute SQL and send result set out.
-     * @param transactionState    the state of the current transaction; determines if to use insert auto-commit or not
-     * @param taiCache            "insert" SQL cache, used to optionally execute the insert (when 'E' message is omitted)
-     * @param pendingWriters      per connection write cache to be used by "insert" SQL. This is also part of the optional "execute"
-     * @param writerSource        global writer cache
-     * @param namedStatements
-     * @param utf8Sink
-     * @return
-     * @throws Exception
-     */
-    public int sync(
-            SqlExecutionContext sqlExecutionContext,
-            int transactionState,
-            SimpleAssociativeCache<TypesAndInsertModern> taiCache,
-            ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
-            WriterSource writerSource,
-            CharSequenceObjHashMap<PGPipelineEntry> namedStatements,
-            PGResponseSink utf8Sink
-    ) throws QueryPausedException, BadProtocolException {
-        if (isError()) {
-            utf8Sink.resetToBookmark();
-            // todo: we need to test scenario, when sync does not fit the buffer
-            outError(utf8Sink, getErrorMessagePosition(), getErrorMessageSink());
-            freePendingWriters(pendingWriters, false);
-        } else {
-            switch (stateSync) {
-                case 0:
-                    if (stateParse) {
-                        outParseComplete(utf8Sink);
-                    }
-                    stateSync = 1;
-                case 1:
-                    if (stateBind) {
-                        outBindComplete(utf8Sink);
-                    }
-                    stateSync = 2;
-                case 2:
-                    switch (stateDesc) {
-                        case 3:
-                            // named prepared statement
-                            outParameterTypeDescription(utf8Sink);
-                            // fall through
-                        case 2:
-                        case 1:
-                            // portal
-                            if (factory != null) {
-                                outRowDescription(utf8Sink);
-                            } else {
-                                outNoData(utf8Sink);
-                            }
-                            break;
-                    }
-                    stateSync = 4;
-                case 4:
-                case 5:
-                    // state goes deeper
-                    if (empty && !preparedStatement && !portal) {
-                        // strangely, Java driver does not need the server to produce
-                        // empty query if his query was "prepared"
-                        outEmptyQuery(utf8Sink);
-                        stateSync = 6;
-                    } else {
-//                    if (!stateExec) {
-//                        execute(sqlExecutionContext, transactionState, taiCache, pendingWriters, writerSource, namedStatements);
-//                        stateExec = true;
-//                    }
-                        if (stateExec) {
-                            // the flow when the pipeline entry was executed
-                            switch (sqlType) {
-                                case CompiledQuery.EXPLAIN:
-                                case CompiledQuery.SELECT:
-                                case CompiledQuery.PSEUDO_SELECT:
-                                    // This is a long response (data set) and because of
-                                    // this we are entering the interruptible state machine here. In that,
-                                    // this call may end up in an exception and the code will have to be re-entered
-                                    // at some point. Our own completion callback will invoke the pipeline callback
-                                    outCursor(sqlExecutionContext, utf8Sink);
-                                    // the above method changes state
-                                    break;
-                                case CompiledQuery.INSERT_AS_SELECT:
-                                case CompiledQuery.INSERT: {
-                                    utf8Sink.bookmark();
-                                    // todo: if we get sent a lot of inserts as the pipeline, we might run out of buffer
-                                    //           sending the replies. We should handle this
-                                    utf8Sink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
-                                    long addr = utf8Sink.skipInt();
-                                    utf8Sink.put(sqlTag).putAscii(" 0 ").put(sqlAffectedRowCount).put((byte) 0);
-                                    utf8Sink.putLen(addr);
-                                    stateSync = 6;
-                                    break;
-                                }
-                                case CompiledQuery.UPDATE: {
-                                    outCommandComplete(utf8Sink, sqlAffectedRowCount);
-                                    stateSync = 6;
-                                    break;
-                                }
-                                default:
-                                    // create table is just "OK"
-                                    utf8Sink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
-                                    long addr = utf8Sink.skipInt();
-                                    utf8Sink.put(sqlTag).put((byte) 0);
-                                    utf8Sink.putLen(addr);
-                                    stateSync = 6;
-                                    break;
-                            }
-                        }
-                    }
-                case 20:
-                case 30:
-                    // ignore these, they are set by outCursor() call and should be processed outside of this
-                    // switch statement
-                    break;
-                default:
-                    assert false;
-            }
-
-            // this is a separate switch because there is no way to-recheck the stateSync that
-            // is set withing the top switch. These values are set by outCursor()
-
-            switch (stateSync) {
-                case 20:
-                    cursor = Misc.free(cursor);
-                    outCommandComplete(utf8Sink, sqlReturnRowCount);
-                    break;
-                case 30:
-                    outPortalSuspended(utf8Sink);
-                    if (!portal) {
-                        // if this is not a named portal
-                        // then we have to close the cursor even if we didn't fully exhaust it
-                        cursor = Misc.free(cursor);
-                    }
-                    break;
-            }
-
-            if (stateClosed) {
-                outSimpleMsg(utf8Sink, MESSAGE_TYPE_CLOSE_COMPLETE);
-            }
-
-            if (isError()) {
-                utf8Sink.resetToBookmark();
-                // todo: we need to test scenario, when sync does not fit the buffer
-                outError(utf8Sink, 0, getErrorMessageSink());
-            }
-        }
-
-        // after the pipeline entry is synchronized we should prepare it for the next
-        // execution iteration, in case the entry is a prepared statement or a portal
-        clearState();
-        return transactionState;
     }
 
     private static void outBindComplete(PGResponseSink utf8Sink) {
@@ -793,7 +780,12 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
-    private void copyParameterValuesToBindVariableService(SqlExecutionContext sqlExecutionContext, CharacterStore characterStore, DirectUtf8String utf8String, ObjectPool<DirectBinarySequence> binarySequenceParamsPool) throws BadProtocolException, SqlException {
+    private void copyParameterValuesToBindVariableService(
+            SqlExecutionContext sqlExecutionContext,
+            CharacterStore characterStore,
+            DirectUtf8String utf8String,
+            ObjectPool<DirectBinarySequence> binarySequenceParamsPool
+    ) throws BadProtocolException, SqlException {
         // Bind variables have to be configured for the cursor.
         // We have stored the following:
         // - outTypeDescriptionTypeOIDs - OIDS of the parameter types, these are all types present in the SQL
@@ -1508,13 +1500,17 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
-    private void outError(PGResponseSink utf8Sink, int position, CharSequence message) {
+    private void outError(PGResponseSink utf8Sink, ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) {
+        freePendingWriters(pendingWriters, false);
+        utf8Sink.resetToBookmark();
+        // todo: we need to test scenario, when sync does not fit the buffer
+        final int position = getErrorMessagePosition();
         utf8Sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
         long addr = utf8Sink.skipInt();
         utf8Sink.putAscii('C');
         utf8Sink.putZ("00000");
         utf8Sink.putAscii('M');
-        utf8Sink.putZ(message);
+        utf8Sink.putZ(getErrorMessageSink());
         utf8Sink.putAscii('S');
         utf8Sink.putZ("ERROR");
         if (position > -1) {
@@ -1861,8 +1857,8 @@ public class PGPipelineEntry implements QuietCloseable {
                         this.factory,
                         sqlType,
                         TAG_EXPLAIN,
-                        sqlExecutionContext.getBindVariableService(),
-                        msgParseParameterTypeOIDs
+                        msgParseParameterTypeOIDs,
+                        outParameterTypeDescriptionTypeOIDs
                 );
                 break;
             case CompiledQuery.SELECT:
@@ -1872,8 +1868,8 @@ public class PGPipelineEntry implements QuietCloseable {
                         factory,
                         sqlType,
                         sqlTag,
-                        sqlExecutionContext.getBindVariableService(),
-                        msgParseParameterTypeOIDs
+                        msgParseParameterTypeOIDs,
+                        outParameterTypeDescriptionTypeOIDs
                 );
                 break;
             case CompiledQuery.PSEUDO_SELECT:
@@ -1892,8 +1888,8 @@ public class PGPipelineEntry implements QuietCloseable {
                         insertOp,
                         sqlType,
                         sqlTag,
-                        sqlExecutionContext.getBindVariableService(),
-                        msgParseParameterTypeOIDs
+                        msgParseParameterTypeOIDs,
+                        outParameterTypeDescriptionTypeOIDs
                 );
                 break;
             case CompiledQuery.UPDATE:
@@ -1977,7 +1973,7 @@ public class PGPipelineEntry implements QuietCloseable {
             // we have to allow the possibility that parameter types between the
             // cache and the "parse" message could be different. If they are,
             // we have to discard the cache and re-compile the SQL text
-            IntList cachedTypes = typeContainer.getPgParameterTypeOIDs();
+            IntList cachedTypes = typeContainer.getPgInParameterTypeOIDs();
             int cachedTypeCount = cachedTypes.size();
             int clientTypeCount = msgParseParameterTypeOIDs.size();
             if (cachedTypeCount == clientTypeCount) {
