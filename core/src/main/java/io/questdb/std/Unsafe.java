@@ -39,6 +39,9 @@ import java.util.concurrent.atomic.LongAdder;
 import static io.questdb.std.MemoryTag.NATIVE_DEFAULT;
 
 public final class Unsafe {
+    // The various _ADDR fields are `long` in Java, but they are `* mut usize` in Rust, or `size_t*` in C.
+    // These are off-heap allocated atomic counters for memory usage tracking.
+
     public static final long BYTE_OFFSET;
     public static final long BYTE_SCALE;
     public static final long INT_OFFSET;
@@ -49,15 +52,10 @@ public final class Unsafe {
     public static final long LONG_OFFSET;
     public static final long LONG_SCALE;
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
-    // Memory-tagged counters we use in native code.
-    // Each long in the array is effectively a `* mut usize` in Rust, or `size_t*` in C.
-    // We do this because we want to preserve the better performance of `LongAdder` for Java code.
+    private static final long FREE_COUNT_ADDR;
+    private static final long MALLOC_COUNT_ADDR;
     private static final long[] NATIVE_MEM_COUNTER_ADDRS = new long[MemoryTag.SIZE];
-    private static final AtomicLong FREE_COUNT = new AtomicLong(0);
-    private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
-    // Total count of the memory we've allocated. This is maintained off-heap so
-    // native code can access it too. The `long` type in Java is a `* mut usize` in Rust, or `size_t*` in C.
-    private static final long MEM_USED_ADDR;
+    private static final long NON_RSS_MEM_USED_ADDR;
     //#if jdk.version!=8
     private static final long OVERRIDE;
     //#endif
@@ -68,9 +66,6 @@ public final class Unsafe {
     //#if jdk.version!=8
     private static final Method implAddExports;
     //#endif
-    // Global RSS memory limit in bytes. Zero means no limit.
-    // This is maintained off-heap so native code can access it too.
-    // The long type in Java is a `* mut usize` in Rust, or `size_t*` in C.
     private static long RSS_MEM_LIMIT_ADDR = 0;
 
     private Unsafe() {
@@ -167,7 +162,7 @@ public final class Unsafe {
     public static long free(long ptr, long size, int memoryTag) {
         if (ptr != 0) {
             Unsafe.getUnsafe().freeMemory(ptr);
-            FREE_COUNT.incrementAndGet();
+            UNSAFE.getAndAddLong(null, FREE_COUNT_ADDR, 1);
             recordMemAlloc(-size, memoryTag);
         }
         return 0;
@@ -186,15 +181,20 @@ public final class Unsafe {
     }
 
     public static long getFreeCount() {
-        return FREE_COUNT.get();
+        return UNSAFE.getLongVolatile(null, FREE_COUNT_ADDR);
     }
 
     public static long getMallocCount() {
-        return MALLOC_COUNT.get();
+        return UNSAFE.getLongVolatile(null, MALLOC_COUNT_ADDR);
     }
 
+    /**
+     * Get the total memory used by the process, this includes both resident memory
+     * and that assigned to memory mapped files.
+     */
     public static long getMemUsed() {
-        return UNSAFE.getLongVolatile(null, MEM_USED_ADDR);
+        return UNSAFE.getLongVolatile(null, NON_RSS_MEM_USED_ADDR) +
+                UNSAFE.getLongVolatile(null, RSS_MEM_USED_ADDR);
     }
 
     public static long getMemUsedByTag(int memoryTag) {
@@ -220,11 +220,11 @@ public final class Unsafe {
     }
 
     public static void incrFreeCount() {
-        FREE_COUNT.incrementAndGet();
+        UNSAFE.getAndAddLong(null, FREE_COUNT_ADDR, 1);
     }
 
     public static void incrMallocCount() {
-        MALLOC_COUNT.incrementAndGet();
+        UNSAFE.getAndAddLong(null, MALLOC_COUNT_ADDR, 1);
     }
 
     public static void incrReallocCount() {
@@ -250,7 +250,7 @@ public final class Unsafe {
             checkAllocLimit(size, memoryTag);
             long ptr = Unsafe.getUnsafe().allocateMemory(size);
             recordMemAlloc(size, memoryTag);
-            MALLOC_COUNT.incrementAndGet();
+            incrMallocCount();
             return ptr;
         } catch (OutOfMemoryError oom) {
             CairoException e = CairoException.nonCritical().setOutOfMemory(true)
@@ -291,12 +291,15 @@ public final class Unsafe {
     }
 
     public static void recordMemAlloc(long size, int memoryTag) {
-        final long mem = UNSAFE.getAndAddLong(null, MEM_USED_ADDR, size) + size;
-        assert mem >= 0;
         assert memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
         COUNTERS[memoryTag].add(size);
         if (memoryTag >= MemoryTag.NATIVE_DEFAULT) {
-            UNSAFE.getAndAddLong(null, RSS_MEM_USED_ADDR, size);
+            final long mem = UNSAFE.getAndAddLong(null, RSS_MEM_USED_ADDR, size) + size;
+            assert mem >= 0;
+        }
+        else {
+            final long mem = UNSAFE.getAndAddLong(null, NON_RSS_MEM_USED_ADDR, size) + size;
+            assert mem >= 0;
         }
     }
 
@@ -509,12 +512,16 @@ public final class Unsafe {
 
         // A single allocation for all the off-heap native memory counters.
         // Might help with locality, given they're often incremented together.
-        long nativeMemCountersArray = UNSAFE.allocateMemory((3 + COUNTERS.length) * 8);
-        MEM_USED_ADDR = nativeMemCountersArray;
-        nativeMemCountersArray += 8;
+        long nativeMemCountersArray = UNSAFE.allocateMemory((5 + COUNTERS.length) * 8);
         RSS_MEM_USED_ADDR = nativeMemCountersArray;
         nativeMemCountersArray += 8;
         RSS_MEM_LIMIT_ADDR = nativeMemCountersArray;
+        nativeMemCountersArray += 8;
+        MALLOC_COUNT_ADDR = nativeMemCountersArray;
+        nativeMemCountersArray += 8;
+        FREE_COUNT_ADDR = nativeMemCountersArray;
+        nativeMemCountersArray += 8;
+        NON_RSS_MEM_USED_ADDR = nativeMemCountersArray;
         nativeMemCountersArray += 8;
         for (int i = 0; i < COUNTERS.length; i++) {
             COUNTERS[i] = new LongAdder();

@@ -23,7 +23,7 @@
  ******************************************************************************/
 use std::alloc::{AllocError, Allocator, Global, Layout};
 use std::ptr::NonNull;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use jni::JNIEnv;
 use jni::objects::JClass;
 
@@ -31,20 +31,20 @@ use jni::objects::JClass;
 pub struct QdbWatermarkAllocator {
     rss_mem_limit: *const AtomicUsize,
     rss_mem_used: *mut AtomicUsize,
-    mem_used: *mut AtomicUsize,
     tagged_used: *mut AtomicUsize,
     malloc_count: *mut AtomicUsize,
 }
+
+const COUNTER_ORDERING: Ordering = Ordering::AcqRel;
 
 impl QdbWatermarkAllocator {
     pub fn new(
         rss_mem_limit: *const AtomicUsize,
         rss_mem_used: *mut AtomicUsize,
-        mem_used: *mut AtomicUsize,
         tagged_used: *mut AtomicUsize,
         malloc_count: *mut AtomicUsize,
     ) -> Self {
-        Self { rss_mem_limit, rss_mem_used, mem_used, tagged_used, malloc_count }
+        Self { rss_mem_limit, rss_mem_used, tagged_used, malloc_count }
     }
 
     fn rss_mem_limit(&self) -> &AtomicUsize {
@@ -53,10 +53,6 @@ impl QdbWatermarkAllocator {
 
     fn rss_mem_used(&self) -> &AtomicUsize {
         unsafe { &*self.rss_mem_used }
-    }
-
-    fn mem_used(&self) -> &AtomicUsize {
-        unsafe { &*self.mem_used }
     }
 
     fn tagged_used(&self) -> &AtomicUsize {
@@ -81,21 +77,16 @@ impl QdbWatermarkAllocator {
 
     fn add_memory_alloc(&self, layout: Layout) {
         let size = layout.size();
-        let new_mem_used = self.mem_used().fetch_add(size, std::sync::atomic::Ordering::SeqCst) + size;
-        assert_ne!(new_mem_used, 0);
-        self.tagged_used().fetch_add(size, std::sync::atomic::Ordering::SeqCst);
-        self.rss_mem_used().fetch_add(size, std::sync::atomic::Ordering::SeqCst);
-        self.malloc_count().fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.tagged_used().fetch_add(size, COUNTER_ORDERING);
+        self.rss_mem_used().fetch_add(size, COUNTER_ORDERING);
+        self.malloc_count().fetch_add(1, COUNTER_ORDERING);
     }
 
     fn sub_memory_alloc(&self, layout: Layout) {
         let size = layout.size();
-        let new_mem_used = self.mem_used().fetch_sub(size, std::sync::atomic::Ordering::SeqCst) - size;
-        assert_ne!(new_mem_used, 0);
-        self.tagged_used().fetch_sub(size, std::sync::atomic::Ordering::SeqCst);
-        self.rss_mem_used().fetch_sub(size, std::sync::atomic::Ordering::SeqCst);
-        self.malloc_count().fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-
+        self.tagged_used().fetch_sub(size, COUNTER_ORDERING);
+        self.rss_mem_used().fetch_sub(size, COUNTER_ORDERING);
+        self.malloc_count().fetch_sub(1, COUNTER_ORDERING);
     }
 }
 
@@ -127,6 +118,7 @@ unsafe impl Allocator for QdbTestAllocator {
     }
 }
 
+#[allow(dead_code)]  // TODO(amunra): remove once in use
 #[cfg(not(test))]
 pub type QdbAllocator = QdbWatermarkAllocator;
 
@@ -141,14 +133,12 @@ pub extern "system" fn Java_io_questdb_std_Unsafe_QdbAllocator_create(
     rss_mem_used: *mut AtomicUsize,
     mem_used: *mut AtomicUsize,
     tagged_used: *mut AtomicUsize,
-    malloc_count: *mut AtomicUsize,
 ) -> *mut QdbWatermarkAllocator {
     Box::into_raw(Box::new(QdbWatermarkAllocator::new(
         rss_mem_limit,
         rss_mem_used,
         mem_used,
         tagged_used,
-        malloc_count,
     )))
 }
 
