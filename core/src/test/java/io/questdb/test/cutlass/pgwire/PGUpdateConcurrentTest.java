@@ -84,70 +84,70 @@ public class PGUpdateConcurrentTest extends BasePGTest {
     @Test
     public void testConcurrencyMultipleWriterMultipleReaderMultiPartitioned() throws Exception {
 //        @Ignore
-        Assume.assumeTrue(testParamLegacyMode);
+        Assume.assumeTrue(legacyMode);
         testConcurrency(4, 10, 8, PartitionMode.MULTIPLE);
     }
 
     @Test
     public void testConcurrencyMultipleWriterMultipleReaderNonPartitioned() throws Exception {
 //        @Ignore
-        Assume.assumeTrue(testParamLegacyMode);
+        Assume.assumeTrue(legacyMode);
         testConcurrency(4, 10, 8, PartitionMode.NONE);
     }
 
     @Test
     public void testConcurrencyMultipleWriterMultipleReaderSinglePartitioned() throws Exception {
 //        @Ignore
-        Assume.assumeTrue(testParamLegacyMode);
+        Assume.assumeTrue(legacyMode);
         testConcurrency(4, 10, 8, PartitionMode.SINGLE);
     }
 
     @Test
     public void testConcurrencySingleWriterMultipleReaderMultiPartitioned() throws Exception {
 //        @Ignore
-        Assume.assumeTrue(testParamLegacyMode);
+        Assume.assumeTrue(legacyMode);
         testConcurrency(1, 10, 25, PartitionMode.MULTIPLE);
     }
 
     @Test
     public void testConcurrencySingleWriterMultipleReaderNonPartitioned() throws Exception {
 //        @Ignore
-        Assume.assumeTrue(testParamLegacyMode);
+        Assume.assumeTrue(legacyMode);
         testConcurrency(1, 10, 40, PartitionMode.NONE);
     }
 
     @Test
     public void testConcurrencySingleWriterMultipleReaderSinglePartitioned() throws Exception {
 //        @Ignore
-        Assume.assumeTrue(testParamLegacyMode);
+        Assume.assumeTrue(legacyMode);
         testConcurrency(1, 10, 40, PartitionMode.SINGLE);
     }
 
     @Test
     public void testConcurrencySingleWriterSingleReaderMultiPartitioned() throws Exception {
 //        @Ignore
-        Assume.assumeTrue(testParamLegacyMode);
+        Assume.assumeTrue(legacyMode);
         testConcurrency(1, 1, 30, PartitionMode.MULTIPLE);
     }
 
     @Test
     public void testConcurrencySingleWriterSingleReaderNonPartitioned() throws Exception {
 //        @Ignore
-        Assume.assumeTrue(testParamLegacyMode);
+        Assume.assumeTrue(legacyMode);
         testConcurrency(1, 1, 50, PartitionMode.NONE);
     }
 
     @Test
     public void testConcurrencySingleWriterSingleReaderSinglePartitioned() throws Exception {
 //        @Ignore
-        Assume.assumeTrue(testParamLegacyMode);
+        Assume.assumeTrue(legacyMode);
         testConcurrency(1, 1, 50, PartitionMode.SINGLE);
     }
 
     @Test
     public void testUpdateTimeout() throws Exception {
 //        @Ignore
-        Assume.assumeTrue(testParamLegacyMode);
+        Assume.assumeTrue(legacyMode);
         assertMemoryLeak(() -> {
             try (
                     IPGWireServer server1 = createPGServer(1);
@@ -264,15 +264,17 @@ public class PGUpdateConcurrentTest extends BasePGTest {
 
                 for (int k = 0; k < numOfWriters; k++) {
                     Thread writer = new Thread(() -> {
-                        try (final Connection connection = getConnection(pgServer.getPort(), false, true)) {
-                            barrier.await();
-                            PreparedStatement update = connection.prepareStatement("UPDATE up SET x = ?");
-                            for (int i = 0; i < numOfUpdates; i++) {
-                                update.setInt(1, i);
-                                Assert.assertEquals(5, update.executeUpdate());
-                                current.incrementAndGet();
+                        try {
+                            try (final Connection connection = getConnection(pgServer.getPort(), false, true)) {
+                                barrier.await();
+                                PreparedStatement update = connection.prepareStatement("UPDATE up SET x = ?");
+                                for (int i = 0; i < numOfUpdates; i++) {
+                                    update.setInt(1, i);
+                                    Assert.assertEquals(5, update.executeUpdate());
+                                    current.incrementAndGet();
+                                }
+                                update.close();
                             }
-                            update.close();
                         } catch (Throwable th) {
                             LOG.error().$("writer error ").$(th).$();
                             exceptions.add(th);

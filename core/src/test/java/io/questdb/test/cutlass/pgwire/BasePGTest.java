@@ -92,7 +92,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
                     | CONN_AWARE_EXTENDED_CACHED_BINARY
                     | CONN_AWARE_EXTENDED_CACHED_TEXT
                     | CONN_AWARE_QUIRKS;
-    protected final boolean testParamLegacyMode;
+    protected final boolean legacyMode;
     protected CopyRequestJob copyRequestJob = null;
     protected int forceRecvFragmentationChunkSize = 1024 * 1024;
     protected int forceSendFragmentationChunkSize = 1024 * 1024;
@@ -100,7 +100,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
     protected int sendBufferSize = 1024 * 1024;
 
     protected BasePGTest(@NonNull LegacyMode legacyMode) {
-        this.testParamLegacyMode = legacyMode == LegacyMode.LEGACY;
+        this.legacyMode = legacyMode == LegacyMode.LEGACY;
     }
 
     public static void assertResultSet(CharSequence expected, StringSink sink, ResultSet rs) throws SQLException, IOException {
@@ -332,6 +332,10 @@ public abstract class BasePGTest extends AbstractCairoTest {
         TestUtils.assertEquals(message, expected, sink);
     }
 
+    protected static Connection getConnection(Mode mode, int port, boolean binary) throws SQLException {
+        return getConnection(mode, port, binary, -2);
+    }
+
     protected static Connection getConnection(Mode mode, int port, boolean binary, int prepareThreshold) throws SQLException {
         Properties properties = new Properties();
         properties.setProperty("user", "admin");
@@ -452,8 +456,8 @@ public abstract class BasePGTest extends AbstractCairoTest {
     }
 
     protected IPGWireServer createPGServer(PGWireConfiguration configuration, boolean fixedClientIdAndSecret) throws SqlException {
-        if (configuration.isLegacyModeEnabled() != testParamLegacyMode) {
-            ((Port0PGWireConfiguration) configuration).isLegacyMode = testParamLegacyMode;
+        if (configuration.isLegacyModeEnabled() != legacyMode) {
+            ((Port0PGWireConfiguration) configuration).isLegacyMode = legacyMode;
         }
         TestWorkerPool workerPool = new TestWorkerPool(configuration.getWorkerCount(), metrics);
         copyRequestJob = new CopyRequestJob(engine, configuration.getWorkerCount());
@@ -500,7 +504,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
             }
         };
 
-        final PGWireConfiguration conf = new Port0PGWireConfiguration(connectionLimit, testParamLegacyMode) {
+        final PGWireConfiguration conf = new Port0PGWireConfiguration(connectionLimit, legacyMode) {
 
             @Override
             public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
@@ -555,9 +559,9 @@ public abstract class BasePGTest extends AbstractCairoTest {
 
     protected Connection getConnection(int port, boolean simple, boolean binary) throws SQLException {
         if (simple) {
-            return getConnection(Mode.SIMPLE, port, binary, -2);
+            return getConnection(Mode.SIMPLE, port, binary);
         } else {
-            return getConnection(Mode.EXTENDED, port, binary, -2);
+            return getConnection(Mode.EXTENDED, port, binary);
         }
     }
 
@@ -610,7 +614,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
     }
 
     @NotNull
-    protected DefaultPGWireConfiguration getHexPgWireConfig() {
+    protected DefaultPGWireConfiguration getStdPgWireConfigAltCreds() {
         return new DefaultPGWireConfiguration() {
             @Override
             public String getDefaultPassword() {
@@ -639,7 +643,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
 
             @Override
             public boolean isLegacyModeEnabled() {
-                return testParamLegacyMode;
+                return legacyMode;
             }
         };
     }
@@ -652,7 +656,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
                 return new DefaultIODispatcherConfiguration() {
                     @Override
                     public int getBindPort() {
-                        return 0;  // Bind to ANY port.
+                        return 5432;  // Bind to ANY port.
                     }
                 };
             }
@@ -664,7 +668,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
 
             @Override
             public boolean isLegacyModeEnabled() {
-                return testParamLegacyMode;
+                return legacyMode;
             }
         };
     }
