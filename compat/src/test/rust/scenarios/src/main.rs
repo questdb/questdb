@@ -7,6 +7,7 @@ use std::env;
 use std::fs;
 use std::process;
 use tokio_postgres::types::ToSql;
+use thiserror::Error;
 use tokio_postgres::{Client, NoTls};
 
 #[derive(Debug, Deserialize)]
@@ -91,7 +92,7 @@ async fn main() {
 
     // Database connection parameters
     let (client, connection) = tokio_postgres::connect(
-        "host=localhost port=8812 user=admin password=quest dbname=qdb",
+        "host=localhost port=5432 user=admin password=quest dbname=qdb",
         NoTls,
     )
     .await
@@ -428,45 +429,34 @@ fn extract_parameters(
     Ok(params)
 }
 
+#[derive(Error, Debug)]
+enum AssertError {
+    #[error("Expected result {expected:?}, got {actual:?}")]
+    ResultMismatch { expected: Vec<Vec<Value>>, actual: Vec<Vec<Value>> },
+    #[error("Expected row {0:?} not found in actual results")]
+    RowNotFound(Vec<Value>),
+}
+
 fn assert_result(
     expect: &Expect,
     actual: &[tokio_postgres::Row],
-) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(expected_result) = &expect.result {
-        // Convert actual rows to Vec<Vec<Value>>
-        let actual_converted = actual
-            .iter()
-            .map(|row| {
-                (0..row.len())
-                    .map(|i| get_value_as_yaml(row, i))
-                    .collect::<Vec<Value>>()
-            })
-            .collect::<Vec<Vec<Value>>>();
+) -> Result<(), AssertError> {
+    let actual_converted: Vec<Vec<Value>> = actual
+        .iter()
+        .map(|row| (0..row.len()).map(|i| get_value_as_yaml(row, i)).collect())
+        .collect();
 
+    if let Some(expected_result) = &expect.result {
         if actual_converted != *expected_result {
-            return Err(format!(
-                "Expected result {:?}, got {:?}",
-                expected_result, actual_converted
-            )
-            .into());
+            return Err(AssertError::ResultMismatch {
+                expected: expected_result.clone(),
+                actual: actual_converted,
+            });
         }
     } else if let Some(expected_contains) = &expect.result_contains {
-        let actual_converted = actual
-            .iter()
-            .map(|row| {
-                (0..row.len())
-                    .map(|i| get_value_as_yaml(row, i))
-                    .collect::<Vec<Value>>()
-            })
-            .collect::<Vec<Vec<Value>>>();
-
         for expected_row in expected_contains {
             if !actual_converted.contains(expected_row) {
-                return Err(format!(
-                    "Expected row {:?} not found in actual results.",
-                    expected_row
-                )
-                .into());
+                return Err(AssertError::RowNotFound(expected_row.clone()));
             }
         }
     }
