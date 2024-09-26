@@ -54,13 +54,13 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
     // try next.
 
     // Initial length of the segments used in the queue.
-    private final static int InitialSegmentLength = 32;
+    private static final int INITIAL_SEGMENT_LENGTH = 32;
     //
     // Maximum length of the segments used in the queue.  This is a somewhat arbitrary limit:
     // larger means that as long as we don't exceed the size, we avoid allocating more segments,
     // but if we do exceed it, then the segment becomes garbage.
     //
-    private final static int MaxSegmentLength = 1024 * 1024;
+    private static final int MAX_SEGMENT_LENGTH = 1024 * 1024;
 
     //
     // Lock used to protect cross-segment operations, including any updates to "tail" or "head"
@@ -78,7 +78,7 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
      * @param factory The factory to use to create new items.
      */
     public ConcurrentQueue(ObjectFactory<T> factory) {
-        this(factory, InitialSegmentLength);
+        this(factory, INITIAL_SEGMENT_LENGTH);
     }
 
 
@@ -90,7 +90,7 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
     public ConcurrentQueue(ObjectFactory<T> factory, int size) {
         assert (size & (size - 1)) == 0; // must be a power of 2
         this.factory = factory;
-        tail = head = new ConcurrentQueueSegment<T>(factory, InitialSegmentLength);
+        tail = head = new ConcurrentQueueSegment<T>(factory, INITIAL_SEGMENT_LENGTH);
     }
 
     /***
@@ -107,7 +107,7 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
      */
     public void enqueue(T item) {
         // Try to enqueue to the current tail.
-        if (!tail.TryEnqueue(item)) {
+        if (!tail.tryEnqueue(item)) {
             // If we're unable to, we need to take a slow path that will
             // try to add a new tail segment.
             enqueueSlow(item);
@@ -147,7 +147,7 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
             ConcurrentQueueSegment<T> tail = this.tail;
 
             // Try to append to the existing tail.
-            if (tail.TryEnqueue(item)) {
+            if (tail.tryEnqueue(item)) {
                 return;
             }
 
@@ -162,7 +162,7 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
                     // We determine the new segment's length based on the old length.
                     // In general, we double the size of the segment, to make it less likely
                     // that we'll need to grow again.
-                    int nextSize = Math.min(tail.getCapacity() * 2, MaxSegmentLength);
+                    int nextSize = Math.min(tail.getCapacity() * 2, MAX_SEGMENT_LENGTH);
                     ConcurrentQueueSegment<T> newTail = new ConcurrentQueueSegment<T>(factory, nextSize);
 
                     // Hook up the new tail.
