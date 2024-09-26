@@ -1,3 +1,5 @@
+use std::process::Command;
+use std::time::Duration;
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime};
 use futures::{pin_mut, StreamExt};
@@ -5,6 +7,7 @@ use pg_interval::Interval;
 use postgres_types::{ToSql, Type};
 use rust_decimal::Decimal;
 use sqllogictest::{DBOutput, DateFormat, DefaultColumnType, TimestampFormat};
+use std::fmt::Write;
 
 use super::{Extended, Postgres, Result};
 
