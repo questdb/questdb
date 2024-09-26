@@ -42,7 +42,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class ConcurrentQueueFuzzTest {
     @Test
     public void testManyConsumers() throws InterruptedException {
-        runFuzz(5, -1);
+        runFuzz(-1, 5);
     }
 
     @Test
