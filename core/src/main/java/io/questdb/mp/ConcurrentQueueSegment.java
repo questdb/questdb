@@ -34,9 +34,11 @@ import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
 
-/// Provides a multi-producer, multi-consumer thread-safe bounded segment.  When the queue is full,
-/// enqueues fail and return false.  When the queue is empty, dequeues fail and return null.
-/// These segments are linked together to form the unbounded "ConcurrentQueue".
+/**
+ * Provides a multi-producer, multi-consumer thread-safe bounded segment.  When the queue is full,
+ * enqueues fail and return false.  When the queue is empty, dequeues fail and return null.
+ * These segments are linked together to form the unbounded "ConcurrentQueue".
+ */
 final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
     // Segment design is inspired by the algorithm outlined at:
     // http://www.1024cores.net/home/lock-free-algorithms/queues/bounded-mpmc-queue
@@ -58,7 +60,7 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
     // The segment following this one in the queue, or null if this segment is the last in the queue.
     ConcurrentQueueSegment<T> nextSegment;
 
-    /***
+    /**
      * Initializes a new instance of the "ConcurrentQueueSegment" class.
      * @param factory The factory to use to create new items.
      * @param boundedLength The maximum number of elements the segment can contain.  Must be a power of 2.
@@ -92,7 +94,7 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
         }
     }
 
-    /***
+    /**
      * Gets the capacity of the segment.
      * @return The capacity of the segment.
      */
@@ -100,7 +102,7 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
         return slots.length;
     }
 
-    /***
+    /**
      * Attempts to dequeue an element from the queue.
      * @param item The item holder to dequeue into.
      * @return true if an element was dequeued; otherwise, false.
@@ -167,7 +169,7 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
         }
     }
 
-    /***
+    /**
      * Attempts to enqueue the item.
      * @param item The item to enqueue.
      * @return true if the item was enqueued; otherwise, false.
@@ -183,7 +185,6 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
 
             // Read the sequence number for the tail position.
             long sequenceNumber = slots[slotsIndex].sequenceNumber;
-            ;
 
             // The slot is empty and ready for us to enqueue into it if its sequence
             // number matches the slot.
@@ -204,7 +205,6 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
                     slots[slotsIndex].sequenceNumber = currentTail + 1;
                     return true;
                 }
-
                 // The tail was already advanced by another thread. A newer tail has already been observed and the next
                 // iteration would make forward progress, so there's no need to spin-wait before trying again.
             } else if (diff < 0) {
@@ -215,7 +215,6 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
                 // we need to enqueue in order.
                 return false;
             }
-            // If we reached this point:
             // Either the slot contains an item, or it is empty but because the slot was filled and dequeued. In either
             // case, the tail has already been updated beyond what was observed above, and the sequence number observed
             // above as a volatile load is more recent than the update to the tail. So, the next iteration of the loop
@@ -224,17 +223,19 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
         }
     }
 
-    /// Ensures that the segment will not accept any subsequent enqueues that aren't already underway.
-    /// When we mark a segment as being frozen for additional enqueues,
-    /// we set the (see cref="_frozenForEnqueues") bool, but that's mostly
-    /// as a small helper to avoid marking it twice.  The real marking comes
-    /// by modifying the Tail for the segment, increasing it by this
-    /// (see freezeOffset).  This effectively knocks it off the
-    /// sequence expected by future enqueuers, such that any additional enqueuer
-    /// will be unable to enqueue due to it not lining up with the expected
-    /// sequence numbers.  This value is chosen specially so that Tail will grow
-    /// to a value that maps to the same slot but that won't be confused with
-    /// any other enqueue/dequeue sequence number.
+    /**
+     * Ensures that the segment will not accept any subsequent enqueues that aren't already underway.
+     * When we mark a segment as being frozen for additional enqueues,
+     * we set the (see cref="_frozenForEnqueues") bool, but that's mostly
+     * as a small helper to avoid marking it twice.  The real marking comes
+     * by modifying the Tail for the segment, increasing it by this
+     * (see freezeOffset).  This effectively knocks it off the
+     * sequence expected by future enqueuers, such that any additional enqueuer
+     * will be unable to enqueue due to it not lining up with the expected
+     * sequence numbers.  This value is chosen specially so that Tail will grow
+     * to a value that maps to the same slot but that won't be confused with
+     * any other enqueue/dequeue sequence number.
+     */
     void ensureFrozenForEnqueues() // must only be called while queue's segment lock is held
     {
         if (!frozenForEnqueues) // flag used to ensure we don't increase the Tail more than once if frozen more than once
