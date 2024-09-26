@@ -53,7 +53,9 @@ jobs:
           source venv_asyncpg/bin/activate
           python compat/src/test/python/runner_asyncpg.py compat/src/test/resources/test_cases.yaml
       - name: Setup Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        # 4d1965c9142484e48d40c19de54b5cba84953a06 is the same as @v1, except it's guaranteed to be immutable
+        # even if the original tag is moved or deleted.
+        uses: actions-rust-lang/setup-rust-toolchain@4d1965c9142484e48d40c19de54b5cba84953a06
         with:
           toolchain: stable
           cache-workspaces: compat/src/test/rust/scenarios
