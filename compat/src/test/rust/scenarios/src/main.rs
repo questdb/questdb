@@ -47,8 +47,15 @@ struct Loop {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Action {
+    Execute,
+    Query,
+}
+
+#[derive(Debug, Deserialize)]
 struct ActionStep {
-    action: String,
+    action: Action,
     query: Option<String>,
     parameters: Option<Vec<TypedParameter>>,
     expect: Option<Expect>,
@@ -198,11 +205,6 @@ async fn execute_step(
     action_step: &ActionStep,
     variables: &mut HashMap<String, String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let action = action_step.action.to_lowercase();
-    if action != "execute" && action != "query" {
-        return Err(format!("Unsupported action: {}", action).into());
-    }
-
     let query_template = action_step.query.as_ref().ok_or("Missing query")?;
     let query_with_vars = substitute_variables(query_template, variables)?;
     let query = replace_param_placeholders(&query_with_vars);
@@ -216,16 +218,15 @@ async fn execute_step(
     let stmt = client.prepare(&query).await?;
     let params_refs: Vec<&(dyn ToSql + Sync)> = params.iter().map(AsRef::as_ref).collect();
 
-    match action.as_str() {
-        "query" => {
+    match action_step.action {
+        Action::Query => {
             let result = client.query(&stmt, &params_refs).await;
             handle_query_result(result, action_step)?;
         }
-        "execute" => {
+        Action::Execute => {
             let result = client.execute(&stmt, &params_refs).await;
             handle_execute_result(result, action_step)?;
         }
-        _ => unreachable!(),
     }
 
     Ok(())
@@ -255,38 +256,37 @@ fn extract_parameters(
     parameters: &[TypedParameter],
     variables: &HashMap<String, String>,
 ) -> Result<Vec<Box<dyn ToSql + Sync>>, Box<dyn std::error::Error>> {
-    parameters
-        .iter()
-        .map(|param| {
-            let param_value: Box<dyn ToSql + Sync> = match &param.value {
-                Value::Number(n) => match param.type_.as_str() {
-                    "int4" => Box::new(n.as_i64().ok_or("Invalid int4")? as i32),
-                    "int8" => Box::new(n.as_i64().ok_or("Invalid int8")?),
-                    "varchar" => Box::new(n.to_string()),
-                    "timestamp" => {
-                        let timestamp = NaiveDateTime::parse_from_str(&n.to_string(), "%Y-%m-%dT%H:%M:%S%.fZ")?;
-                        Box::new(timestamp)
-                    }
-                    _ => return Err("Unsupported parameter type".into()),
-                },
-                Value::String(s) => {
-                    let substituted = substitute_variables(s, variables)?;
-                    match param.type_.to_lowercase().as_str() {
-                        "int4" => Box::new(substituted.parse::<i32>()?),
-                        "timestamp" => {
-                            let timestamp = NaiveDateTime::parse_from_str(&substituted, "%Y-%m-%dT%H:%M:%S%.fZ")?;
-                            Box::new(timestamp)
-                        }
-                        "float8" => Box::new(substituted.parse::<f64>()?),
-                        "varchar" => Box::new(substituted),
-                        _ => return Err("Unsupported parameter type".into()),
-                    }
-                }
+    parameters.iter().map(|param| {
+        let param_value: Box<dyn ToSql + Sync> = match &param.value {
+            Value::Number(n) => match param.type_.as_str() {
+                "int4" => Box::new(n.as_i64().ok_or("Invalid int4")? as i32),
+                "int8" => Box::new(n.as_i64().ok_or("Invalid int8")?),
+                "timestamp" => Box::new(parse_timestamp(&n.to_string())?),
+                "float4" => Box::new(n.as_f64().ok_or("Invalid float4")? as f32),
+                "float8" => Box::new(n.as_f64().ok_or("Invalid float8")?),
+                "varchar" => Box::new(n.to_string()),
                 _ => return Err("Unsupported parameter type".into()),
-            };
-            Ok(param_value)
-        })
-        .collect()
+            },
+            Value::String(s) => {
+                let substituted = substitute_variables(s, variables)?;
+                match param.type_.to_lowercase().as_str() {
+                    "int4" => Box::new(substituted.parse::<i32>()?),
+                    "int8" => Box::new(substituted.parse::<i64>()?),
+                    "timestamp" => Box::new(parse_timestamp(&substituted)?),
+                    "float4" => Box::new(substituted.parse::<f32>()?),
+                    "float8" => Box::new(substituted.parse::<f64>()?),
+                    "varchar" => Box::new(substituted),
+                    _ => return Err("Unsupported parameter type".into()),
+                }
+            }
+            _ => return Err("Unsupported parameter type".into()),
+        };
+        Ok(param_value)
+    }).collect()
+}
+
+fn parse_timestamp(s: &str) -> Result<NaiveDateTime, chrono::ParseError> {
+    NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.fZ")
 }
 
 #[derive(Error, Debug)]
@@ -334,15 +334,14 @@ fn get_value_as_yaml(row: &Row, idx: usize) -> Value {
         tokio_postgres::types::Type::INT2 => Value::Number(row.get::<_, i16>(idx).into()),
         tokio_postgres::types::Type::INT4 => Value::Number(row.get::<_, i32>(idx).into()),
         tokio_postgres::types::Type::INT8 => Value::Number(row.get::<_, i64>(idx).into()),
-        tokio_postgres::types::Type::FLOAT4 | tokio_postgres::types::Type::FLOAT8 => {
-            Value::Number(serde_yaml::Number::from(row.get::<_, f64>(idx)))
-        }
+        tokio_postgres::types::Type::FLOAT4 => Value::Number(serde_yaml::Number::from(row.get::<_, f32>(idx))),
+        tokio_postgres::types::Type::FLOAT8 => Value::Number(serde_yaml::Number::from(row.get::<_, f64>(idx))),
         tokio_postgres::types::Type::BOOL => Value::Bool(row.get(idx)),
         tokio_postgres::types::Type::TIMESTAMP => {
             let val: NaiveDateTime = row.get(idx);
             Value::String(val.format("%Y-%m-%dT%H:%M:%S%.6fZ").to_string())
         }
-        tokio_postgres::types::Type::TEXT | tokio_postgres::types::Type::VARCHAR => {
+        tokio_postgres::types::Type::VARCHAR => {
             Value::String(row.get(idx))
         }
         _ => Value::String(row.get(idx)),
