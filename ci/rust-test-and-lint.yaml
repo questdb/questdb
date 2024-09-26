@@ -19,7 +19,7 @@ jobs:
         lfs: false
         submodules: true
       - script: |
-          python3 .github/prepare_rust_env.py --export-cargo-install-env --components rustfmt clippy
+          python3 .github/prepare_rust_env.py --export-cargo-install-env --components rustfmt clippy --nightly
         displayName: "Ensure Rust is installed"
         # Note, the `prepare_rust_env.py` script exports a number of variables.
       - task: Cache@2

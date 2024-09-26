@@ -69,7 +69,7 @@ steps:
           eq(variables['System.PullRequest.IsFork'], 'false')
         )
 
-  - script: python3 .github/prepare_rust_env.py
+  - script: python3 .github/prepare_rust_env.py --nightly
     displayName: "Ensure Rust is installed"
     # Note, the `prepare_rust_env.py` script exports a number of variables.
 
