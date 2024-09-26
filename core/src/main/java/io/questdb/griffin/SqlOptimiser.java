@@ -5656,20 +5656,35 @@ public class SqlOptimiser implements Mutable {
         final QueryModel nested = model.getNestedModel();
         ExpressionNode toStrExpr;
 
-        if (
-                nested != null
-                        && nested.getJoinModels().size() == 1
-                        && nested.getNestedModel() == null
-                        && nested.getTableName() != null
-                        && model.getSampleBy() == null
-                        && (toStrExpr = model.getColumns().getQuick(0).getAst()).type == ExpressionNode.FUNCTION
-                        && Chars.equalsIgnoreCase("to_str", toStrExpr.token)
-                        && Chars.equalsIgnoreCase("'yyyy-MM-dd'", toStrExpr.rhs.token )
+        if (nested != null
+                && nested.getJoinModels().size() == 1
+                && nested.getNestedModel() == null
+                && nested.getTableName() != null
+                && model.getSampleBy() == null
+                && (toStrExpr = model.getColumns().getQuick(0).getAst()).type == ExpressionNode.FUNCTION
+                && Chars.equalsIgnoreCase("to_str", toStrExpr.token)
+                && Chars.equalsIgnoreCase("'yyyy-MM-dd'", toStrExpr.rhs.token )
         ) {
             if (nested.getTimestamp() == null ) {
                 rewriteTimestampToString(nested);
                 return;
             }
+
+            // Check if this is a group by operation
+            boolean isGroupBy = false;
+            final ObjList<QueryColumn> columns = model.getColumns();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                QueryColumn qc = columns.get(i);
+                if (qc.getAst().token != toStrExpr.token
+                        && functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token) )
+                {
+                    isGroupBy = true;
+                    break;
+                }
+            }
+
+            if ( ! isGroupBy)
+                return;
 
             ExpressionNode ts = nested.getTimestamp();
 
@@ -5682,7 +5697,7 @@ public class SqlOptimiser implements Mutable {
             //   nestedModel ->
             //     nested2Model ->
             //       nestest3Model
-            
+
             final QueryModel nested2Model  = queryModelPool.next();
             nested2Model.setTableNameExpr(model.getTableNameExpr());
             nested2Model.setModelType(model.getModelType());
