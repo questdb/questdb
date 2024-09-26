@@ -25,6 +25,7 @@
 package io.questdb.test.mp;
 
 import io.questdb.mp.ConcurrentQueue;
+import io.questdb.mp.QueueValueHolder;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -79,7 +80,7 @@ public class ConcurrentQueueFuzzTest {
         int elementsCount = 33 + rnd.nextInt(1_000) + (int) Math.pow(2, rnd.nextInt(20));
         boolean[] received = new boolean[elementsCount];
 
-        ConcurrentQueue<Integer> queue = new ConcurrentQueue<>();
+        ConcurrentQueue<IntHolderQueue> queue = new ConcurrentQueue<>(IntHolderQueue::new);
         AtomicInteger counter = new AtomicInteger();
 
         CyclicBarrier barrier = new CyclicBarrier(nProducers + nConsumers);
@@ -92,12 +93,14 @@ public class ConcurrentQueueFuzzTest {
             Thread th = new Thread(() -> {
                 try {
                     barrier.await();
+                    IntHolderQueue holder = new IntHolderQueue();
                     do {
-                        Integer next = counter.getAndIncrement();
+                        int next = counter.getAndIncrement();
                         if (next >= elementsCount) {
                             break;
                         }
-                        queue.enqueue(next);
+                        holder.value = next;
+                        queue.enqueue(holder);
                     } while (true);
                 } catch (Exception e) {
                     e.printStackTrace();
@@ -113,14 +116,13 @@ public class ConcurrentQueueFuzzTest {
             Thread th = new Thread(() -> {
                 try {
                     barrier.await();
-                    Integer item;
+                    IntHolderQueue holder = new IntHolderQueue();
                     do {
-                        item = queue.tryDequeue();
-                        if (item != null) {
-                            if (received[item]) {
-                                errors.add(item);
+                        if (queue.tryDequeue(holder)) {
+                            if (received[holder.value]) {
+                                errors.add(holder.value);
                             }
-                            received[item] = true;
+                            received[holder.value] = true;
 
                             if (pauseReader) {
                                 int pause = rnd.nextInt(100) - 98;
@@ -167,5 +169,14 @@ public class ConcurrentQueueFuzzTest {
         }
 
         System.out.println("Processed " + elementsCount + " queue size: " + queue.capacity());
+    }
+
+    static class IntHolderQueue implements QueueValueHolder<IntHolderQueue> {
+        int value;
+
+        @Override
+        public void copyTo(IntHolderQueue intHolder) {
+            intHolder.value = value;
+        }
     }
 }

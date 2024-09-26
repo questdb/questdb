@@ -24,9 +24,9 @@
 
 package io.questdb.mp;
 
+import io.questdb.std.ObjectFactory;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import org.jetbrains.annotations.Nullable;
 
 // This is stripped down version taken from the .NET Core source code at
 // https://github.com/dotnet/runtime/blob/main/src/libraries/System.Private.CoreLib/src/System/Collections/Concurrent/ConcurrentQueueSegment.cs
@@ -36,7 +36,7 @@ import org.jetbrains.annotations.Nullable;
 /// Provides a multi-producer, multi-consumer thread-safe bounded segment.  When the queue is full,
 /// enqueues fail and return false.  When the queue is empty, dequeues fail and return null.
 /// These segments are linked together to form the unbounded "ConcurrentQueue".
-final class ConcurrentQueueSegment<T> {
+final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
     // Segment design is inspired by the algorithm outlined at:
     // http://www.1024cores.net/home/lock-free-algorithms/queues/bounded-mpmc-queue
 
@@ -57,10 +57,11 @@ final class ConcurrentQueueSegment<T> {
 
     /***
      * Initializes a new instance of the "ConcurrentQueueSegment" class.
+     * @param factory The factory to use to create new items.
      * @param boundedLength The maximum number of elements the segment can contain.  Must be a power of 2.
      */
     @SuppressWarnings("unchecked")
-    ConcurrentQueueSegment(int boundedLength) {
+    ConcurrentQueueSegment(ObjectFactory<T> factory, int boundedLength) {
         // Initialize the slots and the mask.  The mask is used as a way of quickly doing "% slots.Length",
         // instead letting us do "& slotsMask".
         slots = new Slot[boundedLength];
@@ -83,6 +84,7 @@ final class ConcurrentQueueSegment<T> {
         // return false.)
         for (int i = 0; i < slots.length; i++) {
             slots[i] = new Slot<>();
+            slots[i].item = factory.newInstance();
             slots[i].sequenceNumber = i;
         }
     }
@@ -97,9 +99,10 @@ final class ConcurrentQueueSegment<T> {
 
     /***
      * Attempts to dequeue an element from the queue.
-     * @return a non-null value if an element was dequeued; otherwise, null.
+     * @param item The item holder to dequeue into.
+     * @return true if an element was dequeued; otherwise, false.
      */
-    public @Nullable T tryDequeue() {
+    public boolean tryDequeue(T item) {
         Slot<T>[] slots = this.slots;
 
         // Loop in case of contention...
@@ -122,10 +125,9 @@ final class ConcurrentQueueSegment<T> {
                 if (Unsafe.getUnsafe().compareAndSwapLong(headAndTail, paddedHeadOffset, currentHead, currentHead + 1)) {
                     // Successfully reserved the slot.  Note that after the above compareAndSwapLong, other threads
                     // trying to dequeue from this slot will end up spinning until we do the subsequent Write.
-                    T item = slots[slotsIndex].item;
-                    assert item != null;
+                    slots[slotsIndex].item.copyTo(item);
                     Unsafe.getUnsafe().putLongVolatile(slots[slotsIndex], slotSequenceNumberOffset, currentHead + slots.length);
-                    return item;
+                    return true;
                 }
 
                 // The head was already advanced by another thread. A newer head has already been observed and the next
@@ -143,7 +145,7 @@ final class ConcurrentQueueSegment<T> {
                     boolean frozen = frozenForEnqueues;
                     long currentTail = Unsafe.getUnsafe().getLongVolatile(headAndTail, paddedTailOffset);
                     if (currentTail - currentHead <= 0 || (frozen && (currentTail - freezeOffset - currentHead <= 0))) {
-                        return null;
+                        return false;
                     }
 
                     // It's possible it could have become frozen after we checked frozenForEnqueues
@@ -194,7 +196,7 @@ final class ConcurrentQueueSegment<T> {
                 if (Unsafe.getUnsafe().compareAndSwapLong(headAndTail, paddedTailOffset, currentTail, currentTail + 1)) {
                     // Successfully reserved the slot.  Note that after the above CompareExchange, other threads
                     // trying to return will end up spinning until we do the subsequent Write.
-                    slots[slotsIndex].item = item;
+                    item.copyTo(slots[slotsIndex].item);
                     Unsafe.getUnsafe().putLongVolatile(slots[slotsIndex], slotSequenceNumberOffset, currentTail + 1);
                     return true;
                 }
@@ -250,7 +252,7 @@ final class ConcurrentQueueSegment<T> {
     }
 
     // Represents a slot in the queue.
-    private static class Slot<T> {
+    private static class Slot<T extends QueueValueHolder<T>> {
         // The item.
         public T item;
         public long sequenceNumber;
