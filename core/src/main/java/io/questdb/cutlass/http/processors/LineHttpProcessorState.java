@@ -171,6 +171,11 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
             assert recvBufPos < recvBufEnd;
             Unsafe.getUnsafe().putByte(recvBufPos++, (byte) '\n');
             currentStatus = processLocalBuffer();
+            if (currentStatus == Status.NEEDS_READ) {
+                // added \n and parse result is still NEEDS_READ, means there was nothing in this line, e.g.
+                // blank space
+                currentStatus = Status.OK;
+            }
         }
     }
 
@@ -214,7 +219,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
             int errorStartPos = error.length();
             error.put("\nerror in line ").put(errorLine).put(": ");
             error.put(e.getFlyweightMessage());
-            logError(parser, errorStartPos);
+            logError(parser, errorStartPos, false);
             return Status.APPEND_ERROR;
         } catch (CommitFailedException ex) {
             if (ex.isTableDropped()) {
@@ -314,7 +319,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                 error.put(": ").put(String.valueOf(parser.getErrorCode()));
                 break;
         }
-        logError(parser, errorPos);
+        logError(parser, errorPos, false);
         return Status.PARSE_ERROR;
     }
 
@@ -329,7 +334,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         if (ex.getToken() != null) {
             error.put(": ").put(ex.getToken());
         }
-        logError(parser, errorPos);
+        logError(parser, errorPos, false);
         return Status.PARSE_ERROR;
     }
 
@@ -366,9 +371,10 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
         return Status.INTERNAL_ERROR;
     }
 
-    private void logError(LineTcpParser parser, int errorPos) {
+    private void logError(LineTcpParser parser, int errorPos, boolean isError) {
         errorId = ERROR_COUNT.incrementAndGet();
-        LOG.info().$("parse error [errorId=").$(ERROR_ID).$('-').$(errorId)
+        LogRecord logger = isError ? LOG.error() : LOG.info();
+        logger.$("parse error [errorId=").$(ERROR_ID).$('-').$(errorId)
                 .$(", table=").$(parser.getMeasurementName())
                 .$(", line=").$(errorLine)
                 .$(", error=").$(error.subSequence(errorPos, error.length()))
@@ -407,7 +413,9 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                     case BUFFER_UNDERFLOW: {
                         if (!compactBuffer(recvBufStartOfMeasurement)) {
                             errorLine = ++line;
+                            int errorPos = error.length();
                             error.put("unable to read data: ILP line does not fit QuestDB ILP buffer size");
+                            logError(parser, errorPos, true);
                             return Status.MESSAGE_TOO_LARGE;
                         }
                         return Status.NEEDS_READ;
