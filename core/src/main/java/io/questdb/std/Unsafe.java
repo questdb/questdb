@@ -277,7 +277,7 @@ public final class Unsafe {
         } catch (OutOfMemoryError oom) {
             CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.reallocateMemory() OutOfMemoryError [RSS_MEM_USED=")
-                    .put(UNSAFE.getLongVolatile(null, RSS_MEM_USED_ADDR))
+                    .put(getRssMemUsed())
                     .put(", oldSize=")
                     .put(oldSize)
                     .put(", newSize=")

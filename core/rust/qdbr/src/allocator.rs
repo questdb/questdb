@@ -104,8 +104,9 @@ unsafe impl Allocator for QdbWatermarkAllocator {
     }
 }
 
+#[allow(dead_code)]  // TODO(amunra): remove once in use
 #[cfg(test)]
-struct QdbTestAllocator;
+pub struct QdbTestAllocator;
 
 #[cfg(test)]
 unsafe impl Allocator for QdbTestAllocator {
@@ -122,6 +123,7 @@ unsafe impl Allocator for QdbTestAllocator {
 #[cfg(not(test))]
 pub type QdbAllocator = QdbWatermarkAllocator;
 
+#[allow(dead_code)]  // TODO(amunra): remove once in use
 #[cfg(test)]
 pub type QdbAllocator = QdbTestAllocator;
 
