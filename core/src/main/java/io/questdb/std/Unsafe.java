@@ -55,6 +55,7 @@ public final class Unsafe {
     private static final long FREE_COUNT_ADDR;
     private static final long MALLOC_COUNT_ADDR;
     private static final long[] NATIVE_MEM_COUNTER_ADDRS = new long[MemoryTag.SIZE];
+    private static final long[] RUST_TAGGED_ALLOCATORS = new long[MemoryTag.SIZE - NATIVE_DEFAULT];
     private static final long NON_RSS_MEM_USED_ADDR;
     //#if jdk.version!=8
     private static final long OVERRIDE;
@@ -202,11 +203,6 @@ public final class Unsafe {
         return COUNTERS[memoryTag].sum() + UNSAFE.getLongVolatile(null, NATIVE_MEM_COUNTER_ADDRS[memoryTag]);
     }
 
-    public static long getNativeMemCounterAddrByTag(int memoryTag) {
-        assert memoryTag >= 0 && memoryTag < MemoryTag.SIZE;
-        return NATIVE_MEM_COUNTER_ADDRS[memoryTag];
-    }
-
     public static long getReallocCount() {
         return REALLOC_COUNT.get();
     }
@@ -305,6 +301,26 @@ public final class Unsafe {
 
     public static void setRssMemLimit(long limit) {
         UNSAFE.putLongVolatile(null, RSS_MEM_LIMIT_ADDR, limit);
+    }
+
+    private static long createTaggedWatermarkAllocator(int memoryTag) {
+        // See `allocator.rs` for the definition of `TaggedWatermarkAllocator`.
+        // We construct here via `Unsafe` to avoid having initialization order issues with `Os.java`.
+        final long allocSize = 6 * 8;
+        final long addr = UNSAFE.allocateMemory(allocSize);
+        Vect.memset(addr, allocSize, 0);
+        UNSAFE.putLong(addr, RSS_MEM_LIMIT_ADDR);
+        UNSAFE.putLong(addr + 8, RSS_MEM_USED_ADDR);
+        UNSAFE.putLong(addr + 16, NATIVE_MEM_COUNTER_ADDRS[memoryTag]);
+        UNSAFE.putLong(addr + 24, MALLOC_COUNT_ADDR);
+        UNSAFE.putLong(addr + 32, FREE_COUNT_ADDR);
+        UNSAFE.putInt(addr + 40, memoryTag);
+        return addr;
+    }
+
+    /** Returns a `* const qdbr::TaggedWatermarkAllocator` in for use in Rust. */
+    public static long getTaggedWatermarkAllocator(int memoryTag) {
+        return RUST_TAGGED_ALLOCATORS[memoryTag - NATIVE_DEFAULT];
     }
 
     //#if jdk.version!=8
@@ -535,6 +551,9 @@ public final class Unsafe {
             COUNTERS[i] = new LongAdder();
             NATIVE_MEM_COUNTER_ADDRS[i] = nativeMemCountersArray;
             nativeMemCountersArray += 8;
+        }
+        for (int memoryTag = NATIVE_DEFAULT; memoryTag < MemoryTag.SIZE; ++memoryTag) {
+            RUST_TAGGED_ALLOCATORS[memoryTag - NATIVE_DEFAULT] = createTaggedWatermarkAllocator(memoryTag);
         }
     }
 }
