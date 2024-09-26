@@ -21,11 +21,11 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+use jni::objects::JClass;
+use jni::JNIEnv;
 use std::alloc::{AllocError, Allocator, Global, Layout};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use jni::JNIEnv;
-use jni::objects::JClass;
 
 #[derive(Clone, Copy)]
 pub struct QdbWatermarkAllocator {
@@ -45,7 +45,12 @@ impl QdbWatermarkAllocator {
         tagged_used: *mut AtomicUsize,
         malloc_count: *mut AtomicUsize,
     ) -> Self {
-        Self { rss_mem_limit, rss_mem_used, tagged_used, malloc_count }
+        Self {
+            rss_mem_limit,
+            rss_mem_used,
+            tagged_used,
+            malloc_count,
+        }
     }
 
     fn rss_mem_limit(&self) -> &AtomicUsize {
@@ -105,7 +110,7 @@ unsafe impl Allocator for QdbWatermarkAllocator {
     }
 }
 
-#[allow(dead_code)]  // TODO(amunra): remove once in use
+#[allow(dead_code)] // TODO(amunra): remove once in use
 #[cfg(test)]
 pub struct QdbTestAllocator;
 
@@ -120,11 +125,11 @@ unsafe impl Allocator for QdbTestAllocator {
     }
 }
 
-#[allow(dead_code)]  // TODO(amunra): remove once in use
+#[allow(dead_code)] // TODO(amunra): remove once in use
 #[cfg(not(test))]
 pub type QdbAllocator = QdbWatermarkAllocator;
 
-#[allow(dead_code)]  // TODO(amunra): remove once in use
+#[allow(dead_code)] // TODO(amunra): remove once in use
 #[cfg(test)]
 pub type QdbAllocator = QdbTestAllocator;
 
@@ -155,7 +160,5 @@ pub extern "system" fn Java_io_questdb_std_Unsafe_QdbAllocator_destroy(
         panic!("allocator pointer is null");
     }
 
-    drop(unsafe {
-        Box::from_raw(allocator)
-    })
+    drop(unsafe { Box::from_raw(allocator) })
 }
