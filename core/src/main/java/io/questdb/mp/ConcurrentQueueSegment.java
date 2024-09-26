@@ -130,19 +130,19 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
                 // iteration would make forward progress, so there's no need to spin-wait before trying again.
             } else //noinspection StatementWithEmptyBody
                 if (diff < 0) {
-                // The sequence number was less than what we needed, which means this slot still
-                // contains a value, i.e. the segment is full.  Technically it's possible that multiple
-                // dequeuers could have read concurrently, with those getting later slots actually
-                // finishing first, so there could be spaces after this one that are available, but
-                // we need to enqueue in order.
-                return false;
-            } else {
-                // Either the slot contains an item, or it is empty but because the slot was filled and dequeued. In either
-                // case, the tail has already been updated beyond what was observed above, and the sequence number observed
-                // above as a volatile load is more recent than the update to the tail. So, the next iteration of the loop
-                // is guaranteed to see a new tail. Since this is an always-forward-progressing situation, there's no need
-                // to spin-wait before trying again.
-            }
+                    // The sequence number was less than what we needed, which means this slot still
+                    // contains a value, i.e. the segment is full.  Technically it's possible that multiple
+                    // dequeuers could have read concurrently, with those getting later slots actually
+                    // finishing first, so there could be spaces after this one that are available, but
+                    // we need to enqueue in order.
+                    return false;
+                } else {
+                    // Either the slot contains an item, or it is empty but because the slot was filled and dequeued. In either
+                    // case, the tail has already been updated beyond what was observed above, and the sequence number observed
+                    // above as a volatile load is more recent than the update to the tail. So, the next iteration of the loop
+                    // is guaranteed to see a new tail. Since this is an always-forward-progressing situation, there's no need
+                    // to spin-wait before trying again.
+                }
         }
     }
 
@@ -191,33 +191,33 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
                 // iteration would make forward progress, so there's no need to spin-wait before trying again.
             } else //noinspection StatementWithEmptyBody
                 if (diff < 0) {
-                // The sequence number was less than what we needed, which means this slot doesn't
-                // yet contain a value we can dequeue, i.e. the segment is empty.  Technically it's
-                // possible that multiple enqueuers could have written concurrently, with those
-                // getting later slots actually finishing first, so there could be elements after
-                // this one that are available, but we need to dequeue in order.  So before declaring
-                // failure and that the segment is empty, we check the tail to see if we're actually
-                // empty or if we're just waiting for items in flight or after this one to become available.
+                    // The sequence number was less than what we needed, which means this slot doesn't
+                    // yet contain a value we can dequeue, i.e. the segment is empty.  Technically it's
+                    // possible that multiple enqueuers could have written concurrently, with those
+                    // getting later slots actually finishing first, so there could be elements after
+                    // this one that are available, but we need to dequeue in order.  So before declaring
+                    // failure and that the segment is empty, we check the tail to see if we're actually
+                    // empty or if we're just waiting for items in flight or after this one to become available.
 
-                boolean frozen = frozenForEnqueues;
-                int currentTail = Unsafe.getUnsafe().getIntVolatile(headAndTail, paddedTailOffset);
-                if (currentTail - currentHead <= 0 || (frozen && (currentTail - freezeOffset - currentHead <= 0))) {
-                    return false;
+                    boolean frozen = frozenForEnqueues;
+                    int currentTail = Unsafe.getUnsafe().getIntVolatile(headAndTail, paddedTailOffset);
+                    if (currentTail - currentHead <= 0 || (frozen && (currentTail - freezeOffset - currentHead <= 0))) {
+                        return false;
+                    }
+
+                    // It's possible it could have become frozen after we checked _frozenForEnqueues
+                    // and before reading the tail.  That's ok: in that rare race condition, we just
+                    // loop around again. This is not necessarily an always-forward-progressing
+                    // situation since this thread is waiting for another to write to the slot and
+                    // this thread may have to check the same slot multiple times. Spin-wait to avoid
+                    // a potential busy-wait, and then try again.
+                    Os.pause();
+                } else {
+                    // The item was already dequeued by another thread. The head has already been updated beyond what was
+                    // observed above, and the sequence number observed above as a volatile load is more recent than the update
+                    // to the head. So, the next iteration of the loop is guaranteed to see a new head. Since this is an
+                    // always-forward-progressing situation, there's no need to spin-wait before trying again.
                 }
-
-                // It's possible it could have become frozen after we checked _frozenForEnqueues
-                // and before reading the tail.  That's ok: in that rare race condition, we just
-                // loop around again. This is not necessarily an always-forward-progressing
-                // situation since this thread is waiting for another to write to the slot and
-                // this thread may have to check the same slot multiple times. Spin-wait to avoid
-                // a potential busy-wait, and then try again.
-                Os.pause();
-            } else {
-                // The item was already dequeued by another thread. The head has already been updated beyond what was
-                // observed above, and the sequence number observed above as a volatile load is more recent than the update
-                // to the head. So, the next iteration of the loop is guaranteed to see a new head. Since this is an
-                // always-forward-progressing situation, there's no need to spin-wait before trying again.
-            }
         }
     }
 
