@@ -1811,7 +1811,7 @@ public class PGPipelineEntry implements QuietCloseable {
                 if (Utf8s.utf8ToUtf16(valueAddr, valueAddr + valueSize, e)) {
                     bindVariableService.setStr(variableIndex, characterStore.toImmutable());
                 } else {
-                    throw kaput().put("invalid str bind variable type [variableIndex=").put(variableIndex).put(']');
+                    throw kaput().put("invalid UTF8 encoding for string value [variableIndex=").put(variableIndex).put(']');
                 }
             }
         } catch (Throwable ex) {

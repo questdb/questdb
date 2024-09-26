@@ -77,10 +77,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
             | CONN_AWARE_EXTENDED_CACHED_BINARY
             | CONN_AWARE_EXTENDED_CACHED_TEXT;
     public static final long CONN_AWARE_QUIRKS = 256;
-    public static final long CONN_AWARE_ALL_SANS_Q =
-            CONN_AWARE_EXTENDED_BINARY
-                    | CONN_AWARE_EXTENDED_TEXT
-                    | CONN_AWARE_QUIRKS;
     // QUIRKS Mode is where PostgresJDBC driver might send incorrect
     // message to the server. This breaks tests not just with QuestDB
     // but also with PostgresSQL actual.

@@ -314,7 +314,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     public void testBlockWithEmptyQueriesAndComments() throws Exception {
         // @Ignore("ERROR: empty query")
         Assume.assumeFalse(testParamLegacyMode);
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("select 1;" +
                     ";" +
@@ -794,7 +794,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCreateInsertCommitThenErrorDoesntRollBackCommittedFirstInsert() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
             try {
@@ -817,7 +817,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCreateInsertCommitThenErrorDoesntRollBackCommittedFirstInsertOnTwoTables() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
             try {

@@ -52,7 +52,7 @@ public class PGMemoryLimitTest extends BasePGTest {
 
     @Test
     public void testUpdateRecoversFromOomError() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement stat = connection.createStatement()) {
                 stat.execute(
                         "create table up as" +
@@ -91,6 +91,7 @@ public class PGMemoryLimitTest extends BasePGTest {
                                 " FROM down " +
                                 " WHERE up.ts = down.ts and x < 4"
                 );
+                drainWalQueue();
             }
             final String expected = "ts[TIMESTAMP],x[BIGINT]\n" +
                     "1970-01-01 00:00:00.0,100\n" +

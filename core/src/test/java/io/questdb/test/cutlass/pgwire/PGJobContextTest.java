@@ -1305,7 +1305,7 @@ if __name__ == "__main__":
     @Test
     public void testBasicFetch() throws Exception {
         skipOnWalRun(); // Non-partitioned
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 100;
 
@@ -1341,7 +1341,7 @@ if __name__ == "__main__":
     @Test
     public void testBasicFetchIPv4() throws Exception {
         skipOnWalRun(); // Non-partitioned
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 100;
             IntIntHashMap map = new IntIntHashMap();
@@ -1478,7 +1478,7 @@ if __name__ == "__main__":
     @Test
     public void testBasicFetchIPv4MultiCol() throws Exception {
         skipOnWalRun(); // Non-partitioned
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 100;
             IntIntHashMap map = new IntIntHashMap();
@@ -2866,7 +2866,7 @@ if __name__ == "__main__":
     @Test
     public void testCreateTableAsSelectExtendedPrepared() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
                     "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(10))")) {
@@ -2915,7 +2915,7 @@ if __name__ == "__main__":
     @Test
     public void testCreateTableDuplicateColumnName() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try {
                 connection.prepareStatement("create table tab as (\n" +
                         "            select\n" +
@@ -2933,7 +2933,7 @@ if __name__ == "__main__":
     @Test
     public void testCreateTableDuplicateColumnNameNonAscii() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try {
                 connection.prepareStatement("create table tab as (\n" +
                         "            select\n" +
@@ -2951,7 +2951,7 @@ if __name__ == "__main__":
     @Test
     public void testCreateTableExtendedPrepared() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             try (PreparedStatement pstmt = connection.prepareStatement("create table t (\n" +
                     "  a SYMBOL,\n" +
@@ -2970,7 +2970,7 @@ if __name__ == "__main__":
         // @Ignore("This test doesn't use partitioned tables.")
         Assume.assumeFalse(walEnabled);
 
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             int totalRows = 10000;
             int fetchSize = 993;
@@ -3015,7 +3015,7 @@ if __name__ == "__main__":
     @Test
     public void testDDL() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (final PreparedStatement statement = connection.prepareStatement("create table x (a int)")) {
                 statement.execute();
                 try (
@@ -3109,7 +3109,7 @@ if __name__ == "__main__":
                 {"drop all ;", "ERROR: 'tables' expected"},
                 {"drop database ;", "ERROR: 'table' or 'all tables' expected"}
         };
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             for (int i = 0, n = sqlExpectedErrMsg.length; i < n; i++) {
                 String[] testData = sqlExpectedErrMsg[i];
                 try (PreparedStatement statement = connection.prepareStatement(testData[0])) {
@@ -3125,7 +3125,7 @@ if __name__ == "__main__":
     @Test
     public void testDropTableIfExistsDoesNotFailWhenTableDoesNotExist() throws Exception {
         skipOnWalRun(); // table not created
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement("drop table if exists doesnt")) {
                 statement.execute();
             }
@@ -3135,7 +3135,7 @@ if __name__ == "__main__":
     @Test
     public void testEmptySql() throws Exception {
         skipOnWalRun(); // table not created
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement("")) {
                 statement.execute();
             }
@@ -3199,7 +3199,7 @@ if __name__ == "__main__":
             DelayedListener registryListener = new DelayedListener();
             engine.getQueryRegistry().setListener(registryListener);
 
-            assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+            assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
                 SOCountDownLatch started = new SOCountDownLatch(1);
                 SOCountDownLatch stopped = new SOCountDownLatch(1);
                 AtomicReference<Exception> queryError = new AtomicReference<>();
@@ -3384,7 +3384,7 @@ if __name__ == "__main__":
     public void testExecuteAndFailedQueryDoesntLeaveItInRegistry() throws Exception {
         skipOnWalRun();
 
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             ddl("create table trades as (select 'a'::symbol symbol, -1 price from long_sequence(10))");
 
             try (PreparedStatement pstmt = connection.prepareStatement("SELECT symbol,approx_percentile(price, 50, 2) from trades")) {
@@ -3408,7 +3408,9 @@ if __name__ == "__main__":
     @Test
     public void testExecuteSameQueryManyTimesWithMaxRowsReturnsCorrectResult() throws Exception {
         skipOnWalRun();
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+        // this test exercises maxRows feature of the protocol, which is not supported (not sent to the server)
+        // in "simple" mode.
+        assertWithPgServer(CONN_AWARE_EXTENDED_ALL | CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
 
             try (Statement stmt = connection.createStatement()) {
                 stmt.executeUpdate("create table if not exists tab ( a int, b long, ts timestamp)");
@@ -3428,10 +3430,12 @@ if __name__ == "__main__":
             );
 
             //max rows smaller than result set size
-            assertResultTenTimes(connection,
+            assertResultTenTimes(
+                    connection,
                     "select x from long_sequence(5)",
                     "x[BIGINT]\n" +
-                            "1\n2\n3\n", 3
+                            "1\n2\n3\n",
+                    3
             );
 
             // max rows smaller than cursor size, cursor does not return size
@@ -3455,7 +3459,7 @@ if __name__ == "__main__":
 
     @Test
     public void testExplainPlan() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
                     "select x," +
                     " timestamp_sequence(0, 1000) ts" +
@@ -3483,7 +3487,7 @@ if __name__ == "__main__":
     @Test
     @Ignore("TODO PGWire 2.0")
     public void testExplainPlanWithBindVariables() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
                     "select x," +
                     " timestamp_sequence(0, 1000) ts" +
@@ -6644,7 +6648,7 @@ nodejs code:
         // @Ignore("This test doesn't use partitioned tables.")
         Assume.assumeFalse(walEnabled);
 
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             CallableStatement stmt = connection.prepareCall("drop table if exists mining_event;");
             stmt.execute();
 
@@ -6703,31 +6707,21 @@ nodejs code:
     @Test
     public void testPreparedStatement() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertMemoryLeak(() -> {
-            try (
-                    final IPGWireServer server = createPGServer(2);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (
-                        final Connection connection = getConnection(server.getPort(), false, false)
-                ) {
-                    PreparedStatement statement = connection.prepareStatement("select 1,2,3 from long_sequence(1)");
-                    Statement statement1 = connection.createStatement();
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            PreparedStatement statement = connection.prepareStatement("select 1,2,3 from long_sequence(1)");
+            Statement statement1 = connection.createStatement();
 
-                    final String expected = "1[INTEGER],2[INTEGER],3[INTEGER]\n" +
-                            "1,2,3\n";
+            final String expected = "1[INTEGER],2[INTEGER],3[INTEGER]\n" +
+                    "1,2,3\n";
 
-                    StringSink sink = new StringSink();
-                    for (int i = 0; i < 10; i++) {
-                        sink.clear();
-                        ResultSet rs = statement.executeQuery();
+            StringSink sink = new StringSink();
+            for (int i = 0; i < 10; i++) {
+                sink.clear();
+                ResultSet rs = statement.executeQuery();
 
-                        statement1.executeQuery("select 1 from long_sequence(2)");
-                        assertResultSet(expected, sink, rs);
-                        rs.close();
-                    }
-                }
+                statement1.executeQuery("select 1 from long_sequence(2)");
+                assertResultSet(expected, sink, rs);
+                rs.close();
             }
         });
     }
@@ -6793,7 +6787,7 @@ nodejs code:
     @Test
     public void testPreparedStatementInsertSelectNullDesignatedColumn() throws Exception {
         skipOnWalRun();
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             {
                 try (
                         final Statement statement = connection.createStatement();
@@ -6817,8 +6811,8 @@ nodejs code:
 
                     mayDrainWalQueue();
 
-                    try (ResultSet rs = statement.executeQuery("select null, ts, value from tab where value = null")) {
-                        StringSink sink = new StringSink();
+                    sink.clear();
+                    try (ResultSet rs = statement.executeQuery("select null, ts, value from tab where value is null")) {
                         String expected = "null[VARCHAR],ts[TIMESTAMP],value[DOUBLE]\n" +
                                 "null,1970-01-01 00:11:22.334455,null\n";
                         assertResultSet(expected, sink, rs);
@@ -6833,52 +6827,55 @@ nodejs code:
     @Test
     public void testPreparedStatementInsertSelectNullNoDesignatedColumn() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertMemoryLeak(() -> {
-            try (
-                    final IPGWireServer server = createPGServer(2);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (
-                        final Connection connection = getConnection(server.getPort(), false, false);
-                        final Statement statement = connection.createStatement()
-                ) {
-                    statement.execute("create table tab(ts timestamp, value double)");
-                    try (PreparedStatement insert = connection.prepareStatement("insert into tab(ts, value) values(?, ?)")) {
-                        insert.setNull(1, Types.NULL);
-                        insert.setNull(2, Types.NULL);
-                        insert.executeUpdate();
-                    }
-                    try (ResultSet rs = statement.executeQuery("select null, ts, value from tab where value = null")) {
-                        StringSink sink = new StringSink();
-                        String expected = "null[VARCHAR],ts[TIMESTAMP],value[DOUBLE]\n" +
-                                "null,null,null\n";
-                        assertResultSet(expected, sink, rs);
-                    }
-                    statement.execute("drop table tab");
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (final Statement statement = connection.createStatement()) {
+                statement.execute("create table tab(ts timestamp, value double)");
+                try (PreparedStatement insert = connection.prepareStatement("insert into tab(ts, value) values(?, ?)")) {
+                    insert.setNull(1, Types.NULL);
+                    insert.setNull(2, Types.NULL);
+                    insert.executeUpdate();
                 }
+                try (ResultSet rs = statement.executeQuery("select null, ts, value from tab where value = null")) {
+                    StringSink sink = new StringSink();
+                    String expected = "null[VARCHAR],ts[TIMESTAMP],value[DOUBLE]\n" +
+                            "null,null,null\n";
+                    assertResultSet(expected, sink, rs);
+                }
+                statement.execute("drop table tab");
             }
         });
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testPreparedStatementParamBadByte() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertHexScript(
-                NetworkFacadeImpl.INSTANCE,
-                ">0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
-                        "<520000000800000003\n" +
-                        ">700000000a717565737400\n" +
-                        "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
-                        ">5000000022005345542065787472615f666c6f61745f646967697473203d2033000000420000000c0000000000000000450000000900000000015300000004\n" +
-                        "<310000000432000000044300000008534554005a0000000549\n" +
-                        ">500000003700534554206170706c69636174696f6e5f6e616d65203d2027506f737467726553514c204a4442432044726976657227000000420000000c0000000000000000450000000900000000015300000004\n" +
-                        "<310000000432000000044300000008534554005a0000000549\n" +
-                        ">50000000cd0073656c65637420782c24312c24322c24332c24342c24352c24362c24372c24382c24392c2431302c2431312c2431322c2431332c2431342c2431352c2431362c2431372c2431382c2431392c2432302c2432312c2432322066726f6d206c6f6e675f73657175656e63652835290000160000001700000014000002bd000002bd0000001500000010000004130000041300000000000000000000001700000014000002bc000002bd000000150000001000000413000004130000043a000000000000045a000004a04200000123000000160000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001600000001340000000331323300000004352e343300000007302e353637383900000002993100000004545255450000000568656c6c6f0000001dd0b3d180d183d0bfd0bfd0b020d182d183d180d0b8d181d182d0bed0b20000000e313937302d30312d3031202b30300000001a313937302d30382d32302031313a33333a32302e3033332b3030ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000001a313937302d30312d30312030303a30353a30302e3031312b30300000001a313937302d30312d30312030303a30383a32302e3032332b3030000044000000065000450000000900000000005300000004\n" +
-                        "<!!",
-                new Port0PGWireConfiguration()
-        );
+        final String script;
+        if (testParamLegacyMode) {
+            // old code will disconnect if string bind variable value has invalid UTF8 encoding
+            script = ">0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
+                    "<520000000800000003\n" +
+                    ">700000000a717565737400\n" +
+                    "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
+                    ">5000000022005345542065787472615f666c6f61745f646967697473203d2033000000420000000c0000000000000000450000000900000000015300000004\n" +
+                    "<310000000432000000044300000008534554005a0000000549\n" +
+                    ">500000003700534554206170706c69636174696f6e5f6e616d65203d2027506f737467726553514c204a4442432044726976657227000000420000000c0000000000000000450000000900000000015300000004\n" +
+                    "<310000000432000000044300000008534554005a0000000549\n" +
+                    ">50000000cd0073656c65637420782c24312c24322c24332c24342c24352c24362c24372c24382c24392c2431302c2431312c2431322c2431332c2431342c2431352c2431362c2431372c2431382c2431392c2432302c2432312c2432322066726f6d206c6f6e675f73657175656e63652835290000160000001700000014000002bd000002bd0000001500000010000004130000041300000000000000000000001700000014000002bc000002bd000000150000001000000413000004130000043a000000000000045a000004a04200000123000000160000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001600000001340000000331323300000004352e343300000007302e353637383900000002993100000004545255450000000568656c6c6f0000001dd0b3d180d183d0bfd0bfd0b020d182d183d180d0b8d181d182d0bed0b20000000e313937302d30312d3031202b30300000001a313937302d30382d32302031313a33333a32302e3033332b3030ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000001a313937302d30312d30312030303a30353a30302e3031312b30300000001a313937302d30312d30312030303a30383a32302e3032332b3030000044000000065000450000000900000000005300000004\n" +
+                    "<!!";
+        } else {
+            // the modern client will produce actionable error message to the client
+            script = ">0000006b00030000757365720061646d696e006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
+                    "<520000000800000003\n" +
+                    ">700000000a717565737400\n" +
+                    "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
+                    ">5000000022005345542065787472615f666c6f61745f646967697473203d2033000000420000000c0000000000000000450000000900000000015300000004\n" +
+                    "<310000000432000000044300000008534554005a0000000549\n" +
+                    ">500000003700534554206170706c69636174696f6e5f6e616d65203d2027506f737467726553514c204a4442432044726976657227000000420000000c0000000000000000450000000900000000015300000004\n" +
+                    "<310000000432000000044300000008534554005a0000000549\n" +
+                    ">50000000cd0073656c65637420782c24312c24322c24332c24342c24352c24362c24372c24382c24392c2431302c2431312c2431322c2431332c2431342c2431352c2431362c2431372c2431382c2431392c2432302c2432312c2432322066726f6d206c6f6e675f73657175656e63652835290000160000001700000014000002bd000002bd0000001500000010000004130000041300000000000000000000001700000014000002bc000002bd000000150000001000000413000004130000043a000000000000045a000004a04200000123000000160000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001600000001340000000331323300000004352e343300000007302e353637383900000002993100000004545255450000000568656c6c6f0000001dd0b3d180d183d0bfd0bfd0b020d182d183d180d0b8d181d182d0bed0b20000000e313937302d30312d3031202b30300000001a313937302d30382d32302031313a33333a32302e3033332b3030ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000001a313937302d30312d30312030303a30353a30302e3031312b30300000001a313937302d30312d30312030303a30383a32302e3032332b3030000044000000065000450000000900000000005300000004\n" +
+                    "<4500000050433030303030004d696e76616c6964205554463820656e636f64696e6720666f7220737472696e672076616c7565205b7661726961626c65496e6465783d345d00534552524f5200503100005a0000000549\n";
+        }
+        assertHexScript(NetworkFacadeImpl.INSTANCE, script, new Port0PGWireConfiguration());
     }
 
     @Test
@@ -7027,25 +7024,33 @@ nodejs code:
     @Test
     public void testPreparedStatementSelectNull() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertMemoryLeak(() -> {
-            try (
-                    final IPGWireServer server = createPGServer(2);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (
-                        final Connection connection = getConnection(server.getPort(), false, false);
-                        final PreparedStatement statement = connection.prepareStatement("select ? from long_sequence(1)")
-                ) {
-                    StringSink sink = new StringSink();
-                    statement.setNull(1, Types.NULL);
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (final PreparedStatement statement = connection.prepareStatement("select ? from long_sequence(1)")) {
+                sink.clear();
+                statement.setNull(1, Types.NULL);
+                // we are not naming the field explicitly, depending on the protocol (simple or extended)
+                // the SQL text to the server will change. Impacting the column name
+                if (mode == Mode.SIMPLE) {
                     try (ResultSet rs = statement.executeQuery()) {
-                        assertResultSet("$1[VARCHAR]\nnull\n", sink, rs);
+                        assertResultSet("NULL[VARCHAR]\n" +
+                                "null\n", sink, rs);
                     }
                     statement.setNull(1, Types.VARCHAR);
                     try (ResultSet rs = statement.executeQuery()) {
                         sink.clear();
-                        assertResultSet("$1[VARCHAR]\nnull\n", sink, rs);
+                        assertResultSet("NULL[VARCHAR]\n" +
+                                "null\n", sink, rs);
+                    }
+                } else {
+                    try (ResultSet rs = statement.executeQuery()) {
+                        assertResultSet("$1[VARCHAR]\n" +
+                                "null\n", sink, rs);
+                    }
+                    statement.setNull(1, Types.VARCHAR);
+                    try (ResultSet rs = statement.executeQuery()) {
+                        sink.clear();
+                        assertResultSet("$1[VARCHAR]\n" +
+                                "null\n", sink, rs);
                     }
                 }
             }
@@ -7053,70 +7058,79 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
+    @Ignore
     public void testPreparedStatementTextParams() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertMemoryLeak(() -> {
-            sendBufferSize = 1024;
-            try (
-                    final IPGWireServer server = createPGServer(2);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (
-                        final Connection connection = getConnection(server.getPort(), false, false)
-                ) {
+        sendBufferSize = 1024;
+        assertWithPgServer(CONN_AWARE_EXTENDED_ALL, (connection, binary, mode, port) -> {
+            PreparedStatement statement = connection.prepareStatement("select x,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? from long_sequence(5)");
+            statement.setInt(1, 4);
+            statement.setLong(2, 123L);
+            statement.setFloat(3, 5.43f);
+            statement.setDouble(4, 0.56789);
+            statement.setByte(5, (byte) 91);
+            statement.setBoolean(6, true);
+            statement.setString(7, "hello");
+            // this is to test UTF8 behaviour
+            statement.setString(8, "группа туристов");
+            statement.setDate(9, new Date(100L));
+            statement.setTimestamp(10, new Timestamp(20000000033L));
 
-                    PreparedStatement statement = connection.prepareStatement("select x,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? from long_sequence(5)");
-                    statement.setInt(1, 4);
-                    statement.setLong(2, 123L);
-                    statement.setFloat(3, 5.43f);
-                    statement.setDouble(4, 0.56789);
-                    statement.setByte(5, (byte) 91);
-                    statement.setBoolean(6, true);
-                    statement.setString(7, "hello");
-                    // this is to test UTF8 behaviour
-                    statement.setString(8, "группа туристов");
-                    statement.setDate(9, new Date(100L));
-                    statement.setTimestamp(10, new Timestamp(20000000033L));
-
-                    // nulls
-                    statement.setNull(11, Types.INTEGER);
-                    statement.setNull(12, Types.BIGINT);
-                    statement.setNull(13, Types.REAL);
-                    statement.setNull(14, Types.DOUBLE);
-                    statement.setNull(15, Types.SMALLINT);
-                    statement.setNull(16, Types.BOOLEAN);
-                    statement.setNull(17, Types.VARCHAR);
-                    statement.setString(18, null);
-                    statement.setNull(19, Types.DATE);
+            // nulls
+            statement.setNull(11, Types.INTEGER);
+            statement.setNull(12, Types.BIGINT);
+            statement.setNull(13, Types.REAL);
+            statement.setNull(14, Types.DOUBLE);
+            statement.setNull(15, Types.SMALLINT);
+            statement.setNull(16, Types.BOOLEAN);
+            statement.setNull(17, Types.VARCHAR);
+            statement.setString(18, null);
+            statement.setNull(19, Types.DATE);
 //                statement.setNull(20, Types.TIMESTAMP);
 
-                    // when someone uses PostgreSQL's type extensions, which alter driver behaviour
-                    // we should handle this gracefully
+            // when someone uses PostgreSQL's type extensions, which alter driver behaviour
+            // we should handle this gracefully
 
-                    statement.setTimestamp(20, new PGTimestamp(300011));
-                    statement.setTimestamp(21, new PGTimestamp(500023, new GregorianCalendar()));
+            statement.setTimestamp(20, new PGTimestamp(300011));
+            statement.setTimestamp(21, new PGTimestamp(500023, new GregorianCalendar()));
 
-                    // Bind variables are out of context here, hence they are all STRING/VARCHAR
-                    // this is the reason why we show PG wire Dates verbatim. Even though PG wire does eventually tell us
-                    // that this data is typed (sometimes), their requirement to describe SQL statement before
-                    // they send us bind variable types and values forces us to stick with STRING.
-                    final String expected = "x[BIGINT],$1[VARCHAR],$2[VARCHAR],$3[VARCHAR],$4[VARCHAR],$5[VARCHAR],$6[VARCHAR],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[VARCHAR],$12[VARCHAR],$13[VARCHAR],$14[VARCHAR],$15[VARCHAR],$16[VARCHAR],$17[VARCHAR],$18[VARCHAR],$19[VARCHAR],$20[VARCHAR],$21[VARCHAR]\n" +
-                            "1,4,123,5.43,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00\n" +
-                            "2,4,123,5.43,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00\n" +
-                            "3,4,123,5.43,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00\n" +
-                            "4,4,123,5.43,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00\n" +
-                            "5,4,123,5.43,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00\n";
-
-                    StringSink sink = new StringSink();
-                    for (int i = 0; i < 10_000; i++) {
-                        sink.clear();
-                        ResultSet rs = statement.executeQuery();
-                        assertResultSet(expected, sink, rs);
-                        rs.close();
-                    }
+            final String expected;
+            if (testParamLegacyMode) {
+                // Bind variables are out of context here, hence they are all STRING/VARCHAR
+                // this is the reason why we show PG wire Dates verbatim. Even though PG wire does eventually tell us
+                // that this data is typed (sometimes), their requirement to describe SQL statement before
+                // they send us bind variable types and values forces us to stick with STRING.
+                expected = "x[BIGINT],$1[VARCHAR],$2[VARCHAR],$3[VARCHAR],$4[VARCHAR],$5[VARCHAR],$6[VARCHAR],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[VARCHAR],$12[VARCHAR],$13[VARCHAR],$14[VARCHAR],$15[VARCHAR],$16[VARCHAR],$17[VARCHAR],$18[VARCHAR],$19[VARCHAR],$20[VARCHAR],$21[VARCHAR]\n" +
+                        "1,4,123,5.43,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00\n" +
+                        "2,4,123,5.43,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00\n" +
+                        "3,4,123,5.43,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00\n" +
+                        "4,4,123,5.43,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00\n" +
+                        "5,4,123,5.43,0.56789,91,TRUE,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,null,null,null,null,null,1970-01-01 00:05:00.011+00,1970-01-01 00:08:20.023+00\n";
+            } else {
+                // JDBC driver is being evil: even though we defined parameter #3 explicitly as "float",
+                // the driver will correctly send OID 700 on the binary protocol for this paramter, but
+                // in "text" mode, it will send OID 701 making server believe it is "double". This is
+                // one of many JDBC driver bugs, that is liable to change in the future driver versions
+                if (binary) {
+                    expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[REAL],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[TIMESTAMP],$20[TIMESTAMP],$21[VARCHAR]\n" +
+                            "1,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00\n" +
+                            "2,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00\n" +
+                            "3,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00\n" +
+                            "4,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00\n" +
+                            "5,4,123,5.430,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00\n";
+                } else {
+                    expected = "x[BIGINT],$1[INTEGER],$2[BIGINT],$3[DOUBLE],$4[DOUBLE],$5[SMALLINT],$6[BIT],$7[VARCHAR],$8[VARCHAR],$9[VARCHAR],$10[VARCHAR],$11[INTEGER],$12[BIGINT],$13[REAL],$14[DOUBLE],$15[SMALLINT],$16[BIT],$17[VARCHAR],$18[VARCHAR],$19[TIMESTAMP],$20[TIMESTAMP],$21[VARCHAR]\n" +
+                            "1,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00\n" +
+                            "2,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00\n" +
+                            "3,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00\n" +
+                            "4,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00\n" +
+                            "5,4,123,5.43,0.56789,91,true,hello,группа туристов,1970-01-01 +00,1970-08-20 11:33:20.033+00,null,null,null,null,0,false,null,null,null,1970-01-01 00:05:00.011,1970-01-01 00:08:20.023+00\n";
                 }
+            }
+
+            sink.clear();
+            try (ResultSet rs = statement.executeQuery()) {
+                assertResultSet(expected, sink, rs);
             }
         });
     }
@@ -7248,7 +7262,7 @@ nodejs code:
 
     @Test
     public void testPreparedStatementWithSystimestampFunction() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement statement = connection.prepareStatement(
                     "create table xts (ts timestamp) timestamp(ts)")) {
                 statement.execute();
@@ -7571,62 +7585,53 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredAfterDelay() throws Exception {
         // @Ignore("This test doesn't use tables.")
         Assume.assumeFalse(walEnabled);
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            int totalRows = 3;
+            int backoffCount = 3;
 
-        assertMemoryLeak(() -> {
-            try (
-                    final IPGWireServer server = createPGServer(1);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (Connection connection = getConnection(server.getPort(), true, false)) {
-                    int totalRows = 3;
-                    int backoffCount = 3;
+            final AtomicInteger totalEvents = new AtomicInteger();
+            final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+            final AtomicBoolean stopDelayThread = new AtomicBoolean();
+            final AtomicInteger errorCount = new AtomicInteger();
 
-                    final AtomicInteger totalEvents = new AtomicInteger();
-                    final AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
-                    final AtomicBoolean stopDelayThread = new AtomicBoolean();
-
-                    final Thread delayThread = new Thread(() -> {
-                        while (!stopDelayThread.get()) {
-                            SuspendEvent event = eventRef.getAndSet(null);
-                            if (event != null) {
-                                Os.sleep(1);
-                                try {
-                                    event.trigger();
-                                    event.close();
-                                    totalEvents.incrementAndGet();
-                                } catch (Exception e) {
-                                    e.printStackTrace();
-                                }
-                            } else {
-                                Os.pause();
-                            }
+            final Thread delayThread = new Thread(() -> {
+                while (!stopDelayThread.get()) {
+                    SuspendEvent event = eventRef.getAndSet(null);
+                    if (event != null) {
+                        Os.sleep(1);
+                        try {
+                            event.trigger();
+                            event.close();
+                            totalEvents.incrementAndGet();
+                        } catch (Exception e) {
+                            errorCount.incrementAndGet();
                         }
-                    });
-                    delayThread.start();
-
-                    TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-
-                    String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
-                    String expected = "x[BIGINT],y[BIGINT],z[BIGINT]\n" +
-                            "1,1,1\n" +
-                            "2,2,2\n" +
-                            "3,3,3\n";
-                    try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
-                        sink.clear();
-                        assertResultSet(expected, sink, resultSet);
+                    } else {
+                        Os.pause();
                     }
-                    stopDelayThread.set(true);
-
-                    delayThread.join();
-
-                    Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
                 }
+            });
+            delayThread.start();
+
+            TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
+
+            String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
+            String expected = "x[BIGINT],y[BIGINT],z[BIGINT]\n" +
+                    "1,1,1\n" +
+                    "2,2,2\n" +
+                    "3,3,3\n";
+            try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
+                sink.clear();
+                assertResultSet(expected, sink, resultSet);
             }
+            stopDelayThread.set(true);
+
+            delayThread.join();
+            Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
+            Assert.assertEquals(0, errorCount.get());
         });
     }
 
@@ -9526,7 +9531,7 @@ create table tab as (
     @Ignore("this is where we execute cached SQL against changed table")
     public void testTableSchemaChangeExtended() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL_SANS_Q, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.prepareStatement(
                     "create table x as (select 2 id, 'foobar' str, timestamp_sequence(1,10000) as ts from long_sequence(1))"
             ).execute();

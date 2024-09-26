@@ -96,7 +96,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private static final byte MESSAGE_TYPE_SSL_SUPPORTED_RESPONSE = 'S';
     private static final int PREFIXED_MESSAGE_HEADER_LEN = 5;
     private static final int PROTOCOL_TAIL_COMMAND_LENGTH = 64;
-    private static final int ROLLING_BACK_TRANSACTION = 4;
     private static final int SSL_REQUEST = 80877103;
     private final BatchCallback batchCallback;
     private final ObjectPool<DirectBinarySequence> binarySequenceParamsPool;
@@ -1007,7 +1006,9 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compileBatch(activeSqlText, sqlExecutionContext, batchCallback);
             } catch (Throwable ex) {
-                transactionState = ERROR_TRANSACTION;
+                if (transactionState == IN_TRANSACTION) {
+                    transactionState = ERROR_TRANSACTION;
+                }
                 throw msgKaput().put(ex);
             } finally {
                 msgSync();
