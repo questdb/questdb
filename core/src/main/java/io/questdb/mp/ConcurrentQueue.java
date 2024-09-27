@@ -32,48 +32,44 @@ import io.questdb.std.ObjectFactory;
 // The .NET Foundation licenses this file to you under the MIT license.
 
 /***
- * Represents a thread-safe first in-first out (FIFO) unlimited concurrent queue.
- * This type of queue is more convenient to use for notifications in some situations
- * instead of using fixed size RignQueue with Sequencers. These are the cases when there are
- * limited number of items can be produced, like notifications to rebuild a materialized view
- * or apply WAL commits to a table. Given that there is an external deduplication mechanism
- * those queues are limited to the number of tables in the database that can be quite large,
- * but still considered to be in thousands rather than millions.
+ * A thread-safe first in-first out (FIFO) unlimited concurrent queue. This type of queue is
+ * more convenient to use for notifications in some situations instead of using a fixed-size
+ * RingQueue with Sequencers. These are the cases when a limited number of items can be
+ * produced, like notifications to rebuild a materialized view, or apply WAL commits to a
+ * table. Given that there is an external deduplication mechanism, those queues are limited to
+ * the number of tables in the database that can be quite large, but still considered to be in
+ * thousands rather than millions.
  */
 public class ConcurrentQueue<T extends QueueValueHolder<T>> {
-    // This implementation provides an unbounded, multi-producer multi-consumer queue
-    // that supports the standard Enqueue/TryDequeue operations.
-    // It is composed of a linked list of bounded ring buffers, each of which has a head
-    // and a tail index, isolated from each other to minimize false sharing.  As long as
-    // the number of elements in the queue remains less than the size of the current
-    // buffer (Segment), no additional allocations are required for enqueued items.  When
-    // the number of items exceeds the size of the current segment, the current segment is
-    // "frozen" to prevent further enqueues, and a new segment is linked from it and set
-    // as the new tail segment for subsequent enqueues.  As old segments are consumed by
-    // dequeues, the head reference is updated to point to the segment that dequeuers should
-    // try next.
+    // This implementation provides an unbounded, multi-producer multi-consumer queue that
+    // supports the standard Enqueue/TryDequeue operations. It is composed of a linked list of
+    // bounded ring buffers, each of which has a head and a tail index, isolated from each other
+    // to avoid false sharing. As long as the number of elements in the queue remains less than
+    // the size of the current buffer (Segment), no additional allocations are required for
+    // enqueued items. When the number of items exceeds the size of the current segment, the
+    // current segment is "frozen" to prevent further enqueues, and a new segment is linked from
+    // it and set as the new tail segment for subsequent enqueues. As old segments are consumed
+    // by dequeues, the head reference is updated to point to the segment that dequeuers should
+    // try next. When an old segment is empty, it is discarded and becomes garbage.
 
     // Initial length of the segments used in the queue.
     private static final int INITIAL_SEGMENT_LENGTH = 32;
-    //
-    // Maximum length of the segments used in the queue.  This is a somewhat arbitrary limit:
+
+    // Maximum length of the segments used in the queue. This is a somewhat arbitrary limit:
     // larger means that as long as we don't exceed the size, we avoid allocating more segments,
-    // but if we do exceed it, then the segment becomes garbage.
-    //
+    // but if we do exceed it, the segment becomes garbage.
     private static final int MAX_SEGMENT_LENGTH = 1024 * 1024;
 
-    //
     // Lock used to protect cross-segment operations, including any updates to "tail" or "head"
     // and any operations that need to get a consistent view of them.
-    //
     private final Object crossSegmentLock = new Object();
     private final ObjectFactory<T> factory;
-    //The current head segment.
+    // The current head segment.
     private volatile ConcurrentQueueSegment<T> head;
-    //The current tail segment.
+    // The current tail segment.
     private volatile ConcurrentQueueSegment<T> tail;
 
-    /***
+    /**
      * Initializes a new instance of the ConcurrentQueue class with default initial capacity.
      * @param factory The factory to use to create new items.
      */
@@ -82,7 +78,7 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
     }
 
 
-    /***
+    /**
      * Initializes a new instance of the ConcurrentQueue class with the specified initial capacity.
      * @param factory The factory to use to create new items.
      * @param size The initial capacity of the queue, must be a power of 2.
@@ -93,7 +89,7 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
         tail = head = new ConcurrentQueueSegment<T>(factory, INITIAL_SEGMENT_LENGTH);
     }
 
-    /***
+    /**
      * Gets the number of items in the last segment of the queue. Useful for debugging.
      * @return The largest segment size of the queue.
      */
@@ -101,7 +97,7 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
         return tail.getCapacity();
     }
 
-    /***
+    /**
      * Gets the number of items in the queue.
      * @param item The object to add to the end of the "ConcurrentQueue".
      */
@@ -126,19 +122,20 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
         // Get the current head
         ConcurrentQueueSegment<T> head = this.head;
 
-        // Try to take.  If we're successful, we're done.
+        // Try to take. If we're successful, we're done.
         if (head.tryDequeue(result)) {
             return true;
         }
 
         // Check to see whether this segment is the last. If it is, we can consider
-        // this to be a moment-in-time empty condition (even though between the TryDequeue
+        // this to be a moment-in-time empty condition (even though between the tryDequeue
         // check and this check, another item could have arrived).
         if (head.nextSegment == null) {
             return false;
         }
 
-        return tryDequeueSlow(result); // slow path that needs to fix up segments
+        // slow path that needs to fix up segments
+        return tryDequeueSlow(result);
     }
 
     // Adds to the end of the queue, adding a new segment if necessary.
@@ -151,9 +148,8 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
                 return;
             }
 
-            // If we were unsuccessful, take the lock so that we can compare and manipulate
-            // the tail.  Assuming another enqueuer hasn't already added a new segment,
-            // do so, then loop around to try enqueueing again.
+            // If we were unsuccessful, take the lock so that we can compare and manipulate the tail. Assuming another
+            // enqueuer hasn't already added a new segment, do so, then loop around to try enqueueing again.
             synchronized (crossSegmentLock) {
                 if (tail == this.tail) {
                     // Make sure no one else can enqueue to this segment.
@@ -179,23 +175,22 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
             // Get the current head
             ConcurrentQueueSegment<T> head = this.head;
 
-            // Try to take.  If we're successful, we're done.
+            // Try to take. If we're successful, we're done.
             if (head.tryDequeue(item)) {
                 return true;
             }
 
             // Check to see whether this segment is the last. If it is, we can consider
-            // this to be a moment-in-time empty condition (even though between the TryDequeue
+            // this to be a moment-in-time empty condition (even though between the tryDequeue
             // check and this check, another item could have arrived).
             if (head.nextSegment == null) {
                 return false;
             }
 
-            // At this point we know that head.Next != null, which means
-            // this segment has been frozen for additional enqueues. But between
-            // the time that we ran TryDequeue and checked for a next segment,
-            // another item could have been added.  Try to dequeue one more time
-            // to confirm that the segment is indeed empty.
+            // At this point we know that head.Next != null, which means this segment has been
+            // frozen for additional enqueues. But between the time that we ran tryDequeue and
+            // checked for a next segment, another item could have been added. Try to dequeue
+            // one more time to confirm that the segment is indeed empty.
             assert head.frozenForEnqueues;
             if (head.tryDequeue(item)) {
                 return true;

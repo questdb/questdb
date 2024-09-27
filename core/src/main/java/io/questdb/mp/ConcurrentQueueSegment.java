@@ -74,14 +74,14 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
         slotsMask = boundedLength - 1;
         freezeOffset = slots.length * 2;
 
-        // Initialize the sequence number for each slot.  The sequence number provides a ticket that
+        // Initialize the sequence number for each slot. The sequence number provides a ticket that
         // allows dequeuers to know whether they can dequeue and enqueuers to know whether they can
-        // enqueue.  An enqueuer at position N can enqueue when the sequence number is N, and a dequeuer
-        // for position N can dequeue when the sequence number is N + 1.  When an enqueuer is done writing
+        // enqueue. An enqueuer at position N can enqueue when the sequence number is N, and a dequeuer
+        // for position N can dequeue when the sequence number is N + 1. When an enqueuer is done writing
         // at position N, it sets the sequence number to N + 1 so that a dequeuer will be able to dequeue,
         // and when a dequeuer is done dequeueing at position N, it sets the sequence number to N + slots.Length,
         // so that when an enqueuer loops around the slots, it'll find that the sequence number at
-        // position N is N.  This also means that when an enqueuer finds that at position N the sequence
+        // position N is N. This also means that when an enqueuer finds that at position N the sequence
         // number is < N, there is still a value in that slot, i.e. the segment is full, and when a
         // dequeuer finds that the value in a slot is < N + 1, there is nothing currently available to
         // dequeue. (It is possible for multiple enqueuers to enqueue concurrently, writing into
@@ -124,12 +124,12 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
             // would have left the sequence number at pos+1.
             long diff = sequenceNumber - (currentHead + 1);
             if (diff == 0) {
-                // We may be racing with other dequeuers.  Try to reserve the slot by incrementing
-                // the head.  Once we've done that, no one else will be able to read from this slot,
+                // We may be racing with other dequeuers. Try to reserve the slot by incrementing
+                // the head. Once we've done that, no one else will be able to read from this slot,
                 // and no enqueuer will be able to read from this slot until we've written the new
                 // sequence number.
                 if (HEAD.compareAndSet(headAndTail, currentHead, currentHead + 1)) {
-                    // Successfully reserved the slot.  Note that after the above compareAndSwapLong, other threads
+                    // Successfully reserved the slot. Note that after the above compareAndSwapLong, other threads
                     // trying to dequeue from this slot will end up spinning until we do the subsequent Write.
                     slots[slotsIndex].item.copyTo(item);
                     slots[slotsIndex].sequenceNumber = currentHead + slots.length;
@@ -139,10 +139,10 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
                 // iteration would make forward progress, so there's no need to spin-wait before trying again.
             } else if (diff < 0) {
                 // The sequence number was less than what we needed, which means this slot doesn't
-                // yet contain a value we can dequeue, i.e. the segment is empty.  Technically it's
+                // yet contain a value we can dequeue, i.e. the segment is empty. Technically it's
                 // possible that multiple enqueuers could have written concurrently, with those
                 // getting later slots actually finishing first, so there could be elements after
-                // this one that are available, but we need to dequeue in order.  So before declaring
+                // this one that are available, but we need to dequeue in order. So before declaring
                 // failure and that the segment is empty, we check the tail to see if we're actually
                 // empty or if we're just waiting for items in flight or after this one to become available.
 
@@ -152,7 +152,7 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
                     return false;
                 }
                 // It's possible it could have become frozen after we checked frozenForEnqueues
-                // and before reading the tail.  That's ok: in that rare race condition, we just
+                // and before reading the tail. That's ok: in that rare race condition, we just
                 // loop around again. This is not necessarily an always-forward-progressing
                 // situation since this thread is waiting for another to write to the slot and
                 // this thread may have to check the same slot multiple times. Spin-wait to avoid
@@ -187,8 +187,8 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
             // number matches the slot.
             long diff = sequenceNumber - currentTail;
             if (diff == 0) {
-                // We may be racing with other enqueuers.  Try to reserve the slot by incrementing
-                // the tail.  Once we've done that, no one else will be able to write to this slot,
+                // We may be racing with other enqueuers. Try to reserve the slot by incrementing
+                // the tail. Once we've done that, no one else will be able to write to this slot,
                 // and no dequeuer will be able to read from this slot until we've written the new
                 // sequence number. WARNING: The next few lines are not reliable on a runtime that
                 // supports thread aborts. If a thread abort were to sneak in after the compareAndSwapLong
@@ -196,7 +196,7 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
                 // If this implementation is ever used on such a platform, this if block should be
                 // wrapped in a finally / prepared region.
                 if (TAIL.compareAndSet(headAndTail, currentTail, currentTail + 1)) {
-                    // Successfully reserved the slot.  Note that after the above CompareExchange, other threads
+                    // Successfully reserved the slot. Note that after the above CompareExchange, other threads
                     // trying to return will end up spinning until we do the subsequent Write.
                     item.copyTo(slots[slotsIndex].item);
                     slots[slotsIndex].sequenceNumber = currentTail + 1;
