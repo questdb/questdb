@@ -43,7 +43,7 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
     @Override
     public void append(long appendOffsetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
         super.append(appendOffsetRowCount, sourceColumn, sourceLo, sourceHi, commitMode);
-        int fd = super.getPrimaryFd();
+        long fd = super.getPrimaryFd();
         int shl = ColumnType.pow2SizeOf(getColumnType());
 
         final long size = sourceHi - sourceLo;

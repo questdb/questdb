@@ -66,7 +66,7 @@ public class OrderByTimeoutTest extends AbstractCairoTest {
         };
         circuitBreaker = new NetworkSqlExecutionCircuitBreaker(circuitBreakerConfiguration, MemoryTag.NATIVE_HTTP_CONN) {
             @Override
-            public boolean checkIfTripped(long millis, int fd) {
+            public boolean checkIfTripped(long millis, long fd) {
                 return breakConnection == 0 || --breakConnection == 0;
             }
 

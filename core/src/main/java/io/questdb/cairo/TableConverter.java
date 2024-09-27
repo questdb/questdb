@@ -44,10 +44,11 @@ public class TableConverter {
     private static final Log LOG = LogFactory.getLog(TableConverter.class);
 
     public static ObjList<TableToken> convertTables(
-            CairoConfiguration configuration,
+            CairoEngine engine,
             TableSequencerAPI tableSequencerAPI,
             TableFlagResolver tableFlagResolver
     ) {
+        final CairoConfiguration configuration = engine.getConfiguration();
         final ObjList<TableToken> convertedTables = new ObjList<>();
         if (!configuration.isTableTypeConversionEnabled()) {
             LOG.info().$("table type conversion is disabled").$();
@@ -122,6 +123,7 @@ public class TableConverter {
                                 }
                                 metaMem.putBool(TableUtils.META_OFFSET_WAL_ENABLED, walEnabled);
                                 convertedTables.add(token);
+                                engine.metadataCacheHydrateTable(token, true, true);
                             }
 
                             path.trimTo(rootLen).concat(dirNameSink).concat(CONVERT_FILE_NAME);
@@ -145,7 +147,7 @@ public class TableConverter {
     }
 
     private static boolean readWalEnabled(LPSZ path, FilesFacade ff) {
-        int fd = -1;
+        long fd = -1;
         try {
             fd = ff.openRO(path);
             if (fd < 1) {

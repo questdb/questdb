@@ -58,7 +58,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
             @Transient ColumnTypes joinColumnTypes,
-            @Transient ColumnTypes valueTypes, // this expected to be just LONG, we store chain references in map
+            @Transient ColumnTypes valueTypes, // this expected to be just 2 INTs, we store chain references in map
             RecordSink masterKeySink,
             RecordSink slaveKeySink,
             int columnSplit,
@@ -139,7 +139,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         private boolean isMapBuilt;
         private boolean isOpen;
         private Record masterRecord;
-        private LongChain.TreeCursor slaveChainCursor;
+        private LongChain.Cursor slaveChainCursor;
         private Record slaveRecord;
 
         public HashOuterJoinLightRecordCursor(
@@ -193,7 +193,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 key.put(masterRecord, masterKeySink);
                 MapValue value = key.findValue();
                 if (value != null) {
-                    slaveChainCursor = slaveChain.getCursor(value.getLong(0));
+                    slaveChainCursor = slaveChain.getCursor(value.getInt(0));
                     record.hasSlave(true);
                     while (slaveChainCursor.hasNext()) {
                         slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
@@ -236,11 +236,10 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                 key.put(record, slaveKeySink);
                 MapValue value = key.createValue();
                 if (value.isNew()) {
-                    final long offset = slaveChain.put(record.getRowId(), -1);
-                    value.putLong(0, offset);
-                    value.putLong(1, offset);
+                    final int offset = slaveChain.put(record.getRowId(), -1);
+                    value.putInt(0, offset);
                 } else {
-                    value.putLong(1, slaveChain.put(record.getRowId(), value.getLong(1)));
+                    value.putInt(0, slaveChain.put(record.getRowId(), value.getInt(0)));
                 }
             }
         }

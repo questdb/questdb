@@ -36,7 +36,7 @@ import static org.junit.Assert.fail;
 public class PlainTcpLineChannelTest extends AbstractLineTcpReceiverTest {
     private static final NetworkFacade FD_EXHAUSTED_NET_FACADE = new NetworkFacadeImpl() {
         @Override
-        public int socketTcp(boolean blocking) {
+        public long socketTcp(boolean blocking) {
             return -1;
         }
     };

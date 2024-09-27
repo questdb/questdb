@@ -39,7 +39,7 @@ import org.jetbrains.annotations.TestOnly;
 public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     private static final Log LOG = LogFactory.getLog(MemoryPMARImpl.class);
     private final int commitMode;
-    private int fd = -1;
+    private long fd = -1;
     private FilesFacade ff;
     private int madviseOpts = -1;
     private int mappedPage;
@@ -74,14 +74,14 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
-    public int detachFdClose() {
-        int fd = this.fd;
+    public long detachFdClose() {
+        long fd = this.fd;
         this.fd = -1;
         close(false);
         return fd;
     }
 
-    public int getFd() {
+    public long getFd() {
         return fd;
     }
 
@@ -129,7 +129,7 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     @Override
-    public void switchTo(FilesFacade ff, int fd, long extendSegmentSize, long offset, boolean truncate, byte truncateMode) {
+    public void switchTo(FilesFacade ff, long fd, long extendSegmentSize, long offset, boolean truncate, byte truncateMode) {
         this.ff = ff;
         setExtendSegmentSize(extendSegmentSize);
         close(truncate, truncateMode);

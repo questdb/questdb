@@ -39,7 +39,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCursorFactory {
-
     private final int columnIndex;
     private final Function filter;
     private final Record.CharSequenceFunction func;
@@ -50,36 +49,38 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     public LatestBySubQueryRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
             @NotNull RecordMetadata metadata,
-            @NotNull DataFrameCursorFactory dataFrameCursorFactory,
+            @NotNull PartitionFrameCursorFactory partitionFrameCursorFactory,
             int columnIndex,
             @NotNull RecordCursorFactory recordCursorFactory,
             @Nullable Function filter,
             boolean indexed,
             @NotNull Record.CharSequenceFunction func,
-            @NotNull IntList columnIndexes
+            @NotNull IntList columnIndexes,
+            @NotNull IntList columnSizeShifts
     ) {
-        super(metadata, dataFrameCursorFactory, configuration);
+        super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
+
         try {
             // this instance is shared between factory and cursor
             // factory will be resolving symbols for cursor and if successful
             // symbol keys will be added to this hash set
             symbolKeys = new IntHashSet();
             this.indexed = indexed;
-            DataFrameRecordCursor cursor;
+            PageFrameRecordCursor cursor;
             if (indexed) {
                 if (filter != null) {
-                    cursor = new LatestByValuesIndexedFilteredRecordCursor(columnIndex, rows, symbolKeys, null, filter, columnIndexes);
+                    cursor = new LatestByValuesIndexedFilteredRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, null, filter);
                 } else {
-                    cursor = new LatestByValuesIndexedRecordCursor(columnIndex, symbolKeys, null, rows, columnIndexes);
+                    cursor = new LatestByValuesIndexedRecordCursor(configuration, metadata, columnIndex, symbolKeys, null, rows);
                 }
             } else {
                 if (filter != null) {
-                    cursor = new LatestByValuesFilteredRecordCursor(columnIndex, rows, symbolKeys, null, filter, columnIndexes);
+                    cursor = new LatestByValuesFilteredRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, null, filter);
                 } else {
-                    cursor = new LatestByValuesRecordCursor(columnIndex, rows, symbolKeys, null, columnIndexes);
+                    cursor = new LatestByValuesRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, null);
                 }
             }
-            this.cursor = new DataFrameRecordCursorWrapper(cursor);
+            this.cursor = new PageFrameRecordCursorWrapper(cursor);
             this.recordCursorFactory = recordCursorFactory;
             this.filter = filter;
             this.columnIndex = columnIndex;
@@ -100,7 +101,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         sink.type("LatestBySubQuery");
         sink.child("Subquery", recordCursorFactory);
         sink.child(cursor);
-        sink.child(dataFrameCursorFactory);
+        sink.child(partitionFrameCursorFactory);
     }
 
     @Override
@@ -115,11 +116,11 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         Misc.free(filter);
     }
 
-    private class DataFrameRecordCursorWrapper implements DataFrameRecordCursor {
-        private final DataFrameRecordCursor delegate;
+    private class PageFrameRecordCursorWrapper implements PageFrameRecordCursor {
+        private final PageFrameRecordCursor delegate;
         private RecordCursor baseCursor;
 
-        private DataFrameRecordCursorWrapper(DataFrameRecordCursor delegate) {
+        private PageFrameRecordCursorWrapper(PageFrameRecordCursor delegate) {
             this.delegate = delegate;
         }
 
@@ -140,13 +141,8 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         }
 
         @Override
-        public IntList getColumnIndexes() {
-            return delegate.getColumnIndexes();
-        }
-
-        @Override
-        public DataFrameCursor getDataFrameCursor() {
-            return delegate.getDataFrameCursor();
+        public PageFrameCursor getPageFrameCursor() {
+            return delegate.getPageFrameCursor();
         }
 
         @Override
@@ -184,7 +180,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         }
 
         @Override
-        public void of(DataFrameCursor cursor, SqlExecutionContext executionContext) throws SqlException {
+        public void of(PageFrameCursor cursor, SqlExecutionContext executionContext) throws SqlException {
             if (baseCursor != null) {
                 baseCursor = Misc.free(baseCursor);
             }

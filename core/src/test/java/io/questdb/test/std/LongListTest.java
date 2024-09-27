@@ -130,6 +130,18 @@ public class LongListTest {
     }
 
     @Test
+    public void testIndexOf() {
+        LongList list = new LongList();
+        for (int i = 100; i > -1; i--) {
+            list.add(i);
+        }
+
+        for (int i = 100; i > -1; i--) {
+            Assert.assertEquals(100 - i, list.indexOf(i));
+        }
+    }
+
+    @Test
     public void testInsertFromSource() {
         LongList src = new LongList();
         src.add(1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L);
@@ -218,6 +230,26 @@ public class LongListTest {
         list.restoreInitialCapacity();
         Assert.assertEquals(0, list.size());
         Assert.assertEquals(initialCapacity, list.capacity());
+    }
+
+    @Test
+    public void testSmoke() {
+        LongList list = new LongList();
+        for (int i = 0; i < 100; i++) {
+            list.add(i);
+        }
+        Assert.assertEquals(100, list.size());
+        Assert.assertTrue(list.capacity() >= 100);
+
+        for (int i = 0; i < 100; i++) {
+            Assert.assertEquals(i, list.getQuick(i));
+            Assert.assertEquals(i, list.indexOf(i));
+        }
+
+        for (int i = 0; i < 100; i++) {
+            list.remove(i);
+        }
+        Assert.assertEquals(0, list.size());
     }
 
     private void assertOrderedAsc(LongList list) {

@@ -95,7 +95,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
                             "      keys: [sym1,sym2]\n" +
                             "      values: [avg(bid)]\n" +
                             "      filter: sym1 in [AA,BB]\n" +
-                            "        DataFrame\n" +
+                            "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: x\n"
             );

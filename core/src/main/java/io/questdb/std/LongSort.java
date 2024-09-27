@@ -451,7 +451,6 @@ public class LongSort {
 
             // Sort center part recursively
             sort(vec, less, great, false);
-
         } else { // Partitioning with one pivot
             /*
              * Use the third of the five sorted elements as pivot.

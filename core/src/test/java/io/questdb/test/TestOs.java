@@ -85,8 +85,10 @@ public class TestOs {
 
             Path rustLibPath;
             if (tsDevRel.compareTo(tsPrd) > 0 && tsDevRel.compareTo(tsDevDeb) > 0) {
+                System.err.println("Loading DEV release sqllogictest library: " + absoluteDevReleasePath);
                 rustLibPath = absoluteDevReleasePath;
             } else if (tsDevDeb.compareTo(tsPrd) > 0) {
+                System.err.println("Loading DEV debug sqllogictest library: " + absoluteDevDebugPath);
                 rustLibPath = absoluteDevDebugPath;
             } else {
                 rustLibPath = absolutePrdPath;

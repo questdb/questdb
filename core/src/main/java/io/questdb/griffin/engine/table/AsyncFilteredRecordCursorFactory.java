@@ -41,9 +41,9 @@ import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.*;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 
-public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactory implements StealableFilterRecordCursorFactory {
+public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static final PageFrameReducer REDUCER = AsyncFilteredRecordCursorFactory::filter;
 
@@ -77,15 +77,13 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         this.filter = filter;
         this.cursor = new AsyncFilteredRecordCursor(filter, base.getScanDirection());
         this.negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(base.getScanDirection());
-        IntList preTouchColumnTypes = null;
-        if (preTouchColumns) {
-            preTouchColumnTypes = new IntList();
-            for (int i = 0, n = base.getMetadata().getColumnCount(); i < n; i++) {
-                int columnType = base.getMetadata().getColumnType(i);
-                preTouchColumnTypes.add(columnType);
-            }
+        final int columnCount = base.getMetadata().getColumnCount();
+        final IntList columnTypes = new IntList(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            int columnType = base.getMetadata().getColumnType(i);
+            columnTypes.add(columnType);
         }
-        AsyncFilterAtom atom = new AsyncFilterAtom(configuration, filter, perWorkerFilters, preTouchColumnTypes);
+        AsyncFilterAtom atom = new AsyncFilterAtom(configuration, filter, perWorkerFilters, columnTypes, !preTouchColumns);
         this.frameSequence = new PageFrameSequence<>(configuration, messageBus, atom, REDUCER, reduceTaskFactory, workerCount, PageFrameReduceTask.TYPE_FILTER);
         this.limitLoFunction = limitLoFunction;
         this.limitLoPos = limitLoPos;
@@ -215,7 +213,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
 
     private static void filter(
             int workerId,
-            @NotNull PageAddressCacheRecord record,
+            @NotNull PageFrameMemoryRecord record,
             @NotNull PageFrameReduceTask task,
             @NotNull SqlExecutionCircuitBreaker circuitBreaker,
             @Nullable PageFrameSequence<?> stealingFrameSequence
@@ -223,6 +221,9 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         final DirectLongList rows = task.getFilteredRows();
         final long frameRowCount = task.getFrameRowCount();
         final AsyncFilterAtom atom = task.getFrameSequence(AsyncFilterAtom.class).getAtom();
+
+        final PageFrameMemory frameMemory = task.populateFrameMemory();
+        record.init(frameMemory);
 
         rows.clear();
 
@@ -240,8 +241,10 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             atom.releaseFilter(filterId);
         }
 
-        // Pre-touch fixed-size columns, if asked.
-        atom.preTouchColumns(record, rows);
+        // Pre-touch native columns, if asked.
+        if (frameMemory.getFrameFormat() == PageFrame.NATIVE_FORMAT) {
+            atom.preTouchColumns(record, rows);
+        }
     }
 
     @Override

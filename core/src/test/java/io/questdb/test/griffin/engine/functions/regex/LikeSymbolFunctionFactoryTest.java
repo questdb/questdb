@@ -475,6 +475,9 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
             assertLike("s\nv\nvv\n", "select * from x where s like '%v%'", false);
             assertLike("s\n", "select * from x where s like 'w%'", false);
             assertLike("s\n", "select * from x where s like '%w'", false);
+            assertLike("s\nv\nvv\n", "select * from x where s like '%%'", false);
+            assertLike("s\n", "select * from x where s like '%\\%'", false);
+            assertLike("s\n", "select * from x where s like '\\_'", false);
         });
     }
 

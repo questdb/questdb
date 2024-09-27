@@ -465,7 +465,7 @@ public class LimitTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     query,
                     "Limit lo: 10\n" +
-                            "    DataFrame\n" +
+                            "    PageFrame\n" +
                             "        Row backward scan\n" +
                             "        Interval backward scan on: intervaltest\n" +
                             "          intervals: [(\"2023-04-06T00:09:59.000001Z\",\"MAX\")]\n"
@@ -839,6 +839,16 @@ public class LimitTest extends AbstractCairoTest {
                     "ts\tid\n" +
                             "1970-01-01T00:00:00.000004Z\tabc\n",
                     "select * from t1 where id = 'abc' limit -1",
+                    null,
+                    true,
+                    true
+            );
+
+            // now with a virtual column
+            assertQueryAndCache(
+                    "the_answer\tts\tid\n" +
+                            "1764\t1970-01-01T00:00:00.000004Z\tabc\n",
+                    "select 42*42 as the_answer, ts, id from t1 where id = 'abc' limit -1",
                     null,
                     true,
                     true

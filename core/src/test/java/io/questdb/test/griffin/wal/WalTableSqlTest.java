@@ -361,7 +361,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                         .concat(WalUtils.WAL_NAME_BASE).put("1").concat("0")
                         .concat(WalUtils.EVENT_FILE_NAME).$();
                 FilesFacade ff = engine.getConfiguration().getFilesFacade();
-                int fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
+                long fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
                 long intAddr = Unsafe.malloc(4, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.getUnsafe().putInt(intAddr, 10);
                 ff.write(fd, intAddr, 4, 0);
@@ -405,7 +405,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
         ddl("alter table " + tableName + " set type bypass wal", sqlExecutionContext);
         engine.releaseInactive();
-        ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
+        ObjList<TableToken> convertedTables = TableConverter.convertTables(engine, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
         engine.reloadTableNames(convertedTables);
 
         try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
@@ -426,7 +426,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
         ddl("alter table " + tableName + " set type wal", sqlExecutionContext);
         engine.releaseInactive();
-        ObjList<TableToken> convertedTables2 = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
+        ObjList<TableToken> convertedTables2 = TableConverter.convertTables(engine, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
         engine.reloadTableNames(convertedTables2);
 
         try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
@@ -454,7 +454,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             ddl("alter table " + tableName + " add col1 int");
             ddl("alter table " + tableName + " set type wal", sqlExecutionContext);
             engine.releaseInactive();
-            ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
+            ObjList<TableToken> convertedTables = TableConverter.convertTables(engine, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
             engine.reloadTableNames(convertedTables);
 
             ddl("alter table " + tableName + " add col2 int");
@@ -470,7 +470,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             ddl("alter table " + tableName + " set type bypass wal");
             engine.releaseInactive();
-            convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
+            convertedTables = TableConverter.convertTables(engine, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
             engine.reloadTableNames(convertedTables);
 
             ddl("alter table " + tableName + " drop column col2");
@@ -1118,7 +1118,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
         String tableName = testName.getMethodName();
         FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "0" + Files.SEPARATOR + "sym.d")) {
                     TestUtils.unchecked(() -> drop("drop table " + tableName));
                 }
@@ -1410,8 +1410,8 @@ public class WalTableSqlTest extends AbstractCairoTest {
             int i = 0;
 
             @Override
-            public int openRW(LPSZ name, long opts) {
-                int fd = super.openRW(name, opts);
+            public long openRW(LPSZ name, long opts) {
+                long fd = super.openRW(name, opts);
                 if (Utf8s.containsAscii(name, "2022-02-25") && i++ == 0) {
                     TestUtils.unchecked(() -> drop("drop table " + newTableName));
                 }
@@ -1692,7 +1692,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
     @Test
     public void testSuspendedTablesTriedOnceOnStart() throws Exception {
         FilesFacade ff = new TestFilesFacadeImpl() {
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.containsAscii(name, "fail.d")) {
                     return -1;
                 }
@@ -1772,7 +1772,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
         FilesFacade ff = new TestFilesFacadeImpl() {
             // terminate WAL apply Job as soon as first wal segment is opened.
             @Override
-            public int openRO(LPSZ name) {
+            public long openRO(LPSZ name) {
                 if (Utf8s.containsAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "0" + Files.SEPARATOR + "x.d")) {
                     isTerminating.set(true);
                 }

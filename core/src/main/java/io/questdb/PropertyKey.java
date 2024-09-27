@@ -33,8 +33,9 @@ public enum PropertyKey implements ConfigPropertyKey {
     BINARYDATA_ENCODING_MAXLENGTH("binarydata.encoding.maxlength"),
     CAIRO_ROOT("cairo.root"),
     CAIRO_VOLUMES("cairo.volumes"),
-    CAIRO_SNAPSHOT_INSTANCE_ID("cairo.snapshot.instance.id"),
-    CAIRO_SNAPSHOT_RECOVERY_ENABLED("cairo.snapshot.recovery.enabled"),
+    CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID("cairo.snapshot.instance.id"),
+    CAIRO_LEGACY_SNAPSHOT_RECOVERY_ENABLED("cairo.snapshot.recovery.enabled"),
+    CAIRO_CHECKPOINT_RECOVERY_ENABLED("cairo.checkpoint.recovery.enabled"),
     CAIRO_MKDIR_MODE("cairo.mkdir.mode"),
     CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT("cairo.writer.alter.busy.wait.timeout"),
     CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT("cairo.writer.alter.max.wait.timeout"),
@@ -84,6 +85,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE("cairo.sql.hash.join.light.value.page.size"),
     CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_MAX_PAGES("cairo.sql.hash.join.light.value.max.pages"),
     CAIRO_SQL_ASOF_JOIN_LOOKAHEAD("cairo.sql.asof.join.lookahead"),
+    CAIRO_SQL_ASOF_JOIN_FAST("cairo.sql.asof.join.fast"),
     CAIRO_SQL_SORT_VALUE_PAGE_SIZE("cairo.sql.sort.value.page.size"),
     CAIRO_SQL_SORT_VALUE_MAX_PAGES("cairo.sql.sort.value.max.pages"),
     CAIRO_WORK_STEAL_TIMEOUT_NANOS("cairo.work.steal.timeout.nanos"),
@@ -113,6 +115,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_COLUMN_CAST_MODEL_POOL_CAPACITY("cairo.sql.column.cast.model.pool.capacity"),
     CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY("cairo.sql.rename.table.model.pool.capacity"),
     CAIRO_SQL_WITH_CLAUSE_MODEL_POOL_CAPACITY("cairo.sql.with.clause.model.pool.capacity"),
+    CAIRO_SQL_ORDER_BY_SORT_ENABLED("cairo.sql.orderby.sort.enabled"),
+    CAIRO_SQL_ORDER_BY_RADIX_SORT_THRESHOLD("cairo.sql.orderby.radix.sort.threshold"),
     CAIRO_SQL_INSERT_MODEL_POOL_CAPACITY("cairo.sql.insert.model.pool.capacity"),
     CAIRO_SQL_INSERT_MODEL_BATCH_SIZE("cairo.sql.insert.model.batch.size"),
     CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE("cairo.writer.data.index.key.append.page.size"),
@@ -478,7 +482,14 @@ public enum PropertyKey implements ConfigPropertyKey {
     DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE("debug.cairo.o3.column.memory.size", false, true),
     CAIRO_DEFAULT_SEQ_PART_TXN_COUNT("cairo.default.sequencer.part.txn.count"),
     POSTHOG_API_KEY("posthog.api.key"),
-    POSTHOG_ENABLED("posthog.enabled");
+    POSTHOG_ENABLED("posthog.enabled"),
+    LOG_SQL_QUERY_PROGRESS_EXE("log.sql.query.progress.exe"),
+    CAIRO_PARTITION_ENCODER_PARQUET_VERSION("cairo.partition.encoder.parquet.version"),
+    CAIRO_PARTITION_ENCODER_PARQUET_STATISTICS_ENABLED("cairo.partition.encoder.parquet.statistics.enabled"),
+    CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC("cairo.partition.encoder.parquet.compression.codec"),
+    CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL("cairo.partition.encoder.parquet.compression.level"),
+    CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE("cairo.partition.encoder.parquet.row.group.size"),
+    CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE("cairo.partition.encoder.parquet.data.page.size");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

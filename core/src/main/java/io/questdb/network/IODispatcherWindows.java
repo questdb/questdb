@@ -71,7 +71,7 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
             final long srcOpId = context.getAndResetHeartbeatId();
 
             final long opId = nextOpId();
-            final int fd = context.getFd();
+            final long fd = context.getFd();
 
             interestSubSeq.done(cursor);
             if (operation == IOOperation.HEARTBEAT) {
@@ -201,7 +201,7 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
                 }
             }
 
-            final int fd = (int) pending.get(i, OPM_FD);
+            final long fd = pending.get(i, OPM_FD);
             final int newOp = fds.get(fd);
             assert fd != serverFd;
 

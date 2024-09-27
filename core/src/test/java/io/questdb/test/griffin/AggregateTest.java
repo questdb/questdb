@@ -322,7 +322,7 @@ public class AggregateTest extends AbstractCairoTest {
                                 "    GroupBy vectorized: true workers: 1\n" +
                                 "      keys: [account_uuid]\n" +
                                 "      values: [sum(requests)]\n" +
-                                "        DataFrame\n" +
+                                "        PageFrame\n" +
                                 "            Row forward scan\n" +
                                 "            Interval forward scan on: records\n" +
                                 "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n"
@@ -370,7 +370,7 @@ public class AggregateTest extends AbstractCairoTest {
                         "      keys: [org_uuid,account_uuid]\n" +
                         "      values: [sum(price)]\n" +
                         "      filter: null\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Interval forward scan on: records\n" +
                         "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n";
@@ -380,7 +380,7 @@ public class AggregateTest extends AbstractCairoTest {
                         "    GroupBy vectorized: false\n" +
                         "      keys: [org_uuid,account_uuid]\n" +
                         "      values: [sum(price)]\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Interval forward scan on: records\n" +
                         "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n";
@@ -2019,7 +2019,7 @@ public class AggregateTest extends AbstractCairoTest {
         AbstractCairoTest.create(tt1);
 
         // Insert a lot of empty rows to test function's merge correctness.
-        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("tt1"))) {
+        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("tt1"), engine)) {
             for (int i = 0; i < 2 * PAGE_FRAME_MAX_ROWS; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.append();

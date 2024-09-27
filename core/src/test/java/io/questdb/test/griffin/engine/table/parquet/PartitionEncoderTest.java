@@ -25,8 +25,7 @@
 package io.questdb.test.griffin.engine.table.parquet;
 
 import io.questdb.cairo.TableReader;
-import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
-import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
+import io.questdb.griffin.engine.table.parquet.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -37,7 +36,6 @@ import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
-import static io.questdb.griffin.engine.table.parquet.PartitionEncoder.COMPRESSION_UNCOMPRESSED;
 
 public class PartitionEncoderTest extends AbstractCairoTest {
     private final static Log LOG = LogFactory.getLog(PartitionEncoderTest.class);
@@ -58,7 +56,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                 path.of(root).concat("x.parquet").$();
                 try {
                     PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
-                    PartitionEncoder.encodeWithOptions(partitionDescriptor, path, 42, false, 0, 0, PartitionEncoder.PARQUET_VERSION_V1);
+                    PartitionEncoder.encodeWithOptions(partitionDescriptor, path, 42, false, 0, 0, ParquetVersion.PARQUET_VERSION_V1);
                     Assert.fail();
                 } catch (Exception e) {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "Invalid value for CompressionCodec"));
@@ -83,7 +81,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                 path.of(root).concat("x.parquet").$();
                 try {
                     PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
-                    PartitionEncoder.encodeWithOptions(partitionDescriptor, path, COMPRESSION_UNCOMPRESSED, false, 0, 0, 42);
+                    PartitionEncoder.encodeWithOptions(partitionDescriptor, path, ParquetCompression.COMPRESSION_UNCOMPRESSED, false, 0, 0, 42);
                     Assert.fail();
                 } catch (Exception e) {
                     Assert.assertTrue(Chars.contains(e.getMessage(), "Invalid value for Version"));

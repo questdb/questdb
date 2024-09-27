@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
@@ -53,6 +54,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     private final int maxHash;
     private final int symbolCapacity;
     private final SymbolValueCountCollector valueCountCollector;
+    private boolean cachedFlag;
     private boolean nullValue = false;
     private MemoryMARW offsetMem;
     private int symbolIndexInTxWriter;
@@ -125,8 +127,10 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
             if (useCache) {
                 this.cache = new CharSequenceIntHashMap(symbolCapacity, 0.3, CharSequenceIntHashMap.NO_ENTRY_VALUE);
+                cachedFlag = true;
             } else {
                 this.cache = null;
+                cachedFlag = false;
             }
 
             this.symbolIndexInTxWriter = symbolIndexInTxWriter;
@@ -176,11 +180,21 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         Misc.free(indexWriter);
         Misc.free(charMem);
         if (offsetMem != null) {
-            int fd = offsetMem.getFd();
+            long fd = offsetMem.getFd();
             offsetMem = Misc.free(offsetMem);
             LOG.debug().$("closed [fd=").$(fd).$(']').$();
         }
         nullValue = false;
+    }
+
+    @Override
+    public MemoryR getSymbolOffsetsMemory() {
+        return offsetMem;
+    }
+
+    @Override
+    public MemoryR getSymbolValuesMemory() {
+        return charMem;
     }
 
     @Override
@@ -198,7 +212,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     }
 
     public boolean isCached() {
-        return cache != null;
+        return cachedFlag;
     }
 
     @Override
@@ -268,6 +282,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     @Override
     public void updateCacheFlag(boolean flag) {
         offsetMem.putBool(HEADER_CACHE_ENABLED, flag);
+        cachedFlag = flag;
     }
 
     @Override

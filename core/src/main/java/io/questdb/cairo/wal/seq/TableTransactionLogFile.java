@@ -66,7 +66,6 @@ import java.io.Closeable;
  * or in multiple files with N records per file.
  * <p>
  * See different implementations of the interface for the storage details.
- * <p>
  */
 public interface TableTransactionLogFile extends Closeable {
     int HEADER_RESERVED = 6 * Long.BYTES + Integer.BYTES;

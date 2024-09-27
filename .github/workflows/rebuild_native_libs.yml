@@ -1,4 +1,4 @@
-name: Build and Push Release CXX/Rust libraries
+name: Build and Push Release CXX Libraries
 on:
   workflow_dispatch:
 # This workflow is triggered manually from the Actions tab.
@@ -43,13 +43,13 @@ jobs:
           mkdir -p core/src/main/bin/darwin-aarch64/
           cp core/target/classes/io/questdb/bin-local/libquestdb.dylib core/src/main/resources/io/questdb/bin/darwin-aarch64/
           cp core/target/classes/io/questdb/bin-local/libjemalloc.dylib core/src/main/bin/darwin-aarch64/
-      - name: Copy darwin-amd64 CXX Library to the final directory
+      - name: Copy darwin-x86-64 CXX Library to the final directory
         if: ${{ matrix.os == 'macos-13' }}
         run: |
-          mkdir -p core/src/main/resources/io/questdb/bin/darwin-amd64/
-          mkdir -p core/src/main/bin/darwin-amd64/
-          cp core/target/classes/io/questdb/bin-local/libquestdb.dylib core/src/main/resources/io/questdb/bin/darwin-amd64/
-          cp core/target/classes/io/questdb/bin-local/libjemalloc.dylib core/src/main/bin/darwin-amd64/
+          mkdir -p core/src/main/resources/io/questdb/bin/darwin-x86-64/
+          mkdir -p core/src/main/bin/darwin-x86-64/
+          cp core/target/classes/io/questdb/bin-local/libquestdb.dylib core/src/main/resources/io/questdb/bin/darwin-x86-64/
+          cp core/target/classes/io/questdb/bin-local/libjemalloc.dylib core/src/main/bin/darwin-x86-64/
       - name: Save darwin-aarch64 Libraries to Cache
         if: ${{ matrix.os == 'macos-14' }}
         uses: actions/cache/save@v3
@@ -58,15 +58,15 @@ jobs:
             core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdb.dylib
             core/src/main/bin/darwin-aarch64/libjemalloc.dylib
           key: nativelibs-armosx-${{ github.sha }}
-      - name: Save darwin-amd64 Libraries to Cache
+      - name: Save darwin-x86-64 Libraries to Cache
         if: ${{ matrix.os == 'macos-13' }}
         uses: actions/cache/save@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/darwin-amd64/libquestdb.dylib
-            core/src/main/bin/darwin-amd64/libjemalloc.dylib
+            core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdb.dylib
+            core/src/main/bin/darwin-x86-64/libjemalloc.dylib
           key: nativelibs-osx-${{ github.sha }}
-  build-all-linux-amd64:
+  build-all-linux-x86-64:
     runs-on: ubuntu-latest
     # this is very bare container, we use it to restrict GLIBC to 2.28
     # everything has to be installed on it manually
@@ -96,20 +96,20 @@ jobs:
           cd ./core
           # git submodule update --init
           cmake -DCMAKE_BUILD_TYPE=Release -B cmake-build-release -S.
-      - name: Build linux-amd64 CXX Library
+      - name: Build linux-x86-64 CXX Library
         run: |
           cd core
           cmake --build cmake-build-release --config Release
-          mkdir -p src/main/resources/io/questdb/bin/linux-amd64/
-          mkdir -p src/main/bin/linux-amd64/
-          cp target/classes/io/questdb/bin-local/libquestdb.so src/main/resources/io/questdb/bin/linux-amd64/
-          cp target/classes/io/questdb/bin-local/libjemalloc.so src/main/bin/linux-amd64/
-      - name: Save linux-amd64 Libraries to Cache
+          mkdir -p src/main/resources/io/questdb/bin/linux-x86-64/
+          mkdir -p src/main/bin/linux-x86-64/
+          cp target/classes/io/questdb/bin-local/libquestdb.so src/main/resources/io/questdb/bin/linux-x86-64/
+          cp target/classes/io/questdb/bin-local/libjemalloc.so src/main/bin/linux-x86-64/
+      - name: Save linux-x86-64 Libraries to Cache
         uses: actions/cache/save@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/linux-amd64/libquestdb.so
-            core/src/main/bin/linux-amd64/libjemalloc.so
+            core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so
+            core/src/main/bin/linux-x86-64/libjemalloc.so
           key: nativelibs-linux-${{ github.sha }}
   build-all-linux-aarch64:
     runs-on: ubuntu-latest
@@ -175,12 +175,12 @@ jobs:
         run: |
           cd core
           cmake --build cmake-build-release-win64 --config Release
-          mkdir -p src/main/resources/io/questdb/bin/windows-amd64/
-          cp target/classes/io/questdb/bin-local/libquestdb.dll src/main/resources/io/questdb/bin/windows-amd64/
+          mkdir -p src/main/resources/io/questdb/bin/windows-x86-64/
+          cp target/classes/io/questdb/bin-local/libquestdb.dll src/main/resources/io/questdb/bin/windows-x86-64/
       - name: Check CXX runtime dependency
         run: |
           cd ./core
-          if x86_64-w64-mingw32-objdump -p ./src/main/resources/io/questdb/bin/windows-amd64/libquestdb.dll | grep -q libstdc++; then
+          if x86_64-w64-mingw32-objdump -p ./src/main/resources/io/questdb/bin/windows-x86-64/libquestdb.dll | grep -q libstdc++; then
             echo "Failure: CXX runtime dependency detected"
             exit 1
           fi
@@ -191,10 +191,10 @@ jobs:
         uses: actions/cache/save@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/windows-amd64/libquestdb.dll
+            core/src/main/resources/io/questdb/bin/windows-x86-64/libquestdb.dll
           key: nativelibs-windows-${{ github.sha }}
   collect-commit-and-push:
-    needs: [ build-all-macos,build-cxx-windows, build-all-linux-amd64, build-all-linux-aarch64 ]
+    needs: [ build-all-macos,build-cxx-windows, build-all-linux-x86-64, build-all-linux-aarch64 ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -211,19 +211,19 @@ jobs:
             core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdb.dylib
             core/src/main/bin/darwin-aarch64/libjemalloc.dylib
           key: nativelibs-armosx-${{ github.sha }}
-      - name: Restore darwin-amd64 Libraries from Cache
+      - name: Restore darwin-x86-64 Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/darwin-amd64/libquestdb.dylib
-            core/src/main/bin/darwin-amd64/libjemalloc.dylib
+            core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdb.dylib
+            core/src/main/bin/darwin-x86-64/libjemalloc.dylib
           key: nativelibs-osx-${{ github.sha }}
-      - name: Restore linux-amd64 Libraries from Cache
+      - name: Restore linux-x86-64 Libraries from Cache
         uses: actions/cache/restore@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/linux-amd64/libquestdb.so
-            core/src/main/bin/linux-amd64/libjemalloc.so
+            core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so
+            core/src/main/bin/linux-x86-64/libjemalloc.so
           key: nativelibs-linux-${{ github.sha }}
       - name: Restore linux-aarch64 Libraries from Cache
         uses: actions/cache/restore@v3
@@ -236,7 +236,7 @@ jobs:
         uses: actions/cache/restore@v3
         with:
           path: |
-            core/src/main/resources/io/questdb/bin/windows-amd64/libquestdb.dll
+            core/src/main/resources/io/questdb/bin/windows-x86-64/libquestdb.dll
           key: nativelibs-windows-${{ github.sha }}
       - name: Check git status before
         run: |
@@ -247,15 +247,15 @@ jobs:
           git config --global user.email 'jaromir@questdb.io'
           git add core/src/main/resources/io/questdb/bin/darwin-aarch64/libquestdb.dylib
           git add core/src/main/bin/darwin-aarch64/libjemalloc.dylib
-          git add core/src/main/resources/io/questdb/bin/darwin-amd64/libquestdb.dylib
-          git add core/src/main/bin/darwin-amd64/libjemalloc.dylib
-          git add core/src/main/resources/io/questdb/bin/linux-amd64/libquestdb.so
-          git add core/src/main/bin/linux-amd64/libjemalloc.so
+          git add core/src/main/resources/io/questdb/bin/darwin-x86-64/libquestdb.dylib
+          git add core/src/main/bin/darwin-x86-64/libjemalloc.dylib
+          git add core/src/main/resources/io/questdb/bin/linux-x86-64/libquestdb.so
+          git add core/src/main/bin/linux-x86-64/libjemalloc.so
           git add core/src/main/resources/io/questdb/bin/linux-aarch64/libquestdb.so
           git add core/src/main/bin/linux-aarch64/libjemalloc.so
-          git add core/src/main/resources/io/questdb/bin/windows-amd64/libquestdb.dll
+          git add core/src/main/resources/io/questdb/bin/windows-x86-64/libquestdb.dll
           
-          git commit -m "chore(build): rebuild CXX libraries"
+          git commit -m "Rebuild CXX libraries"
       - name: Check git status after
         run: |
           git status
@@ -271,4 +271,3 @@ jobs:
         # So even if a bad actor takes over the repo, and rewrites tags to point to malicious commits, we will still be safe.
         with:
           branch: ${{ github.head_ref || github.ref_name }}
-

@@ -30,14 +30,15 @@ import io.questdb.griffin.engine.groupby.StableAwareStringHolder;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.DirectString;
 import io.questdb.std.str.DirectUtf16Sink;
-import io.questdb.std.str.StableDirectString;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class StableAwareStringHolderTest extends AbstractCairoTest {
+
     @Test
     public void testClearAndSet() throws Exception {
         assertMemoryLeak(() -> {
@@ -57,10 +58,10 @@ public class StableAwareStringHolderTest extends AbstractCairoTest {
     public void testClearAndSetDirect() throws Exception {
         assertMemoryLeak(() -> {
             try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB);
-                 DirectUtf16Sink directCharSequence = new DirectUtf16Sink(16);
+                 DirectUtf16Sink directCharSequence = new DirectUtf16Sink(16)
             ) {
                 directCharSequence.put("barbaz");
-                StableDirectString stableDirectString = new StableDirectString();
+                DirectString stableDirectString = new DirectString(() -> true);
                 stableDirectString.of(directCharSequence.lo(), directCharSequence.hi());
                 StableAwareStringHolder holder = new StableAwareStringHolder();
                 holder.setAllocator(allocator);
@@ -68,12 +69,12 @@ public class StableAwareStringHolderTest extends AbstractCairoTest {
                 // store a non-stable char sequence
                 holder.of(0).clearAndSet("foobar");
                 TestUtils.assertEquals("foobar", holder);
-                long foobarPtr = holder.ptr();
+                long foobarPtr = holder.colouredPtr();
 
                 // store a direct char sequence into a new location
                 holder.of(0).clearAndSet(stableDirectString);
                 TestUtils.assertEquals("barbaz", holder);
-                long barbazPtr = holder.ptr();
+                long barbazPtr = holder.colouredPtr();
 
                 // store a direct char sequence into the original location of the non-direct string
                 holder.of(foobarPtr).clearAndSet(stableDirectString);
@@ -103,7 +104,7 @@ public class StableAwareStringHolderTest extends AbstractCairoTest {
                 StableAwareStringHolder holder = new StableAwareStringHolder();
                 holder.setAllocator(allocator);
                 Rnd rnd = TestUtils.generateRandom(null);
-                StableDirectString stableDirectString = new StableDirectString();
+                DirectString stableDirectString = new DirectString(() -> true);
                 for (int i = 0; i < 1_000; i++) {
                     boolean useDirect = rnd.nextBoolean();
                     int len = rnd.nextPositiveInt() % 100;

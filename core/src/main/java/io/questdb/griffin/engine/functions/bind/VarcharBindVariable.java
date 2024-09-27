@@ -36,13 +36,8 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
 public class VarcharBindVariable extends VarcharFunction implements ScalarFunction, Mutable {
-    private final int floatScale;
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private boolean isNull = true;
-
-    public VarcharBindVariable(int floatScale) {
-        this.floatScale = floatScale;
-    }
 
     @Override
     public void clear() {
@@ -169,7 +164,7 @@ public class VarcharBindVariable extends VarcharFunction implements ScalarFuncti
         isNull = Numbers.isNull(value);
         if (!isNull) {
             utf8Sink.clear();
-            utf8Sink.put(value, floatScale);
+            utf8Sink.put(value);
         }
     }
 

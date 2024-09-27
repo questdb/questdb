@@ -78,6 +78,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final WalEventReader walEventReader;
     private final Telemetry<TelemetryWalTask> walTelemetry;
     private final WalTelemetryFacade walTelemetryFacade;
+    private long lastAttemptSeqTxn;
 
     public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
@@ -261,6 +262,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     final long commitTimestamp = transactionLogCursor.getCommitTimestamp();
                     final long seqTxn = transactionLogCursor.getTxn();
 
+                    this.lastAttemptSeqTxn = seqTxn;
                     if (seqTxn != writer.getAppliedSeqTxn() + 1) {
                         throw CairoException.critical(0)
                                 .put("unexpected sequencer transaction, expected ").put(writer.getAppliedSeqTxn() + 1)
@@ -421,6 +423,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         try {
             telemetryFacade.store(TelemetrySystemEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
             LogRecord logRecord = LOG.critical().$("job failed, table suspended [table=").utf8(tableToken.getDirName());
+            if (lastAttemptSeqTxn > -1) {
+                logRecord.$(", seqTxn=").$(lastAttemptSeqTxn);
+            }
             if (throwable instanceof CairoException) {
                 CairoException ex = (CairoException) throwable;
                 logRecord.$(", error=").$(ex.getFlyweightMessage())
@@ -552,6 +557,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     ) {
         final Path tempPath = Path.PATH.get();
         SeqTxnTracker txnTracker = null;
+        this.lastAttemptSeqTxn = -1;
         try {
             // security context is checked on writing to the WAL and can be ignored here
             final TableToken updatedToken = engine.getUpdatedTableToken(tableToken);

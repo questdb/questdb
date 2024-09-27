@@ -116,6 +116,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public @NotNull CharSequence getCheckpointRoot() {
+        return getDelegate().getCheckpointRoot();
+    }
+
+    @Override
     public @NotNull SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return getDelegate().getCircuitBreakerConfiguration();
     }
@@ -371,6 +376,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public @NotNull CharSequence getLegacyCheckpointRoot() {
+        return getDelegate().getLegacyCheckpointRoot();
+    }
+
+    @Override
+    public boolean getLogSqlQueryProgressExe() {
+        return getDelegate().getLogSqlQueryProgressExe();
+    }
+
+    @Override
     public int getMaxCrashFiles() {
         return getDelegate().getMaxCrashFiles();
     }
@@ -576,11 +591,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public @NotNull CharSequence getSnapshotRoot() {
-        return getDelegate().getSnapshotRoot();
-    }
-
-    @Override
     public long getSpinLockTimeout() {
         return getDelegate().getSpinLockTimeout();
     }
@@ -753,6 +763,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlModelPoolCapacity() {
         return getDelegate().getSqlModelPoolCapacity();
+    }
+
+    @Override
+    public int getSqlOrderByRadixSortThreshold() {
+        return getDelegate().getSqlOrderByRadixSortThreshold();
     }
 
     @Override
@@ -951,6 +966,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public double getWalLagRowsMultiplier() {
+        return getDelegate().getWalLagRowsMultiplier();
+    }
+
+    @Override
     public long getWalMaxLagSize() {
         return getDelegate().getWalMaxLagSize();
     }
@@ -988,11 +1008,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getWalSegmentRolloverSize() {
         return getDelegate().getWalSegmentRolloverSize();
-    }
-
-    @Override
-    public double getWalLagRowsMultiplier() {
-        return getDelegate().getWalLagRowsMultiplier();
     }
 
     @Override
@@ -1051,6 +1066,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isCheckpointRecoveryEnabled() {
+        return getDelegate().isCheckpointRecoveryEnabled();
+    }
+
+    @Override
     public boolean isDevModeEnabled() {
         return getDelegate().isDevModeEnabled();
     }
@@ -1086,13 +1106,13 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public boolean isSnapshotRecoveryEnabled() {
-        return getDelegate().isSnapshotRecoveryEnabled();
+    public boolean isSqlJitDebugEnabled() {
+        return getDelegate().isSqlJitDebugEnabled();
     }
 
     @Override
-    public boolean isSqlJitDebugEnabled() {
-        return getDelegate().isSqlJitDebugEnabled();
+    public boolean isSqlOrderBySortEnabled() {
+        return getDelegate().isSqlOrderBySortEnabled();
     }
 
     @Override
@@ -1137,6 +1157,41 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
         getDelegate().populateSettings(settings);
+    }
+
+    @Override
+    public boolean useFastAsOfJoin() {
+        return getDelegate().useFastAsOfJoin();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetVersion() {
+        return getDelegate().getPartitionEncoderParquetVersion();
+    }
+
+    @Override
+    public boolean isPartitionEncoderParquetStatisticsEnabled() {
+        return getDelegate().isPartitionEncoderParquetStatisticsEnabled();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetCompressionCodec() {
+        return getDelegate().getPartitionEncoderParquetCompressionCodec();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetCompressionLevel() {
+        return getDelegate().getPartitionEncoderParquetCompressionLevel();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetRowGroupSize() {
+        return getDelegate().getPartitionEncoderParquetRowGroupSize();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetDataPageSize() {
+        return getDelegate().getPartitionEncoderParquetDataPageSize();
     }
 
     protected CairoConfiguration getDelegate() {

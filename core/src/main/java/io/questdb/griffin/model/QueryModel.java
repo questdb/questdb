@@ -86,6 +86,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     public static final int SHOW_PARTITIONS = 3;
     public static final int SHOW_SEARCH_PATH = 8;
     public static final int SHOW_SERVER_VERSION = 12;
+    public static final int SHOW_SERVER_VERSION_NUM = 13;
     public static final int SHOW_STANDARD_CONFORMING_STRINGS = 7;
     public static final int SHOW_TABLES = 1;
     public static final int SHOW_TIME_ZONE = 10;
@@ -185,6 +186,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     private int selectModelType = SELECT_MODEL_NONE;
     private int setOperationType;
     private int showKind = -1;
+    private boolean skipped;
     private int tableId = -1;
     private ExpressionNode tableNameExpr;
     private RecordCursorFactory tableNameFunction;
@@ -448,6 +450,7 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         fillTo = null;
         fillStride = null;
         fillValues = null;
+        skipped = false;
     }
 
     public void clearColumnMapStructs() {
@@ -642,7 +645,8 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
                 && Objects.equals(limitAdviceHi, that.limitAdviceHi)
                 && Objects.equals(unionModel, that.unionModel)
                 && Objects.equals(updateTableModel, that.updateTableModel)
-                && Objects.equals(updateTableToken, that.updateTableToken);
+                && Objects.equals(updateTableToken, that.updateTableToken)
+                && skipped == that.skipped;
     }
 
     public QueryColumn findBottomUpColumnByAst(ExpressionNode node) {
@@ -935,11 +939,11 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
     }
 
     public ObjList<CharSequence> getUpdateTableColumnNames() {
-        return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnNames() : updateTableColumnNames;
+        return updateTableModel != null ? updateTableModel.getUpdateTableColumnNames() : updateTableColumnNames;
     }
 
     public IntList getUpdateTableColumnTypes() {
-        return this.updateTableModel != null ? this.updateTableModel.getUpdateTableColumnTypes() : updateTableColumnTypes;
+        return updateTableModel != null ? updateTableModel.getUpdateTableColumnTypes() : updateTableColumnTypes;
     }
 
     public TableToken getUpdateTableToken() {
@@ -1035,6 +1039,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public boolean isSelectTranslation() {
         return isSelectTranslation;
+    }
+
+    public boolean isSkipped() {
+        return skipped;
     }
 
     @SuppressWarnings("unused")
@@ -1359,6 +1367,10 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
 
     public void setShowKind(int showKind) {
         this.showKind = showKind;
+    }
+
+    public void setSkipped(boolean skipped) {
+        this.skipped = skipped;
     }
 
     public void setTableId(int id) {

@@ -26,14 +26,18 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Sinkable;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -69,7 +73,7 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     default void close() {
     }
 
-    default SingleSymbolFilter convertToSampleByIndexDataFrameCursorFactory() {
+    default SingleSymbolFilter convertToSampleByIndexPageFrameCursorFactory() {
         return null;
     }
 
@@ -109,18 +113,24 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
         return getBaseFactory().getMetadata().getColumnName(idx);
     }
 
-    /**
-     * Method is necessary for cases where row cursor uses index from table reader while record cursor
-     * can reorder columns (e.g. DataFrameRecordCursorFactory)
-     *
-     * @param idx idx of column
-     * @return name of base column (no remapping)
-     */
-    default String getBaseColumnNameNoRemap(int idx) {
-        return getBaseColumnName(idx);
+    default RecordCursorFactory getBaseFactory() {
+        return null;
     }
 
-    default RecordCursorFactory getBaseFactory() {
+    // to be used in combination with compiled filter
+    @Nullable
+    default ObjList<Function> getBindVarFunctions() {
+        return null;
+    }
+
+    // to be used in combination with compiled filter
+    @Nullable
+    default MemoryCARW getBindVarMemory() {
+        return null;
+    }
+
+    @Nullable
+    default CompiledFilter getCompiledFilter() {
         return null;
     }
 
@@ -137,6 +147,11 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      */
     default RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         throw new UnsupportedOperationException();
+    }
+
+    @Nullable
+    default Function getFilter() {
+        return null;
     }
 
     /**
@@ -179,6 +194,13 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Closes everything but base factory and filter.
+     */
+    default void halfClose() {
+
+    }
+
+    /**
      * Returns true if this factory handles limit M , N clause already and false otherwise .
      * If true then separate limit cursor factory is not needed (and could actually cause problem
      * by re-applying limit logic).
@@ -189,7 +211,15 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
 
     boolean recordCursorSupportsRandomAccess();
 
-    default void revertFromSampleByIndexDataFrameCursorFactory() {
+    default void revertFromSampleByIndexPageFrameCursorFactory() {
+    }
+
+    /**
+     * Returns true if the factory stands for nothing more but a filter, so that
+     * the above factory (e.g. a parallel GROUP BY one) can steal the filter.
+     */
+    default boolean supportsFilterStealing() {
+        return false;
     }
 
     default boolean supportsPageFrameCursor() {

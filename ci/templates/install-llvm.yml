@@ -1,0 +1,15 @@
+parameters:
+  name: shouldRun
+  default: true
+steps:
+  - bash: |
+      set -eux
+      rustup component add llvm-tools-preview
+      LLVM_TOOLS_PATH=$(dirname $(find $HOME/.rustup -name llvm-profdata))
+      export PATH=$LLVM_TOOLS_PATH:$PATH
+      set +x
+      llvm-profdata --version
+      llvm-cov --version
+      echo "##vso[task.setvariable variable=LLVM_TOOLS_PATH]$LLVM_TOOLS_PATH"
+    displayName: "Install LLVM coverage tools"
+    condition: ${{ parameters.shouldRun }}

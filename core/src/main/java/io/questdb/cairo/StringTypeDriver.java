@@ -36,8 +36,8 @@ import static io.questdb.cairo.ColumnType.LEGACY_VAR_SIZE_AUX_SHL;
 public class StringTypeDriver implements ColumnTypeDriver {
     public static final StringTypeDriver INSTANCE = new StringTypeDriver();
 
-    public static void appendValue(MemoryCMARW dataMem, MemoryCMARW auxMem, CharSequence sink) {
-        auxMem.putLong(dataMem.putStr(sink));
+    public static void appendValue(MemoryA auxMem, MemoryA dataMem, CharSequence value) {
+        auxMem.putLong(dataMem.putStr(value));
     }
 
     @Override
@@ -76,7 +76,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, int fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts) {
+    public void configureAuxMemOM(FilesFacade ff, MemoryOM auxMem, long fd, LPSZ fileName, long rowLo, long rowHi, int memoryTag, long opts) {
         auxMem.ofOffset(
                 ff,
                 fd,
@@ -93,7 +93,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
             FilesFacade ff,
             MemoryR auxMem,
             MemoryOM dataMem,
-            int dataFd,
+            long dataFd,
             LPSZ fileName,
             long rowLo,
             long rowHi,
@@ -109,6 +109,11 @@ public class StringTypeDriver implements ColumnTypeDriver {
                 memoryTag,
                 opts
         );
+    }
+
+    @Override
+    public long dedupMergeVarColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr) {
+        return Vect.dedupMergeStrBinColumnSize(mergeIndexAddr, mergeIndexCount, srcDataFixAddr, srcOooFixAddr);
     }
 
     @Override
@@ -147,7 +152,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
-    public long getDataVectorSizeAtFromFd(FilesFacade ff, int auxFd, long row) {
+    public long getDataVectorSizeAtFromFd(FilesFacade ff, long auxFd, long row) {
         long auxFileOffset = getAuxVectorOffset(row + 1);
         long dataOffset = row > -1 ? ff.readNonNegativeLong(auxFd, auxFileOffset) : 0;
 
@@ -200,7 +205,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
             long srcHi,
             long dstAddr,
             long dstFileOffset,
-            int dstFd,
+            long dstFd,
             boolean mixedIOFlag
     ) {
         // srcHi is inclusive, and we also copy 1 extra entry due to N+1 aux vector structure
@@ -311,7 +316,6 @@ public class StringTypeDriver implements ColumnTypeDriver {
             long srcHi,
             long dstAddr,
             long dstAddrSize
-
     ) {
         assert (srcHi - srcLo + 2) * 8 <= dstAddrSize;
         // +2 because
@@ -319,11 +323,6 @@ public class StringTypeDriver implements ColumnTypeDriver {
         // 2. we copy 1 extra entry due to N+1 string aux vector structure
 
         Vect.shiftCopyFixedSizeColumnData(shift, src, srcLo, srcHi + 1, dstAddr);
-    }
-
-    @Override
-    public long dedupMergeVarColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr) {
-        return Vect.dedupMergeStrBinColumnSize(mergeIndexAddr, mergeIndexCount, srcDataFixAddr, srcOooFixAddr);
     }
 }
 

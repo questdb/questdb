@@ -93,6 +93,11 @@ public class LineTcpSender extends AbstractLineSender {
     }
 
     @Override
+    public void cancelRow() {
+        throw new LineSenderException("cancelRow() not supported by TCP transport");
+    }
+
+    @Override
     public void flush() {
         validateNotClosed();
         sendAll();

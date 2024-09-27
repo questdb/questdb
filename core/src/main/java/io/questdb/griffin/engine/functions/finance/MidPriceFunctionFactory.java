@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class MidPriceFunctionFactory implements FunctionFactory {
@@ -60,11 +59,7 @@ public class MidPriceFunctionFactory implements FunctionFactory {
         public double getDouble(Record rec) {
             final double b = bid.getDouble(rec);
             final double a = ask.getDouble(rec);
-
-            if (Numbers.isNull(b) || Numbers.isNull(a)) {
-                return Double.NaN;
-            }
-            return ((a + b) / 2.0);
+            return FinanceUtils.mid(b, a);
         }
 
         @Override

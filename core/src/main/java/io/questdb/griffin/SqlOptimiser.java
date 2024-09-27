@@ -29,7 +29,6 @@ import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.engine.functions.catalogue.*;
 import io.questdb.griffin.engine.functions.constants.CharConstant;
-import io.questdb.griffin.engine.functions.table.AllTablesFunctionFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.model.*;
@@ -223,6 +222,12 @@ public class SqlOptimiser implements Mutable {
 
     private static boolean modelIsFlex(QueryModel model) {
         return model != null && flexColumnModelTypes.contains(model.getSelectModelType());
+    }
+
+    private static void pushDownLimitAdvice(QueryModel model, QueryModel nestedModel, boolean useDistinctModel) {
+        if ((nestedModel.getOrderBy().size() == 0 || isOrderedByDesignatedTimestamp(nestedModel)) && !useDistinctModel) {
+            nestedModel.setLimitAdvice(model.getLimitLo(), model.getLimitHi());
+        }
     }
 
     /**
@@ -1172,10 +1177,10 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void copyColumnsFromMetadata(QueryModel model, RecordMetadata m, boolean nonLiteral) throws SqlException {
+    private void copyColumnsFromMetadata(QueryModel model, RecordMetadata m) throws SqlException {
         // column names are not allowed to have a dot
         for (int i = 0, k = m.getColumnCount(); i < k; i++) {
-            CharSequence columnName = createColumnAlias(m.getColumnName(i), model, nonLiteral);
+            CharSequence columnName = createColumnAlias(m.getColumnName(i), model, false);
             QueryColumn column = queryColumnPool.next().of(
                     columnName,
                     expressionNodePool.next().of(
@@ -1996,7 +2001,7 @@ public class SqlOptimiser implements Mutable {
     private void enumerateColumns(QueryModel model, TableRecordMetadata metadata) throws SqlException {
         model.setMetadataVersion(metadata.getMetadataVersion());
         model.setTableId(metadata.getTableId());
-        copyColumnsFromMetadata(model, metadata, false);
+        copyColumnsFromMetadata(model, metadata);
         if (model.isUpdate()) {
             copyColumnTypesFromMetadata(model, metadata);
         }
@@ -2385,6 +2390,7 @@ public class SqlOptimiser implements Mutable {
         return node;
     }
 
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     private boolean matchesWithOrWithoutTablePrefix(@NotNull CharSequence name, @NotNull CharSequence table, CharSequence target) {
         if (target == null) {
             return false;
@@ -2758,10 +2764,15 @@ public class SqlOptimiser implements Mutable {
         return nextLiteral(token, 0);
     }
 
-    private boolean nonAggregateFunctionDependsOn(ExpressionNode node, CharSequence argument) {
+    private boolean nonAggregateFunctionDependsOn(ExpressionNode node, ExpressionNode timestampNode) {
+        if (timestampNode == null) {
+            return false;
+        }
+
+        final CharSequence timestamp = timestampNode.token;
         sqlNodeStack.clear();
         while (node != null) {
-            if (node.type == LITERAL && Chars.equalsIgnoreCase(node.token, argument)) {
+            if (node.type == LITERAL && Chars.equalsIgnoreCase(node.token, timestamp)) {
                 return true;
             }
 
@@ -3153,7 +3164,7 @@ public class SqlOptimiser implements Mutable {
         if (model.getSelectModelType() == QueryModel.SELECT_MODEL_SHOW) {
             switch (model.getShowKind()) {
                 case QueryModel.SHOW_TABLES:
-                    tableFactory = new ShowTablesFunctionFactory.ShowTablesCursorFactory(configuration, AllTablesFunctionFactory.METADATA, AllTablesFunctionFactory.SIGNATURE);
+                    tableFactory = new AllTablesFunctionFactory.AllTablesCursorFactory();
                     break;
                 case QueryModel.SHOW_COLUMNS:
                     tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
@@ -3194,6 +3205,9 @@ public class SqlOptimiser implements Mutable {
                 case QueryModel.SHOW_SERVER_VERSION:
                     tableFactory = new ShowServerVersionCursorFactory();
                     break;
+                case QueryModel.SHOW_SERVER_VERSION_NUM:
+                    tableFactory = new ShowServerVersionNumCursorFactory();
+                    break;
                 default:
                     tableFactory = sqlParserCallback.generateShowSqlFactory(model);
                     break;
@@ -3205,7 +3219,7 @@ public class SqlOptimiser implements Mutable {
             model.setTableNameFunction(tableFactory);
             tableFactoriesInFlight.add(tableFactory);
         }
-        copyColumnsFromMetadata(model, tableFactory.getMetadata(), false);
+        copyColumnsFromMetadata(model, tableFactory.getMetadata());
     }
 
     private void processEmittedJoinClauses(QueryModel model) {
@@ -4510,7 +4524,7 @@ public class SqlOptimiser implements Mutable {
                             && (sampleByOffset != null && SqlKeywords.isZeroOffset(sampleByOffset.token) && (sampleByTimezoneName == null || SqlKeywords.isUTC(sampleByTimezoneName.token)))
                             && (sampleByFillSize == 0 || (sampleByFillSize == 1 && !SqlKeywords.isPrevKeyword(sampleByFill.getQuick(0).token) && !SqlKeywords.isLinearKeyword(sampleByFill.getQuick(0).token)))
                             && sampleByUnit == null
-                            && (sampleByFrom == null || (sampleByFrom.type != BIND_VARIABLE))
+                            && (sampleByFrom == null || ((sampleByFrom.type != BIND_VARIABLE) && (sampleByFrom.type != FUNCTION) && (sampleByFrom.type != OPERATION)))
             ) {
                 // Validate that the model does not have wildcard column names.
                 // Using wildcard in group-by expression makes SQL ambiguous and
@@ -4585,31 +4599,30 @@ public class SqlOptimiser implements Mutable {
                     }
                 }
 
-                if (maybeKeyed.size() > 0 && sampleByFillSize > 0) {
+                if (maybeKeyed.size() > 0 && ((sampleByFrom != null || sampleByTo != null) || (sampleByFillSize > 0 && !isNoneKeyword(sampleByFill.getQuick(0).token)))) {
                     boolean isKeyed = false;
 
-                    if (!isNoneKeyword(sampleByFill.getQuick(0).token)) {
-                        final CharSequence tableName = nested.getTableName();
-                        for (int i = 0, n = maybeKeyed.size(); i < n; i++) {
-                            final ExpressionNode expr = maybeKeyed.getQuick(i);
-                            switch (expr.type) {
-                                case LITERAL:
-                                    if (!matchesWithOrWithoutTablePrefix(expr.token, tableName, timestamp.token)
-                                            && !matchesWithOrWithoutTablePrefix(expr.token, tableName, timestampAlias)) {
-                                        isKeyed = true;
-                                    }
-                                    break;
-                                case OPERATION:
+                    final CharSequence tableName = nested.getTableName();
+                    for (int i = 0, n = maybeKeyed.size(); i < n; i++) {
+                        final ExpressionNode expr = maybeKeyed.getQuick(i);
+                        switch (expr.type) {
+                            case LITERAL:
+                                if (!matchesWithOrWithoutTablePrefix(expr.token, tableName, timestamp.token)
+                                        && !matchesWithOrWithoutTablePrefix(expr.token, tableName, timestampAlias)) {
                                     isKeyed = true;
-                                    break;
-                                case FUNCTION:
-                                    if (!functionParser.getFunctionFactoryCache().isGroupBy(expr.token)) {
-                                        isKeyed = true;
-                                    }
-                                    break;
-                            }
+                                }
+                                break;
+                            case OPERATION:
+                                isKeyed = true;
+                                break;
+                            case FUNCTION:
+                                if (!functionParser.getFunctionFactoryCache().isGroupBy(expr.token)) {
+                                    isKeyed = true;
+                                }
+                                break;
                         }
                     }
+
 
                     if (isKeyed) {
                         // drop out early, since we don't handle keyed
@@ -4643,7 +4656,7 @@ public class SqlOptimiser implements Mutable {
                 for (int i = 0, k = 0, n = model.getBottomUpColumns().size(); i < n; k++) {
                     QueryColumn qc = model.getBottomUpColumns().getQuick(i);
                     boolean isAFunctionUsingTimestampColumn = (qc.getAst().type == FUNCTION || qc.getAst().type == OPERATION)
-                            && nonAggregateFunctionDependsOn(qc.getAst(), nested.getTimestamp().token);
+                            && nonAggregateFunctionDependsOn(qc.getAst(), nested.getTimestamp());
 
                     if (
                             isAFunctionUsingTimestampColumn ||
@@ -5368,7 +5381,7 @@ public class SqlOptimiser implements Mutable {
                 // this is not a direct call to aggregation function, in which case
                 // we emit aggregation function into group-by model and leave the rest in outer model
                 final int beforeSplit = groupByModel.getBottomUpColumns().size();
-                if (checkForAggregates(qc.getAst()) || (sampleBy != null && nonAggregateFunctionDependsOn(qc.getAst(), baseModel.getTimestamp().token))) {
+                if (checkForAggregates(qc.getAst()) || (sampleBy != null && nonAggregateFunctionDependsOn(qc.getAst(), baseModel.getTimestamp()))) {
                     // push aggregates and literals outside aggregate functions
                     emitAggregatesAndLiterals(qc.getAst(), groupByModel, translatingModel, innerVirtualModel, baseModel, groupByNodes, groupByAliases);
                     emitCursors(qc.getAst(), cursorModel, innerVirtualModel, translatingModel, baseModel, sqlExecutionContext, sqlParserCallback);
@@ -5554,14 +5567,13 @@ public class SqlOptimiser implements Mutable {
             limitSource = translatingModel;
             translatingModel.setNestedModel(baseModel);
 
-            // translating model has limits to ensure clean factory separation
+            // Translating model has limits to ensure clean factory separation
             // during code generation. However, in some cases limit could also
             // be implemented by nested model. Nested model must not implement limit
             // when parent model is order by or join.
-            // Only exception is when order by is by designated timestamp because it'll be implemented as forward or backward scan (no sorting required) .
-            if ((baseModel.getOrderBy().size() == 0 || isOrderedByDesignatedTimestamp(baseModel)) && !useDistinctModel) {
-                baseModel.setLimitAdvice(model.getLimitLo(), model.getLimitHi());
-            }
+            // The only exception is when order by is by designated timestamp because
+            // it'll be implemented as forward or backward scan (no sorting required).
+            pushDownLimitAdvice(model, baseModel, useDistinctModel);
 
             translatingModel.moveLimitFrom(model);
             translatingModel.moveJoinAliasFrom(model);
@@ -5572,6 +5584,10 @@ public class SqlOptimiser implements Mutable {
             innerVirtualModel.setNestedModel(root);
             innerVirtualModel.moveLimitFrom(limitSource);
             innerVirtualModel.moveJoinAliasFrom(limitSource);
+
+            // Set limit hint if applicable.
+            pushDownLimitAdvice(innerVirtualModel, root, useDistinctModel);
+
             root = innerVirtualModel;
             limitSource = innerVirtualModel;
         }
