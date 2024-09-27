@@ -1093,6 +1093,7 @@ pub fn get_selected_rows(page: &DataPage) -> VecDeque<Interval> {
 
 #[cfg(test)]
 mod tests {
+    use crate::allocator::QdbTestAllocator;
     use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
     use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
     use crate::parquet_read::decode::{INT_NULL, LONG_NULL, UUID_NULL};
@@ -1110,7 +1111,6 @@ mod tests {
     use std::path::Path;
     use std::ptr::null;
     use tempfile::NamedTempFile;
-    use crate::allocator::QdbTestAllocator;
 
     #[test]
     fn test_decode_int_column_v2_nulls() {

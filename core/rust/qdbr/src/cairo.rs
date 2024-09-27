@@ -94,7 +94,7 @@ impl CairoException {
         let backtrace: JValue = (&backtrace).into();
         let cairo_exc: JThrowable = env
             .call_static_method(
-                "io/questdb/std/CairoException",
+                "io/questdb/cairo/CairoException",
                 "paramInstance",
                 concat!(
                     "(",
@@ -102,7 +102,7 @@ impl CairoException {
                     "Z",                        // boolean outOfMemory
                     "Ljava/lang/CharSequence;", // CharSequence message
                     "Ljava/lang/CharSequence;", // CharSequence backtrace
-                    ")Lio/questdb/std/CairoException;"
+                    ")Lio/questdb/cairo/CairoException;"
                 ),
                 &[errno.into(), self.out_of_memory.into(), message, backtrace],
             )

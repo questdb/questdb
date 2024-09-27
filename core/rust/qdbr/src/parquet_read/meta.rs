@@ -174,6 +174,7 @@ mod tests {
     use std::path::Path;
     use std::ptr::null;
 
+    use crate::allocator::QdbTestAllocator;
     use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
     use crate::parquet_read::meta::ParquetDecoder;
     use crate::parquet_write::file::ParquetWriter;
@@ -181,7 +182,6 @@ mod tests {
     use arrow::datatypes::ToByteSlice;
     use bytes::Bytes;
     use tempfile::NamedTempFile;
-    use crate::allocator::QdbTestAllocator;
 
     #[test]
     fn test_decode_column_type_fixed() {

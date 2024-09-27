@@ -46,7 +46,6 @@ public class PartitionUpdater implements QuietCloseable {
     }
 
     public void of(
-            int memoryTag,
             @Transient LPSZ srcPath,
             long fileOpenOpts,
             long fileSize,
@@ -56,7 +55,7 @@ public class PartitionUpdater implements QuietCloseable {
             long rowGroupSize,
             long dataPageSize
     ) {
-        final long allocator = Unsafe.getTaggedWatermarkAllocator(memoryTag);
+        final long allocator = Unsafe.getTaggedWatermarkAllocator(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
         destroy();
         ptr = create(  // throws CairoException on error
                 allocator,
