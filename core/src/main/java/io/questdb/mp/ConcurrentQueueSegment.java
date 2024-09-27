@@ -241,10 +241,7 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
         if (!frozenForEnqueues) // flag used to ensure we don't increase the Tail more than once if frozen more than once
         {
             frozenForEnqueues = true;
-            long tail;
-            do {
-                tail = headAndTail.tail;
-            } while (!TAIL.compareAndSet(headAndTail, tail, tail + freezeOffset));
+            TAIL.addAndGet(headAndTail, freezeOffset);
         }
     }
 
