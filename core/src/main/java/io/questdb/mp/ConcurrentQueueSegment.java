@@ -63,7 +63,8 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
 
     /**
      * Initializes a new instance of the "ConcurrentQueueSegment" class.
-     * @param factory The factory to use to create new items.
+     *
+     * @param factory       The factory to use to create new items.
      * @param boundedLength The maximum number of elements the segment can contain. Must be a power of 2.
      */
     @SuppressWarnings("unchecked")
@@ -97,6 +98,7 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
 
     /**
      * Gets the capacity of the segment.
+     *
      * @return The capacity of the segment.
      */
     public int getCapacity() {
@@ -105,6 +107,7 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
 
     /**
      * Attempts to dequeue an element from the queue.
+     *
      * @param item The item holder to dequeue into.
      * @return true if an element was dequeued; otherwise, false.
      */
@@ -168,6 +171,7 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
 
     /**
      * Attempts to enqueue the item.
+     *
      * @param item The item to enqueue.
      * @return true if the item was enqueued; otherwise, false.
      */
