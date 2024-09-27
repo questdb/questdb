@@ -95,7 +95,11 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     @Override
-    public OperationFuture execute(SqlExecutionContext sqlExecutionContext, SCSequence eventSubSeq, boolean closeOnDone) throws SqlException {
+    public OperationFuture execute(
+            SqlExecutionContext sqlExecutionContext,
+            SCSequence eventSubSeq,
+            boolean closeOnDone
+    ) throws SqlException {
         switch (type) {
             case INSERT:
                 return insertOp.execute(sqlExecutionContext);

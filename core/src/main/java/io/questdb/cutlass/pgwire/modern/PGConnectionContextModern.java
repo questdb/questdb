@@ -42,6 +42,7 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.SCSequence;
 import io.questdb.network.*;
 import io.questdb.std.*;
 import io.questdb.std.str.*;
@@ -144,6 +145,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private boolean tlsSessionStarting = false;
     private long totalReceived = 0;
     private int transactionState = NO_TRANSACTION;
+    private final SCSequence tempSequence = new SCSequence();
 
     public PGConnectionContextModern(
             CairoEngine engine,
@@ -246,8 +248,9 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         this.recvBuffer = Unsafe.free(recvBuffer, recvBufferSize, MemoryTag.NATIVE_PGW_CONN);
         this.sendBuffer = this.sendBufferPtr = this.sendBufferLimit = Unsafe.free(sendBuffer, sendBufferSize, MemoryTag.NATIVE_PGW_CONN);
         responseUtf8Sink.bookmarkPtr = sendBufferPtr;
-        pipelineCurrentEntry = null;
-        pipeline.clear();
+        do {
+            pipelineCurrentEntry = Misc.free(pipelineCurrentEntry);
+        } while ((pipelineCurrentEntry = pipeline.poll()) != null);
         prepareForNewQuery();
         clearRecvBuffer();
         clearWriters();
@@ -833,7 +836,8 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                 this,
                 characterStore,
                 utf8String,
-                binarySequenceParamsPool
+                binarySequenceParamsPool,
+                tempSequence
         );
     }
 
@@ -1357,7 +1361,8 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
                     PGConnectionContextModern.this,
                     characterStore,
                     utf8String,
-                    binarySequenceParamsPool
+                    binarySequenceParamsPool,
+                    tempSequence
             );
             pipelineCurrentEntry.setStateExec(true);
         }

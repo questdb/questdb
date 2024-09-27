@@ -2509,9 +2509,8 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testCancelOneQueryOutOfMultipleRunningOnes() throws Exception {
-        assertMemoryLeak(() -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             ddl("create table if not exists tab as " +
                     "(select x::timestamp ts, x, rnd_double() d " +
                     "from long_sequence(1)) " +
@@ -2526,23 +2525,19 @@ if __name__ == "__main__":
             final long[] results = new long[THREADS];
             final CountDownLatch startLatch = new CountDownLatch(THREADS);
             final CountDownLatch endLatch = new CountDownLatch(THREADS);
+            final AtomicInteger errorCount = new AtomicInteger();
 
-            try (
-                    final IPGWireServer server = createPGServer(4, Long.MAX_VALUE, 6);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-
+            try {
                 for (int i = 0; i < THREADS; i++) {
-                    conns.add(getConnection(server.getPort(), false, true));
+                    conns.add(getConnection(mode, port, binary));
                 }
 
                 for (int i = 0; i < THREADS; i++) {
                     final int j = i;
                     new Thread(() -> {
                         final String query = (j == BLOCKED_THREAD) ?
-                                "select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000)" :
-                                "select count(*) from tab where sleep(1000)";
+                                "select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(12000)" :
+                                "select count(*) from tab where sleep(100)";
                         try (PreparedStatement stmt = conns.getQuick(j).prepareStatement(query)) {
                             startLatch.countDown();
                             startLatch.await();
@@ -2550,10 +2545,11 @@ if __name__ == "__main__":
                                 rs.next();
                                 results[j] = rs.getLong(1);
                             }
-                        } catch (SQLException e) {
-                            LOG.error().$(e).$();
-                        } catch (InterruptedException e) {
-                            throw new RuntimeException(e);
+                        } catch (Throwable e) {
+                            if (!Chars.containsLowerCase(e.getMessage(), "cancelled by user")) {
+                                LOG.error().$(e).$();
+                                errorCount.incrementAndGet();
+                            }
                         } finally {
                             endLatch.countDown();
                         }
@@ -2561,7 +2557,7 @@ if __name__ == "__main__":
                 }
 
                 while (endLatch.getCount() > 0) {
-                    Os.sleep(10);
+                    Os.sleep(1);
                     ((PgConnection) conns.getQuick(BLOCKED_THREAD)).cancelQuery();
                 }
 
@@ -2569,6 +2565,7 @@ if __name__ == "__main__":
                     Assert.assertEquals(i != BLOCKED_THREAD ? 1 : 0, results[i]);
                 }
 
+                Assert.assertEquals(0, errorCount.get());
             } finally {
                 for (int i = 0, n = conns.size(); i < n; i++) {
                     conns.getQuick(i).close();
@@ -3072,31 +3069,22 @@ if __name__ == "__main__":
     @Test
     public void testDiscardClearsTransactionFlag() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertMemoryLeak(() -> {
-            try (
-                    final IPGWireServer server = createPGServer(2, 60);
-                    WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-
-                try (final Connection connection = getConnection(Mode.SIMPLE, server.getPort(), false, -2)) {
-                    try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
-                            "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(0))")) {
-                        pstmt.execute();
-                    }
-                    connection.prepareStatement("insert into t values (1, 1)").execute();
-                    connection.prepareStatement("COMMIT").execute();
-                    connection.prepareStatement("DISCARD ALL").execute();
-
-                    try (final Connection conn2 = getConnection(Mode.SIMPLE, server.getPort(), false, -2)) {
-                        for (int i = 0; i < 100; i++) {
-                            conn2.prepareStatement("insert into t values (1, 1)").execute();
-                        }
-                    }
-                }
-                assertSql("count\n" +
-                        "101\n", "select count(*) from t");
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement pstmt = connection.prepareStatement("create table t as " +
+                    "(select cast(x + 1 as long) a, cast(x as timestamp) b from long_sequence(0))")) {
+                pstmt.execute();
             }
+            connection.prepareStatement("insert into t values (1, 1)").execute();
+            connection.prepareStatement("COMMIT").execute();
+            connection.prepareStatement("DISCARD ALL").execute();
+
+            try (final Connection conn2 = getConnection(Mode.SIMPLE, port, binary)) {
+                for (int i = 0; i < 100; i++) {
+                    conn2.prepareStatement("insert into t values (1, 1)").execute();
+                }
+            }
+            assertSql("count\n" +
+                    "101\n", "select count(*) from t");
         });
     }
 
@@ -3606,7 +3594,8 @@ if __name__ == "__main__":
 
     @Test
     public void testExtendedQueryTimeout() throws Exception {
-        assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY | CONN_AWARE_EXTENDED_PREPARED_TEXT, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary, mode, port) -> {
+        maxQueryTime = TIMEOUT_FAIL_ON_FIRST_CHECK;
+        assertWithPgServer(CONN_AWARE_ALL, (conn, binary, mode, port) -> {
             ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final PreparedStatement statement = conn.prepareStatement("select s, count(*) from t1 group by s ")) {
                 statement.execute();
@@ -3617,9 +3606,10 @@ if __name__ == "__main__":
         });
     }
 
-    @Test// fetch works only in extended query mode
+    @Test
     public void testFetch10RowsAtaTime() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_SIMPLE_BINARY & ~CONN_AWARE_SIMPLE_TEXT, (connection, binary, mode, port) -> {
+        // fetch works only in extended query mode
+        assertWithPgServer(CONN_AWARE_EXTENDED_ALL | CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
             try (PreparedStatement pstmt = connection.prepareStatement(
                     "create table xx as (" +
@@ -8093,38 +8083,27 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testQueryEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
-        // @Ignore("This test doesn't use tables.")
         Assume.assumeFalse(walEnabled);
-
-        assertMemoryLeak(() -> {
-            try (
-                    final IPGWireServer server = createPGServer(1, 100);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                int port = server.getPort();
-                try (Connection connection = getConnection(Mode.SIMPLE, port, false)) {
-                    AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
-                    TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
-
-                    try {
-                        String query = "select * from test_data_unavailable(1, 10)";
-                        String expected = "x[BIGINT],y[BIGINT],z[BIGINT]\n" +
-                                "1,1,1\n";
-                        try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
-                            sink.clear();
-                            assertResultSet(expected, sink, resultSet);
-                            Assert.fail();
-                        } catch (SQLException e) {
-                            TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
-                        }
-                    } finally {
-                        // Make sure to close the event on the producer side.
-                        Misc.free(eventRef.get());
-                    }
+        Assume.assumeFalse(legacyMode);
+        maxQueryTime = 100;
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+            TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
+            try {
+                String query = "select * from test_data_unavailable(1, 10)";
+                String expected = "x[BIGINT],y[BIGINT],z[BIGINT]\n" +
+                        "1,1,1\n";
+                try (ResultSet resultSet = connection.prepareStatement(query).executeQuery()) {
+                    sink.clear();
+                    assertResultSet(expected, sink, resultSet);
+                    Assert.fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
                 }
+            } finally {
+                // Make sure to close the event on the producer side.
+                Misc.free(eventRef.get());
             }
         });
     }
@@ -8284,24 +8263,33 @@ nodejs code:
     @Test
     public void testQueryTimeout() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertMemoryLeak(() -> {
-            ddl("create table tab as (select rnd_double() d, rnd_long() l, rnd_int() i from long_sequence(500000))");
-            try (
-                    final IPGWireServer server = createPGServer(1, 300);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                int port = server.getPort();
-                try (
-                        final Connection connection = getConnection(Mode.EXTENDED, port, true);
-                        final PreparedStatement statement = connection.prepareStatement("select * from tab order by d")
-                ) {
-                    try {
-                        statement.execute();
-                        Assert.fail();
-                    } catch (SQLException e) {
-                        TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
-                    }
+        Assume.assumeFalse(legacyMode);
+        maxQueryTime = 300;
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (final PreparedStatement statement = connection.prepareStatement("select sleep(120000)")) {
+                try {
+                    statement.execute();
+                    Assert.fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQueryTimeoutLegacy() throws Exception {
+        skipOnWalRun(); // non-partitioned table
+        maxQueryTime = 300;
+        Assume.assumeTrue(legacyMode);
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            ddl("create table tab as (select rnd_double() d from long_sequence(1000000))");
+            try (final PreparedStatement statement = connection.prepareStatement("select * from tab order by d")) {
+                try {
+                    statement.execute();
+                    Assert.fail();
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "timeout, query aborted");
                 }
             }
         });
@@ -8685,7 +8673,7 @@ nodejs code:
 
     @Test
     public void testRunQueryAfterCancellingPreviousInTheSameConnection() throws Exception {
-        assertMemoryLeak(() -> {
+        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             ddl("create table if not exists tab as " +
                     "(select x::timestamp ts, " +
                     "        x, " +
@@ -8693,24 +8681,12 @@ nodejs code:
                     " from long_sequence(10)) " +
                     "timestamp(ts) partition by day");
             mayDrainWalQueue();
+            executeAndCancelQuery((PgConnection) connection);
 
-            try (
-                    final IPGWireServer server = createPGServer(2);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-
-                // first connection
-                int port = server.getPort();
-                try (final PgConnection connection = (PgConnection) getConnection(Mode.EXTENDED, port, true)) {
-                    executeAndCancelQuery(connection);
-
-                    try (final PreparedStatement stmt = connection.prepareStatement("select count(*) from tab where x > 0")) {
-                        ResultSet result = stmt.executeQuery();
-                        sink.clear();
-                        assertResultSet("count[BIGINT]\n10\n", sink, result);
-                    }
-                }
+            try (final PreparedStatement stmt = connection.prepareStatement("select count(*) from tab where x > 0")) {
+                ResultSet result = stmt.executeQuery();
+                sink.clear();
+                assertResultSet("count[BIGINT]\n10\n", sink, result);
             }
         });
     }
@@ -8738,7 +8714,7 @@ nodejs code:
     public void testRustBindVariableHex() throws Exception {
         skipOnWalRun(); // non-partitioned table
         //hex for close message 43 00000009 53 535f31 00
-        String script = ">0000003600030000636c69656e745f656e636f64696e67005554463800757365720061646d696e006461746162617365007164620000\n" +
+        assertHexScript(">0000003600030000636c69656e745f656e636f64696e67005554463800757365720061646d696e006461746162617365007164620000\n" +
                 "<520000000800000003\n" +
                 ">700000000a717565737400\n" +
                 "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
@@ -8754,19 +8730,13 @@ nodejs code:
                 "<430000000b434f4d4d4954005a0000000549\n" +
                 ">4300000008537330005300000004\n" +
                 "<33000000045a0000000549\n" +
-                ">5800000004\n";
-
-        assertHexScript(
-                NetworkFacadeImpl.INSTANCE,
-                script,
-                new Port0PGWireConfiguration()
-        );
+                ">5800000004\n");
     }
 
     @Test
     public void testRustSelectHex() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        final String script = ">0000004300030000636c69656e745f656e636f64696e6700555446380074696d657a6f6e650055544300757365720061646d696e006461746162617365007164620000\n" +
+        assertHexScript(">0000004300030000636c69656e745f656e636f64696e6700555446380074696d657a6f6e650055544300757365720061646d696e006461746162617365007164620000\n" +
                 "<520000000800000003\n" +
                 ">700000000a717565737400\n" +
                 "<520000000800000000530000001154696d655a6f6e6500474d5400530000001d6170706c69636174696f6e5f6e616d6500517565737444420053000000187365727665725f76657273696f6e0031312e33005300000019696e74656765725f6461746574696d6573006f6e005300000019636c69656e745f656e636f64696e670055544638004b0000000c0000003fbb8b96505a0000000549\n" +
@@ -8806,12 +8776,7 @@ nodejs code:
                 "<430000000b434f4d4d4954005a0000000549\n" +
                 ">4300000008537331005300000004\n" +
                 "<33000000045a0000000549\n" +
-                ">5800000004\n";
-        assertHexScript(
-                NetworkFacadeImpl.INSTANCE,
-                script,
-                new Port0PGWireConfiguration()
-        );
+                ">5800000004\n");
     }
 
     @Test
@@ -9299,7 +9264,8 @@ create table tab as (
 
     @Test
     public void testSimpleCountQueryTimeout() throws Exception {
-        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary, mode, port) -> {
+        maxQueryTime = TIMEOUT_FAIL_ON_FIRST_CHECK;
+        assertWithPgServer(CONN_AWARE_ALL, (conn, binary, mode, port) -> {
             ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final Statement statement = conn.createStatement()) {
                 statement.execute("select count(*) from t1 where s = 's10'");
@@ -9312,7 +9278,8 @@ create table tab as (
 
     @Test
     public void testSimpleGroupByQueryTimeout() throws Exception {
-        assertWithPgServer(CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY, TIMEOUT_FAIL_ON_FIRST_CHECK, (conn, binary, mode, port) -> {
+        maxQueryTime = TIMEOUT_FAIL_ON_FIRST_CHECK;
+        assertWithPgServer(CONN_AWARE_ALL, (conn, binary, mode, port) -> {
             ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final Statement statement = conn.createStatement()) {
                 statement.execute("select s, count(*) from t1 group by s ");
@@ -9840,7 +9807,8 @@ create table tab as (
 
     @Test
     public void testSqlBatchTimeout() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary, mode, port) -> {
+        maxQueryTime = TIMEOUT_FAIL_ON_FIRST_CHECK;
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (final Statement statement = connection.createStatement()) {
                 statement.execute("create table tab (d double);" +
                         "select count(*) from tab;" +
@@ -10106,7 +10074,8 @@ create table tab as (
     @Test
     public void testTimeoutIsPerPreparedStatement() throws Exception {
         // what are we testing here? nothing is asserted
-        assertWithPgServer(CONN_AWARE_ALL, 1000, (conn, binary, mode, port) -> {
+        maxQueryTime = 1000;
+        assertWithPgServer(CONN_AWARE_ALL, (conn, binary, mode, port) -> {
             ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
             try (final PreparedStatement statement = conn.prepareStatement("insert into t1 select 's' || x from long_sequence(100)")) {
                 statement.execute();
@@ -11950,6 +11919,7 @@ create table tab as (
                 stmt.executeQuery();
                 Assert.fail("Exception is not thrown");
             } catch (PSQLException ex) {
+                ex.printStackTrace();
                 // expected
                 Assert.assertNotNull(ex);
             }

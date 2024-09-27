@@ -29,7 +29,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.pgwire.IPGWireServer;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
-import io.questdb.mp.WorkerPool;
 import io.questdb.network.SuspendEvent;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
@@ -367,41 +366,23 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCachedTextFormatPgStatementReturnsDataUsingBinaryFormatWhenClientRequestsIt() throws Exception {
-        assertMemoryLeak(() -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (
-                    IPGWireServer server = createPGServer(2);
-                    WorkerPool workerPool = server.getWorkerPool()
+                    Statement stmt = connection.createStatement()
             ) {
-                workerPool.start(LOG);
-                try (Connection connection = getConnection(EXTENDED_FOR_PREPARED, server.getPort(), false, 1);
-                     Statement stmt = connection.createStatement()) {
-                    connection.setAutoCommit(true);
+                connection.setAutoCommit(true);
 
-                    boolean hasResult = stmt.execute("CREATE TABLE mytable(l int, s text); INSERT INTO mytable VALUES(1, 'a');");
-                    assertResults(stmt, hasResult, zero(), one());
+                boolean hasResult = stmt.execute(
+                        "CREATE TABLE mytable(l int, s text); " +
+                                "INSERT INTO mytable VALUES(1, 'a');"
+                );
+                assertResults(stmt, hasResult, zero(), one());
 
-                    PreparedStatement pstmt = connection.prepareStatement("SELECT * FROM mytable");
+                ((PgConnection) connection).setForceBinary(true);//force binary transfer for int column
+
+                try (PreparedStatement pstmt = connection.prepareStatement("SELECT * FROM mytable")) {
                     hasResult = pstmt.execute();
                     assertResults(pstmt, hasResult, data(row(1L, "a")));
-                    pstmt.close();
-                }
-            }
-
-            try (
-                    IPGWireServer server = createPGServer(2);
-                    WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (Connection connection = getConnection(EXTENDED_FOR_PREPARED, server.getPort(), true, 1);
-                     Statement ignored = connection.createStatement()) {
-                    connection.setAutoCommit(true);
-
-                    ((PgConnection) connection).setForceBinary(true);//force binary transfer for int column
-
-                    PreparedStatement pstmt = connection.prepareStatement("SELECT * FROM mytable");
-                    boolean hasResult = pstmt.execute();
-                    assertResults(pstmt, hasResult, data(row(1L, "a")));
-                    pstmt.close();
                 }
             }
         });
@@ -409,7 +390,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCloseReturnsZeroResult() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
             boolean hasResult = statement.execute("CLOSE");
@@ -434,6 +415,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCloseThenSelectReturnsSelectResult() throws Exception {
+        // legacy code fails in quirks mode, include quirks when legacy is removed
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("CLOSE ALL; select 6");
@@ -446,7 +428,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCommitReturnsZeroResult() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
             boolean hasResult = statement.execute("COMMIT");
@@ -465,6 +447,7 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test
     public void testCommitThenSelectReturnsSelectResult() throws Exception {
+        // legacy code fails in quirks mode, include quirks when legacy is removed
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("COMMIT; select 3");
@@ -473,14 +456,32 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
-    @Ignore("create-as-select does not report the number of inserted rows")
-    public void testCreateAsSelectReturnsRightInsertCount() throws Exception {
+    public void testCreateAsSelectReturnsRightInsertCountLegacy() throws Exception {
+        Assume.assumeTrue(legacyMode);
+        assertWithPgServer(CONN_AWARE_SIMPLE_BINARY, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+
+            boolean hasResult = statement.execute(
+                    "CREATE TABLE test as (select x from long_sequence(3)); " +
+                            "SELECT * from test;");
+
+            assertResults(statement, hasResult,
+                    count(3),
+                    data(row("1"), row("2"), row("3")));
+        });
+    }
+
+    @Test
+    public void testCreateAsSelectReturnsRightInsertCountModern() throws Exception {
+        Assume.assumeFalse(legacyMode);
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
 
             boolean hasResult = statement.execute(
                     "CREATE TABLE test as (select x from long_sequence(3)); " +
                             "SELECT * from test;");
+
+            // modern code returns row count for "create as select", while legacy does not
             assertResults(statement, hasResult,
                     count(3),
                     data(row("1"), row("2"), row("3")));
@@ -1101,39 +1102,17 @@ public class PGMultiStatementMessageTest extends BasePGTest {
 
     @Test // test interleaved extended query execution they don't spill bind formats
     public void testDifferentExtendedQueriesExecutedInExtendedModeDoNotSpillFormats() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    IPGWireServer server = createPGServer(2);
-                    WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (Connection connection = getConnection(EXTENDED_FOR_PREPARED, server.getPort(), false, -1);
-                     Statement stmt = connection.createStatement()) {
-                    connection.setAutoCommit(true);
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement stmt = connection.createStatement()) {
+                connection.setAutoCommit(true);
 
-                    boolean hasResult = stmt.execute("CREATE TABLE mytable(l int, s text); INSERT INTO mytable VALUES(53, 'z');");
-                    assertResults(stmt, hasResult, zero(), one());
+                boolean hasResult = stmt.execute("CREATE TABLE mytable(l int, s text); INSERT INTO mytable VALUES(53, 'z');");
+                assertResults(stmt, hasResult, zero(), one());
 
-                    PreparedStatement pstmt = connection.prepareStatement("SELECT * FROM mytable");
-                    hasResult = pstmt.execute();
-                    assertResults(pstmt, hasResult, data(row(53L, "z")));
-                    pstmt.close();
-                }
-            }
-
-            try (
-                    IPGWireServer server = createPGServer(2);
-                    WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (Connection connection = getConnection(EXTENDED_FOR_PREPARED, server.getPort(), true, -1);
-                     Statement ignored = connection.createStatement()) {
-                    connection.setAutoCommit(true);
-
-                    PreparedStatement pstmt1 = connection.prepareStatement("SELECT l FROM mytable where 1=1");
-                    boolean hasResult = pstmt1.execute();
-                    assertResults(pstmt1, hasResult, data(row(53L)));
-                }
+                PreparedStatement pstmt = connection.prepareStatement("SELECT * FROM mytable");
+                hasResult = pstmt.execute();
+                assertResults(pstmt, hasResult, data(row(53L, "z")));
+                pstmt.close();
             }
         });
     }
@@ -1237,81 +1216,123 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
-    @Ignore
     public void testQueryEventuallySucceedsOnDataUnavailableEventNeverFired() throws Exception {
-        assertMemoryLeak(() -> {
-            try (PGTestSetup test = new PGTestSetup(true, 100)) {
-                AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
-                TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
+        maxQueryTime = 100;
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            AtomicReference<SuspendEvent> eventRef = new AtomicReference<>();
+            TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
 
-                try {
-                    test.statement.execute("select * from test_data_unavailable(1, 10); " +
-                            "select * from test_data_unavailable(1, 10);");
-                } catch (SQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
-                } finally {
-                    // Make sure to close the event on the producer side.
-                    Misc.free(eventRef.get());
-                }
+            try (Statement statement = connection.createStatement()) {
+                statement.execute(
+                        "select * from test_data_unavailable(1, 10); " +
+                                "select * from test_data_unavailable(1, 10);");
+            } catch (SQLException e) {
+                TestUtils.assertContains(e.getMessage(), "timeout, query aborted ");
+            } finally {
+                // Make sure to close the event on the producer side.
+                Misc.free(eventRef.get());
             }
         });
     }
 
     @Test
-    @Ignore
     public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredImmediately() throws Exception {
-        assertMemoryLeak(() -> {
-            try (PGTestSetup test = new PGTestSetup()) {
-                int totalRows = 3;
-                int backoffCount = 10;
+        Assume.assumeFalse(legacyMode);
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            int totalRows = 3;
+            int backoffCount = 10;
 
-                final AtomicInteger totalEvents = new AtomicInteger();
-                TestDataUnavailableFunctionFactory.eventCallback = event -> {
-                    event.trigger();
-                    event.close();
-                    totalEvents.incrementAndGet();
-                };
+            final AtomicInteger totalEvents = new AtomicInteger();
+            TestDataUnavailableFunctionFactory.eventCallback = event -> {
+                event.trigger();
+                event.close();
+                totalEvents.incrementAndGet();
+            };
 
-                Statement statement = test.statement;
-
-                boolean hasResult = statement.execute("select * from test_data_unavailable(" + totalRows + ", " + backoffCount + "); " +
-                        "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ");");
-                // TODO(puzpuzpuz): the second query get ignored here since batch statement execution doesn't
-                //  support proper pause/resume on insufficient buffer size or data in cold storage.
-                assertResults(statement, hasResult,
-                        data(row(1L, 1L, 1L), row(2L, 2L, 2L), row(3L, 3L, 3L))
+            try (Statement statement = connection.createStatement()) {
+                boolean hasResult = statement.execute(
+                        "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + "); " +
+                                "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ");"
                 );
+                assertResults(
+                        statement,
+                        hasResult,
+                        data(
+                                row(1L, 1L, 1L),
+                                row(2L, 2L, 2L),
+                                row(3L, 3L, 3L)
 
-                Assert.assertEquals(totalRows * backoffCount, totalEvents.get());
+                        ),
+                        data(
+                                row(1L, 1L, 1L),
+                                row(2L, 2L, 2L),
+                                row(3L, 3L, 3L)
+
+                        )
+                );
             }
+            Assert.assertEquals(2 * totalRows * backoffCount, totalEvents.get());
+        });
+    }
+
+    @Test
+    public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredImmediatelyLegacy() throws Exception {
+        Assume.assumeTrue(legacyMode);
+        assertWithPgServer(CONN_AWARE_EXTENDED_TEXT | CONN_AWARE_EXTENDED_BINARY | CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            int totalRows = 3;
+            int backoffCount = 10;
+
+            final AtomicInteger totalEvents = new AtomicInteger();
+            TestDataUnavailableFunctionFactory.eventCallback = event -> {
+                event.trigger();
+                event.close();
+                totalEvents.incrementAndGet();
+            };
+
+            try (Statement statement = connection.createStatement()) {
+                boolean hasResult = statement.execute(
+                        "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + "); " +
+                                "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ");"
+                );
+                assertResults(
+                        statement,
+                        hasResult,
+                        data(
+                                row(1L, 1L, 1L),
+                                row(2L, 2L, 2L),
+                                row(3L, 3L, 3L)
+
+                        ),
+                        data(
+                                row(1L, 1L, 1L),
+                                row(2L, 2L, 2L),
+                                row(3L, 3L, 3L)
+
+                        )
+                );
+            }
+            Assert.assertEquals(2 * totalRows * backoffCount, totalEvents.get());
         });
     }
 
     @Test // edge case - run the same query with binary protocol in extended mode and then the same in query block
     public void testQueryExecutedInBatchModeDoesNotUseCachedStatementBinaryFormat() throws Exception {
-        assertMemoryLeak(() -> {
-            try (
-                    IPGWireServer server = createPGServer(2);
-                    WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                try (Connection connection = getConnection(EXTENDED_FOR_PREPARED, server.getPort(), false, 1);
-                     Statement stmt = connection.createStatement()) {
-                    connection.setAutoCommit(true);
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement stmt = connection.createStatement()) {
+                connection.setAutoCommit(true);
 
-                    boolean hasResult = stmt.execute("CREATE TABLE mytable(l int, s text); INSERT INTO mytable VALUES(33, 'x');");
-                    assertResults(stmt, hasResult, zero(), one());
+                boolean hasResult = stmt.execute("CREATE TABLE mytable(l int, s text); INSERT INTO mytable VALUES(33, 'x');");
+                assertResults(stmt, hasResult, zero(), one());
 
-                    ((PgConnection) connection).setForceBinary(true);//force binary transfer for int column
+                ((PgConnection) connection).setForceBinary(true);//force binary transfer for int column
 
-                    PreparedStatement pstmt = connection.prepareStatement("SELECT * FROM mytable");
-                    hasResult = pstmt.execute();
-                    assertResults(pstmt, hasResult, data(row(33L, "x")));
-                    pstmt.close();
+                PreparedStatement pstmt = connection.prepareStatement("SELECT * FROM mytable");
+                hasResult = pstmt.execute();
+                assertResults(pstmt, hasResult, data(row(33L, "x")));
+                pstmt.close();
 
-                    hasResult = stmt.execute("SELECT * FROM mytable");
-                    assertResults(stmt, hasResult, data(row(33L, "x")));
-                }
+                hasResult = stmt.execute("SELECT * FROM mytable");
+                assertResults(stmt, hasResult, data(row(33L, "x")));
             }
         });
     }
@@ -1459,24 +1480,31 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("select 1;/* comment */");
-
             assertResults(statement, hasResult, data(row(1)));
         });
     }
 
     @Test
-    @Ignore("error: could not lock 'TEST', reason='busyReader'")
+    @Ignore
+    // execution order in modern code is incorrect, which stems from some SQL executed at parse time while
+    // others via a model
     public void testRunBlockWithCreateInsertSelectDropReturnsSelectResult() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+        Assume.assumeFalse(legacyMode);
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS & ~CONN_AWARE_SIMPLE_BINARY & ~CONN_AWARE_SIMPLE_TEXT, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
-
             boolean hasResult = statement.execute(
                     "CREATE TABLE TEST(l long, s string); " +
                             "INSERT INTO TEST VALUES (3, 'three'); " +
                             "SELECT * from TEST;" +
-                            "DROP TABLE TEST;");
-            assertResults(statement, hasResult, Result.ZERO, count(1),
-                    data(row(3L, "three")), Result.ZERO
+                            "DROP TABLE TEST;"
+            );
+            assertResults(
+                    statement,
+                    hasResult,
+                    Result.ZERO,
+                    count(1),
+                    data(row(3L, "three")),
+                    Result.ZERO
             );
         });
     }
@@ -1863,15 +1891,15 @@ public class PGMultiStatementMessageTest extends BasePGTest {
         final IPGWireServer server;
         final Statement statement;
 
-        PGTestSetup(boolean useSimpleMode, long queryTimeout) throws SQLException, SqlException {
-            server = createPGServer(2, queryTimeout);
+        PGTestSetup(boolean useSimpleMode) throws SQLException, SqlException {
+            server = createPGServer(2);
             server.getWorkerPool().start(LOG);
             connection = getConnection(server.getPort(), useSimpleMode, true);
             statement = connection.createStatement();
         }
 
         PGTestSetup() throws SQLException, SqlException {
-            this(true, Long.MAX_VALUE);
+            this(true);
         }
 
         @Override

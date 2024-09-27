@@ -279,17 +279,7 @@ public class PGSecurityTest extends BasePGTest {
         // because the out of thin air property would overwrite the user set by the client. Example:
         // 2022-05-17T15:58:38.973955Z I i.q.c.p.PGConnectionContext property [name=user, value=user] <-- client indicates username is "user"
         // 2022-05-17T15:58:38.974236Z I i.q.c.p.PGConnectionContext property [name=user, value=database] <-- buggy pgwire parser overwrites username with out of thin air value
-        assertMemoryLeak(() -> {
-            try (
-                    final IPGWireServer server = createPGServer(1);
-                    final WorkerPool workerPool = server.getWorkerPool()
-            ) {
-                workerPool.start(LOG);
-                // Postgres JDBC clients ignores unknown properties and does not send them to a server
-                // so have to use a property which actually exists
-                getConnectionWithCustomProperty(server.getPort(), PGProperty.OPTIONS.getName()).close();
-            }
-        });
+        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> getConnectionWithCustomProperty(port, PGProperty.OPTIONS.getName()).close());
     }
 
     @Test

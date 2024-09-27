@@ -96,6 +96,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
     protected CopyRequestJob copyRequestJob = null;
     protected int forceRecvFragmentationChunkSize = 1024 * 1024;
     protected int forceSendFragmentationChunkSize = 1024 * 1024;
+    protected long maxQueryTime = Long.MAX_VALUE;
     protected int recvBufferSize = 1024 * 1024;
     protected int sendBufferSize = 1024 * 1024;
 
@@ -364,8 +365,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
             Mode mode,
             boolean binary,
             PGJobContextTest.ConnectionAwareRunnable runnable,
-            int prepareThreshold,
-            long queryTimeout
+            int prepareThreshold
     ) throws Exception {
         LOG.info().$("asserting PG Wire server [mode=").$(mode)
                 .$(", binary=").$(binary)
@@ -375,7 +375,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
         try {
             assertMemoryLeak(() -> {
                 try (
-                        final IPGWireServer server = createPGServer(2, queryTimeout);
+                        final IPGWireServer server = createPGServer(2);
                         WorkerPool workerPool = server.getWorkerPool()
                 ) {
                     workerPool.start(LOG);
@@ -389,73 +389,72 @@ public abstract class BasePGTest extends AbstractCairoTest {
         }
     }
 
-    protected void assertWithPgServer(long bits, long queryTimeout, PGJobContextTest.ConnectionAwareRunnable runnable) throws Exception {
+    protected void assertWithPgServer(long bits, PGJobContextTest.ConnectionAwareRunnable runnable) throws Exception {
         if ((bits & BasePGTest.CONN_AWARE_SIMPLE_BINARY) == BasePGTest.CONN_AWARE_SIMPLE_BINARY) {
             LOG.info().$("Mode: asserting simple binary").$();
-            assertWithPgServer(Mode.SIMPLE, true, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.SIMPLE, true, runnable, -1, queryTimeout);
+            assertWithPgServer(Mode.SIMPLE, true, runnable, -2);
+            assertWithPgServer(Mode.SIMPLE, true, runnable, -1);
         }
 
         if ((bits & BasePGTest.CONN_AWARE_SIMPLE_TEXT) == BasePGTest.CONN_AWARE_SIMPLE_TEXT) {
             LOG.info().$("Mode: asserting simple text").$();
-            assertWithPgServer(Mode.SIMPLE, false, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.SIMPLE, false, runnable, -1, queryTimeout);
+            assertWithPgServer(Mode.SIMPLE, false, runnable, -2);
+            assertWithPgServer(Mode.SIMPLE, false, runnable, -1);
         }
 
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_BINARY) == BasePGTest.CONN_AWARE_EXTENDED_BINARY) {
             LOG.info().$("Mode: asserting extended binary").$();
-            assertWithPgServer(Mode.EXTENDED, true, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED, true, runnable, -2);
             if ((bits & CONN_AWARE_QUIRKS) == CONN_AWARE_QUIRKS) {
-                assertWithPgServer(Mode.EXTENDED, true, runnable, -1, queryTimeout);
+                assertWithPgServer(Mode.EXTENDED, true, runnable, -1);
             }
         }
 
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_TEXT) == BasePGTest.CONN_AWARE_EXTENDED_TEXT) {
             LOG.info().$("Mode: asserting extended text").$();
-            assertWithPgServer(Mode.EXTENDED, false, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED, false, runnable, -2);
             if ((bits & CONN_AWARE_QUIRKS) == CONN_AWARE_QUIRKS) {
-                assertWithPgServer(Mode.EXTENDED, false, runnable, -1, queryTimeout);
+                assertWithPgServer(Mode.EXTENDED, false, runnable, -1);
             }
         }
 
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_PREPARED_BINARY) == BasePGTest.CONN_AWARE_EXTENDED_PREPARED_BINARY) {
             LOG.info().$("Mode: asserting extended prepared binary").$();
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, true, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, true, runnable, -1, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, true, runnable, -2);
+            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, true, runnable, -1);
         }
 
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_PREPARED_TEXT) == BasePGTest.CONN_AWARE_EXTENDED_PREPARED_TEXT) {
             LOG.info().$("Mode: asserting extended prepared text").$();
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, runnable, -2, queryTimeout);
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, runnable, -1, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, runnable, -2);
+            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, runnable, -1);
         }
 
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_CACHED_BINARY) == BasePGTest.CONN_AWARE_EXTENDED_CACHED_BINARY) {
             LOG.info().$("Mode: asserting extended cached binary").$();
-            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, runnable, -2);
             if ((bits & CONN_AWARE_QUIRKS) == CONN_AWARE_QUIRKS) {
-                assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, runnable, -1, queryTimeout);
+                assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, runnable, -1);
             }
         }
 
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_CACHED_TEXT) == BasePGTest.CONN_AWARE_EXTENDED_CACHED_TEXT) {
             LOG.info().$("Mode: asserting extended cached text").$();
-            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, runnable, -2, queryTimeout);
+            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, runnable, -2);
             if ((bits & CONN_AWARE_QUIRKS) == CONN_AWARE_QUIRKS) {
-                assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, runnable, -1, queryTimeout);
+                assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, runnable, -1);
             }
         }
-    }
-
-    protected void assertWithPgServer(long bits, PGJobContextTest.ConnectionAwareRunnable runnable) throws Exception {
-        assertWithPgServer(bits, Long.MAX_VALUE, runnable);
     }
 
     protected IPGWireServer createPGServer(PGWireConfiguration configuration) throws SqlException {
         return createPGServer(configuration, false);
     }
 
-    protected IPGWireServer createPGServer(PGWireConfiguration configuration, boolean fixedClientIdAndSecret) throws SqlException {
+    protected IPGWireServer createPGServer(
+            PGWireConfiguration configuration,
+            boolean fixedClientIdAndSecret
+    ) throws SqlException {
         if (configuration.isLegacyModeEnabled() != legacyMode) {
             ((Port0PGWireConfiguration) configuration).isLegacyMode = legacyMode;
         }
@@ -474,14 +473,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
     }
 
     protected IPGWireServer createPGServer(int workerCount) throws SqlException {
-        return createPGServer(workerCount, Long.MAX_VALUE);
-    }
-
-    protected IPGWireServer createPGServer(int workerCount, long maxQueryTime) throws SqlException {
-        return createPGServer(workerCount, maxQueryTime, -1);
-    }
-
-    protected IPGWireServer createPGServer(int workerCount, long maxQueryTime, int connectionLimit) throws SqlException {
 
         final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             @Override
@@ -504,7 +495,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
             }
         };
 
-        final PGWireConfiguration conf = new Port0PGWireConfiguration(connectionLimit, legacyMode) {
+        final PGWireConfiguration conf = new Port0PGWireConfiguration(-1, legacyMode) {
 
             @Override
             public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
@@ -614,18 +605,8 @@ public abstract class BasePGTest extends AbstractCairoTest {
     }
 
     @NotNull
-    protected DefaultPGWireConfiguration getStdPgWireConfigAltCreds() {
+    protected DefaultPGWireConfiguration getStdPgWireConfig() {
         return new DefaultPGWireConfiguration() {
-            @Override
-            public String getDefaultPassword() {
-                return "oh";
-            }
-
-            @Override
-            public String getDefaultUsername() {
-                return "xyz";
-            }
-
             @Override
             public IODispatcherConfiguration getDispatcherConfiguration() {
                 return new DefaultIODispatcherConfiguration() {
@@ -649,8 +630,18 @@ public abstract class BasePGTest extends AbstractCairoTest {
     }
 
     @NotNull
-    protected DefaultPGWireConfiguration getStdPgWireConfig() {
+    protected DefaultPGWireConfiguration getStdPgWireConfigAltCreds() {
         return new DefaultPGWireConfiguration() {
+            @Override
+            public String getDefaultPassword() {
+                return "oh";
+            }
+
+            @Override
+            public String getDefaultUsername() {
+                return "xyz";
+            }
+
             @Override
             public IODispatcherConfiguration getDispatcherConfiguration() {
                 return new DefaultIODispatcherConfiguration() {

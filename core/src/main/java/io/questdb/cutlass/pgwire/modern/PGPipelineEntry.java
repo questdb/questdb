@@ -33,6 +33,7 @@ import io.questdb.cutlass.pgwire.BadProtocolException;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.cutlass.pgwire.PGResponseSink;
 import io.questdb.griffin.*;
+import io.questdb.mp.SCSequence;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.QueryPausedException;
 import io.questdb.std.*;
@@ -354,7 +355,8 @@ public class PGPipelineEntry implements QuietCloseable {
             WriterSource writerSource,
             CharacterStore characterStore,
             DirectUtf8String utf8String,
-            ObjectPool<DirectBinarySequence> binarySequenceParamsPool
+            ObjectPool<DirectBinarySequence> binarySequenceParamsPool,
+            SCSequence tempSequence
     ) throws BadProtocolException {
         // do not execute anything, that has been parse-executed
         if (stateParseExecuted) {
@@ -367,7 +369,7 @@ public class PGPipelineEntry implements QuietCloseable {
                 case CompiledQuery.EXPLAIN:
                 case CompiledQuery.SELECT:
                 case CompiledQuery.PSEUDO_SELECT:
-                    executeSelect(sqlExecutionContext, characterStore, utf8String, binarySequenceParamsPool);
+                    msgExecuteSelect(sqlExecutionContext, characterStore, utf8String, binarySequenceParamsPool);
                     break;
                 case CompiledQuery.INSERT:
                     executeInsert(
@@ -385,7 +387,14 @@ public class PGPipelineEntry implements QuietCloseable {
                 case CompiledQuery.ALTER_USER:
                 case CompiledQuery.CREATE_USER:
                 case CompiledQuery.UPDATE:
-                    executeCompiledQuery(sqlExecutionContext, transactionState, characterStore, utf8String, binarySequenceParamsPool);
+                    msgExecuteDDL(
+                            sqlExecutionContext,
+                            transactionState,
+                            characterStore,
+                            utf8String,
+                            binarySequenceParamsPool,
+                            tempSequence
+                    );
                     break;
                 case CompiledQuery.DEALLOCATE:
                     // this is supposed to work instead of sending 'close' message via the
@@ -527,11 +536,11 @@ public class PGPipelineEntry implements QuietCloseable {
                                     stateSync = 6;
                                     break;
                                 }
-                                case CompiledQuery.UPDATE: {
+                                case CompiledQuery.UPDATE:
+                                case CompiledQuery.CREATE_TABLE_AS_SELECT:
                                     outCommandComplete(utf8Sink, sqlAffectedRowCount);
                                     stateSync = 6;
                                     break;
-                                }
                                 default:
                                     // create table is just "OK"
                                     utf8Sink.put(MESSAGE_TYPE_COMMAND_COMPLETE);
@@ -939,12 +948,13 @@ public class PGPipelineEntry implements QuietCloseable {
                 .put(']');
     }
 
-    private void executeCompiledQuery(
+    private void msgExecuteDDL(
             SqlExecutionContext sqlExecutionContext,
             int transactionState,
             CharacterStore characterStore,
             DirectUtf8String utf8String,
-            ObjectPool<DirectBinarySequence> binarySequenceParamsPool
+            ObjectPool<DirectBinarySequence> binarySequenceParamsPool,
+            SCSequence tempSequence
     ) throws SqlException, BadProtocolException {
         if (transactionState != ERROR_TRANSACTION) {
             copyParameterValuesToBindVariableService(
@@ -954,7 +964,7 @@ public class PGPipelineEntry implements QuietCloseable {
                     binarySequenceParamsPool
             );
             // execute against writer from the engine, synchronously (null sequence)
-            try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, null, true)) {
+            try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, true)) {
                 // this doesn't actually wait, because the call is synchronous
                 fut.await();
                 sqlAffectedRowCount = fut.getAffectedRowsCount();
@@ -1017,7 +1027,7 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
-    private void executeSelect(
+    private void msgExecuteSelect(
             SqlExecutionContext sqlExecutionContext,
             CharacterStore characterStore,
             DirectUtf8String utf8String,
@@ -1894,6 +1904,7 @@ public class PGPipelineEntry implements QuietCloseable {
                 break;
             case CompiledQuery.UPDATE:
                 // copy contents of the mutable CompiledQuery into our cache
+                System.out.println("CLONING ["+Thread.currentThread().getId() + "] "+cq.getUpdateOperation());
                 compiledQuery.ofUpdate(cq.getUpdateOperation());
                 compiledQuery.withSqlText(cq.getSqlText());
                 sqlTag = TAG_UPDATE;
