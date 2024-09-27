@@ -71,6 +71,7 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
 
     /**
      * Initializes a new instance of the ConcurrentQueue class with default initial capacity.
+     *
      * @param factory The factory to use to create new items.
      */
     public ConcurrentQueue(ObjectFactory<T> factory) {
@@ -80,6 +81,7 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
 
     /**
      * Initializes a new instance of the ConcurrentQueue class with the specified initial capacity.
+     *
      * @param factory The factory to use to create new items.
      * @param size The initial capacity of the queue, must be a power of 2.
      */
@@ -91,6 +93,7 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
 
     /**
      * Gets the number of items in the last segment of the queue. Useful for debugging.
+     *
      * @return The largest segment size of the queue.
      */
     public int capacity() {
@@ -99,6 +102,7 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
 
     /**
      * Gets the number of items in the queue.
+     *
      * @param item The object to add to the end of the "ConcurrentQueue".
      */
     public void enqueue(T item) {
