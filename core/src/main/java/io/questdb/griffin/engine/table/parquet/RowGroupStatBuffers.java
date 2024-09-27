@@ -32,15 +32,33 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 
 public class RowGroupStatBuffers implements QuietCloseable, Reopenable {
-    private static final long CHUNK_STATS_PTR_OFFSET;
     private static final long CHUNK_STATS_MIN_VALUE_PTR_OFFSET;
     private static final long CHUNK_STATS_MIN_VALUE_SIZE_OFFSET;
+    private static final long CHUNK_STATS_PTR_OFFSET;
     private static final long CHUNK_STATS_STRUCT_SIZE;
     private static final Log LOG = LogFactory.getLog(RowGroupStatBuffers.class);
+    private final int memoryTag;
     private long ptr;
 
-    public RowGroupStatBuffers() {
-        this.ptr = create();
+    public RowGroupStatBuffers(int memoryTag) {
+        this.ptr = create(Unsafe.getTaggedWatermarkAllocator(memoryTag));
+        this.memoryTag = memoryTag;
+    }
+
+    @Override
+    public void close() {
+        if (ptr != 0) {
+            destroy(ptr);
+            ptr = 0;
+        }
+    }
+
+    public long getMinValueLong(int columnIndex) {
+        final long size = getMinValueSize(columnIndex);
+        assert size == Long.BYTES;
+        final long ptr = getMinValuePtr(columnIndex);
+        assert ptr != 0;
+        return Unsafe.getUnsafe().getLong(ptr);
     }
 
     public long getMinValuePtr(int columnIndex) {
@@ -53,22 +71,6 @@ public class RowGroupStatBuffers implements QuietCloseable, Reopenable {
         return Unsafe.getUnsafe().getLong(statBuffersPtr + columnIndex * CHUNK_STATS_STRUCT_SIZE + CHUNK_STATS_MIN_VALUE_SIZE_OFFSET);
     }
 
-    public long getMinValueLong(int columnIndex) {
-        final long size = getMinValueSize(columnIndex);
-        assert size == Long.BYTES;
-        final long ptr = getMinValuePtr(columnIndex);
-        assert ptr != 0;
-        return Unsafe.getUnsafe().getLong(ptr);
-    }
-
-    @Override
-    public void close() {
-        if (ptr != 0) {
-            destroy(ptr);
-            ptr = 0;
-        }
-    }
-
     public long ptr() {
         return ptr;
     }
@@ -76,21 +78,21 @@ public class RowGroupStatBuffers implements QuietCloseable, Reopenable {
     @Override
     public void reopen() {
         if (ptr == 0) {
-            ptr = create();
+            ptr = create(Unsafe.getTaggedWatermarkAllocator(memoryTag));
         }
     }
-
-    private static native long minValuePtrOffset();
-
-    private static native long minValueSizeOffset();
 
     private static native long buffersPtrOffset();
 
     private static native long buffersSize();
 
-    private static native long create();
+    private static native long create(long allocator);
 
     private static native void destroy(long impl);
+
+    private static native long minValuePtrOffset();
+
+    private static native long minValueSizeOffset();
 
     static {
         Os.init();

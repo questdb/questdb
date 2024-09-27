@@ -215,8 +215,10 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuffers_create(
     _env: JNIEnv,
     _class: JClass,
+    allocator: *const QdbAllocator,
 ) -> *mut RowGroupBuffers {
-    Box::into_raw(Box::new(RowGroupBuffers::new()))
+    let allocator = unsafe { *allocator };
+    Box::into_raw(Box::new(RowGroupBuffers::new(allocator)))
 }
 
 #[no_mangle]
@@ -287,8 +289,10 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_create(
     _env: JNIEnv,
     _class: JClass,
+    allocator: *const QdbAllocator,
 ) -> *mut RowGroupStatBuffers {
-    Box::into_raw(Box::new(RowGroupStatBuffers::new()))
+    let allocator = unsafe { *allocator };
+    Box::into_raw(Box::new(RowGroupStatBuffers::new(allocator)))
 }
 
 #[no_mangle]

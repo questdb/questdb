@@ -34,48 +34,53 @@ use parquet2::write::Version;
 use std::collections::VecDeque;
 use std::io::{Read, Seek};
 use std::ptr;
+use crate::allocator::{AcVec, QdbAllocator};
 
 impl RowGroupBuffers {
-    pub fn new() -> Self {
+    pub fn new(allocator: QdbAllocator) -> Self {
         Self {
             column_bufs_ptr: ptr::null_mut(),
-            column_bufs: Vec::new(),
+            column_bufs: AcVec::new_in(allocator),
         }
     }
 
-    pub fn ensure_n_columns(&mut self, required_cols: usize) {
+    pub fn ensure_n_columns(&mut self, required_cols: usize) -> ParquetResult<()> {
         if self.column_bufs.len() < required_cols {
+            let allocator = *self.column_bufs.allocator();
             self.column_bufs
-                .resize_with(required_cols, ColumnChunkBuffers::new);
+                .resize_with(required_cols, || ColumnChunkBuffers::new(allocator))?;
             self.column_bufs_ptr = self.column_bufs.as_mut_ptr();
         }
+        Ok(())
     }
 }
 
 impl RowGroupStatBuffers {
-    pub fn new() -> Self {
+    pub fn new(allocator: QdbAllocator) -> Self {
         Self {
             column_chunk_stats_ptr: ptr::null_mut(),
-            column_chunk_stats: Vec::new(),
+            column_chunk_stats: AcVec::new_in(allocator),
         }
     }
 
-    pub fn ensure_n_columns(&mut self, required_cols: usize) {
+    pub fn ensure_n_columns(&mut self, required_cols: usize) -> ParquetResult<()> {
         if self.column_chunk_stats.len() < required_cols {
+            let allocator = *self.column_chunk_stats.allocator();
             self.column_chunk_stats
-                .resize_with(required_cols, ColumnChunkStats::new);
+                .resize_with(required_cols, || ColumnChunkStats::new(allocator))?;
             self.column_chunk_stats_ptr = self.column_chunk_stats.as_mut_ptr();
         }
+        Ok(())
     }
 }
 
 impl ColumnChunkBuffers {
-    pub fn new() -> Self {
+    pub fn new(allocator: QdbAllocator) -> Self {
         Self {
-            data_vec: Vec::new(),
+            data_vec: AcVec::new_in(allocator),
             data_ptr: ptr::null_mut(),
             data_size: 0,
-            aux_vec: Vec::new(),
+            aux_vec: AcVec::new_in(allocator),
             aux_ptr: ptr::null_mut(),
             aux_size: 0,
         }
@@ -91,11 +96,11 @@ impl ColumnChunkBuffers {
 }
 
 impl ColumnChunkStats {
-    pub fn new() -> Self {
+    pub fn new(allocator: QdbAllocator) -> Self {
         Self {
             min_value_ptr: ptr::null_mut(),
             min_value_size: 0,
-            min_value: Vec::new(),
+            min_value: AcVec::new_in(allocator),
         }
     }
 }
@@ -131,7 +136,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             ));
         }
 
-        row_group_bufs.ensure_n_columns(columns.len());
+        row_group_bufs.ensure_n_columns(columns.len())?;
 
         let mut row_group_size = 0usize;
         for (dest_col_idx, &(column_idx, to_column_type)) in columns.iter().enumerate() {
@@ -266,7 +271,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             ));
         }
 
-        row_group_stat_buffers.ensure_n_columns(columns.len());
+        row_group_stat_buffers.ensure_n_columns(columns.len())?;
         let row_group_index = row_group_index as usize;
         for (dest_col_idx, &(column_idx, to_column_type)) in columns.iter().enumerate() {
             let column_idx = column_idx as usize;
@@ -291,7 +296,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             if let Some(meta_data) = &column_chunk.meta_data {
                 if let Some(statistics) = &meta_data.statistics {
                     if let Some(min) = statistics.min_value.as_ref() {
-                        stats.min_value.extend_from_slice(min);
+                        stats.min_value.extend_from_slice(min)?;
                     }
                 }
             }
@@ -1031,7 +1036,7 @@ fn decode_page<T: Pushable>(
     row_count: usize,
     sink: &mut T,
 ) -> ParquetResult<()> {
-    sink.reserve();
+    sink.reserve()?;
     let iter = decode_null_bitmap(version, page, row_count)?;
     if let Some(iter) = iter {
         for run in iter {
@@ -1042,17 +1047,17 @@ fn decode_page<T: Pushable>(
                     let iter = BitmapIter::new(values, offset, length);
                     for item in iter {
                         if item {
-                            sink.push();
+                            sink.push()?;
                         } else {
-                            sink.push_null();
+                            sink.push_null()?;
                         }
                     }
                 }
                 FilteredHybridEncoded::Repeated { is_set, length } => {
                     if is_set {
-                        sink.push_slice(length);
+                        sink.push_slice(length)?;
                     } else {
-                        sink.push_nulls(length);
+                        sink.push_nulls(length)?;
                     }
                 }
                 FilteredHybridEncoded::Skipped(valids) => {
@@ -1061,7 +1066,7 @@ fn decode_page<T: Pushable>(
             };
         }
     } else {
-        sink.push_slice(row_count);
+        sink.push_slice(row_count)?;
     }
     sink.result()
 }

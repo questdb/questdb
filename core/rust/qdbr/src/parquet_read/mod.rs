@@ -1,4 +1,4 @@
-use crate::allocator::QdbAllocator;
+use crate::allocator::{AcVec, QdbAllocator};
 use crate::parquet::col_type::ColumnType;
 use crate::parquet::qdb_metadata::QdbMeta;
 use parquet2::metadata::FileMetaData;
@@ -44,13 +44,13 @@ pub struct ColumnMeta {
 #[repr(C)]
 pub struct RowGroupBuffers {
     column_bufs_ptr: *const ColumnChunkBuffers,
-    column_bufs: Vec<ColumnChunkBuffers>,
+    column_bufs: AcVec<ColumnChunkBuffers>,
 }
 
 #[repr(C)]
 pub struct RowGroupStatBuffers {
     column_chunk_stats_ptr: *const ColumnChunkStats,
-    column_chunk_stats: Vec<ColumnChunkStats>,
+    column_chunk_stats: AcVec<ColumnChunkStats>,
 }
 
 /// QuestDB-format Column Data
@@ -63,18 +63,18 @@ pub struct RowGroupStatBuffers {
 pub struct ColumnChunkBuffers {
     pub data_size: usize,
     pub data_ptr: *mut u8,
-    pub data_vec: Vec<u8>,
+    pub data_vec: AcVec<u8>,
 
     pub aux_size: usize,
     pub aux_ptr: *mut u8,
-    pub aux_vec: Vec<u8>,
+    pub aux_vec: AcVec<u8>,
 }
 
 #[repr(C)]
 pub struct ColumnChunkStats {
     pub min_value_ptr: *mut u8,
     pub min_value_size: usize,
-    pub min_value: Vec<u8>,
+    pub min_value: AcVec<u8>,
 }
 
 #[cfg(test)]

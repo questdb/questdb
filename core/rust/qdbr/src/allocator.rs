@@ -210,3 +210,5 @@ pub type QdbAllocator = TaggedWatermarkAllocator;
 #[allow(dead_code)] // TODO(amunra): remove once in use
 #[cfg(test)]
 pub type QdbAllocator = QdbTestAllocator;
+
+pub type AcVec<T> = alloc_checked::vec::Vec<T, QdbAllocator>;
