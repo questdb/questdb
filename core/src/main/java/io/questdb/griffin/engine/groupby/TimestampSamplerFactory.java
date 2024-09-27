@@ -32,15 +32,7 @@ import org.jetbrains.annotations.NotNull;
 
 public final class TimestampSamplerFactory {
 
-    /**
-     * Parses strings such as '10m', '3M', '5d', '12h', 'y', '35s'
-     *
-     * @param cs       the key
-     * @param position position in SQL text to report error against
-     * @return instance of appropriate TimestampSampler
-     * @throws SqlException when input string is invalid
-     */
-    public static TimestampSampler getInstance(CharSequence cs, int position) throws SqlException {
+    public static int findIntervalEndIndex(CharSequence cs, int position) throws SqlException {
         int k = -1;
 
         if (cs == null) {
@@ -67,37 +59,19 @@ public final class TimestampSamplerFactory {
             throw SqlException.$(position + k, "expected single letter qualifier");
         }
 
-        try {
-            final int n;
-            if (k == 0) {
-                n = 1;
-            } else {
-                n = Numbers.parseInt(cs, 0, k);
-                if (n == 0) {
-                    throw SqlException.$(position, "zero is not a valid sample value");
-                }
-            }
-
-            return createTimestampSampler(n, cs.charAt(k), position + k);
-        } catch (NumericException ignore) {
-            // we are parsing a pre-validated number
-            // but we have to deal with checked exception anyway
-            assert false;
-        }
-
-        throw SqlException.$(position + k, "unsupported interval qualifier");
+        return k;
     }
 
     public static TimestampSampler getInstance(long period, CharSequence units, int position) throws SqlException {
         if (units.length() == 1) {
-            return createTimestampSampler(period, units.charAt(0), position);
+            return getInstance(period, units.charAt(0), position);
         }
         // Just in case SqlParser will allow this in the future
         throw SqlException.$(position, "expected one character interval qualifier");
     }
 
     @NotNull
-    private static TimestampSampler createTimestampSampler(long interval, char timeUnit, int position) throws SqlException {
+    public static TimestampSampler getInstance(long interval, char timeUnit, int position) throws SqlException {
         switch (timeUnit) {
             case 'U':
                 // micros
@@ -130,5 +104,40 @@ public final class TimestampSamplerFactory {
                 throw SqlException.$(position, "unsupported interval qualifier");
 
         }
+    }
+
+    /**
+     * Parses strings such as '10m', '3M', '5d', '12h', 'y', '35s'
+     *
+     * @param cs       the key
+     * @param position position in SQL text to report error against
+     * @return instance of appropriate TimestampSampler
+     * @throws SqlException when input string is invalid
+     */
+    public static TimestampSampler getInstance(CharSequence cs, int position) throws SqlException {
+        int k = findIntervalEndIndex(cs, position);
+        assert cs.length() > k;
+
+        long n = parseInterval(cs, k, position);
+        return getInstance(n, cs.charAt(k), position + k);
+    }
+
+    public static long parseInterval(CharSequence cs, int intervalEnd, int position) throws SqlException {
+        final int n;
+        if (intervalEnd == 0) {
+            n = 1;
+        } else {
+            try {
+                n = Numbers.parseInt(cs, 0, intervalEnd);
+                if (n == 0) {
+                    throw SqlException.$(position, "zero is not a valid sample value");
+                }
+            } catch (NumericException e) {
+                // we are parsing a pre-validated number
+                // but we have to deal with checked exception anyway
+                throw new AssertionError("bug in interval parser. please report. [cs=" + cs + ", interval-end=" + intervalEnd + "]", e);
+            }
+        }
+        return n;
     }
 }

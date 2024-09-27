@@ -1775,12 +1775,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             int timestampIndex = groupByFactory.getMetadata().getColumnIndexQuiet(alias);
 
+            int samplingIntervalEnd = TimestampSamplerFactory.findIntervalEndIndex(fillStride.token, fillStride.position);
+            long samplingInterval = TimestampSamplerFactory.parseInterval(fillStride.token, samplingIntervalEnd, fillStride.position);
+            assert samplingInterval > 0;
+            assert samplingIntervalEnd < fillStride.token.length();
+            char samplingIntervalUnit = fillStride.token.charAt(samplingIntervalEnd);
+
             return new FillRangeRecordCursorFactory(
                     groupByFactory.getMetadata(),
                     groupByFactory,
                     fillFromFunc,
                     fillToFunc,
-                    fillStride.token,
+                    samplingInterval,
+                    samplingIntervalUnit,
                     fillValues,
                     timestampIndex
             );

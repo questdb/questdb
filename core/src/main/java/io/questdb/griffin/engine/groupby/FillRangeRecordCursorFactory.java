@@ -56,7 +56,8 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
     private final FillRangeRecordCursor cursor = new FillRangeRecordCursor();
     private final Function fromFunc;
     private final RecordMetadata metadata;
-    private final CharSequence stride;
+    private final long samplingInterval;
+    private final char samplingIntervalUnit;
     private final int timestampIndex;
     private final Function toFunc;
     private final ObjList<Function> valueFuncs;
@@ -66,7 +67,8 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             RecordCursorFactory base,
             Function fromFunc,
             Function toFunc,
-            CharSequence stride,
+            long samplingInterval,
+            char samplingIntervalUnit,
             ObjList<Function> fillValues,
             int timestampIndex
     ) {
@@ -74,7 +76,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         this.base = base;
         this.fromFunc = fromFunc;
         this.toFunc = toFunc;
-        this.stride = stride;
+
+        this.samplingInterval = samplingInterval;
+        this.samplingIntervalUnit = samplingIntervalUnit;
         this.timestampIndex = timestampIndex;
         this.valueFuncs = fillValues;
         this.metadata = metadata;
@@ -101,7 +105,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
 
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
-            cursor.of(baseCursor, fromFunc, toFunc, stride, valueFuncs, timestampIndex, executionContext);
+            cursor.of(baseCursor, fromFunc, toFunc, samplingInterval, samplingIntervalUnit, valueFuncs, timestampIndex, executionContext);
             return cursor;
         } catch (Throwable th) {
             cursor.close();
@@ -125,7 +129,9 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         if (fromFunc != TimestampConstant.NULL || toFunc != TimestampConstant.NULL) {
             sink.attr("range").val('(').val(fromFunc).val(',').val(toFunc).val(')');
         }
-        sink.attr("stride").val('\'').val(stride).val('\'');
+        // todo: this might be incorrect, since I dunno if concatenation of a long and char works as expected
+        // to be tested
+        sink.attr("stride").val('\'').val(samplingInterval).val(samplingIntervalUnit).val('\'');
 
         // print values omitting the timestamp column
         // since we added an extra artificial null
@@ -298,7 +304,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             rangeBound = RANGE_UNBOUNDED;
         }
 
-        private void initTimestamps(Function fromFunc, Function toFunc, CharSequence stride) throws SqlException {
+        private void initTimestamps(Function fromFunc, Function toFunc, long samplingInterval, char samplingIntervalUnit) throws SqlException {
             if (fromFunc != TimestampConstant.NULL) {
                 fromTimestamp = fromFunc.getTimestamp(null);
             }
@@ -307,7 +313,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 toTimestamp = toFunc.getTimestamp(null);
             }
 
-            timestampSampler = TimestampSamplerFactory.getInstance(stride, 0);
+            timestampSampler = TimestampSamplerFactory.getInstance(samplingInterval, samplingIntervalUnit, 0);
             timestampSampler.setStart(fromTimestamp);
 
             nextBucketTimestamp = fromTimestamp;
@@ -351,7 +357,8 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 RecordCursor baseCursor,
                 @NotNull Function fromFunc,
                 @NotNull Function toFunc,
-                CharSequence stride,
+                long samplingInterval,
+                char samplingIntervalUnit,
                 ObjList<Function> valueFuncs,
                 int timestampIndex,
                 SqlExecutionContext executionContext
@@ -362,7 +369,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             Function.initNcFunctions(valueFuncs, baseCursor, executionContext);
             fromFunc.init(baseCursor, executionContext);
             toFunc.init(baseCursor, executionContext);
-            initTimestamps(fromFunc, toFunc, stride);
+            initTimestamps(fromFunc, toFunc, samplingInterval, samplingIntervalUnit);
             if (presentRecords == null) {
                 presentRecords = new BitSet(toFunc != TimestampConstant.NULL ? timestampSampler.bucketIndex(toTimestamp) : DEFAULT_BITSET_SIZE);
             }
