@@ -63,7 +63,6 @@ public class IntervalUtilsTest {
         int intervalB = 0;
 
         while (intervalA != sizeA && intervalB != sizeB) {
-
             long aLo = getIntervalLo(a, intervalA);
             long aHi = getIntervalHi(a, intervalA);
 
@@ -79,7 +78,6 @@ public class IntervalUtilsTest {
                 // b loses
                 intervalB++;
             } else {
-
                 append(out, Math.max(aLo, bLo), Math.min(aHi, bHi));
 
                 if (aHi < bHi) {

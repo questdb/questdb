@@ -80,13 +80,6 @@ public class IntrinsicModel implements Mutable {
         intrinsicValue = FALSE;
     }
 
-    public void intersectEquals(Function function) {
-        runtimeIntervalBuilder.intersectEquals(function);
-        if (runtimeIntervalBuilder.isEmptySet()) {
-            intrinsicValue = FALSE;
-        }
-    }
-
     public void intersectIntervals(long lo, long hi) {
         runtimeIntervalBuilder.intersect(lo, hi);
     }
@@ -114,6 +107,13 @@ public class IntrinsicModel implements Mutable {
 
     public void intersectRuntimeIntervals(Function intervalFunction) {
         runtimeIntervalBuilder.intersectRuntimeIntervals(intervalFunction);
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
+    }
+
+    public void intersectRuntimeTimestamp(Function function) {
+        runtimeIntervalBuilder.intersectRuntimeTimestamp(function);
         if (runtimeIntervalBuilder.isEmptySet()) {
             intrinsicValue = FALSE;
         }

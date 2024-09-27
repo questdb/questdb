@@ -1066,7 +1066,7 @@ public final class WhereClauseParser implements Mutable {
                                     removeNodes(b, keyNodes);
                                     node.intrinsicValue = IntrinsicModel.TRUE;
 
-                                    //in set is empty
+                                    // in set is empty
                                     if (tempKeyValues.size() == 0) {
                                         model.intrinsicValue = IntrinsicModel.FALSE;
                                     }
@@ -1291,7 +1291,7 @@ public final class WhereClauseParser implements Mutable {
             Misc.free(func);
             return true;
         } else if (func.isRuntimeConstant()) {
-            model.intersectEquals(func);
+            model.intersectRuntimeTimestamp(func);
             node.intrinsicValue = IntrinsicModel.TRUE;
             return true;
         }
