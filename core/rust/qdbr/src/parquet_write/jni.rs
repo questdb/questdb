@@ -19,6 +19,8 @@ use parquet2::write::Version;
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_create(
     mut env: JNIEnv,
     _class: JClass,
+    src_path_len: u32,
+    src_path_ptr: *const u8,
     raw_fd: i32,
     file_size: u64,
     timestamp_index: jint,
@@ -65,9 +67,15 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     match create() {
         Ok(updater) => Box::into_raw(Box::new(updater)),
         Err(mut err) => {
+            let src_path = unsafe { slice::from_raw_parts(src_path_ptr, src_path_len as usize) };
+            let src_path = std::str::from_utf8(src_path).unwrap_or("!!invalid path utf8!!");
+            err.add_context(format!(
+                "could not open parquet file for update from path {}",
+                src_path
+            ));
             err.add_context("error in PartitionUpdater.create");
             err.to_cairo_exception().throw(&mut env)
-        },
+        }
     }
 }
 
@@ -112,6 +120,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     mut env: JNIEnv,
     _class: JClass,
     parquet_updater: *mut ParquetUpdater,
+    table_name_len: u32,
+    table_name_ptr: *const u8,
     row_group_id: jshort,
     col_count: jint,
     col_names_ptr: *const u8,
@@ -120,6 +130,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     col_data_len: jlong,
     row_count: jlong,
 ) {
+    let orig_row_group_id = row_group_id;
     let row_group_id = Some(row_group_id);
 
     assert!(
@@ -150,7 +161,13 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     match update() {
         Ok(_) => (),
         Err(mut err) => {
-            err.add_context("could not update partition");
+            let table_name =
+                unsafe { slice::from_raw_parts(table_name_ptr, table_name_len as usize) };
+            let table_name =
+                std::str::from_utf8(table_name).unwrap_or("!!invalid table_dir_name utf8!!");
+            err.add_context(format!(
+                "could not update row group {orig_row_group_id} for table {table_name}"
+            ));
             err.add_context("error in PartitionUpdater.updateRowGroup");
             err.to_cairo_exception().throw(&mut env)
         }

@@ -104,12 +104,7 @@ impl CairoException {
                     "Ljava/lang/CharSequence;", // CharSequence backtrace
                     ")Lio/questdb/std/CairoException;"
                 ),
-                &[
-                    errno.into(),
-                    self.out_of_memory.into(),
-                    message,
-                    backtrace,
-                ],
+                &[errno.into(), self.out_of_memory.into(), message, backtrace],
             )
             .expect("failed to call CairoException::paramInstance()")
             .l()
