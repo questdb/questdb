@@ -29,7 +29,7 @@ import io.questdb.std.Os;
 
 import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 
-// This is stripped down version taken from the .NET Core source code at
+// This is a stripped down version of the .NET Core source code at
 // https://github.com/dotnet/runtime/blob/main/src/libraries/System.Private.CoreLib/src/System/Collections/Concurrent/ConcurrentQueueSegment.cs
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
@@ -56,6 +56,7 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
     private final Slot<T>[] slots;
     // Mask for quickly accessing a position within the queue's array.
     private final long slotsMask;
+    // flag used to ensure we don't increase the tail more than once if frozen more than once
     volatile boolean frozenForEnqueues;
     // The segment following this one in the queue, or null if this segment is the last in the queue.
     ConcurrentQueueSegment<T> nextSegment;
@@ -134,38 +135,34 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
                     slots[slotsIndex].sequenceNumber = currentHead + slots.length;
                     return true;
                 }
-
                 // The head was already advanced by another thread. A newer head has already been observed and the next
                 // iteration would make forward progress, so there's no need to spin-wait before trying again.
-            } else //noinspection StatementWithEmptyBody
-                if (diff < 0) {
-                    // The sequence number was less than what we needed, which means this slot doesn't
-                    // yet contain a value we can dequeue, i.e. the segment is empty.  Technically it's
-                    // possible that multiple enqueuers could have written concurrently, with those
-                    // getting later slots actually finishing first, so there could be elements after
-                    // this one that are available, but we need to dequeue in order.  So before declaring
-                    // failure and that the segment is empty, we check the tail to see if we're actually
-                    // empty or if we're just waiting for items in flight or after this one to become available.
+            } else if (diff < 0) {
+                // The sequence number was less than what we needed, which means this slot doesn't
+                // yet contain a value we can dequeue, i.e. the segment is empty.  Technically it's
+                // possible that multiple enqueuers could have written concurrently, with those
+                // getting later slots actually finishing first, so there could be elements after
+                // this one that are available, but we need to dequeue in order.  So before declaring
+                // failure and that the segment is empty, we check the tail to see if we're actually
+                // empty or if we're just waiting for items in flight or after this one to become available.
 
-                    boolean frozen = frozenForEnqueues;
-                    long currentTail = headAndTail.tail;
-                    if (currentTail - currentHead <= 0 || (frozen && (currentTail - freezeOffset - currentHead <= 0))) {
-                        return false;
-                    }
-
-                    // It's possible it could have become frozen after we checked frozenForEnqueues
-                    // and before reading the tail.  That's ok: in that rare race condition, we just
-                    // loop around again. This is not necessarily an always-forward-progressing
-                    // situation since this thread is waiting for another to write to the slot and
-                    // this thread may have to check the same slot multiple times. Spin-wait to avoid
-                    // a potential busy-wait, and then try again.
-                    Os.pause();
-                } else {
-                    // The item was already dequeued by another thread. The head has already been updated beyond what was
-                    // observed above, and the sequence number observed above as a volatile load is more recent than the update
-                    // to the head. So, the next iteration of the loop is guaranteed to see a new head. Since this is an
-                    // always-forward-progressing situation, there's no need to spin-wait before trying again.
+                boolean frozen = frozenForEnqueues;
+                long currentTail = headAndTail.tail;
+                if (currentTail - currentHead <= 0 || (frozen && (currentTail - freezeOffset - currentHead <= 0))) {
+                    return false;
                 }
+                // It's possible it could have become frozen after we checked frozenForEnqueues
+                // and before reading the tail.  That's ok: in that rare race condition, we just
+                // loop around again. This is not necessarily an always-forward-progressing
+                // situation since this thread is waiting for another to write to the slot and
+                // this thread may have to check the same slot multiple times. Spin-wait to avoid
+                // a potential busy-wait, and then try again.
+                Os.pause();
+            }
+            // The item was already dequeued by another thread. The head has already been updated beyond what was
+            // observed above, and the sequence number observed above as a volatile load is more recent than the update
+            // to the head. So, the next iteration of the loop is guaranteed to see a new head. Since this is an
+            // always-forward-progressing situation, there's no need to spin-wait before trying again.
         }
     }
 
@@ -225,21 +222,18 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
 
     /**
      * Ensures that the segment will not accept any subsequent enqueues that aren't already underway.
-     * When we mark a segment as being frozen for additional enqueues,
-     * we set the (see cref="_frozenForEnqueues") bool, but that's mostly
-     * as a small helper to avoid marking it twice.  The real marking comes
-     * by modifying the Tail for the segment, increasing it by this
-     * (see freezeOffset).  This effectively knocks it off the
-     * sequence expected by future enqueuers, such that any additional enqueuer
-     * will be unable to enqueue due to it not lining up with the expected
-     * sequence numbers.  This value is chosen specially so that Tail will grow
-     * to a value that maps to the same slot but that won't be confused with
-     * any other enqueue/dequeue sequence number.
+     * When we mark a segment as being frozen for additional enqueues, we set the `frozenForEnqueues`
+     * flag, but that's mostly as a small helper to avoid marking it twice. The real marking comes
+     * by modifying the `tail` for the segment, increasing it by `freezeOffset`. This effectively knocks
+     * it off the sequence expected by future enqueuers, such that any additional enqueuer will be unable
+     * to enqueue due to it not lining up with the expected sequence numbers. This value is chosen
+     * specially so that tail will grow to a value that maps to the same slot but that won't be confused
+     * with any other enqueue/dequeue sequence number.
+     * <p>
+     * Must only be called while queue's segment lock is held!
      */
-    void ensureFrozenForEnqueues() // must only be called while queue's segment lock is held
-    {
-        if (!frozenForEnqueues) // flag used to ensure we don't increase the Tail more than once if frozen more than once
-        {
+    void ensureFrozenForEnqueues() {
+        if (!frozenForEnqueues) {
             frozenForEnqueues = true;
             TAIL.addAndGet(headAndTail, freezeOffset);
         }
