@@ -35,8 +35,8 @@ import java.util.concurrent.atomic.AtomicLongFieldUpdater;
 // The .NET Foundation licenses this file to you under the MIT license.
 
 /**
- * Provides a multi-producer, multi-consumer thread-safe bounded segment.  When the queue is full,
- * enqueues fail and return false.  When the queue is empty, dequeues fail and return null.
+ * Provides a multi-producer, multi-consumer thread-safe bounded segment. When the queue is full,
+ * enqueues fail and return false. When the queue is empty, dequeues fail and return null.
  * These segments are linked together to form the unbounded "ConcurrentQueue".
  */
 final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
@@ -52,7 +52,7 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
     // The head and tail positions, with padding to help avoid false sharing contention.
     // Dequeuing happens from the head, enqueuing happens at the tail.
     private final PaddedHeadAndTail headAndTail = new PaddedHeadAndTail();
-    // The array of items in this queue.  Each slot contains the item in that slot and its "sequence number".
+    // The array of items in this queue. Each slot contains the item in that slot and its "sequence number".
     private final Slot<T>[] slots;
     // Mask for quickly accessing a position within the queue's array.
     private final long slotsMask;
@@ -64,11 +64,11 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
     /**
      * Initializes a new instance of the "ConcurrentQueueSegment" class.
      * @param factory The factory to use to create new items.
-     * @param boundedLength The maximum number of elements the segment can contain.  Must be a power of 2.
+     * @param boundedLength The maximum number of elements the segment can contain. Must be a power of 2.
      */
     @SuppressWarnings("unchecked")
     ConcurrentQueueSegment(ObjectFactory<T> factory, int boundedLength) {
-        // Initialize the slots and the mask.  The mask is used as a way of quickly doing "% slots.Length",
+        // Initialize the slots and the mask. The mask is used as a way of quickly doing "% slots.Length",
         // instead letting us do "& slotsMask".
         slots = new Slot[boundedLength];
         slotsMask = boundedLength - 1;
@@ -129,8 +129,8 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
                 // and no enqueuer will be able to read from this slot until we've written the new
                 // sequence number.
                 if (HEAD.compareAndSet(headAndTail, currentHead, currentHead + 1)) {
-                    // Successfully reserved the slot. Note that after the above compareAndSwapLong, other threads
-                    // trying to dequeue from this slot will end up spinning until we do the subsequent Write.
+                    // Successfully reserved the slot. Note that after the above compareAndSet, other threads
+                    // trying to dequeue from this slot will end up spinning until we do the subsequent write.
                     slots[slotsIndex].item.copyTo(item);
                     slots[slotsIndex].sequenceNumber = currentHead + slots.length;
                     return true;
@@ -191,10 +191,10 @@ final class ConcurrentQueueSegment<T extends QueueValueHolder<T>> {
                 // the tail. Once we've done that, no one else will be able to write to this slot,
                 // and no dequeuer will be able to read from this slot until we've written the new
                 // sequence number. WARNING: The next few lines are not reliable on a runtime that
-                // supports thread aborts. If a thread abort were to sneak in after the compareAndSwapLong
-                // but before the putLongVolatile, other threads will spin trying to access this slot.
-                // If this implementation is ever used on such a platform, this if block should be
-                // wrapped in a finally / prepared region.
+                // supports thread aborts. If a thread abort were to sneak in after the compareAndSet
+                // but before the assignment to sequenceNumber, other threads will spin trying to
+                // access this slot. If this implementation is ever used on such a platform, this if
+                // block should be wrapped in a try-finally.
                 if (TAIL.compareAndSet(headAndTail, currentTail, currentTail + 1)) {
                     // Successfully reserved the slot. Note that after the above CompareExchange, other threads
                     // trying to return will end up spinning until we do the subsequent Write.
