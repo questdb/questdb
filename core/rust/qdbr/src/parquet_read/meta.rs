@@ -1,3 +1,4 @@
+use crate::allocator::QdbAllocator;
 use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
 use crate::parquet::error::ParquetResult;
 use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
@@ -28,7 +29,7 @@ fn extract_qdb_meta(file_metadata: &FileMetaData) -> ParquetResult<Option<QdbMet
 }
 
 impl<R: Read + Seek> ParquetDecoder<R> {
-    pub fn read(mut reader: R) -> ParquetResult<Self> {
+    pub fn read(allocator: QdbAllocator, mut reader: R) -> ParquetResult<Self> {
         let metadata = read_metadata(&mut reader)?;
         let col_len = metadata.schema_descr.columns().len();
         let qdb_meta = extract_qdb_meta(&metadata)?;
@@ -59,6 +60,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
 
         // TODO: add some validation
         Ok(Self {
+            allocator,
             col_count: columns.len() as u32,
             row_count: metadata.num_rows,
             row_group_count: metadata.row_groups.len() as u32,
@@ -179,6 +181,7 @@ mod tests {
     use arrow::datatypes::ToByteSlice;
     use bytes::Bytes;
     use tempfile::NamedTempFile;
+    use crate::allocator::QdbTestAllocator;
 
     #[test]
     fn test_decode_column_type_fixed() {
@@ -236,7 +239,7 @@ mod tests {
 
         let path = temp_file.path().to_str().unwrap();
         let file = File::open(Path::new(path)).unwrap();
-        let meta = ParquetDecoder::read(file).unwrap();
+        let meta = ParquetDecoder::read(QdbTestAllocator, file).unwrap();
 
         assert_eq!(meta.columns.len(), column_count);
         assert_eq!(meta.row_count, row_count);

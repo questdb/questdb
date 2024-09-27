@@ -33,7 +33,6 @@ thread_local! {
 }
 
 #[derive(Debug, Copy, Clone)]
-#[allow(dead_code)] // TODO(amunra): remove once in use
 pub enum AllocFailure {
     /// The underlying allocator failed to allocate memory.
     OutOfMemory {
@@ -185,13 +184,13 @@ unsafe impl Allocator for TaggedWatermarkAllocator {
 /// This may be `None` if no error occurred, or if the error was cleared.
 /// This operates on top of a thread-local and augments the (lack of) details
 /// provided by the `AllocError` type.
-#[allow(dead_code)] // TODO(amunra): remove once in use
 pub fn take_last_alloc_error() -> Option<AllocFailure> {
     ALLOC_ERROR.with(|error| error.borrow_mut().take())
 }
 
 #[allow(dead_code)] // TODO(amunra): remove once in use
 #[cfg(test)]
+#[derive(Clone, Copy)]
 pub struct QdbTestAllocator;
 
 #[cfg(test)]
@@ -205,7 +204,6 @@ unsafe impl Allocator for QdbTestAllocator {
     }
 }
 
-#[allow(dead_code)] // TODO(amunra): remove once in use
 #[cfg(not(test))]
 pub type QdbAllocator = TaggedWatermarkAllocator;
 

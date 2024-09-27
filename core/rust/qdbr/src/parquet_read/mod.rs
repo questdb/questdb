@@ -1,3 +1,4 @@
+use crate::allocator::QdbAllocator;
 use crate::parquet::col_type::ColumnType;
 use crate::parquet::qdb_metadata::QdbMeta;
 use parquet2::metadata::FileMetaData;
@@ -15,6 +16,7 @@ pub struct ParquetDecoder<R>
 where
     R: Read + Seek,
 {
+    pub allocator: QdbAllocator,
     pub col_count: u32,
     pub row_count: usize,
     pub row_group_count: u32,
@@ -89,6 +91,7 @@ mod tests {
     use parquet::schema::types::Type;
     use std::io::Cursor;
     use std::sync::Arc;
+    use crate::allocator::QdbTestAllocator;
 
     #[test]
     fn fn_load_symbol_without_local_is_global_format_meta() -> ParquetResult<()> {
@@ -104,7 +107,7 @@ mod tests {
         let buf = gen_test_symbol_parquet(Some(qdb_meta.serialize()?))?;
 
         let reader = Cursor::new(buf);
-        let mut parquet_decoder = ParquetDecoder::read(reader)?;
+        let mut parquet_decoder = ParquetDecoder::read(QdbTestAllocator, reader)?;
         let mut rgb = RowGroupBuffers::new();
         let res = parquet_decoder.decode_row_group(
             &mut rgb,

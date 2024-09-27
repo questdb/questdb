@@ -98,10 +98,11 @@ public class PartitionDecoder implements QuietCloseable {
         return metadata;
     }
 
-    public void of(long fd) {
+    public void of(int memoryTag, long fd) {
         destroy();
         this.fd = fd;
-        ptr = create(Files.toOsFd(fd));  // throws CairoException on error
+        final long allocator = Unsafe.getTaggedWatermarkAllocator(memoryTag);
+        ptr = create(allocator, Files.toOsFd(fd));  // throws CairoException on error
         columnsPtr = Unsafe.getUnsafe().getLong(ptr + COLUMNS_PTR_OFFSET);
         rowGroupSizesPtr = Unsafe.getUnsafe().getLong(ptr + ROW_GROUP_SIZES_PTR_OFFSET);
         metadata.init();
@@ -121,7 +122,7 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native long columnsPtrOffset();
 
-    private static native long create(int fd) throws CairoException;
+    private static native long create(long allocator, int fd) throws CairoException;
 
     private static native long decodeRowGroup(
             long decoderPtr,

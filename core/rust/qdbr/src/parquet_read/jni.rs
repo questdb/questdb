@@ -1,28 +1,29 @@
 use std::fs::File;
 use std::slice;
 
+use crate::allocator::QdbAllocator;
 use crate::parquet::col_type::ColumnType;
 use crate::parquet::error::{ParquetErrorExt, ParquetResult};
 use crate::parquet::io::{FromRawFdI32Ext, NonOwningFile};
 use crate::parquet::qdb_metadata::ParquetFieldId;
 use crate::parquet_read::decode::ParquetColumnIndex;
-use jni::objects::JClass;
-use jni::JNIEnv;
-use std::mem::{offset_of, size_of};
-
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnChunkStats, ColumnMeta, ParquetDecoder, RowGroupBuffers,
     RowGroupStatBuffers,
 };
+use jni::objects::JClass;
+use jni::JNIEnv;
+use std::mem::{offset_of, size_of};
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_create(
     mut env: JNIEnv,
     _class: JClass,
+    allocator: *const QdbAllocator,
     raw_fd: i32,
 ) -> *mut ParquetDecoder<NonOwningFile> {
     let reader = NonOwningFile::new(unsafe { File::from_raw_fd_i32(raw_fd) });
-    match ParquetDecoder::read(reader) {
+    match ParquetDecoder::read(unsafe { *allocator }, reader) {
         Ok(decoder) => Box::into_raw(Box::new(decoder)),
         Err(mut err) => {
             err.add_context(format!("could not read parquet file with fd {raw_fd}"));

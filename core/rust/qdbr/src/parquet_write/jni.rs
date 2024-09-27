@@ -7,6 +7,7 @@ use crate::parquet_write::file::ParquetWriter;
 use crate::parquet_write::schema::{Column, Partition};
 use crate::parquet_write::update::ParquetUpdater;
 
+use crate::allocator::QdbAllocator;
 use crate::parquet::io::FromRawFdI32Ext;
 use jni::objects::JClass;
 use jni::sys::{jboolean, jint, jlong, jshort};
@@ -19,6 +20,7 @@ use parquet2::write::Version;
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_create(
     mut env: JNIEnv,
     _class: JClass,
+    allocator: *const QdbAllocator,
     src_path_len: u32,
     src_path_ptr: *const u8,
     raw_fd: i32,
@@ -54,6 +56,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
         };
 
         ParquetUpdater::new(
+            unsafe { *allocator },
             unsafe { File::from_raw_fd_i32(raw_fd) },
             file_size,
             sorting_columns,

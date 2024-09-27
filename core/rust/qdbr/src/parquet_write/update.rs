@@ -21,6 +21,7 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+use crate::allocator::QdbAllocator;
 use crate::parquet::error::{ParquetError, ParquetErrorCause, ParquetErrorExt, ParquetResult};
 use crate::parquet_write::file::{create_row_group, WriteOptions};
 use crate::parquet_write::schema::{to_encodings, Partition};
@@ -33,6 +34,7 @@ use std::fs::File;
 
 #[repr(C)]
 pub struct ParquetUpdater {
+    allocator: QdbAllocator,
     parquet_file: ParquetFile<File>,
     compression_options: CompressionOptions,
     row_group_size: Option<usize>,
@@ -41,6 +43,7 @@ pub struct ParquetUpdater {
 
 impl ParquetUpdater {
     pub fn new(
+        allocator: QdbAllocator,
         mut reader: File,
         file_size: u64,
         sorting_columns: Option<Vec<SortingColumn>>,
@@ -73,6 +76,7 @@ impl ParquetUpdater {
         );
 
         Ok(ParquetUpdater {
+            allocator,
             parquet_file,
             compression_options,
             row_group_size,
