@@ -148,11 +148,7 @@ public class EqIntervalFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             final Interval a = left.getInterval(rec);
-            final Interval b = cachedRuntimeConst;
-            if (a == null || b == null) {
-                return negated != (a == b);
-            }
-            return negated != a.equals(b);
+            return negated != a.equals(cachedRuntimeConst);
         }
 
         @Override
