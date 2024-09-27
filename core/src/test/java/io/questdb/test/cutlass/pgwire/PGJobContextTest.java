@@ -160,7 +160,6 @@ public class PGJobContextTest extends BasePGTest {
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractCairoTest.setUpStatic();
-        inputRoot = TestUtils.getCsvRoot();
         final SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss'.0'");
         formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
         final Stream<Object[]> dates = LongStream.rangeClosed(0, count - 1)
@@ -186,8 +185,7 @@ public class PGJobContextTest extends BasePGTest {
                 .I$();
         node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
-
-        inputRoot = root;
+        inputRoot = TestUtils.getCsvRoot();
     }
 
     @After
@@ -7576,6 +7574,7 @@ nodejs code:
     }
 
     // TODO(puzpuzpuz): fix schema changes handling in PGWire for extended protocol
+    //                  https://github.com/questdb/questdb/issues/4971
     @Ignore
     @Test
     public void testReadParquetSchemaChangeExtended() throws Exception {
@@ -9391,6 +9390,7 @@ create table tab as (
     }
 
     // TODO(puzpuzpuz): fix schema changes handling in PGWire for extended protocol
+    //                  https://github.com/questdb/questdb/issues/4971
     @Ignore
     @Test
     public void testTableSchemaChangeExtended() throws Exception {
@@ -12379,6 +12379,7 @@ create table tab as (
     }
 
     private void testReadParquetSchemaChange(boolean simple) throws Exception {
+        inputRoot = root; // the parquet files are exported into the root dir
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
             try (
