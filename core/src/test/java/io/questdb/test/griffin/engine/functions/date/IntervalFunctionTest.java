@@ -233,12 +233,39 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTodayWithTimezone() throws Exception {
+    public void testTodayWithTimezone1() throws Exception {
         assertMemoryLeak(() -> assertSql(
                 "column\n" +
                         "true\n",
-                "select today('Antarctica/McMurdo') = interval(date_trunc('day', to_timezone(now(), 'Antarctica/McMurdo')), date_trunc('day', to_timezone(dateadd('d', 1, now()), 'Antarctica/McMurdo')) - 1)\n"
+                "select today('Antarctica/McMurdo') = interval(to_timezone(date_trunc('day', now()), 'Antarctica/McMurdo'), dateadd('d', 1, to_timezone(date_trunc('day', now()), 'Antarctica/McMurdo')) - 1)"
         ));
+    }
+
+    @Test
+    public void testTodayWithTimezone2() throws Exception {
+        setCurrentMicros(Timestamps.DAY_MICROS);
+        assertMemoryLeak(() -> {
+            String expected = "today\n" +
+                    "('1970-01-02T02:00:00.000Z', '1970-01-03T01:59:59.999Z')\n";
+            assertSql(expected, "select today('Europe/Sofia')");
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "Europe/Sofia");
+            assertSql(expected, "select today(:tz)");
+
+            expected = "today\n" +
+                    "('1970-01-02T06:00:00.000Z', '1970-01-03T05:59:59.999Z')\n";
+            assertSql(expected, "select today('BST')");
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "BST");
+            assertSql(expected, "select today(:tz)");
+
+            expected = "today\n" +
+                    "('1970-01-02T01:00:00.000Z', '1970-01-03T00:59:59.999Z')\n";
+            assertSql(expected, "select today('CET')");
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "CET");
+            assertSql(expected, "select today(:tz)");
+        });
     }
 
     @Test
@@ -252,12 +279,39 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTomorrowWithTimezone() throws Exception {
+    public void testTomorrowWithTimezone1() throws Exception {
         assertMemoryLeak(() -> assertSql(
                 "column\n" +
                         "true\n",
-                "select tomorrow('Antarctica/McMurdo') = interval(date_trunc('day', to_timezone(dateadd('d', 1, now()), 'Antarctica/McMurdo')), date_trunc('day', to_timezone(dateadd('d', 2, now()), 'Antarctica/McMurdo')) - 1)\n"
+                "select tomorrow('Antarctica/McMurdo') = interval(to_timezone(dateadd('d', 1, date_trunc('day', now())), 'Antarctica/McMurdo'), dateadd('d', 1, to_timezone(dateadd('d', 1, date_trunc('day', now())), 'Antarctica/McMurdo')) - 1)"
         ));
+    }
+
+    @Test
+    public void testTomorrowWithTimezone2() throws Exception {
+        setCurrentMicros(Timestamps.DAY_MICROS);
+        assertMemoryLeak(() -> {
+            String expected = "tomorrow\n" +
+                    "('1970-01-03T02:00:00.000Z', '1970-01-04T01:59:59.999Z')\n";
+            assertSql(expected, "select tomorrow('Europe/Sofia')");
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "Europe/Sofia");
+            assertSql(expected, "select tomorrow(:tz)");
+
+            expected = "tomorrow\n" +
+                    "('1970-01-03T06:00:00.000Z', '1970-01-04T05:59:59.999Z')\n";
+            assertSql(expected, "select tomorrow('BST')");
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "BST");
+            assertSql(expected, "select tomorrow(:tz)");
+
+            expected = "tomorrow\n" +
+                    "('1970-01-03T01:00:00.000Z', '1970-01-04T00:59:59.999Z')\n";
+            assertSql(expected, "select tomorrow('CET')");
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "CET");
+            assertSql(expected, "select tomorrow(:tz)");
+        });
     }
 
     @Test
@@ -271,12 +325,39 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testYesterdayWithTimezone() throws Exception {
+    public void testYesterdayWithTimezone1() throws Exception {
         assertMemoryLeak(() -> assertSql(
                 "column\n" +
                         "true\n",
-                "select yesterday('Antarctica/McMurdo') = interval(date_trunc('day', to_timezone(dateadd('d', -1, now()), 'Antarctica/McMurdo')), date_trunc('day', to_timezone(now(), 'Antarctica/McMurdo')) - 1)\n"
+                "select yesterday('Antarctica/McMurdo') = interval(to_timezone(dateadd('d', -1, date_trunc('day', now())), 'Antarctica/McMurdo'), dateadd('d', 1, to_timezone(dateadd('d', -1, date_trunc('day', now())), 'Antarctica/McMurdo')) - 1)"
         ));
+    }
+
+    @Test
+    public void testYesterdayWithTimezone2() throws Exception {
+        setCurrentMicros(2 * Timestamps.DAY_MICROS);
+        assertMemoryLeak(() -> {
+            String expected = "yesterday\n" +
+                    "('1970-01-02T02:00:00.000Z', '1970-01-03T01:59:59.999Z')\n";
+            assertSql(expected, "select yesterday('Europe/Sofia')");
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "Europe/Sofia");
+            assertSql(expected, "select yesterday(:tz)");
+
+            expected = "yesterday\n" +
+                    "('1970-01-02T06:00:00.000Z', '1970-01-03T05:59:59.999Z')\n";
+            assertSql(expected, "select yesterday('BST')");
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "BST");
+            assertSql(expected, "select yesterday(:tz)");
+
+            expected = "yesterday\n" +
+                    "('1970-01-02T01:00:00.000Z', '1970-01-03T00:59:59.999Z')\n";
+            assertSql(expected, "select yesterday('CET')");
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "CET");
+            assertSql(expected, "select yesterday(:tz)");
+        });
     }
 
     private static void buildNotInPlan(StringSink sink, long lo, long hi) {

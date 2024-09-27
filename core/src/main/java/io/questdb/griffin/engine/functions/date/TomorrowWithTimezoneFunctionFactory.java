@@ -81,17 +81,16 @@ public class TomorrowWithTimezoneFunctionFactory implements FunctionFactory {
 
         @Override
         public @NotNull Interval getInterval(Record rec) {
-            long nowWithTz = now;
+            long tomorrowStart = Timestamps.floorDD(Timestamps.addDays(now, 1));
             final CharSequence tz = tzFunc.getStrA(rec);
             if (tz != null) {
                 try {
-                    nowWithTz = Timestamps.toTimezone(nowWithTz, TimestampFormatUtils.EN_LOCALE, tz);
+                    tomorrowStart = Timestamps.toTimezone(tomorrowStart, TimestampFormatUtils.EN_LOCALE, tz);
                 } catch (NumericException e) {
                     return Interval.NULL;
                 }
             }
-            final long tomorrowStart = Timestamps.floorDD(Timestamps.addDays(nowWithTz, 1));
-            final long tomorrowEnd = Timestamps.floorDD(Timestamps.addDays(nowWithTz, 2)) - 1;
+            long tomorrowEnd = Timestamps.addDays(tomorrowStart, 1) - 1;
             return interval.of(tomorrowStart, tomorrowEnd);
         }
 
@@ -143,18 +142,17 @@ public class TomorrowWithTimezoneFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            long now = executionContext.getNow();
+            long tomorrowStart = Timestamps.floorDD(Timestamps.addDays(executionContext.getNow(), 1));
             final CharSequence tz = tzFunc.getStrA(null);
             if (tz != null) {
                 try {
-                    now = Timestamps.toTimezone(now, TimestampFormatUtils.EN_LOCALE, tz);
+                    tomorrowStart = Timestamps.toTimezone(tomorrowStart, TimestampFormatUtils.EN_LOCALE, tz);
                 } catch (NumericException e) {
                     interval.of(Interval.NULL.getLo(), Interval.NULL.getHi());
                     return;
                 }
             }
-            final long tomorrowStart = Timestamps.floorDD(Timestamps.addDays(now, 1));
-            final long tomorrowEnd = Timestamps.floorDD(Timestamps.addDays(now, 2)) - 1;
+            long tomorrowEnd = Timestamps.addDays(tomorrowStart, 1) - 1;
             interval.of(tomorrowStart, tomorrowEnd);
         }
 
