@@ -74,7 +74,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         this.base = base;
         this.fromFunc = fromFunc;
         this.toFunc = toFunc;
-        this.stride = stride;
+        this.stride = Chars.toString(stride);
         this.timestampIndex = timestampIndex;
         this.valueFuncs = fillValues;
         this.metadata = metadata;

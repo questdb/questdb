@@ -29,7 +29,6 @@ import io.questdb.test.cutlass.suspend.TestCase;
 import io.questdb.test.cutlass.suspend.TestCases;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -64,14 +63,14 @@ public class PGQuerySuspendTest extends BasePGTest {
     }
 
     @Test
-    @Ignore("problem with the test")
     public void testAllCases() throws Exception {
-        // there seem to be a problem with the test itself, it sometimes fails on create table, which isn't
-        // something we can restart?
-        // for example:
-        // 2024-09-26T19:32:42.560341Z E i.q.g.e.QueryProgress err [id=469, sql=`create table y as (select * from x), index(isym) timestamp(ts) partition by hour`, principal=admin, cache=false, jit=false, time=14823000, msg=[-1] partition is located in cold storage, query will be suspended [table=x, partition=0], errno=-1, pos=13]
-        // this is a problem for both legacy and modern code
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+
+            // clear listeners - we do not want to emit suspend events in DDL statements
+            // since this is not yet supported
+            engine.releaseAllReaders();
+            engine.setReaderListener(null);
+
             CallableStatement stmt = connection.prepareCall(testCases.getDdlX());
             stmt.execute();
             stmt = connection.prepareCall(testCases.getDdlY());
