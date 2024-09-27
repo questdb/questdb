@@ -83,7 +83,7 @@ public class ConcurrentQueue<T extends QueueValueHolder<T>> {
      * Initializes a new instance of the ConcurrentQueue class with the specified initial capacity.
      *
      * @param factory The factory to use to create new items.
-     * @param size The initial capacity of the queue, must be a power of 2.
+     * @param size    The initial capacity of the queue, must be a power of 2.
      */
     public ConcurrentQueue(ObjectFactory<T> factory, int size) {
         assert (size & (size - 1)) == 0; // must be a power of 2
