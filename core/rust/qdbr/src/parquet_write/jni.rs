@@ -6,7 +6,6 @@ use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResul
 use crate::parquet_write::file::ParquetWriter;
 use crate::parquet_write::schema::{Column, Partition};
 use crate::parquet_write::update::ParquetUpdater;
-use crate::utils;
 
 use crate::parquet::io::FromRawFdI32Ext;
 use jni::objects::JClass;
@@ -65,7 +64,10 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 
     match create() {
         Ok(updater) => Box::into_raw(Box::new(updater)),
-        Err(err) => utils::throw_java_ex(&mut env, "PartitionUpdater.create", &err),
+        Err(mut err) => {
+            err.add_context("error in PartitionUpdater.create");
+            err.to_cairo_exception().throw(&mut env)
+        },
     }
 }
 
@@ -99,7 +101,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
         Ok(_) => (),
         Err(mut err) => {
             err.add_context("could not update partition");
-            utils::throw_java_ex(&mut env, "PartitionUpdater.finish", &err)
+            err.add_context("error in PartitionUpdater.finish");
+            err.to_cairo_exception().throw(&mut env)
         }
     }
 }
@@ -148,7 +151,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
         Ok(_) => (),
         Err(mut err) => {
             err.add_context("could not update partition");
-            utils::throw_java_ex(&mut env, "PartitionUpdater.updateRowGroup", &err)
+            err.add_context("error in PartitionUpdater.updateRowGroup");
+            err.to_cairo_exception().throw(&mut env)
         }
     }
 }

@@ -21,13 +21,18 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+use crate::allocator::{take_last_alloc_error, AllocFailure};
+use crate::cairo::CairoException;
+use std::alloc::AllocError;
 use std::backtrace::{Backtrace, BacktraceStatus};
+use std::collections::TryReserveError;
 use std::fmt::{Debug, Display, Formatter, Write};
 use std::sync::Arc;
 
 /// Cause of a parquet error.
 #[derive(Debug, Clone)]
 pub enum ParquetErrorCause {
+    OutOfMemory(Option<AllocFailure>),
     Parquet2(parquet2::error::Error),
     QdbMeta(Arc<serde_json::Error>),
     Layout,
@@ -47,6 +52,9 @@ pub enum ParquetErrorCause {
 impl ParquetErrorCause {
     pub fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            ParquetErrorCause::OutOfMemory(maybe_err) => maybe_err
+                .as_ref()
+                .map(|err| err as &(dyn std::error::Error + 'static)),
             ParquetErrorCause::Parquet2(err) => Some(err),
             ParquetErrorCause::QdbMeta(err) => Some(err.as_ref()),
             ParquetErrorCause::Utf8Decode(err) => Some(err),
@@ -72,10 +80,12 @@ pub struct ParquetError {
     /// What caused the error.
     cause: ParquetErrorCause,
 
-    /// Stack of additional contextual information,
+    /// Initial message (if any) and
+    /// stack of additional contextual information,
     /// printed in reverse order.
     context: Vec<String>,
 
+    /// Root location of the error.
     backtrace: Arc<Backtrace>,
 }
 
@@ -113,6 +123,22 @@ impl ParquetError {
 
     pub fn display_with_backtrace(&self) -> ParquetErrorWithBacktraceDisplay {
         ParquetErrorWithBacktraceDisplay(self)
+    }
+
+    fn build_out_of_memory() -> ParquetError {
+        let last_err = take_last_alloc_error();
+        let no_last_err = last_err.is_none();
+        let mut err = Self::new(ParquetErrorCause::OutOfMemory(last_err));
+        if no_last_err {
+            err.add_context("memory allocation failed");
+        }
+        err
+    }
+
+    pub fn to_cairo_exception(self) -> CairoException {
+        CairoException::new(self.to_string())
+            .out_of_memory(matches!(self.cause, ParquetErrorCause::OutOfMemory(_)))
+            .backtrace(self.backtrace.clone())
     }
 }
 
@@ -178,6 +204,18 @@ impl Display for ParquetErrorWithBacktraceDisplay<'_> {
 impl std::error::Error for ParquetError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         self.cause.source()
+    }
+}
+
+impl From<AllocError> for ParquetError {
+    fn from(_: AllocError) -> Self {
+        Self::build_out_of_memory()
+    }
+}
+
+impl From<TryReserveError> for ParquetError {
+    fn from(_: TryReserveError) -> Self {
+        Self::build_out_of_memory()
     }
 }
 

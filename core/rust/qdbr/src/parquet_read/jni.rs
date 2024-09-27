@@ -14,7 +14,6 @@ use crate::parquet_read::{
     ColumnChunkBuffers, ColumnChunkStats, ColumnMeta, ParquetDecoder, RowGroupBuffers,
     RowGroupStatBuffers,
 };
-use crate::utils;
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_create(
@@ -25,7 +24,10 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     let reader = NonOwningFile::new(unsafe { File::from_raw_fd_i32(raw_fd) });
     match ParquetDecoder::read(reader) {
         Ok(decoder) => Box::into_raw(Box::new(decoder)),
-        Err(err) => utils::throw_java_ex(&mut env, "PartitionDecoder.create", &err),
+        Err(mut err) => {
+            err.add_context("error in PartitionDecoder.create");
+            err.to_cairo_exception().throw(&mut env)
+        },
     }
 }
 
@@ -78,7 +80,10 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 
     match res {
         Ok(row_count) => row_count,
-        Err(err) => utils::throw_java_ex(&mut env, "decodeRowGroup", &err),
+        Err(mut err) => {
+            err.add_context("error in PartitionDecoder.decodeRowGroup");
+            err.to_cairo_exception().throw(&mut env)
+        },
     }
 }
 
@@ -109,7 +114,10 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 
     match res {
         Ok(_) => {}
-        Err(err) => utils::throw_java_ex(&mut env, "getRowGroupStats", &err),
+        Err(mut err) => {
+            err.add_context("error in PartitionDecoder.getRowGroupStats");
+            err.to_cairo_exception().throw(&mut env)
+        }
     }
 }
 

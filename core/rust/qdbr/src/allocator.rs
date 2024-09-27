@@ -22,6 +22,7 @@
  *
  ******************************************************************************/
 use std::alloc::{AllocError, Allocator, Global, Layout};
+use std::fmt::{Display, Formatter};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -31,20 +32,52 @@ thread_local! {
     static ALLOC_ERROR: std::cell::RefCell<Option<AllocFailure>> = std::cell::RefCell::new(None);
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 #[allow(dead_code)] // TODO(amunra): remove once in use
-pub enum AllocFailure
-{
+pub enum AllocFailure {
+    /// The underlying allocator failed to allocate memory.
     OutOfMemory {
+        /// What was requested.
         layout: Layout,
     },
+
+    /// A memory limit would have been exceeded.
     MemoryLimitExceeded {
-        memory_tag: i32,
+        /// What was requested.
         layout: Layout,
+
+        /// The memory tag that was used for the allocation request.
+        memory_tag: i32,
+
+        /// The memory limit at the time of the breach.
         rss_mem_limit: usize,
+
+        /// The memory used at the time of the breach.
         rss_mem_used: usize,
     },
 }
+
+impl Display for AllocFailure {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AllocFailure::OutOfMemory { layout } => {
+                write!(f, "out of memory when allocating {} (alignment: {})", layout.size(), layout.align())
+            }
+            AllocFailure::MemoryLimitExceeded {
+                layout,
+                memory_tag,
+                rss_mem_limit,
+                rss_mem_used,
+            } => write!(
+                f,
+                "memory limit exceeded when allocating {} with tag {} (alignment: {}, rss used: {}, rss limit: {})",
+                layout.size(), memory_tag, layout.align(), rss_mem_used, rss_mem_limit
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AllocFailure {}
 
 /// Custom allocator that fails once a memory limit watermark is reached.
 /// It also tracks memory usage for a specific memory tag.
@@ -126,20 +159,18 @@ impl TaggedWatermarkAllocator {
 
 unsafe impl Allocator for TaggedWatermarkAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        self.check_alloc_limit(layout)
-            .map_err(|failure| {
-                ALLOC_ERROR.with(|error| {
-                    *error.borrow_mut() = Some(failure);
-                });
-                AllocError
-            })?;
-        let allocated = Global.allocate(layout)
-            .map_err(|error| {
-                ALLOC_ERROR.with(|error| {
-                    *error.borrow_mut() = Some(AllocFailure::OutOfMemory { layout });
-                });
-                error
-            })?;
+        self.check_alloc_limit(layout).map_err(|failure| {
+            ALLOC_ERROR.with(|error| {
+                *error.borrow_mut() = Some(failure);
+            });
+            AllocError
+        })?;
+        let allocated = Global.allocate(layout).map_err(|error| {
+            ALLOC_ERROR.with(|error| {
+                *error.borrow_mut() = Some(AllocFailure::OutOfMemory { layout });
+            });
+            error
+        })?;
         self.add_memory_alloc(layout);
         Ok(allocated)
     }
