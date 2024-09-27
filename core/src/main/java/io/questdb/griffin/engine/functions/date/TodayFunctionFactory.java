@@ -59,7 +59,7 @@ public class TodayFunctionFactory implements FunctionFactory {
         return new Func();
     }
 
-    private static class Func extends IntervalFunction implements Function {
+    private static class Func extends IntervalFunction {
         private final Interval interval = new Interval();
 
         @Override

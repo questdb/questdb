@@ -31,9 +31,11 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
@@ -56,7 +58,7 @@ public class IntervalStartFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
-    private static class Func extends TimestampFunction implements ScalarFunction {
+    private static class Func extends TimestampFunction implements UnaryFunction {
         private final Function intervalFunc;
 
         public Func(Function intervalFunc) {
@@ -64,8 +66,8 @@ public class IntervalStartFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public String getName() {
-            return "interval_start";
+        public Function getArg() {
+            return intervalFunc;
         }
 
         @Override
@@ -74,8 +76,8 @@ public class IntervalStartFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            intervalFunc.init(symbolTableSource, executionContext);
+        public void toPlan(PlanSink sink) {
+            sink.val("interval_start(").val(intervalFunc).val(')');
         }
     }
 }
