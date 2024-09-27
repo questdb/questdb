@@ -33,7 +33,6 @@ import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 
 public class UnionCastRecord extends AbstractUnionRecord {
-
     private final ObjList<Function> castFunctionsA;
     private final ObjList<Function> castFunctionsB;
 

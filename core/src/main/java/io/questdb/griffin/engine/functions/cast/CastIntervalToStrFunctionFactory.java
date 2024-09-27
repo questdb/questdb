@@ -29,15 +29,17 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
-public class CastShortToStrFunctionFactory implements FunctionFactory {
+public class CastIntervalToStrFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "cast(Es)";
+        return "cast(Δs)";
     }
 
     @Override
@@ -48,9 +50,15 @@ public class CastShortToStrFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        Function shortFunc = args.getQuick(0);
-        if (shortFunc.isConstant()) {
-            return new StrConstant(String.valueOf(shortFunc.getShort(null)));
+        Function intervalFunc = args.getQuick(0);
+        if (intervalFunc.isConstant()) {
+            StringSink sink = Misc.getThreadLocalSink();
+            final Interval interval = intervalFunc.getInterval(null);
+            if (Interval.NULL.equals(interval)) {
+                return StrConstant.NULL;
+            }
+            interval.toSink(sink);
+            return new StrConstant(Chars.toString(sink));
         }
         return new Func(args.getQuick(0));
     }
@@ -65,16 +73,22 @@ public class CastShortToStrFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrA(Record rec) {
-            sinkA.clear();
-            sinkA.put(arg.getShort(rec));
-            return sinkA;
+            final Interval value = arg.getInterval(rec);
+            if (!Interval.NULL.equals(value)) {
+                value.toSink(sinkA);
+                return sinkA;
+            }
+            return null;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
-            sinkB.clear();
-            sinkB.put(arg.getShort(rec));
-            return sinkB;
+            final Interval value = arg.getInterval(rec);
+            if (!Interval.NULL.equals(value)) {
+                value.toSink(sinkB);
+                return sinkB;
+            }
+            return null;
         }
     }
 }

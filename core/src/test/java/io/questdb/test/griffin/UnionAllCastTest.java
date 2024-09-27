@@ -1508,13 +1508,75 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInterval() throws Exception {
+    public void testInterval1() throws Exception {
         assertMemoryLeak(() -> assertSql(
                 "i\ttypeOf\n" +
                         "('1970-01-01T00:00:00.100Z', '1970-01-01T00:00:00.200Z')\tINTERVAL\n" +
                         "('1970-01-01T00:00:00.300Z', '1970-01-01T00:00:00.400Z')\tINTERVAL\n" +
                         "\tINTERVAL\n",
                 "select i, typeOf(i) from ((select interval(100000,200000) i) union all (select interval(300000,400000) i) union all (select null::interval i))"
+        ));
+    }
+
+    @Test
+    public void testInterval2() throws Exception {
+        setCurrentMicros(0);
+        assertMemoryLeak(() -> assertSql(
+                "a\tb\n" +
+                        "('1969-12-30T00:00:00.000Z', '1969-12-31T23:59:59.999Z')\t('1969-12-30T00:00:00.000Z', '1969-12-31T23:59:59.999Z')\n",
+                "select * from (\n" +
+                        "  select today() a, yesterday() b\n" +
+                        "  union all\n" +
+                        "  select yesterday(), yesterday()\n" +
+                        "  union all\n" +
+                        "  select today() a, null b\n" +
+                        ")\n" +
+                        "where b = a"
+        ));
+    }
+
+    @Test
+    public void testInterval3() throws Exception {
+        setCurrentMicros(0);
+        assertMemoryLeak(() -> assertSql(
+                "a\ta1\n" +
+                        "('1970-01-01T00:00:00.000Z', '1970-01-01T23:59:59.999Z')\t('1970-01-01T00:00:00.000Z', '1970-01-01T23:59:59.999Z')\n" +
+                        "('1969-12-30T00:00:00.000Z', '1969-12-31T23:59:59.999Z')\t('1969-12-30T00:00:00.000Z', '1969-12-31T23:59:59.999Z')\n" +
+                        "('1970-01-02T00:00:00.000Z', '1970-01-02T23:59:59.999Z')\t('1970-01-02T00:00:00.000Z', '1970-01-02T23:59:59.999Z')\n",
+                "select * from (\n" +
+                        "  select today() a\n" +
+                        "  union \n" +
+                        "  select yesterday()\n" +
+                        "  union \n" +
+                        "  select tomorrow()\n" +
+                        ") a\n" +
+                        "join (\n" +
+                        "  select today() a\n" +
+                        "  union \n" +
+                        "  select yesterday()\n" +
+                        "  union \n" +
+                        "  select tomorrow()\n" +
+                        ") b\n" +
+                        "on a.a = b.a"
+        ));
+    }
+
+    @Test
+    public void testInterval4() throws Exception {
+        setCurrentMicros(0);
+        assertMemoryLeak(() -> assertSql(
+                "a\tb\n" +
+                        "('1970-01-01T00:00:00.000Z', '1970-01-01T23:59:59.999Z')\t('1969-12-30T00:00:00.000Z', '1969-12-31T23:59:59.999Z')\n" +
+                        "('1970-01-01T00:00:00.000Z', '1970-01-01T23:59:59.999Z')('1969-12-30T00:00:00.000Z', '1969-12-31T23:59:59.999Z')\t('1969-12-30T00:00:00.000Z', '1969-12-31T23:59:59.999Z')\n" +
+                        "foobar\t\n",
+                "select * from (\n" +
+                        "  select today() a, yesterday() b\n" +
+                        "  union all\n" +
+                        "  select yesterday(), yesterday()\n" +
+                        "  union all\n" +
+                        "  select 'foobar' a, null b\n" +
+                        ")\n" +
+                        "where b != a"
         ));
     }
 

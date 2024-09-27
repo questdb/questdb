@@ -1371,6 +1371,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         )
                                 );
                                 break;
+                            case ColumnType.INTERVAL:
+                                castFunctions.add(new CastIntervalToStrFunctionFactory.Func(new IntervalColumn(i)));
+                                break;
                             case ColumnType.BINARY:
                                 throw SqlException.unsupportedCast(
                                         modelPosition,
@@ -1385,7 +1388,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 new SymbolColumn(
                                         i,
                                         castFromMetadata.isSymbolTableStatic(i)
-                                )));
+                                )
+                        ));
                         break;
                     case ColumnType.LONG256:
                         castFunctions.add(new Long256Column(i));
@@ -1686,6 +1690,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             default:
                                 assert false;
                         }
+                        break;
+                    case ColumnType.INTERVAL:
+                        castFunctions.add(new IntervalColumn(i));
+                        break;
                 }
             }
         }

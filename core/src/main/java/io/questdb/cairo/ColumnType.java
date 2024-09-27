@@ -457,7 +457,8 @@ public final class ColumnType {
                 /* 28 unused    */, {}
                 /* 29 unused    */, {}
                 /* 30 unused    */, {}
-                /* 31 NULL      */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
+                /* 31 INTERVAL  */, {INTERVAL, STRING}
+                /* 32 NULL      */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
         };
         for (short fromTag = UNDEFINED; fromTag < NULL; fromTag++) {
             for (short toTag = BOOLEAN; toTag <= NULL; toTag++) {
