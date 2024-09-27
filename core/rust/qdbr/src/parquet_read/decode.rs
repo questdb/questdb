@@ -377,6 +377,28 @@ pub fn decoder_page(
 
                     Ok(row_count)
                 }
+                (
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
+                    _,
+                    ColumnType::Byte,
+                ) => {
+                    let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
+                    let mut slicer = RleDictionarySlicer::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        row_count,
+                        &INT_NULL,
+                    )?;
+                    decode_page(
+                        version,
+                        page,
+                        row_count,
+                        &mut FixedInt2ByteColumnSink::new(&mut slicer, buffers, &BYTE_NULL),
+                    )?;
+
+                    Ok(row_count)
+                }
                 _ => Err(encoding_error),
             }
         }
