@@ -24,49 +24,38 @@
 
 package io.questdb.griffin.engine.functions.date;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.PlanSink;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
+import io.questdb.griffin.engine.functions.IntervalFunction;
+import io.questdb.std.Interval;
 import io.questdb.std.datetime.microtime.Timestamps;
+import org.jetbrains.annotations.NotNull;
 
-public class TodayFunctionFactory implements FunctionFactory {
-    private static final String SIGNATURE = "today()";
-
-    @Override
-    public String getSignature() {
-        return SIGNATURE;
-    }
+public abstract class AbstractIntervalFunction extends IntervalFunction {
+    protected final Interval interval = new Interval();
 
     @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) {
-        return new Func();
+    public @NotNull Interval getInterval(Record rec) {
+        return interval;
     }
 
-    private static class Func extends AbstractIntervalFunction {
-
-        @Override
-        public String getName() {
-            return "today";
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(SIGNATURE);
-        }
-
-        @Override
-        protected long intervalStart(long now) {
-            return Timestamps.floorDD(now);
-        }
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+        final long start = intervalStart(executionContext.getNow());
+        final long end = Timestamps.addDays(start, 1) - 1;
+        interval.of(start, end);
     }
+
+    @Override
+    public boolean isReadThreadSafe() {
+        return true;
+    }
+
+    @Override
+    public boolean isRuntimeConstant() {
+        return true;
+    }
+
+    protected abstract long intervalStart(long now);
 }

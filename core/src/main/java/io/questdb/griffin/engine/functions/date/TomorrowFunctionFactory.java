@@ -26,19 +26,12 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.IntervalFunction;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.std.IntList;
-import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Timestamps;
-import org.jetbrains.annotations.NotNull;
 
 public class TomorrowFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = "tomorrow()";
@@ -59,13 +52,7 @@ public class TomorrowFunctionFactory implements FunctionFactory {
         return new Func();
     }
 
-    private static class Func extends IntervalFunction {
-        private final Interval interval = new Interval();
-
-        @Override
-        public @NotNull Interval getInterval(Record rec) {
-            return interval;
-        }
+    private static class Func extends AbstractIntervalFunction {
 
         @Override
         public String getName() {
@@ -73,26 +60,13 @@ public class TomorrowFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            final long now = executionContext.getNow();
-            final long tomorrowStart = Timestamps.floorDD(Timestamps.addDays(now, 1));
-            final long tomorrowEnd = Timestamps.floorDD(Timestamps.addDays(now, 2)) - 1;
-            interval.of(tomorrowStart, tomorrowEnd);
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return true;
-        }
-
-        @Override
-        public boolean isRuntimeConstant() {
-            return true;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val(SIGNATURE);
+        }
+
+        @Override
+        protected long intervalStart(long now) {
+            return Timestamps.floorDD(Timestamps.addDays(now, 1));
         }
     }
 }
