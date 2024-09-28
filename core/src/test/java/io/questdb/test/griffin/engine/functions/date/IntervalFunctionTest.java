@@ -233,27 +233,39 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTodayWithTimezone1() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "column\n" +
-                        "true\n",
-                "select today('Antarctica/McMurdo') = interval(to_timezone(date_trunc('day', now()), 'Antarctica/McMurdo'), dateadd('d', 1, to_timezone(date_trunc('day', now()), 'Antarctica/McMurdo')) - 1)"
-        ));
-    }
-
-    @Test
-    public void testTodayWithTimezone2() throws Exception {
-        setCurrentMicros(Timestamps.DAY_MICROS);
+    public void testTodayWithTimezone() throws Exception {
+        setCurrentMicros(Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-02T01:00:00.000000Z
         assertMemoryLeak(() -> {
             String expected = "today\n" +
-                    "('1970-01-02T02:00:00.000Z', '1970-01-03T01:59:59.999Z')\n";
+                    "('1970-01-02T00:00:00.000Z', '1970-01-02T23:59:59.999Z')\n";
+            assertSql(expected, "select today('')");
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "");
+            assertSql(expected, "select today(:tz)");
+
+            expected = "today\n" +
+                    "('1970-01-01T01:30:00.000Z', '1970-01-02T01:29:59.999Z')\n";
+            assertSql(expected, "select today('UTC-01:30')");
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "UTC-01:30");
+            assertSql(expected, "select today(:tz)");
+
+            expected = "today\n" +
+                    "('1970-01-01T22:30:00.000Z', '1970-01-02T22:29:59.999Z')\n";
+            assertSql(expected, "select today('UTC+01:30')");
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "UTC+01:30");
+            assertSql(expected, "select today(:tz)");
+
+            expected = "today\n" +
+                    "('1970-01-01T22:00:00.000Z', '1970-01-02T21:59:59.999Z')\n";
             assertSql(expected, "select today('Europe/Sofia')");
             bindVariableService.clear();
             bindVariableService.setStr("tz", "Europe/Sofia");
             assertSql(expected, "select today(:tz)");
 
             expected = "today\n" +
-                    "('1970-01-01T19:00:00.000Z', '1970-01-02T18:59:59.999Z')\n";
+                    "('1970-01-01T05:00:00.000Z', '1970-01-02T04:59:59.999Z')\n";
             assertSql(expected, "select today('America/Toronto')");
             bindVariableService.clear();
             bindVariableService.setStr("tz", "America/Toronto");
@@ -272,27 +284,39 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTomorrowWithTimezone1() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "column\n" +
-                        "true\n",
-                "select tomorrow('Antarctica/McMurdo') = interval(to_timezone(dateadd('d', 1, date_trunc('day', now())), 'Antarctica/McMurdo'), dateadd('d', 1, to_timezone(dateadd('d', 1, date_trunc('day', now())), 'Antarctica/McMurdo')) - 1)"
-        ));
-    }
-
-    @Test
-    public void testTomorrowWithTimezone2() throws Exception {
-        setCurrentMicros(Timestamps.DAY_MICROS);
+    public void testTomorrowWithTimezone() throws Exception {
+        setCurrentMicros(Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-02T01:00:00.000000Z
         assertMemoryLeak(() -> {
             String expected = "tomorrow\n" +
-                    "('1970-01-03T02:00:00.000Z', '1970-01-04T01:59:59.999Z')\n";
+                    "('1970-01-03T00:00:00.000Z', '1970-01-03T23:59:59.999Z')\n";
+            assertSql(expected, "select tomorrow('')");
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "");
+            assertSql(expected, "select tomorrow(:tz)");
+
+            expected = "tomorrow\n" +
+                    "('1970-01-02T01:30:00.000Z', '1970-01-03T01:29:59.999Z')\n";
+            assertSql(expected, "select tomorrow('UTC-01:30')");
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "UTC-01:30");
+            assertSql(expected, "select tomorrow(:tz)");
+
+            expected = "tomorrow\n" +
+                    "('1970-01-02T22:30:00.000Z', '1970-01-03T22:29:59.999Z')\n";
+            assertSql(expected, "select tomorrow('UTC+01:30')");
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "UTC+01:30");
+            assertSql(expected, "select tomorrow(:tz)");
+
+            expected = "tomorrow\n" +
+                    "('1970-01-02T22:00:00.000Z', '1970-01-03T21:59:59.999Z')\n";
             assertSql(expected, "select tomorrow('Europe/Sofia')");
             bindVariableService.clear();
             bindVariableService.setStr("tz", "Europe/Sofia");
             assertSql(expected, "select tomorrow(:tz)");
 
             expected = "tomorrow\n" +
-                    "('1970-01-02T19:00:00.000Z', '1970-01-03T18:59:59.999Z')\n";
+                    "('1970-01-02T05:00:00.000Z', '1970-01-03T04:59:59.999Z')\n";
             assertSql(expected, "select tomorrow('America/Toronto')");
             bindVariableService.clear();
             bindVariableService.setStr("tz", "America/Toronto");
@@ -311,27 +335,39 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testYesterdayWithTimezone1() throws Exception {
-        assertMemoryLeak(() -> assertSql(
-                "column\n" +
-                        "true\n",
-                "select yesterday('Antarctica/McMurdo') = interval(to_timezone(dateadd('d', -1, date_trunc('day', now())), 'Antarctica/McMurdo'), dateadd('d', 1, to_timezone(dateadd('d', -1, date_trunc('day', now())), 'Antarctica/McMurdo')) - 1)"
-        ));
-    }
-
-    @Test
-    public void testYesterdayWithTimezone2() throws Exception {
-        setCurrentMicros(2 * Timestamps.DAY_MICROS);
+    public void testYesterdayWithTimezone() throws Exception {
+        setCurrentMicros(2 * Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-03T01:00:00.000000Z
         assertMemoryLeak(() -> {
             String expected = "yesterday\n" +
-                    "('1970-01-02T02:00:00.000Z', '1970-01-03T01:59:59.999Z')\n";
+                    "('1970-01-02T00:00:00.000Z', '1970-01-02T23:59:59.999Z')\n";
+            assertSql(expected, "select yesterday('')");
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "");
+            assertSql(expected, "select yesterday(:tz)");
+
+            expected = "yesterday\n" +
+                    "('1970-01-01T01:30:00.000Z', '1970-01-02T01:29:59.999Z')\n";
+            assertSql(expected, "select yesterday('UTC-01:30')");
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "UTC-01:30");
+            assertSql(expected, "select yesterday(:tz)");
+
+            expected = "yesterday\n" +
+                    "('1970-01-01T22:30:00.000Z', '1970-01-02T22:29:59.999Z')\n";
+            assertSql(expected, "select yesterday('UTC+01:30')");
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "UTC+01:30");
+            assertSql(expected, "select yesterday(:tz)");
+
+            expected = "yesterday\n" +
+                    "('1970-01-01T22:00:00.000Z', '1970-01-02T21:59:59.999Z')\n";
             assertSql(expected, "select yesterday('Europe/Sofia')");
             bindVariableService.clear();
             bindVariableService.setStr("tz", "Europe/Sofia");
             assertSql(expected, "select yesterday(:tz)");
 
             expected = "yesterday\n" +
-                    "('1970-01-01T19:00:00.000Z', '1970-01-02T18:59:59.999Z')\n";
+                    "('1970-01-01T05:00:00.000Z', '1970-01-02T04:59:59.999Z')\n";
             assertSql(expected, "select yesterday('America/Toronto')");
             bindVariableService.clear();
             bindVariableService.setStr("tz", "America/Toronto");

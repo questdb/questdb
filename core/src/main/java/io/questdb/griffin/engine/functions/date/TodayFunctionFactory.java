@@ -31,12 +31,8 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntervalFunction;
-import io.questdb.griffin.engine.functions.constants.TimestampConstant;
-import io.questdb.std.IntList;
-import io.questdb.std.Interval;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 
@@ -74,9 +70,8 @@ public class TodayFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            final long now = executionContext.getNow();
-            final long todayStart = Timestamps.floorDD(now);
-            final long todayEnd = Timestamps.floorDD(Timestamps.addDays(now, 1)) - 1;
+            final long todayStart = Timestamps.floorDD(executionContext.getNow());
+            final long todayEnd = Timestamps.addDays(todayStart, 1) - 1;
             interval.of(todayStart, todayEnd);
         }
 

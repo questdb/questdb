@@ -35,9 +35,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntervalFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.*;
+import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
+
+import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
 public class TodayWithTimezoneFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = "today(S)";
@@ -62,73 +65,39 @@ public class TodayWithTimezoneFunctionFactory implements FunctionFactory {
         return new Func(tzFunc);
     }
 
-    private static class Func extends IntervalFunction implements UnaryFunction {
-        private final Interval interval = new Interval();
-        private final Function tzFunc;
+    private static class Func extends AbstractIntervalWithTimezoneFunction {
         private long now;
 
         public Func(Function tzFunc) {
-            this.tzFunc = tzFunc;
-        }
-
-        @Override
-        public Function getArg() {
-            return tzFunc;
+            super(tzFunc);
         }
 
         @Override
         public @NotNull Interval getInterval(Record rec) {
-            long todayStart = Timestamps.floorDD(now);
-            final CharSequence tz = tzFunc.getStrA(rec);
-            if (tz != null) {
-                try {
-                    todayStart = Timestamps.toTimezone(todayStart, TimestampFormatUtils.EN_LOCALE, tz);
-                } catch (NumericException e) {
-                    return Interval.NULL;
-                }
-            }
-            long todayEnd = Timestamps.addDays(todayStart, 1) - 1;
-            return interval.of(todayStart, todayEnd);
+            return calculateInterval(interval, now, tzFunc.getStrA(rec));
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            UnaryFunction.super.init(symbolTableSource, executionContext);
+            super.init(symbolTableSource, executionContext);
             now = executionContext.getNow();
-        }
-
-        @Override
-        public boolean isConstant() {
-            return false;
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return UnaryFunction.super.isReadThreadSafe();
-        }
-
-        @Override
-        public boolean isRuntimeConstant() {
-            return UnaryFunction.super.isRuntimeConstant();
         }
 
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(SIGNATURE);
         }
-    }
-
-    private static class RuntimeConstFunc extends IntervalFunction implements UnaryFunction {
-        private final Interval interval = new Interval();
-        private final Function tzFunc;
-
-        public RuntimeConstFunc(Function tzFunc) {
-            this.tzFunc = tzFunc;
-        }
 
         @Override
-        public Function getArg() {
-            return tzFunc;
+        protected long intervalStart(long now) {
+            return Timestamps.floorDD(now);
+        }
+    }
+
+    private static class RuntimeConstFunc extends AbstractIntervalWithTimezoneFunction {
+
+        public RuntimeConstFunc(Function tzFunc) {
+            super(tzFunc);
         }
 
         @Override
@@ -138,24 +107,8 @@ public class TodayWithTimezoneFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            UnaryFunction.super.init(symbolTableSource, executionContext);
-            long todayStart = Timestamps.floorDD(executionContext.getNow());
-            final CharSequence tz = tzFunc.getStrA(null);
-            if (tz != null) {
-                try {
-                    todayStart = Timestamps.toTimezone(todayStart, TimestampFormatUtils.EN_LOCALE, tz);
-                } catch (NumericException e) {
-                    interval.of(Interval.NULL.getLo(), Interval.NULL.getHi());
-                    return;
-                }
-            }
-            long todayEnd = Timestamps.addDays(todayStart, 1) - 1;
-            interval.of(todayStart, todayEnd);
-        }
-
-        @Override
-        public boolean isConstant() {
-            return false;
+            super.init(symbolTableSource, executionContext);
+            calculateInterval(interval, executionContext.getNow(), tzFunc.getStrA(null));
         }
 
         @Override
@@ -171,6 +124,11 @@ public class TodayWithTimezoneFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(SIGNATURE);
+        }
+
+        @Override
+        protected long intervalStart(long now) {
+            return Timestamps.floorDD(now);
         }
     }
 }
