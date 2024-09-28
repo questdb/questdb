@@ -40,6 +40,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.microtime.TimestampFormatCompiler;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.Nullable;

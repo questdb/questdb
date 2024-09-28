@@ -225,7 +225,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         Misc.free(mem);
         Misc.freeObjList(tableWriters);
     }
-
     @NotNull
     public CompiledQuery compile(@NotNull CharSequence query, @Transient @NotNull SqlExecutionContext executionContext) throws SqlException {
         clear();
