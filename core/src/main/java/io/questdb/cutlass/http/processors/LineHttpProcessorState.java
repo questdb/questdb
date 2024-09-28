@@ -171,6 +171,11 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
             assert recvBufPos < recvBufEnd;
             Unsafe.getUnsafe().putByte(recvBufPos++, (byte) '\n');
             currentStatus = processLocalBuffer();
+            if (currentStatus == Status.NEEDS_READ) {
+                // added \n and parse result is still NEEDS_READ, means there was nothing in this line, e.g.
+                // blank space
+                currentStatus = Status.OK;
+            }
         }
     }
 
@@ -367,8 +372,13 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
     }
 
     private void logError(LineTcpParser parser, int errorPos) {
+        logError(parser, errorPos, false);
+    }
+
+    private void logError(LineTcpParser parser, int errorPos, boolean isError) {
         errorId = ERROR_COUNT.incrementAndGet();
-        LOG.info().$("parse error [errorId=").$(ERROR_ID).$('-').$(errorId)
+        LogRecord logger = isError ? LOG.error() : LOG.info();
+        logger.$("parse error [errorId=").$(ERROR_ID).$('-').$(errorId)
                 .$(", table=").$(parser.getMeasurementName())
                 .$(", line=").$(errorLine)
                 .$(", error=").$(error.subSequence(errorPos, error.length()))
@@ -407,7 +417,9 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
                     case BUFFER_UNDERFLOW: {
                         if (!compactBuffer(recvBufStartOfMeasurement)) {
                             errorLine = ++line;
+                            int errorPos = error.length();
                             error.put("unable to read data: ILP line does not fit QuestDB ILP buffer size");
+                            logError(parser, errorPos, true);
                             return Status.MESSAGE_TOO_LARGE;
                         }
                         return Status.NEEDS_READ;
