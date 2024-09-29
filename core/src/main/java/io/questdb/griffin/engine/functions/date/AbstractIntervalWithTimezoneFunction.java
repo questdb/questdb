@@ -73,8 +73,9 @@ public abstract class AbstractIntervalWithTimezoneFunction extends IntervalFunct
         return UnaryFunction.super.isRuntimeConstant();
     }
 
-    protected Interval calculateInterval(Interval interval, long now, CharSequence tz) {
+    protected Interval calculateInterval(long now, CharSequence tz) {
         if (Chars.isBlank(tz)) {
+            // no timezone, default to UTC
             final long start = intervalStart(now);
             final long end = Timestamps.addDays(start, 1) - 1;
             return interval.of(start, end);
