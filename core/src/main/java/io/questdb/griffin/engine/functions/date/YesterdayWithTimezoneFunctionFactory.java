@@ -70,7 +70,7 @@ public class YesterdayWithTimezoneFunctionFactory implements FunctionFactory {
 
         @Override
         public @NotNull Interval getInterval(Record rec) {
-            return calculateInterval(interval, now, tzFunc.getStrA(rec));
+            return calculateInterval(now, tzFunc.getStrA(rec));
         }
 
         @Override
@@ -104,7 +104,7 @@ public class YesterdayWithTimezoneFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
-            calculateInterval(interval, executionContext.getNow(), tzFunc.getStrA(null));
+            calculateInterval(executionContext.getNow(), tzFunc.getStrA(null));
         }
 
         @Override
