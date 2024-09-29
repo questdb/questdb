@@ -80,7 +80,7 @@ public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDa
     }
 
     protected Interval calculateInterval(long now, CharSequence tz) {
-        if (Chars.isBlank(tz)) {
+        if (tz == null) {
             // no timezone, default to UTC
             final long start = intervalStart(now);
             final long end = intervalEnd(start);

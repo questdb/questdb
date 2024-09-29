@@ -252,9 +252,9 @@ public class IntervalFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             String expected = "today\n" +
                     "('1970-01-02T00:00:00.000Z', '1970-01-02T23:59:59.999Z')\n";
-            assertSql(expected, "select today('')");
+            assertSql(expected, "select today(null)");
             bindVariableService.clear();
-            bindVariableService.setStr("tz", "");
+            bindVariableService.setStr("tz", null);
             assertSql(expected, "select today(:tz)");
 
             expected = "today\n" +
@@ -303,9 +303,9 @@ public class IntervalFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             String expected = "tomorrow\n" +
                     "('1970-01-03T00:00:00.000Z', '1970-01-03T23:59:59.999Z')\n";
-            assertSql(expected, "select tomorrow('')");
+            assertSql(expected, "select tomorrow(null)");
             bindVariableService.clear();
-            bindVariableService.setStr("tz", "");
+            bindVariableService.setStr("tz", null);
             assertSql(expected, "select tomorrow(:tz)");
 
             expected = "tomorrow\n" +
@@ -354,9 +354,9 @@ public class IntervalFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             String expected = "yesterday\n" +
                     "('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\n";
-            assertSql(expected, "select yesterday('')");
+            assertSql(expected, "select yesterday(null)");
             bindVariableService.clear();
-            bindVariableService.setStr("tz", "");
+            bindVariableService.setStr("tz", null);
             assertSql(expected, "select yesterday(:tz)");
 
             expected = "yesterday\n" +
