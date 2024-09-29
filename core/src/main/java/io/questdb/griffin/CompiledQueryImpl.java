@@ -189,12 +189,24 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         of(CANCEL_QUERY);
     }
 
+    public void ofCheckpointCreate() {
+        of(CHECKPOINT_CREATE);
+    }
+
+    public void ofCheckpointRelease() {
+        of(CHECKPOINT_RELEASE);
+    }
+
     public void ofCommit() {
         of(COMMIT);
     }
 
     public void ofCopyRemote() {
         of(COPY_REMOTE);
+    }
+
+    public void ofCreateMatView(TableToken tableToken) {
+        of(CREATE_MAT_VIEW, null, tableToken);
     }
 
     public void ofCreateTable(TableToken tableToken) {
@@ -260,14 +272,6 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
 
     public void ofSet() {
         of(SET);
-    }
-
-    public void ofCheckpointRelease() {
-        of(CHECKPOINT_RELEASE);
-    }
-
-    public void ofCheckpointCreate() {
-        of(CHECKPOINT_CREATE);
     }
 
     public void ofTableResume() {

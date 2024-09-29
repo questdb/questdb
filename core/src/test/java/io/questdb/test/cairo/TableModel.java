@@ -157,6 +157,11 @@ public class TableModel implements TableStructure {
     }
 
     @Override
+    public boolean isMatView() {
+        return false;
+    }
+
+    @Override
     public boolean isSequential(int columnIndex) {
         return false;
     }

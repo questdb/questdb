@@ -125,6 +125,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int connectionPoolInitialCapacity;
     private final int connectionStringPoolCapacity;
     private final int createAsSelectRetryCount;
+    private final int createMatViewRetryCount;
     private final int dateAdapterPoolCapacity;
     private final String dbDirectory;
     private final int defaultSeqPartTxnCount;
@@ -209,6 +210,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final DateLocale locale;
     private final Log log;
     private final boolean logSqlQueryProgressExe;
+    private final boolean matViewEnabled;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
     private final double maxRequiredDelimiterStdDev;
@@ -240,12 +242,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean o3QuickSortEnabled;
     private final int parallelIndexThreshold;
     private final boolean parallelIndexingEnabled;
-    private final boolean partitionEncoderParquetStatisticsEnabled;
-    private final int partitionEncoderParquetVersion;
+    private final int partitionEncoderParqeutRowGroupSize;
     private final int partitionEncoderParquetCompressionCodec;
     private final int partitionEncoderParquetCompressionLevel;
-    private final int partitionEncoderParqeutRowGroupSize;
     private final int partitionEncoderParquetDataPageSize;
+    private final boolean partitionEncoderParquetStatisticsEnabled;
+    private final int partitionEncoderParquetVersion;
     private final boolean pgEnabled;
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final String posthogApiKey;
@@ -288,6 +290,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlCopyModelPoolCapacity;
     private final int sqlCountDistinctCapacity;
     private final double sqlCountDistinctLoadFactor;
+    private final int sqlCreateMatViewModelPoolCapacity;
     private final long sqlCreateTableModelBatchSize;
     private final int sqlCreateTableModelPoolCapacity;
     private final int sqlDistinctTimestampKeyCapacity;
@@ -707,6 +710,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 )
         );
         this.devModeEnabled = getBoolean(properties, env, PropertyKey.DEV_MODE_ENABLED, false);
+        this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, false);
 
         int cpuAvailable = Runtime.getRuntime().availableProcessors();
         int cpuUsed = 0;
@@ -998,6 +1002,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
+            this.createMatViewRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_MAT_VIEW_RETRY_COUNT, 5);
             this.defaultSymbolCacheFlag = getBoolean(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CACHE_FLAG, true);
             this.defaultSymbolCapacity = getInt(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CAPACITY, 256);
             this.fileOperationRetryCount = getInt(properties, env, PropertyKey.CAIRO_FILE_OPERATION_RETRY_COUNT, 30);
@@ -1047,6 +1052,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             int sqlWindowColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_COLUMN_POOL_CAPACITY, 64);
             this.sqlWindowColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY, sqlWindowColumnPoolCapacity);
             this.sqlCreateTableModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_CREATE_TABLE_MODEL_POOL_CAPACITY, 16);
+            this.sqlCreateMatViewModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_CREATE_MAT_VIEW_MODEL_POOL_CAPACITY, 8);
             this.sqlCreateTableModelBatchSize = getLong(properties, env, PropertyKey.CAIRO_SQL_CREATE_TABLE_MODEL_BATCH_SIZE, 1_000_000);
             this.sqlColumnCastModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COLUMN_CAST_MODEL_POOL_CAPACITY, 16);
             this.sqlRenameTableModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_RENAME_TABLE_MODEL_POOL_CAPACITY, 16);
@@ -2189,6 +2195,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getCreateMatViewModelPoolCapacity() {
+            return sqlCreateMatViewModelPoolCapacity;
+        }
+
+        @Override
+        public int getCreateMatViewRetryCount() {
+            return createMatViewRetryCount;
+        }
+
+        @Override
         public long getCreateTableModelBatchSize() {
             return sqlCreateTableModelBatchSize;
         }
@@ -2506,6 +2522,31 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getParallelIndexThreshold() {
             return parallelIndexThreshold;
+        }
+
+        @Override
+        public int getPartitionEncoderParquetCompressionCodec() {
+            return partitionEncoderParquetCompressionCodec;
+        }
+
+        @Override
+        public int getPartitionEncoderParquetCompressionLevel() {
+            return partitionEncoderParquetCompressionLevel;
+        }
+
+        @Override
+        public int getPartitionEncoderParquetDataPageSize() {
+            return partitionEncoderParquetDataPageSize;
+        }
+
+        @Override
+        public int getPartitionEncoderParquetRowGroupSize() {
+            return partitionEncoderParqeutRowGroupSize;
+        }
+
+        @Override
+        public int getPartitionEncoderParquetVersion() {
+            return partitionEncoderParquetVersion;
         }
 
         @Override
@@ -3073,6 +3114,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isMatViewEnabled() {
+            return matViewEnabled;
+        }
+
+        @Override
         public boolean isMultiKeyDedupEnabled() {
             return false;
         }
@@ -3085,6 +3131,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isParallelIndexingEnabled() {
             return parallelIndexingEnabled;
+        }
+
+        @Override
+        public boolean isPartitionEncoderParquetStatisticsEnabled() {
+            return partitionEncoderParquetStatisticsEnabled;
         }
 
         @Override
@@ -3151,36 +3202,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean useFastAsOfJoin() {
             return useFastAsOfJoin;
-        }
-
-        @Override
-        public int getPartitionEncoderParquetVersion() {
-            return partitionEncoderParquetVersion;
-        }
-
-        @Override
-        public boolean isPartitionEncoderParquetStatisticsEnabled() {
-            return partitionEncoderParquetStatisticsEnabled;
-        }
-
-        @Override
-        public int getPartitionEncoderParquetCompressionCodec() {
-            return partitionEncoderParquetCompressionCodec;
-        }
-
-        @Override
-        public int getPartitionEncoderParquetCompressionLevel() {
-            return partitionEncoderParquetCompressionLevel;
-        }
-
-        @Override
-        public int getPartitionEncoderParquetRowGroupSize() {
-            return partitionEncoderParqeutRowGroupSize;
-        }
-
-        @Override
-        public int getPartitionEncoderParquetDataPageSize() {
-            return partitionEncoderParquetDataPageSize;
         }
     }
 

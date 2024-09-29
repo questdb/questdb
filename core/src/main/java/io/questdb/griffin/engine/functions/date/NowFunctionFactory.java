@@ -69,6 +69,11 @@ public class NowFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
         public boolean isReadThreadSafe() {
             return true;
         }

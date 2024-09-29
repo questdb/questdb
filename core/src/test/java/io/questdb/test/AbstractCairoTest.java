@@ -1945,7 +1945,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     protected TableToken registerTableName(CharSequence tableName) {
-        TableToken token = engine.lockTableName(tableName, false);
+        TableToken token = engine.lockTableName(tableName, false, false);
         if (token != null) {
             engine.registerTableToken(token);
         }

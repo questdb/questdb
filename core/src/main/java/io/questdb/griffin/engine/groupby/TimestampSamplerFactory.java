@@ -25,10 +25,11 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
+
+import static io.questdb.griffin.engine.groupby.SampleByIntervalExpressionParser.parseIntervalQualifier;
+import static io.questdb.griffin.engine.groupby.SampleByIntervalExpressionParser.parseIntervalValue;
 
 public final class TimestampSamplerFactory {
 
@@ -41,51 +42,10 @@ public final class TimestampSamplerFactory {
      * @throws SqlException when input string is invalid
      */
     public static TimestampSampler getInstance(CharSequence cs, int position) throws SqlException {
-        int k = -1;
-
-        if (cs == null) {
-            throw SqlException.$(position, "missing interval");
-        }
-
-        final int len = cs.length();
-
-        // look for end of digits
-        for (int i = 0; i < len; i++) {
-            char c = cs.charAt(i);
-            if (c < '0' || c > '9') {
-                k = i;
-                break;
-            }
-        }
-
-        if (k == -1) {
-            throw SqlException.$(position + len, "expected interval qualifier");
-        }
-
-        // expect 1 letter qualifier
-        if (k + 1 < len) {
-            throw SqlException.$(position + k, "expected single letter qualifier");
-        }
-
-        try {
-            final int n;
-            if (k == 0) {
-                n = 1;
-            } else {
-                n = Numbers.parseInt(cs, 0, k);
-                if (n == 0) {
-                    throw SqlException.$(position, "zero is not a valid sample value");
-                }
-            }
-
-            return createTimestampSampler(n, cs.charAt(k), position + k);
-        } catch (NumericException ignore) {
-            // we are parsing a pre-validated number
-            // but we have to deal with checked exception anyway
-            assert false;
-        }
-
-        throw SqlException.$(position + k, "unsupported interval qualifier");
+        final int n = parseIntervalValue(cs, position);
+        final int qualifierPos = position + cs.length() - 1;
+        final char c = parseIntervalQualifier(cs, qualifierPos);
+        return createTimestampSampler(n, c, qualifierPos);
     }
 
     public static TimestampSampler getInstance(long period, CharSequence units, int position) throws SqlException {
@@ -128,7 +88,6 @@ public final class TimestampSamplerFactory {
             default:
                 // Just in case SqlParser will allow this in the future
                 throw SqlException.$(position, "unsupported interval qualifier");
-
         }
     }
 }
