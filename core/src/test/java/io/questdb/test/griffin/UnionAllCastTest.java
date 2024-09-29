@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -1520,10 +1521,10 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testInterval2() throws Exception {
-        setCurrentMicros(0);
+        setCurrentMicros(7 * Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
         assertMemoryLeak(() -> assertSql(
                 "a\tb\n" +
-                        "('1969-12-30T00:00:00.000Z', '1969-12-31T23:59:59.999Z')\t('1969-12-30T00:00:00.000Z', '1969-12-31T23:59:59.999Z')\n",
+                        "('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\t('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\n",
                 "select * from (\n" +
                         "  select today() a, yesterday() b\n" +
                         "  union all\n" +
@@ -1537,12 +1538,12 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testInterval3() throws Exception {
-        setCurrentMicros(0);
+        setCurrentMicros(7 * Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
         assertMemoryLeak(() -> assertSql(
                 "a\ta1\n" +
-                        "('1970-01-01T00:00:00.000Z', '1970-01-01T23:59:59.999Z')\t('1970-01-01T00:00:00.000Z', '1970-01-01T23:59:59.999Z')\n" +
-                        "('1969-12-30T00:00:00.000Z', '1969-12-31T23:59:59.999Z')\t('1969-12-30T00:00:00.000Z', '1969-12-31T23:59:59.999Z')\n" +
-                        "('1970-01-02T00:00:00.000Z', '1970-01-02T23:59:59.999Z')\t('1970-01-02T00:00:00.000Z', '1970-01-02T23:59:59.999Z')\n",
+                        "('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')\t('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')\n" +
+                        "('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\t('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\n" +
+                        "('1970-01-09T00:00:00.000Z', '1970-01-09T23:59:59.999Z')\t('1970-01-09T00:00:00.000Z', '1970-01-09T23:59:59.999Z')\n",
                 "select * from (\n" +
                         "  select today() a\n" +
                         "  union \n" +
@@ -1563,11 +1564,11 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testInterval4() throws Exception {
-        setCurrentMicros(0);
+        setCurrentMicros(7 * Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
         assertMemoryLeak(() -> assertSql(
                 "a\tb\n" +
-                        "('1970-01-01T00:00:00.000Z', '1970-01-01T23:59:59.999Z')\t('1969-12-30T00:00:00.000Z', '1969-12-31T23:59:59.999Z')\n" +
-                        "('1970-01-01T00:00:00.000Z', '1970-01-01T23:59:59.999Z')('1969-12-30T00:00:00.000Z', '1969-12-31T23:59:59.999Z')\t('1969-12-30T00:00:00.000Z', '1969-12-31T23:59:59.999Z')\n" +
+                        "('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')\t('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\n" +
+                        "('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\t('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\n" +
                         "foobar\t\n",
                 "select * from (\n" +
                         "  select today() a, yesterday() b\n" +

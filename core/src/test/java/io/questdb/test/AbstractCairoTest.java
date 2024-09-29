@@ -84,7 +84,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static CairoConfiguration configuration;
     protected static TestCairoConfigurationFactory configurationFactory;
     protected static long currentMicros = -1;
-    protected static final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+    protected static final MicrosecondClock defaultMicrosecondClock = () -> currentMicros != -1 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
     protected static MicrosecondClock testMicrosClock = defaultMicrosecondClock;
     protected static CairoEngine engine;
     protected static TestCairoEngineFactory engineFactory;

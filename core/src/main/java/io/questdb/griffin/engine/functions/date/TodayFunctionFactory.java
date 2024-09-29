@@ -31,7 +31,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.Timestamps;
 
 public class TodayFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = "today()";
@@ -52,7 +51,7 @@ public class TodayFunctionFactory implements FunctionFactory {
         return new Func();
     }
 
-    private static class Func extends AbstractIntervalFunction {
+    private static class Func extends AbstractDayIntervalFunction {
 
         @Override
         public String getName() {
@@ -65,8 +64,8 @@ public class TodayFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected long intervalStart(long now) {
-            return Timestamps.floorDD(now);
+        protected int shiftFromToday() {
+            return 0;
         }
     }
 }

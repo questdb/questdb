@@ -61,7 +61,7 @@ public class TodayWithTimezoneFunctionFactory implements FunctionFactory {
         return new Func(tzFunc);
     }
 
-    private static class Func extends AbstractIntervalWithTimezoneFunction {
+    private static class Func extends AbstractDayIntervalWithTimezoneFunction {
         private long now;
 
         public Func(Function tzFunc) {
@@ -85,20 +85,15 @@ public class TodayWithTimezoneFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected long intervalStart(long now) {
-            return Timestamps.floorDD(now);
+        protected int shiftFromToday() {
+            return 0;
         }
     }
 
-    private static class RuntimeConstFunc extends AbstractIntervalWithTimezoneFunction {
+    private static class RuntimeConstFunc extends AbstractDayIntervalWithTimezoneFunction {
 
         public RuntimeConstFunc(Function tzFunc) {
             super(tzFunc);
-        }
-
-        @Override
-        public @NotNull Interval getInterval(Record rec) {
-            return interval;
         }
 
         @Override
@@ -123,8 +118,8 @@ public class TodayWithTimezoneFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        protected long intervalStart(long now) {
-            return Timestamps.floorDD(now);
+        protected int shiftFromToday() {
+            return 0;
         }
     }
 }

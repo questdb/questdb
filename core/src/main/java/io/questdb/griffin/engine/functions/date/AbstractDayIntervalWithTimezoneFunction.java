@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -37,20 +38,25 @@ import io.questdb.std.NumericException;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
+import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
-public abstract class AbstractIntervalWithTimezoneFunction extends IntervalFunction implements UnaryFunction {
-    protected final Interval interval = new Interval();
+public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDayIntervalFunction implements UnaryFunction {
     protected final Function tzFunc;
 
-    public AbstractIntervalWithTimezoneFunction(Function tzFunc) {
+    public AbstractDayIntervalWithTimezoneFunction(Function tzFunc) {
         this.tzFunc = tzFunc;
     }
 
     @Override
     public Function getArg() {
         return tzFunc;
+    }
+
+    @Override
+    public @NotNull Interval getInterval(Record rec) {
+        return interval;
     }
 
     @Override
@@ -77,7 +83,7 @@ public abstract class AbstractIntervalWithTimezoneFunction extends IntervalFunct
         if (Chars.isBlank(tz)) {
             // no timezone, default to UTC
             final long start = intervalStart(now);
-            final long end = Timestamps.addDays(start, 1) - 1;
+            final long end = intervalEnd(start);
             return interval.of(start, end);
         }
 
@@ -86,8 +92,9 @@ public abstract class AbstractIntervalWithTimezoneFunction extends IntervalFunct
             if (l != Long.MIN_VALUE) {
                 // the timezone is in numeric offset format
                 final long offset = Numbers.decodeLowInt(l) * Timestamps.MINUTE_MICROS;
-                final long startWithTz = intervalStart(now + offset);
-                final long endWithTz = Timestamps.addDays(startWithTz, 1) - 1;
+                final long nowWithTz = now + offset;
+                final long startWithTz = intervalStart(nowWithTz);
+                final long endWithTz = intervalEnd(startWithTz);
                 return interval.of(startWithTz - offset, endWithTz - offset);
             }
 
@@ -100,12 +107,10 @@ public abstract class AbstractIntervalWithTimezoneFunction extends IntervalFunct
             final long nowWithTz = now + offset;
             // calculate date start and end with tz
             long startWithTz = intervalStart(nowWithTz);
-            long endWithTz = Timestamps.addDays(startWithTz, 1) - 1;
+            long endWithTz = intervalEnd(startWithTz);
             return interval.of(Timestamps.toUTC(startWithTz, tzRules), Timestamps.toUTC(endWithTz, tzRules));
         } catch (NumericException e) {
             return interval.of(Interval.NULL.getLo(), Interval.NULL.getHi());
         }
     }
-
-    protected abstract long intervalStart(long now);
 }

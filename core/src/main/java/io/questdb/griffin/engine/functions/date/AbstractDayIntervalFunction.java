@@ -26,13 +26,14 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntervalFunction;
 import io.questdb.std.Interval;
 import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 
-public abstract class AbstractIntervalFunction extends IntervalFunction {
+public abstract class AbstractDayIntervalFunction extends IntervalFunction {
     protected final Interval interval = new Interval();
 
     @Override
@@ -41,9 +42,10 @@ public abstract class AbstractIntervalFunction extends IntervalFunction {
     }
 
     @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-        final long start = intervalStart(executionContext.getNow());
-        final long end = Timestamps.addDays(start, 1) - 1;
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        final long now = executionContext.getNow();
+        final long start = intervalStart(now);
+        final long end = intervalEnd(start);
         interval.of(start, end);
     }
 
@@ -57,5 +59,13 @@ public abstract class AbstractIntervalFunction extends IntervalFunction {
         return true;
     }
 
-    protected abstract long intervalStart(long now);
+    protected long intervalEnd(long start) {
+        return start + Timestamps.DAY_MICROS - 1;
+    }
+
+    protected long intervalStart(long now) {
+        return Timestamps.floorDD(Timestamps.addDays(now, shiftFromToday()));
+    }
+
+    protected abstract int shiftFromToday();
 }
