@@ -75,6 +75,7 @@ public class CastIntervalToStrFunctionFactory implements FunctionFactory {
         public CharSequence getStrA(Record rec) {
             final Interval value = arg.getInterval(rec);
             if (!Interval.NULL.equals(value)) {
+                sinkA.clear();
                 value.toSink(sinkA);
                 return sinkA;
             }
@@ -85,6 +86,7 @@ public class CastIntervalToStrFunctionFactory implements FunctionFactory {
         public CharSequence getStrB(Record rec) {
             final Interval value = arg.getInterval(rec);
             if (!Interval.NULL.equals(value)) {
+                sinkB.clear();
                 value.toSink(sinkB);
                 return sinkB;
             }

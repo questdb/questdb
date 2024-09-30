@@ -2802,6 +2802,28 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntervalAllVirtual() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "first\tcount\tts\n" +
+                        "('2024-09-29T18:00:00.000Z', '2024-09-30T17:59:59.999Z')\t60\t2022-02-24T00:00:00.000000Z\n" +
+                        "('2024-09-29T18:00:00.000Z', '2024-09-30T17:59:59.999Z')\t60\t2022-02-24T01:00:00.000000Z\n" +
+                        "('2024-09-29T18:00:00.000Z', '2024-09-30T17:59:59.999Z')\t60\t2022-02-24T02:00:00.000000Z\n" +
+                        "('2024-09-29T18:00:00.000Z', '2024-09-30T17:59:59.999Z')\t60\t2022-02-24T03:00:00.000000Z\n" +
+                        "('2024-09-29T18:00:00.000Z', '2024-09-30T17:59:59.999Z')\t60\t2022-02-24T04:00:00.000000Z\n" +
+                        "('2024-09-29T18:00:00.000Z', '2024-09-30T17:59:59.999Z')\t60\t2022-02-24T05:00:00.000000Z\n" +
+                        "('2024-09-29T18:00:00.000Z', '2024-09-30T17:59:59.999Z')\t60\t2022-02-24T06:00:00.000000Z\n" +
+                        "('2024-09-29T18:00:00.000Z', '2024-09-30T17:59:59.999Z')\t60\t2022-02-24T07:00:00.000000Z\n" +
+                        "('2024-09-29T18:00:00.000Z', '2024-09-30T17:59:59.999Z')\t20\t2022-02-24T08:00:00.000000Z\n",
+                "select first(today), count(x), ts " +
+                        "from ( " +
+                        "  select today('bst') today, x, timestamp_sequence('2022-02-24', 60*1000*1000) ts " +
+                        "  from long_sequence(500) " +
+                        ") timestamp(ts) " +
+                        "SAMPLE by 1h;"
+        ));
+    }
+
+    @Test
     public void testNoSampleByWithDeferredSingleSymbolFilterPageFrameRecordCursorFactory() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table xx (k timestamp, d DOUBLE, s SYMBOL)" +
