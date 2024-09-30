@@ -59,24 +59,16 @@ def convert_and_append_parameters(value, type, resolved_parameters):
 async def execute_query(connection: Connection, query, parameters):
     query_type = query.strip().split()[0].lower()
     if query_type == 'select':
-        if parameters:
-            result = await connection.fetch(query, *parameters)
-        else:
-            result = await connection.fetch(query)
-        return result
-    else:
-        if parameters:
-            status = await connection.execute(query, *parameters)
-        else:
-            status = await connection.execute(query)
+        return await connection.fetch(query, *parameters)
 
-        # parse status string to update count (if any) as a result
-        status_parts = status.split()
-        if status_parts[0] == 'INSERT' or status_parts[0] == 'UPDATE':
-            row_count = int(status_parts[-1])
-            return [{'count': row_count}]
-        else:
-            return None
+    status = await connection.execute(query, *parameters)
+    # parse status string to update count (if any) as a result
+    status_parts = status.split()
+    if status_parts[0] == 'INSERT' or status_parts[0] == 'UPDATE':
+        row_count = int(status_parts[-1])
+        return [{'count': row_count}]
+
+    return None
 
 
 def assert_result(expect, actual):
