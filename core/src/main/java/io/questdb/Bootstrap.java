@@ -150,8 +150,6 @@ public class Bootstrap {
         }
 
         verifyFileLimits();
-
-
         try {
             if (bootstrapConfiguration.useSite()) {
                 // site
