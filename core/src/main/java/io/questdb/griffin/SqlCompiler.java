@@ -34,9 +34,9 @@ import org.jetbrains.annotations.TestOnly;
 
 public interface SqlCompiler extends QuietCloseable, Mutable {
 
-    CompiledQuery compile(CharSequence s, SqlExecutionContext ctx) throws SqlException;
+    CompiledQuery compile(CharSequence sqlText, SqlExecutionContext ctx) throws SqlException;
 
-    void compileBatch(CharSequence queryText, SqlExecutionContext sqlExecutionContext, BatchCallback batchCallback) throws Exception;
+    void compileBatch(CharSequence batchText, SqlExecutionContext sqlExecutionContext, BatchCallback batchCallback) throws Exception;
 
     QueryBuilder query();
 
@@ -47,7 +47,7 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     void setFullFatJoins(boolean fullFatJoins);
 
     @TestOnly
-    ExecutionModel testCompileModel(CharSequence query, SqlExecutionContext executionContext) throws SqlException;
+    ExecutionModel testCompileModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
 
     @TestOnly
     ExpressionNode testParseExpression(CharSequence expression, QueryModel model) throws SqlException;

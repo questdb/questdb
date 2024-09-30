@@ -4,6 +4,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.std.CharSequenceObjHashMap;
 import org.jetbrains.annotations.Nullable;
 
@@ -20,6 +21,8 @@ public class DropOperation {
     private final int entityNamePosition;
     private final CharSequenceObjHashMap<CharSequence> flags = new CharSequenceObjHashMap<>();
     private final DropOperationHandler dropOperationHandler;
+    private final String sqlText;
+    private final long beginNanos;
 
     public DropOperation(
             CairoEngine engine,
@@ -27,7 +30,9 @@ public class DropOperation {
             String entityName,
             int entityNamePosition,
             CharSequenceObjHashMap<CharSequence> flags,
-            @Nullable DropOperationHandler dropOperationHandler
+            @Nullable DropOperationHandler dropOperationHandler,
+            String sqlText,
+            long beginNanos
     ) {
         this.cairoEngine = engine;
         this.cmd = cmd;
@@ -35,24 +40,32 @@ public class DropOperation {
         this.entityNamePosition = entityNamePosition;
         this.flags.putAll(flags);
         this.dropOperationHandler = dropOperationHandler;
+        this.sqlText = sqlText;
+        this.beginNanos = beginNanos;
     }
 
     public void execute(SqlExecutionContext sqlExecutionContext) throws SqlException {
-        switch (cmd) {
-            case DROP_ALL_TABLES:
-                try (SqlCompiler compiler = cairoEngine.getSqlCompiler()) {
-                    compiler.dropAllTables(sqlExecutionContext);
-                }
-                break;
-            case DROP_SINGLE_TABLE:
-                try (SqlCompiler compiler = cairoEngine.getSqlCompiler()) {
-                    compiler.dropTable(sqlExecutionContext, entityName, entityNamePosition, flags);
-                }
-                break;
-            default:
-                assert dropOperationHandler != null;
-                dropOperationHandler.execute(sqlExecutionContext, entityName, entityNamePosition, flags);
-                break;
+        try {
+            switch (cmd) {
+                case DROP_ALL_TABLES:
+                    try (SqlCompiler compiler = cairoEngine.getSqlCompiler()) {
+                        compiler.dropAllTables(sqlExecutionContext);
+                    }
+                    break;
+                case DROP_SINGLE_TABLE:
+                    try (SqlCompiler compiler = cairoEngine.getSqlCompiler()) {
+                        compiler.dropTable(sqlExecutionContext, entityName, entityNamePosition, flags);
+                    }
+                    break;
+                default:
+                    assert dropOperationHandler != null;
+                    dropOperationHandler.execute(sqlExecutionContext, entityName, entityNamePosition, flags);
+                    break;
+            }
+            QueryProgress.logEnd(0, sqlText, sqlExecutionContext, beginNanos, false);
+        } catch (Throwable e) {
+            QueryProgress.logError(e, 0, sqlText, sqlExecutionContext, beginNanos, false);
+            throw e;
         }
     }
 

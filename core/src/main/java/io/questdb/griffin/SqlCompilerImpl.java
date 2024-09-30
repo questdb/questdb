@@ -228,13 +228,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @NotNull
-    public CompiledQuery compile(@NotNull CharSequence query, @Transient @NotNull SqlExecutionContext executionContext) throws SqlException {
+    public CompiledQuery compile(@NotNull CharSequence sqlText, @Transient @NotNull SqlExecutionContext executionContext) throws SqlException {
         clear();
         // these are quick executions that do not require building of a model
-        lexer.of(query);
+        lexer.of(sqlText);
         isSingleQueryMode = true;
 
-        compileInner(executionContext, query);
+        compileInner(executionContext, sqlText);
         return compiledQuery;
     }
 
@@ -249,7 +249,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * <p>
      * Useful PG doc link :
      *
-     * @param query            - block of queries to process
+     * @param batchText            - block of queries to process
      * @param executionContext - SQL execution context
      * @param batchCallback    - callback to perform actions prior to or after batch part compilation, e.g. clear caches or execute command
      * @throws SqlException              - in case of syntax error
@@ -260,12 +260,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      */
     @Override
     public void compileBatch(
-            @NotNull CharSequence query,
+            @NotNull CharSequence batchText,
             @NotNull SqlExecutionContext executionContext,
             BatchCallback batchCallback
     ) throws Exception {
         clear();
-        lexer.of(query);
+        lexer.of(batchText);
         isSingleQueryMode = false;
 
         if (batchCallback == null) {
@@ -288,7 +288,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                 // Fetch sqlText, this will move lexer pointer (state change).
                 // We try to avoid logging the entire sql batch, in case batch contains secrets
-                final CharSequence sqlText = query.subSequence(position, goToQueryEnd());
+                final CharSequence sqlText = batchText.subSequence(position, goToQueryEnd());
                 // re-position lexer pointer to where sqlText just began
                 lexer.backTo(position, null);
                 compileInner(executionContext, sqlText);
@@ -338,9 +338,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     @TestOnly
     @Override
-    public ExecutionModel testCompileModel(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
+    public ExecutionModel testCompileModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
         clear();
-        lexer.of(query);
+        lexer.of(sqlText);
         return compileExecutionModel(executionContext);
     }
 
@@ -592,10 +592,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
 
-    private void compileAlter(SqlExecutionContext executionContext) throws SqlException {
+    private void compileAlter(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok == null || !SqlKeywords.isTableKeyword(tok)) {
-            unknownAlterStatement(executionContext, tok);
+            compileAlterExt(executionContext, tok);
             return;
         }
         final int tableNamePosition = lexer.getPosition();
@@ -892,7 +892,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void compileCancel(SqlExecutionContext executionContext) throws SqlException {
+    private void compileCancel(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok == null || !SqlKeywords.isQueryKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "'QUERY' expected'");
@@ -1504,9 +1504,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return tableName;
     }
 
-    private void compileDrop(SqlExecutionContext executionContext) throws SqlException {
+    private void compileDrop(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
+        // drop does not have passwords
+        QueryProgress.logStart(-1, sqlText, executionContext, false);
         // the selected method depends on the second token, we have already seen DROP
         dropOperationBuilder.clear();
+        dropOperationBuilder.setBeginNanos(configuration.getNanosecondClock().getTicks());
+
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null) {
             // DROP TABLE [ IF EXISTS ] name [;]
@@ -1562,14 +1566,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         compileDropExt(executionContext, tok);
+        dropOperationBuilder.setSqlText(sqlText);
         compiledQuery.ofDrop(dropOperationBuilder.build());
     }
 
-    private void compileBegin(SqlExecutionContext executionContext) {
+    private void compileBegin(SqlExecutionContext executionContext, @Transient CharSequence sqlText) {
         compiledQuery.ofBegin();
     }
 
-    private void compileCheckpoint(SqlExecutionContext executionContext) throws SqlException {
+    private void compileCheckpoint(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         executionContext.getSecurityContext().authorizeDatabaseSnapshot();
         CharSequence tok = expectToken(lexer, "'create' or 'release'");
 
@@ -1584,7 +1589,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void compileCommit(SqlExecutionContext executionContext) {
+    private void compileCommit(SqlExecutionContext executionContext, @Transient CharSequence sqlText) {
         compiledQuery.ofCommit();
     }
 
@@ -1638,7 +1643,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         );
     }
 
-    private void compileDeallocate(SqlExecutionContext executionContext) throws SqlException {
+    private void compileDeallocate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         CharSequence statementName = GenericLexer.unquote(expectToken(lexer, "statement name"));
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && !Chars.equals(tok, ';')) {
@@ -1704,7 +1709,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             try {
                 // we cannot log start of the executor SQL because we do not know if it
                 // contains secrets or not.
-                executor.execute(executionContext);
+                executor.execute(executionContext, sqlText);
                 // executor might decide that SQL contains secret, otherwise we're logging it
                 this.sqlText = executionContext.containsSecret() ? "** redacted for privacy ** " : sqlText;
             } catch (Throwable e) {
@@ -1728,8 +1733,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // executor is allowed to give up on the execution and fall back to standard behaviour
         if (executor == null || compiledQuery.getType() == CompiledQuery.NONE) {
             compileUsingModel(executionContext, beginNanos);
-        } else {
-            QueryProgress.logEnd(-1, this.sqlText, executionContext, beginNanos, false);
         }
         final short type = compiledQuery.getType();
         if ((type == CompiledQuery.ALTER || type == CompiledQuery.UPDATE) && !executionContext.isWalApplication()) {
@@ -1738,7 +1741,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.withContext(executionContext);
     }
 
-    private void compileLegacyCheckpoint(SqlExecutionContext executionContext) throws SqlException {
+    private void compileLegacyCheckpoint(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         executionContext.getSecurityContext().authorizeDatabaseSnapshot();
         CharSequence tok = expectToken(lexer, "'prepare' or 'complete'");
 
@@ -1753,15 +1756,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void compileRollback(SqlExecutionContext executionContext) {
+    private void compileRollback(SqlExecutionContext executionContext, @Transient CharSequence sqlText) {
         compiledQuery.ofRollback();
     }
 
-    private void compileSet(SqlExecutionContext executionContext) {
+    private void compileSet(SqlExecutionContext executionContext, @Transient CharSequence sqlText) {
         compiledQuery.ofSet();
     }
 
-    private void compileReindex(SqlExecutionContext executionContext) throws SqlException {
+    private void compileReindex(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         CharSequence tok;
         tok = SqlUtil.fetchNext(lexer);
         if (tok == null || !isTableKeyword(tok)) {
@@ -2228,14 +2231,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void createTable(final ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
         final CreateTableModel createTableModel = (CreateTableModel) model;
-        final ExpressionNode name = createTableModel.getName();
+        final ExpressionNode tableNameExpr = createTableModel.getTableNameExpr();
 
         // Fast path for CREATE TABLE IF NOT EXISTS in scenario when the table already exists
-        final int status = executionContext.getTableStatus(path, name.token);
+        final int status = executionContext.getTableStatus(path, tableNameExpr.token);
         if (createTableModel.isIgnoreIfExists() && status == TableUtils.TABLE_EXISTS) {
-            compiledQuery.ofCreateTable(executionContext.getTableTokenIfExists(name.token));
+            compiledQuery.ofCreateTable(executionContext.getTableTokenIfExists(tableNameExpr.token));
         } else if (status == TableUtils.TABLE_EXISTS) {
-            throw SqlException.$(name.position, "table already exists");
+            throw SqlException.$(tableNameExpr.position, "table already exists");
         } else {
             // create table (...) ... in volume volumeAlias;
             CharSequence volumeAlias = createTableModel.getVolumeAlias();
@@ -2277,7 +2280,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         );
                     }
                 } catch (EntryUnavailableException e) {
-                    throw SqlException.$(name.position, "table already exists");
+                    throw SqlException.$(tableNameExpr.position, "table already exists");
                 } catch (CairoException e) {
                     if (e.isAuthorizationError() || e.isCancellation()) {
                         // No point printing stack trace for authorization or cancellation errors
@@ -2288,10 +2291,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     if (e.isInterruption()) {
                         throw e;
                     }
-                    throw SqlException.$(name.position, "Could not create table, ").put(e.getFlyweightMessage());
+                    throw SqlException.$(tableNameExpr.position, "Could not create table, ").put(e.getFlyweightMessage());
                 }
             } else {
-                tableToken = createTableFromCursorExecutor(createTableModel, executionContext, volumeAlias, name.position);
+                tableToken = createTableFromCursorExecutor(createTableModel, executionContext, volumeAlias, tableNameExpr.position);
             }
 
             if (createTableModel.getQueryModel() == null) {
@@ -2920,7 +2923,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void compileTruncate(SqlExecutionContext executionContext) throws SqlException {
+    private void compileTruncate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         CharSequence tok;
         tok = SqlUtil.fetchNext(lexer);
 
@@ -3026,7 +3029,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofTruncate();
     }
 
-    private void compileVacuum(SqlExecutionContext executionContext) throws SqlException {
+    private void compileVacuum(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         CharSequence tok = expectToken(lexer, "'table'");
         // It used to be VACUUM PARTITIONS but become VACUUM TABLE
         boolean partitionsKeyword = isPartitionsKeyword(tok);
@@ -3241,7 +3244,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
 
-    protected void unknownAlterStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
+    protected void compileAlterExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         if (tok == null) {
             throw SqlException.position(lexer.getPosition()).put("'table' expected");
         }
@@ -3289,7 +3292,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     @FunctionalInterface
     public interface KeywordBasedExecutor {
-        void execute(SqlExecutionContext executionContext) throws SqlException;
+        void execute(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException;
     }
 
     public final static class PartitionAction {
@@ -3668,7 +3671,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             dstPathRoot = dstPath.size();
         }
 
-        private void sqlBackup(SqlExecutionContext executionContext) throws SqlException {
+        private void sqlBackup(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
             if (null == configuration.getBackupRoot()) {
                 throw CairoException.nonCritical().put("backup is disabled, server.conf property 'cairo.sql.backup.root' is not set");
             }

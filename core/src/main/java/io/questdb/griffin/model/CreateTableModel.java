@@ -47,16 +47,15 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
     private boolean ignoreIfExists = false;
     private ExpressionNode likeTableName;
     private int maxUncommittedRows;
-    private ExpressionNode name;
     private long o3MaxLag;
     private ExpressionNode partitionBy;
     private QueryModel queryModel;
+    private ExpressionNode tableNameExpr;
     private ExpressionNode timestamp;
     private CharSequence volumeAlias;
     private boolean walEnabled;
 
     private CreateTableModel() {
-
     }
 
     public void addColumn(CharSequence name, int type, int symbolCapacity) throws SqlException {
@@ -97,7 +96,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         timestamp = null;
         partitionBy = null;
         likeTableName = null;
-        name = null;
+        tableNameExpr = null;
         volumeAlias = null;
         columnBits.clear();
         columnNames.clear();
@@ -158,10 +157,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         return CREATE_TABLE;
     }
 
-    public ExpressionNode getName() {
-        return name;
-    }
-
     @Override
     public long getO3MaxLag() {
         return o3MaxLag;
@@ -190,7 +185,11 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
 
     @Override
     public CharSequence getTableName() {
-        return name.token;
+        return tableNameExpr.token;
+    }
+
+    public ExpressionNode getTableNameExpr() {
+        return tableNameExpr;
     }
 
     public ExpressionNode getTimestamp() {
@@ -269,10 +268,6 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
         this.maxUncommittedRows = maxUncommittedRows;
     }
 
-    public void setName(ExpressionNode name) {
-        this.name = name;
-    }
-
     public void setO3MaxLag(long o3MaxLag) {
         this.o3MaxLag = o3MaxLag;
     }
@@ -283,6 +278,10 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
 
     public void setQueryModel(QueryModel queryModel) {
         this.queryModel = queryModel;
+    }
+
+    public void setTableNameExpr(ExpressionNode tableNameExpr) {
+        this.tableNameExpr = tableNameExpr;
     }
 
     public void setTimestamp(ExpressionNode timestamp) {
@@ -321,7 +320,7 @@ public class CreateTableModel implements Mutable, ExecutionModel, Sinkable, Tabl
             sink.putAscii(" atomic");
         }
         sink.putAscii(" table ");
-        sink.put(getName().token);
+        sink.put(getTableNameExpr().token);
         if (getQueryModel() != null) {
             sink.putAscii(" as (");
             getQueryModel().toSink(sink);

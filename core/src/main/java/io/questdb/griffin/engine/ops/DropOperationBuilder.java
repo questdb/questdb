@@ -2,15 +2,18 @@ package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
 
 public class DropOperationBuilder implements Mutable {
     private final CairoEngine cairoEngine;
     private final CharSequenceObjHashMap<CharSequence> flags = new CharSequenceObjHashMap<>();
+    private long beginNanos;
     private int cmd = DropOperation.DROP_ENTITY_UNDEFINED;
     private DropOperation.DropOperationHandler dropOperationHandler;
     private String entityName;
     private int entityNamePosition;
+    private CharSequence sqlText;
 
     public DropOperationBuilder(CairoEngine cairoEngine) {
         this.cairoEngine = cairoEngine;
@@ -21,7 +24,16 @@ public class DropOperationBuilder implements Mutable {
     }
 
     public DropOperation build() {
-        return new DropOperation(cairoEngine, cmd, entityName, entityNamePosition, flags, dropOperationHandler);
+        return new DropOperation(
+                cairoEngine,
+                cmd,
+                entityName,
+                entityNamePosition,
+                flags,
+                dropOperationHandler,
+                Chars.toString(sqlText),
+                beginNanos
+        );
     }
 
     @Override
@@ -55,6 +67,10 @@ public class DropOperationBuilder implements Mutable {
         }
     }
 
+    public void setBeginNanos(long beginNanos) {
+        this.beginNanos = beginNanos;
+    }
+
     public void setCmd(int cmd) {
         this.cmd = cmd;
     }
@@ -66,5 +82,9 @@ public class DropOperationBuilder implements Mutable {
     public void setEntity(String entityName, int entityNamePosition) {
         this.entityName = entityName;
         this.entityNamePosition = entityNamePosition;
+    }
+
+    public void setSqlText(CharSequence sqlText) {
+        this.sqlText = sqlText;
     }
 }

@@ -125,13 +125,13 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
-        public CompiledQuery compile(CharSequence s, SqlExecutionContext ctx) throws SqlException {
-            return delegate.compile(s, ctx);
+        public CompiledQuery compile(CharSequence sqlText, SqlExecutionContext ctx) throws SqlException {
+            return delegate.compile(sqlText, ctx);
         }
 
         @Override
-        public void compileBatch(CharSequence queryText, SqlExecutionContext sqlExecutionContext, BatchCallback batchCallback) throws Exception {
-            delegate.compileBatch(queryText, sqlExecutionContext, batchCallback);
+        public void compileBatch(CharSequence batchText, SqlExecutionContext sqlExecutionContext, BatchCallback batchCallback) throws Exception {
+            delegate.compileBatch(batchText, sqlExecutionContext, batchCallback);
         }
 
         @Override
@@ -191,8 +191,8 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
-        public ExecutionModel testCompileModel(CharSequence query, SqlExecutionContext executionContext) throws SqlException {
-            return delegate.testCompileModel(query, executionContext);
+        public ExecutionModel testCompileModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
+            return delegate.testCompileModel(sqlText, executionContext);
         }
 
         @Override

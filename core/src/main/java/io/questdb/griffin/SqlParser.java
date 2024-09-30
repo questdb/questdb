@@ -590,7 +590,7 @@ public class SqlParser {
 
         assertTableNameIsQuotedOrNotAKeyword(tableName, lexer.lastTokenPosition());
 
-        model.setName(nextLiteral(GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tableName), lexer.lastTokenPosition()), lexer.lastTokenPosition()));
+        model.setTableNameExpr(nextLiteral(GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tableName), lexer.lastTokenPosition()), lexer.lastTokenPosition()));
 
         tok = tok(lexer, "'(' or 'as'");
 

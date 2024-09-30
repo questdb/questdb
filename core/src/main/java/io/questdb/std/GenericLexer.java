@@ -293,8 +293,8 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         return last = flyweightSequence;
     }
 
-    public void of(CharSequence cs) {
-        of(cs, 0, cs == null ? 0 : cs.length());
+    public void of(CharSequence content) {
+        of(content, 0, content == null ? 0 : content.length());
     }
 
     public void of(CharSequence cs, int lo, int hi) {

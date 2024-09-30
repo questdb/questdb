@@ -6731,9 +6731,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        protected void unknownAlterStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
+        protected void compileAlterExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
             unknownAlterStatementCalled = true;
-            super.unknownAlterStatement(executionContext, tok);
+            super.compileAlterExt(executionContext, tok);
         }
 
         @Override

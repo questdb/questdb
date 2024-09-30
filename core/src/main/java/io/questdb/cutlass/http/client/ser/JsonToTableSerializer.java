@@ -79,7 +79,7 @@ public class JsonToTableSerializer implements JsonParser, Mutable, QuietCloseabl
     public JsonToTableSerializer(CairoEngine engine) {
         this.engine = engine;
         // wire up the model
-        createTableModel.setName(tableName);
+        createTableModel.setTableNameExpr(tableName);
         createTableModel.setTimestamp(timestampName);
         createTableModel.setPartitionBy(partitionBy);
     }
@@ -91,7 +91,7 @@ public class JsonToTableSerializer implements JsonParser, Mutable, QuietCloseabl
         columnName = null;
         lexer.clear();
         createTableModel.clear();
-        createTableModel.setName(tableName);
+        createTableModel.setTableNameExpr(tableName);
         createTableModel.setTimestamp(timestampName);
         createTableModel.setPartitionBy(partitionBy);
     }
