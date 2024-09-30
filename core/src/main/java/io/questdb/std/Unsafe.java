@@ -67,7 +67,7 @@ public final class Unsafe {
     //#if jdk.version!=8
     private static final Method implAddExports;
     //#endif
-    private static long RSS_MEM_LIMIT_ADDR = 0;
+    private static final long RSS_MEM_LIMIT_ADDR;
 
     private Unsafe() {
     }
