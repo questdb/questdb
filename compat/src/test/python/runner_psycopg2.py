@@ -27,55 +27,12 @@ import re
 import sys
 import yaml
 from string import Template
+from common import *
 
 
-def load_yaml(file_path):
-    with open(file_path, 'r') as file:
-        return yaml.safe_load(file)
-
-
-def substitute_variables(text, variables):
-    if text is None:
-        return None
-    template = Template(str(text))
-    return template.safe_substitute(variables)
-
-
-def replace_param_placeholders(query):
-    # Replace $[n] with %s for psycopg2
-    # Matches $[1], $[2], etc.
+def adjust_placeholder_syntax(query):
+    # Replace $[n] with %s
     return re.sub(r'\$\[\d+\]', '%s', query)
-
-
-def extract_parameters(typed_parameters, variables):
-    resolved_parameters = []
-    for typed_param in typed_parameters:
-        type_ = typed_param.get('type').lower()
-        value = typed_param.get('value')
-
-        # convert_and_push_parameters(value, type_, resolved_parameters)
-        if isinstance(value, str):
-            resolved_param = substitute_variables(value, variables)
-            convert_and_push_parameters(resolved_param, type_, resolved_parameters)
-        else:
-            convert_and_push_parameters(value, type_, resolved_parameters)
-    return resolved_parameters
-
-
-def convert_and_push_parameters(value, type, resolved_parameters):
-    if type == 'int4' or type == 'int8':
-        resolved_parameters.append(int(value))
-    elif type == 'float4' or type == 'float8':
-        resolved_parameters.append(float(value))
-    elif type == 'boolean':
-        resolved_parameters.append(bool(value))
-    elif type == 'varchar':
-        resolved_parameters.append(str(value))
-    elif type == 'timestamp':
-        parsed_value = datetime.datetime.strptime(value, '%Y-%m-%dT%H:%M:%S.%fZ')
-        resolved_parameters.append(parsed_value)
-    else:
-        resolved_parameters.append(value)
 
 
 def execute_query(cursor, query, parameters):
@@ -92,31 +49,6 @@ def execute_query(cursor, query, parameters):
             return [(cursor.rowcount,)]
     except psycopg2.ProgrammingError:
         return cursor.statusmessage
-
-
-def assert_result(expect, actual):
-    if 'result' in expect:
-        expected_result = expect['result']
-        if isinstance(expected_result, list):
-            # Convert tuples in actual to lists
-            actual_converted = [list(row) for row in actual]
-            for row in actual_converted:
-                for i, value in enumerate(row):
-                    if isinstance(value, datetime.datetime):
-                        row[i] = value.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
-            assert actual_converted == expected_result, f"Expected result {expected_result}, got {actual_converted}"
-        else:
-            # For non-list expected results, compare as strings
-            assert str(actual) == str(expected_result), f"Expected result '{expected_result}', got '{actual}'"
-    elif 'result_contains' in expect:
-        # Convert tuples in actual to lists
-        actual_converted = [list(row) for row in actual]
-        for row in actual_converted:
-            for i, value in enumerate(row):
-                if isinstance(value, datetime.datetime):
-                    row[i] = value.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
-        for expected_row in expect['result_contains']:
-            assert expected_row in actual_converted, f"Expected row {expected_row} not found in actual results."
 
 
 def execute_steps(steps, variables, cursor, connection):
@@ -155,9 +87,9 @@ def execute_step(step, variables, cursor, connection):
     query_with_vars = substitute_variables(query_template, variables)
 
     # Replace parameter placeholders in query
-    query = replace_param_placeholders(query_with_vars)
+    query = adjust_placeholder_syntax(query_with_vars)
 
-    resolved_parameters = extract_parameters(parameters, variables)
+    resolved_parameters = resolve_parameters(parameters, variables)
     result = execute_query(cursor, query, resolved_parameters)
     connection.commit()
 
