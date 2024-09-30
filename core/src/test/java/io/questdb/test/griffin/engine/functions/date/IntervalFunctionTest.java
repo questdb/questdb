@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Interval;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
@@ -237,6 +238,36 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimezoneDSTSwitch() throws Exception {
+        // Last Sunday of March, e.g. 2024-03-31, is the DST (daylight saving time) switch day in Bulgaria (UTC+02 to UTC+03).
+        assertMemoryLeak(() -> {
+            setCurrentMicros(IntervalUtils.parseFloorPartialTimestamp("2024-04-01T06:00:00.000000Z"));
+            String expected = "yesterday\n" +
+                    "('2024-03-30T22:00:00.000Z', '2024-03-31T20:59:59.999Z')\n";
+            assertSql(expected, "select yesterday('Europe/Sofia')");
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "Europe/Sofia");
+            assertSql(expected, "select yesterday(:tz)");
+
+            setCurrentMicros(IntervalUtils.parseFloorPartialTimestamp("2024-03-31T06:00:00.000000Z"));
+            expected = "today\n" +
+                    "('2024-03-30T22:00:00.000Z', '2024-03-31T20:59:59.999Z')\n";
+            assertSql(expected, "select today('Europe/Sofia')");
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "Europe/Sofia");
+            assertSql(expected, "select today(:tz)");
+
+            setCurrentMicros(IntervalUtils.parseFloorPartialTimestamp("2024-03-30T06:00:00.000000Z"));
+            expected = "tomorrow\n" +
+                    "('2024-03-30T22:00:00.000Z', '2024-03-31T20:59:59.999Z')\n";
+            assertSql(expected, "select tomorrow('Europe/Sofia')");
+            bindVariableService.clear();
+            bindVariableService.setStr("tz", "Europe/Sofia");
+            assertSql(expected, "select tomorrow(:tz)");
+        });
+    }
+
+    @Test
     public void testToday1() throws Exception {
         assertMemoryLeak(() -> {
             long todayStart = today(sqlExecutionContext.getNow());
@@ -299,38 +330,38 @@ public class IntervalFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testTomorrowWithTimezone() throws Exception {
-        setCurrentMicros(2 * Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-02T01:00:00.000000Z
+        setCurrentMicros(2 * Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-03T01:00:00.000000Z
         assertMemoryLeak(() -> {
             String expected = "tomorrow\n" +
-                    "('1970-01-03T00:00:00.000Z', '1970-01-03T23:59:59.999Z')\n";
+                    "('1970-01-04T00:00:00.000Z', '1970-01-04T23:59:59.999Z')\n";
             assertSql(expected, "select tomorrow(null)");
             bindVariableService.clear();
             bindVariableService.setStr("tz", null);
             assertSql(expected, "select tomorrow(:tz)");
 
             expected = "tomorrow\n" +
-                    "('1970-01-02T01:30:00.000Z', '1970-01-03T01:29:59.999Z')\n";
+                    "('1970-01-03T01:30:00.000Z', '1970-01-04T01:29:59.999Z')\n";
             assertSql(expected, "select tomorrow('UTC-01:30')");
             bindVariableService.clear();
             bindVariableService.setStr("tz", "UTC-01:30");
             assertSql(expected, "select tomorrow(:tz)");
 
             expected = "tomorrow\n" +
-                    "('1970-01-02T22:30:00.000Z', '1970-01-03T22:29:59.999Z')\n";
+                    "('1970-01-03T22:30:00.000Z', '1970-01-04T22:29:59.999Z')\n";
             assertSql(expected, "select tomorrow('UTC+01:30')");
             bindVariableService.clear();
             bindVariableService.setStr("tz", "UTC+01:30");
             assertSql(expected, "select tomorrow(:tz)");
 
             expected = "tomorrow\n" +
-                    "('1970-01-02T22:00:00.000Z', '1970-01-03T21:59:59.999Z')\n";
+                    "('1970-01-03T22:00:00.000Z', '1970-01-04T21:59:59.999Z')\n";
             assertSql(expected, "select tomorrow('Europe/Sofia')");
             bindVariableService.clear();
             bindVariableService.setStr("tz", "Europe/Sofia");
             assertSql(expected, "select tomorrow(:tz)");
 
             expected = "tomorrow\n" +
-                    "('1970-01-02T05:00:00.000Z', '1970-01-03T04:59:59.999Z')\n";
+                    "('1970-01-03T05:00:00.000Z', '1970-01-04T04:59:59.999Z')\n";
             assertSql(expected, "select tomorrow('America/Toronto')");
             bindVariableService.clear();
             bindVariableService.setStr("tz", "America/Toronto");

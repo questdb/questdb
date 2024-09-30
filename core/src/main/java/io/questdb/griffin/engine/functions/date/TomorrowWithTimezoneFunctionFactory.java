@@ -119,7 +119,7 @@ public class TomorrowWithTimezoneFunctionFactory implements FunctionFactory {
 
         @Override
         protected int shiftFromToday() {
-            return 0;
+            return 1;
         }
     }
 }
