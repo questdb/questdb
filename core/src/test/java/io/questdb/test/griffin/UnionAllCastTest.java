@@ -1568,7 +1568,6 @@ public class UnionAllCastTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertSql(
                 "a\tb\n" +
                         "('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')\t('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\n" +
-                        "('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\t('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\n" +
                         "foobar\t\n",
                 "select * from (\n" +
                         "  select today() a, yesterday() b\n" +
