@@ -25,8 +25,13 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -36,7 +41,11 @@ import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.BitSet;
+import io.questdb.std.Long256;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.NotNull;
@@ -132,8 +141,6 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         if (fromFunc != TimestampConstant.NULL || toFunc != TimestampConstant.NULL) {
             sink.attr("range").val('(').val(fromFunc).val(',').val(toFunc).val(')');
         }
-        // todo: this might be incorrect, since I dunno if concatenation of a long and char works as expected
-        // to be tested
         sink.attr("stride").val('\'').val(samplingInterval).val(samplingIntervalUnit).val('\'');
 
         // print values omitting the timestamp column
