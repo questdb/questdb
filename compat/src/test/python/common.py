@@ -83,6 +83,8 @@ def convert_query_result(result):
             if isinstance(value, datetime.datetime):
                 row[i] = value.strftime('%Y-%m-%dT%H:%M:%S.%fZ')
 
+    return result_converted
+
 
 def assert_result(expect, actual):
     if 'result' in expect:
