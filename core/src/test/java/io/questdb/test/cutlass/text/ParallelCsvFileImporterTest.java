@@ -2760,7 +2760,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                 context,
                 true
         );
-        compiler.compile("drop table " + tableName, context);
+        context.getCairoEngine().drop("drop table " + tableName, context);
     }
 
     private LongList list(long... values) {
@@ -2864,7 +2864,7 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
                     false,
                     true
             );
-            compiler.compile("drop table \"" + backlogTableName + "\"", sqlExecutionContext);
+            engine.drop("drop table \"" + backlogTableName + "\"", sqlExecutionContext);
         }
     }
 

@@ -147,7 +147,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                     errors.compareAndSet(null, new AssertionError("Timed out waiting for threads to complete"));
                     TestListener.dumpThreadStacks();
                 }
-                dropTable(defaultCompiler, defaultContext, tableToken);
+                dropTable(defaultContext, tableToken);
                 Misc.freeObjListAndClear(compilers);
                 Misc.freeObjListAndClear(contexts);
 

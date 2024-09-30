@@ -380,7 +380,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public void drop(Path path, TableToken tableToken) {
+    public void dropTable(@Transient Path path, TableToken tableToken) {
         verifyTableToken(tableToken);
         if (tableToken.isWal()) {
             if (tableNameRegistry.dropTable(tableToken)) {
@@ -429,10 +429,6 @@ public class CairoEngine implements Closeable, WriterSource {
                     throw SqlException.$(0, "use select()");
                 default:
                     throw SqlException.$(0, "use ddl()");
-            }
-        } catch (SqlException | CairoException ex) {
-            if (!Chars.contains(ex.getFlyweightMessage(), "table does not exist")) {
-                throw ex;
             }
         } catch (TableReferenceOutOfDateException e) {
             // ignore

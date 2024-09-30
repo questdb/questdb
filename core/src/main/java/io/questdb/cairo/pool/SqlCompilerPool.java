@@ -30,6 +30,7 @@ import io.questdb.griffin.*;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Rnd;
 
 public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPool.C> {
@@ -134,6 +135,21 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
+        public void dropAllTables(SqlExecutionContext sqlExecutionContext) throws SqlException {
+            delegate.dropAllTables(sqlExecutionContext);
+        }
+
+        @Override
+        public void dropTable(
+                SqlExecutionContext sqlExecutionContext,
+                CharSequence tableName,
+                int tableNamePosition,
+                CharSequenceObjHashMap<CharSequence> flags
+        ) throws SqlException {
+            delegate.dropTable(sqlExecutionContext, tableName, tableNamePosition, flags);
+        }
+
+        @Override
         public Entry<C> getEntry() {
             return entry;
         }
@@ -192,6 +208,10 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         @Override
         public void updateTableToken(TableToken tableToken) {
             this.tableToken = tableToken;
+        }
+
+        public SqlCompiler getDelegate() {
+            return delegate;
         }
     }
 }

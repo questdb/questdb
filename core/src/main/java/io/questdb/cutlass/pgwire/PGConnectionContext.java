@@ -31,8 +31,8 @@ import io.questdb.cairo.*;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.text.TextLoader;
@@ -2293,6 +2293,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 queryContainsSecret = sqlExecutionContext.containsSecret();
                 break;
             case CompiledQuery.ALTER:
+            case CompiledQuery.DROP:
                 // future-proofing ALTER execution
                 try (OperationFuture fut = cq.execute(sqlExecutionContext, tempSequence, true)) {
                     fut.await();

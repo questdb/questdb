@@ -27,6 +27,7 @@ package io.questdb.griffin;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.TestOnly;
@@ -53,4 +54,13 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
 
     @TestOnly
     void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException;
+
+    void dropAllTables(SqlExecutionContext sqlExecutionContext) throws SqlException;
+
+    void dropTable(
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence tableName,
+            int tableNamePosition,
+            CharSequenceObjHashMap<CharSequence> flags
+    ) throws SqlException;
 }

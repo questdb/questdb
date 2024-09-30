@@ -219,7 +219,7 @@ public class DropStatementTest extends AbstractCairoTest {
             ddl("CREATE TABLE \"" + tab2 + "\" (s string)", sqlExecutionContext);
 
             try (TableWriter ignored = getWriter(tab0)) {
-                ddl("DROP ALL TABLES;", sqlExecutionContext);
+                drop("DROP ALL TABLES;", sqlExecutionContext);
             } catch (CairoException expected) {
                 TestUtils.assertContains(
                         expected.getFlyweightMessage(),

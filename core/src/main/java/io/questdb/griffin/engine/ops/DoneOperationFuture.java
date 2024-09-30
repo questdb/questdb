@@ -48,11 +48,6 @@ public class DoneOperationFuture implements OperationFuture {
     }
 
     @Override
-    public long getInstanceId() {
-        return -2L;
-    }
-
-    @Override
     public int getStatus() {
         return QUERY_COMPLETE;
     }
