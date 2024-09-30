@@ -64,7 +64,7 @@ tests:
             - [ 4, 4.5, "2023-10-01T10:00:00.000000Z" ]
             - [ 5, 5.5, "2023-10-01T10:00:00.000000Z" ]
       - action: query
-        query: "truncate table ${table_name};"
+        query: "TRUNCATE TABLE ${table_name};"
       - action: query
         query: "SELECT COUNT(*) FROM ${table_name};"
         expect:
@@ -87,7 +87,7 @@ tests:
             - [ 4 ]
             - [ 5 ]
   - name: Parquet test
-    description: This test uses the builtin Parquet demo data
+    description: This test uses the built-in Parquet demo data
     steps:
       - action: query
         query: "SELECT * FROM read_parquet('trades.parquet') WHERE side = $[1];"
