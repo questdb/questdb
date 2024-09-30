@@ -1550,6 +1550,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public Row newRow(long timestamp) {
         switch (rowAction) {
+            case ROW_ACTION_NO_PARTITION:
+
+                if (timestamp < Timestamps.O3_MIN_TS) {
+                    throw CairoException.nonCritical().put("timestamp before 1970-01-01 is not allowed");
+                }
+
+                if (timestamp < txWriter.getMaxTimestamp()) {
+                    throw CairoException.nonCritical().put("cannot insert rows out of order to non-partitioned table. Table=").put(path);
+                }
+
+                bumpMasterRef();
+                updateMaxTimestamp(timestamp);
+                break;
+            case ROW_ACTION_NO_TIMESTAMP:
+                bumpMasterRef();
+                break;
+            case ROW_ACTION_O3:
+                bumpMasterRef();
+                o3TimestampSetter(timestamp);
+                return row;
             case ROW_ACTION_OPEN_PARTITION:
 
                 if (timestamp < Timestamps.O3_MIN_TS) {
@@ -1582,26 +1602,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 updateMaxTimestamp(timestamp);
                 break;
-            case ROW_ACTION_NO_PARTITION:
-
-                if (timestamp < Timestamps.O3_MIN_TS) {
-                    throw CairoException.nonCritical().put("timestamp before 1970-01-01 is not allowed");
-                }
-
-                if (timestamp < txWriter.getMaxTimestamp()) {
-                    throw CairoException.nonCritical().put("cannot insert rows out of order to non-partitioned table. Table=").put(path);
-                }
-
-                bumpMasterRef();
-                updateMaxTimestamp(timestamp);
-                break;
-            case ROW_ACTION_NO_TIMESTAMP:
-                bumpMasterRef();
-                break;
-            case ROW_ACTION_O3:
-                bumpMasterRef();
-                o3TimestampSetter(timestamp);
-                return row;
         }
         txWriter.append();
         return row;

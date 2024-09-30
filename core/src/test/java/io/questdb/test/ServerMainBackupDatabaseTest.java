@@ -163,7 +163,7 @@ public class ServerMainBackupDatabaseTest extends AbstractBootstrapTest {
                 // drop tables
                 ObjList<TableToken> tokens = tableTokens.get();
                 for (int i = 0, n = tokens.size(); i < n; i++) {
-                    dropTable(defaultCompiler, defaultContext, tokens.getQuick(i));
+                    dropTable(defaultContext, tokens.getQuick(i));
                 }
 
                 // fail on first error found

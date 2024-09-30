@@ -105,7 +105,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         this.queryExecutors.extendAndSet(CompiledQuery.TRUNCATE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.ALTER, this::executeAlterTable);
         this.queryExecutors.extendAndSet(CompiledQuery.SET, sendConfirmation);
-        this.queryExecutors.extendAndSet(CompiledQuery.DROP, sendConfirmation);
+        this.queryExecutors.extendAndSet(CompiledQuery.DROP, this::executeAlterTable);
         this.queryExecutors.extendAndSet(CompiledQuery.PSEUDO_SELECT, this::executePseudoSelect);
         this.queryExecutors.extendAndSet(CompiledQuery.CREATE_TABLE, sendConfirmation);
         this.queryExecutors.extendAndSet(CompiledQuery.INSERT_AS_SELECT, sendConfirmation);
@@ -729,7 +729,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
             long timeout = state.getStatementTimeout() > 0 ? state.getStatementTimeout() : asyncCommandTimeout;
             if (state.getExecutionTimeNanos() / 1_000_000L < timeout) {
                 // Schedule a retry
-                state.info().$("waiting for update query [instance=").$(fut.getInstanceId()).I$();
                 throw EntryUnavailableException.instance("wait for update query");
             } else {
                 state.freeAsyncOperation();

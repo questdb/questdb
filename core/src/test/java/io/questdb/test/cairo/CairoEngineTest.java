@@ -306,7 +306,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 TableToken x = createX(engine);
                 assertReader(engine, x);
                 assertWriter(engine, x);
-                engine.drop(path, x);
+                engine.dropTable(path, x);
                 Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getTableStatus(path, x));
 
                 try {
@@ -328,7 +328,7 @@ public class CairoEngineTest extends AbstractCairoTest {
     public void testRemoveNewTable() {
         try (CairoEngine engine = new CairoEngine(configuration)) {
             TableToken x = createX(engine);
-            engine.drop(path, x);
+            engine.dropTable(path, x);
             Assert.assertEquals(TableUtils.TABLE_DOES_NOT_EXIST, engine.getTableStatus(path, x));
         }
     }
@@ -339,7 +339,7 @@ public class CairoEngineTest extends AbstractCairoTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 createY(engine);
                 try {
-                    engine.drop(path, engine.verifyTableName("x"));
+                    engine.dropTable(path, engine.verifyTableName("x"));
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
@@ -356,7 +356,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 try (TableReader reader = engine.getReader(x)) {
                     Assert.assertNotNull(reader);
                     try {
-                        engine.drop(path, x);
+                        engine.dropTable(path, x);
                         Assert.fail();
                     } catch (CairoException ignored) {
                     }
@@ -373,7 +373,7 @@ public class CairoEngineTest extends AbstractCairoTest {
                 try (TableWriter writer = getWriter(engine, x.getTableName())) {
                     Assert.assertNotNull(writer);
                     try {
-                        engine.drop(path, x);
+                        engine.dropTable(path, x);
                         Assert.fail();
                     } catch (CairoException ignored) {
                     }

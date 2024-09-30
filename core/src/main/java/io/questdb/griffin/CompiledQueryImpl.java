@@ -30,10 +30,7 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.engine.ops.AlterOperation;
-import io.questdb.griffin.engine.ops.DoneOperationFuture;
-import io.questdb.griffin.engine.ops.OperationDispatcher;
-import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.engine.ops.*;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Mutable;
@@ -55,6 +52,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private TableToken tableToken;
     private short type;
     private UpdateOperation updateOp;
+    private DropOperation dropOp;
 
     public CompiledQueryImpl(CairoEngine engine) {
         // type inference fails on java 8 if <UpdateOperation> is removed
@@ -87,6 +85,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.alterOp = null;
         this.updateOp = null;
         this.statementName = null;
+        this.dropOp = null;
     }
 
     @Override
@@ -105,6 +104,9 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
             case ALTER:
                 alterOp.withSqlStatement(sqlStatement);
                 return alterOperationDispatcher.execute(alterOp, sqlExecutionContext, eventSubSeq, closeOnDone);
+            case DROP:
+                dropOp.execute(sqlExecutionContext);
+                // fall thru
             default:
                 return doneFuture.of(0);
         }
@@ -159,18 +161,13 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         return of(type, null, null);
     }
 
-    public CompiledQuery of(short type, RecordCursorFactory recordCursorFactory) {
-        return of(type, recordCursorFactory, null);
-    }
-
-    public CompiledQuery of(RecordCursorFactory recordCursorFactory) {
-        return of(SELECT, recordCursorFactory, null);
-    }
-
-    public CompiledQuery ofAlter(AlterOperation alterOp) {
+    public void ofAlter(AlterOperation alterOp) {
         of(ALTER);
         this.alterOp = alterOp;
-        return this;
+    }
+
+    public void ofSelect(RecordCursorFactory recordCursorFactory) {
+        of(SELECT, recordCursorFactory, null);
     }
 
     public void ofAlterUser() {
@@ -215,8 +212,9 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         of(DEALLOCATE);
     }
 
-    public void ofDrop() {
+    public void ofDrop(DropOperation dropOperation) {
         of(DROP);
+        this.dropOp = dropOperation;
     }
 
     public void ofExplain(RecordCursorFactory recordCursorFactory) {

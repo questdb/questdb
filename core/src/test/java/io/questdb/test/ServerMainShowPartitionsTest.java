@@ -151,7 +151,7 @@ public class ServerMainShowPartitionsTest extends AbstractBootstrapTest {
                 if (!completed.await(TimeUnit.SECONDS.toNanos(3L))) {
                     TestListener.dumpThreadStacks();
                 }
-                dropTable(defaultCompiler, defaultContext, tableToken);
+                dropTable(defaultContext, tableToken);
                 for (int i = 0; i < numThreads; i++) {
                     compilers.get(i).close();
                     contexts.get(i).close();

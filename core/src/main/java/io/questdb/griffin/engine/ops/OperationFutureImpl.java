@@ -107,11 +107,6 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
     }
 
     @Override
-    public long getInstanceId() {
-        return correlationId;
-    }
-
-    @Override
     public int getStatus() {
         return status;
     }

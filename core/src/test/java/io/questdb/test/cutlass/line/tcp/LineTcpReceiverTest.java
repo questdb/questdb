@@ -1809,7 +1809,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     }
 
     private void dropWeatherTable() {
-        engine.drop(path, engine.verifyTableName("weather"));
+        engine.dropTable(path, engine.verifyTableName("weather"));
     }
 
     private void mayDrainWalQueue() {

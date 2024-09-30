@@ -65,8 +65,6 @@ public interface OperationFuture extends Closeable {
      */
     long getAffectedRowsCount();
 
-    long getInstanceId();
-
     /**
      * True if operation completed, false otherwise.
      *

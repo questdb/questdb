@@ -253,10 +253,13 @@ public class O3MaxLagTest extends AbstractO3Test {
     @Test
     public void testVarColumnPageBoundaries3() throws Exception {
         dataAppendPageSize = (int) Files.PAGE_SIZE;
-        executeWithPool(0,
-                (CairoEngine engine,
-                 SqlCompiler compiler,
-                 SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(
+                0,
+                (
+                        CairoEngine engine,
+                        SqlCompiler compiler,
+                        SqlExecutionContext sqlExecutionContext
+                ) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
                     int lo = (longsPerPage - 8) * 2;
@@ -277,31 +280,37 @@ public class O3MaxLagTest extends AbstractO3Test {
                                         additionalCount,
                                         i,
                                         maxUncommitted,
-                                        new Rnd());
-                                compiler.compile("drop table x", sqlExecutionContext);
-                                compiler.compile("drop table y", sqlExecutionContext);
+                                        new Rnd()
+                                );
+                                engine.drop("drop table x", sqlExecutionContext);
+                                engine.drop("drop table y", sqlExecutionContext);
                             }
                         }
                     }
-                });
+                }
+        );
     }
 
     @Test
     public void testVarColumnPageBoundariesAppend() throws Exception {
         dataAppendPageSize = (int) Files.PAGE_SIZE;
-        executeWithPool(0,
-                (CairoEngine engine,
-                 SqlCompiler compiler,
-                 SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(
+                0,
+                (
+                        CairoEngine engine,
+                        SqlCompiler compiler,
+                        SqlExecutionContext sqlExecutionContext
+                ) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
                     int lo = (longsPerPage - 8) * 2;
                     for (int i = lo; i < hi; i++) {
                         LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
                         testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, 1000);
-                        compiler.compile("drop table x", sqlExecutionContext);
+                        engine.drop("drop table x", sqlExecutionContext);
                     }
-                });
+                }
+        );
     }
 
     @Test
@@ -312,19 +321,23 @@ public class O3MaxLagTest extends AbstractO3Test {
         dataAppendPageSize = (int) Files.PAGE_SIZE * multiplier;
         LOG.info().$("Testing with random pages size of ").$(dataAppendPageSize).$();
 
-        executeWithPool(0,
-                (CairoEngine engine,
-                 SqlCompiler compiler,
-                 SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(
+                0,
+                (
+                        CairoEngine engine,
+                        SqlCompiler compiler,
+                        SqlExecutionContext sqlExecutionContext
+                ) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
                     int lo = (longsPerPage - 8) * 2;
                     for (int i = lo; i < hi; i++) {
                         LOG.info().$("=========== iteration ").$(i).$(" ===================").$();
                         testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, 1000);
-                        compiler.compile("drop table x", sqlExecutionContext);
+                        engine.drop("drop table x", sqlExecutionContext);
                     }
-                });
+                }
+        );
     }
 
     @Test
@@ -332,9 +345,11 @@ public class O3MaxLagTest extends AbstractO3Test {
         dataAppendPageSize = (int) Files.PAGE_SIZE;
         executeWithPool(
                 0,
-                (CairoEngine engine,
-                 SqlCompiler compiler,
-                 SqlExecutionContext sqlExecutionContext) -> {
+                (
+                        CairoEngine engine,
+                        SqlCompiler compiler,
+                        SqlExecutionContext sqlExecutionContext
+                ) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     testVarColumnMergeWithColumnTops(
                             engine,
@@ -348,34 +363,42 @@ public class O3MaxLagTest extends AbstractO3Test {
                     );
                     compiler.compile("drop table x", sqlExecutionContext);
                     compiler.compile("drop table y", sqlExecutionContext);
-                });
+                }
+        );
     }
 
     @Test
     public void testVarColumnPageBoundariesInO3Memory() throws Exception {
         dataAppendPageSize = (int) Files.PAGE_SIZE;
-        executeWithPool(0,
-                (CairoEngine engine,
-                 SqlCompiler compiler,
-                 SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(
+                0,
+                (
+                        CairoEngine engine,
+                        SqlCompiler compiler,
+                        SqlExecutionContext sqlExecutionContext
+                ) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
                     int lo = (longsPerPage - 8) * 2;
                     for (int i = lo; i < hi; i++) {
                         LOG.info().$("=========== iteration ").$(i).$(", max uncommitted ").$(longsPerPage).$(" ===================").$();
                         testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, longsPerPage);
-                        compiler.compile("drop table x", sqlExecutionContext);
+                        engine.drop("drop table x", sqlExecutionContext);
                     }
-                });
+                }
+        );
     }
 
     @Test
     public void testVarColumnPageBoundariesRndMaxUncommitted() throws Exception {
         dataAppendPageSize = (int) Files.PAGE_SIZE;
-        executeWithPool(0,
-                (CairoEngine engine,
-                 SqlCompiler compiler,
-                 SqlExecutionContext sqlExecutionContext) -> {
+        executeWithPool(
+                0,
+                (
+                        CairoEngine engine,
+                        SqlCompiler compiler,
+                        SqlExecutionContext sqlExecutionContext
+                ) -> {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
                     int lo = (longsPerPage - 8) * 2;
@@ -383,9 +406,10 @@ public class O3MaxLagTest extends AbstractO3Test {
                     for (int i = lo; i < hi; i++) {
                         LOG.info().$("=========== iteration ").$(i).$(", max uncommitted ").$(maxUncommitted).$(" ===================").$();
                         testVarColumnPageBoundaryIterationWithColumnTop(engine, compiler, sqlExecutionContext, i, maxUncommitted);
-                        compiler.compile("drop table x", sqlExecutionContext);
+                        engine.drop("drop table x", sqlExecutionContext);
                     }
-                });
+                }
+        );
     }
 
     private void appendRows(TableWriter tw, int count, Rnd rnd) throws NumericException {
@@ -452,7 +476,8 @@ public class O3MaxLagTest extends AbstractO3Test {
             TableModel tableModel
     ) throws NumericException, SqlException {
         // Create empty tables of same structure
-        TestUtils.createPopulateTable("o3",
+        TestUtils.createPopulateTable(
+                "o3",
                 compiler,
                 sqlExecutionContext,
                 tableModel,
@@ -461,7 +486,8 @@ public class O3MaxLagTest extends AbstractO3Test {
                 0
         );
 
-        TestUtils.createPopulateTable("ordered",
+        TestUtils.createPopulateTable(
+                "ordered",
                 compiler,
                 sqlExecutionContext,
                 tableModel,
@@ -1232,9 +1258,9 @@ public class O3MaxLagTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table x add column str2 string", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column y long", sqlExecutionContext).execute(null).await();
-        compiler.compile(
+        sqlExecutionContext.getCairoEngine().ddl("alter table x add column str2 string", sqlExecutionContext);
+        sqlExecutionContext.getCairoEngine().ddl("alter table x add column y long", sqlExecutionContext);
+        sqlExecutionContext.getCairoEngine().insert(
                 "insert into x " +
                         "select" +
                         " 'aa' as str," +
@@ -1247,7 +1273,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         );
 
         // Day 2 '1970-01-02'
-        compiler.compile(
+        sqlExecutionContext.getCairoEngine().insert(
                 "insert into x " +
                         "select" +
                         " 'aa' as str," +
@@ -1259,7 +1285,7 @@ public class O3MaxLagTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile(
+        sqlExecutionContext.getCairoEngine().insert(
                 "insert into x " +
                         "select" +
                         " 'aa' as str," +
@@ -1283,7 +1309,8 @@ public class O3MaxLagTest extends AbstractO3Test {
                 sqlExecutionContext,
                 "select count() from x where str = 'aa'", sink,
                 "count\n" +
-                        aaCount + "\n");
+                        aaCount + "\n"
+        );
         compiler.compile("create table y as (select * from x where str = 'aa')", sqlExecutionContext);
 
         try (TableWriter tw = TestUtils.getWriter(engine, "x")) {
@@ -1328,7 +1355,7 @@ public class O3MaxLagTest extends AbstractO3Test {
     private void testVarColumnPageBoundaryIterationWithColumnTop(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, int iteration, int maxUncommittedRows) throws SqlException, NumericException {
         // Day 1 '1970-01-01'
         int appendCount = iteration / 2;
-        compiler.compile(
+        sqlExecutionContext.getCairoEngine().ddl(
                 "create table x as (" +
                         "select" +
                         " 'aa' as str," +
@@ -1340,7 +1367,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         );
 
         // Day 2 '1970-01-02'
-        compiler.compile(
+        engine.insert(
                 "insert into x " +
                         "select" +
                         " 'aa' as str," +
@@ -1350,10 +1377,10 @@ public class O3MaxLagTest extends AbstractO3Test {
                 sqlExecutionContext
         );
 
-        compiler.compile("alter table x add column dummy string", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x drop column dummy", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column str2 string", sqlExecutionContext).execute(null).await();
-        compiler.compile("alter table x add column y long", sqlExecutionContext).execute(null).await();
+        engine.ddl("alter table x add column dummy string", sqlExecutionContext);
+        engine.ddl("alter table x drop column dummy", sqlExecutionContext);
+        engine.ddl("alter table x add column str2 string", sqlExecutionContext);
+        engine.ddl("alter table x add column y long", sqlExecutionContext);
 
         if (iteration % 2 == 0) {
             engine.releaseAllWriters();
@@ -1368,15 +1395,20 @@ public class O3MaxLagTest extends AbstractO3Test {
             TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
                     "str\tts\tx\tstr2\ty\n" +
                             "aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull\n" +
-                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull\n");
+                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull\n"
+            );
 
             appendRowsWithDroppedColumn(tw, appendCount - halfCount, rnd);
             tw.ic(Timestamps.HOUR_MICROS);
 
-            TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
+            TestUtils.assertSql(
+                    compiler,
+                    sqlExecutionContext,
+                    "select * from x where str = 'aa'", sink,
                     "str\tts\tx\tstr2\ty\n" +
                             "aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull\n" +
-                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull\n");
+                            "aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull\n"
+            );
 
             if (iteration % 2 == 0) {
                 tw.commit();
@@ -1390,6 +1422,7 @@ public class O3MaxLagTest extends AbstractO3Test {
         TestUtils.assertSql(compiler, sqlExecutionContext, "select * from x where str = 'aa'", sink,
                 "str\tts\tx\tstr2\ty\n" +
                         "aa\t1970-01-01T11:00:00.000000Z\t1\t\tnull\n" +
-                        "aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull\n");
+                        "aa\t1970-01-02T00:00:00.000000Z\t1\t\tnull\n"
+        );
     }
 }

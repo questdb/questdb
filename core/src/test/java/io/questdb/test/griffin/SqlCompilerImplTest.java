@@ -5366,7 +5366,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     TestUtils.assertEquals("{\"columnCount\":2,\"columns\":[{\"index\":0,\"name\":\"a\",\"type\":\"STRING\"},{\"index\":1,\"name\":\"b\",\"type\":\"DOUBLE\"}],\"timestampIndex\":-1}", sink);
                 }
             }
-            engine.drop(path, tt);
+            engine.dropTable(path, tt);
         }
     }
 
@@ -6050,7 +6050,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUseExtensionPoints() {
+    public void testUseExtensionPoints() throws SqlException {
         try (SqlCompilerWrapper compiler = new SqlCompilerWrapper(engine)) {
             try {
                 compiler.compile("alter altar", sqlExecutionContext);
@@ -6066,34 +6066,28 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 Assert.assertTrue(compiler.parseShowSqlCalled);
             }
 
+            ddl("create table ka(a int)", sqlExecutionContext);
             try {
                 compiler.compile("drop table ka boom zoom", sqlExecutionContext);
                 Assert.fail();
             } catch (Exception e) {
-                Assert.assertTrue(compiler.unknownDropTableSuffixCalled);
+                Assert.assertTrue(compiler.compileDropExtCalled);
             }
 
             try {
                 compiler.compile("drop something", sqlExecutionContext);
                 Assert.fail();
             } catch (Exception e) {
-                Assert.assertTrue(compiler.unknownDropStatementCalled);
+                Assert.assertTrue(compiler.compileDropExtCalled);
             }
 
             try {
-                compiler.compile("drop table hopp", sqlExecutionContext);
+                // when table doesn't exist "dropTableCalled" should not be triggered
+                engine.drop("drop table hopp", sqlExecutionContext);
                 Assert.fail();
             } catch (Exception e) {
-                Assert.assertTrue(compiler.dropTableCalled);
+                Assert.assertFalse(compiler.dropTableCalled);
             }
-
-            compiler.dropTableCalled = false;
-            try {
-                compiler.compile("drop table if exists hopp", sqlExecutionContext);
-            } catch (Exception e) {
-                Assert.fail();
-            }
-            Assert.assertTrue(compiler.dropTableCalled);
 
             try {
                 compiler.compile("create table tab (i int)", sqlExecutionContext);
@@ -6453,8 +6447,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         boolean parseShowSqlCalled;
         boolean unknownAlterStatementCalled;
         boolean unknownDropColumnSuffixCalled;
-        boolean unknownDropStatementCalled;
-        boolean unknownDropTableSuffixCalled;
+        boolean compileDropExtCalled;
 
         SqlCompilerWrapper(CairoEngine engine) {
             super(engine);
@@ -6473,15 +6466,25 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        protected void addColumnSuffix(SecurityContext securityContext, CharSequence tok, TableToken tableToken, AlterOperationBuilder dropColumnStatement) throws SqlException {
-            addColumnSuffixCalled = true;
-            super.addColumnSuffix(securityContext, tok, tableToken, dropColumnStatement);
+        public void dropTable(
+                SqlExecutionContext executionContext,
+                CharSequence tableName,
+                int tableNamePosition,
+                CharSequenceObjHashMap<CharSequence> flags
+        ) throws SqlException {
+            dropTableCalled = true;
+            super.dropTable(executionContext, tableName, tableNamePosition, flags);
         }
 
         @Override
-        protected boolean dropTable(SqlExecutionContext executionContext, CharSequence tableName, int tableNamePosition, boolean hasIfExists) throws SqlException {
-            dropTableCalled = true;
-            return super.dropTable(executionContext, tableName, tableNamePosition, hasIfExists);
+        protected void addColumnSuffix(
+                SecurityContext securityContext,
+                CharSequence tok,
+                TableToken tableToken,
+                AlterOperationBuilder alterOperationBuilder
+        ) throws SqlException {
+            addColumnSuffixCalled = true;
+            super.addColumnSuffix(securityContext, tok, tableToken, alterOperationBuilder);
         }
 
         @Override
@@ -6497,15 +6500,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        protected void unknownDropStatement(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
-            unknownDropStatementCalled = true;
-            super.unknownDropStatement(executionContext, tok);
-        }
-
-        @Override
-        protected void unknownDropTableSuffix(SqlExecutionContext executionContext, CharSequence tok, CharSequence tableName, int tableNamePosition, boolean hasIfExists) throws SqlException {
-            unknownDropTableSuffixCalled = true;
-            super.unknownDropTableSuffix(executionContext, tok, tableName, tableNamePosition, hasIfExists);
+        protected void compileDropExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
+            compileDropExtCalled = true;
+            super.compileDropExt(executionContext, tok);
         }
     }
 }
