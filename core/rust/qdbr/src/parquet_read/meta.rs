@@ -33,11 +33,11 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         let metadata = read_metadata(&mut reader)?;
         let col_len = metadata.schema_descr.columns().len();
         let qdb_meta = extract_qdb_meta(&metadata)?;
-        let mut row_group_sizes: Vec<i32> = Vec::with_capacity(metadata.row_groups.len());
-        let mut columns = Vec::with_capacity(col_len);
+        let mut row_group_sizes: AcVec<i32> = AcVec::try_with_capacity_in(metadata.row_groups.len(), allocator)?;
+        let mut columns = AcVec::try_with_capacity_in(col_len, allocator)?;
 
         for row_group in metadata.row_groups.iter() {
-            row_group_sizes.push(row_group.num_rows() as i32)
+            row_group_sizes.push(row_group.num_rows() as i32)?
         }
 
         for (column_id, f) in metadata.schema_descr.columns().iter().enumerate() {
@@ -55,7 +55,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                     name_size: name.len() as i32,
                     name_ptr: name.as_ptr(),
                     name_vec: name,
-                });
+                })?;
             }
         }
 

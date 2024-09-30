@@ -43,7 +43,7 @@ dependencies = [
 [[package]]
 name = "alloc-checked"
 version = "0.1.0"
-source = "git+https://github.com/questdb/alloc-checked.git?rev=0f04f0867a641f8447960faee9058a8dc64216b2#0f04f0867a641f8447960faee9058a8dc64216b2"
+source = "git+https://github.com/questdb/alloc-checked.git?branch=more_vec_methods#b3e307a166fb425943b340cd2568d5fbe61f2e29"
 
 [[package]]
 name = "alloc-no-stdlib"
