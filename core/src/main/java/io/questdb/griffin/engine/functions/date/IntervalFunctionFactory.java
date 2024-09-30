@@ -73,8 +73,7 @@ public class IntervalFunctionFactory implements FunctionFactory {
             if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL) {
                 return Interval.NULL;
             }
-            interval.of(lo.getTimestamp(rec), hi.getTimestamp(rec));
-            return interval;
+            return interval.of(l, r);
         }
 
         @Override
