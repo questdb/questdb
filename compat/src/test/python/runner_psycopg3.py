@@ -86,7 +86,7 @@ def execute_step(step, variables, cursor: Cursor, connection: Connection):
     # Replace parameter placeholders in query
     query = adjust_placeholder_syntax(query_with_vars)
 
-    resolved_parameters = extract_parameters(parameters, variables)
+    resolved_parameters = resolve_parameters(parameters, variables)
     result = execute_query(cursor, query, resolved_parameters)
     connection.commit()
 
