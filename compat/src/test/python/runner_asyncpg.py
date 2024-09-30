@@ -20,28 +20,27 @@ def substitute_variables(text, variables):
     return template.safe_substitute(variables)
 
 
-def replace_param_placeholders(query):
+def adjust_placeholder_syntax(query):
     # Replace $[n] with $n for asyncpg
     # Matches $[1], $[2], etc.
     return re.sub(r'\$\[(\d+)\]', r'$\1', query)
 
 
-def extract_parameters(typed_parameters, variables):
+def resolve_parameters(typed_parameters, variables):
     resolved_parameters = []
     for typed_param in typed_parameters:
         type_ = typed_param.get('type').lower()
         value = typed_param.get('value')
 
-        # convert_and_push_parameters(value, type_, resolved_parameters)
         if isinstance(value, str):
-            resolved_param = substitute_variables(value, variables)
-            convert_and_push_parameters(resolved_param, type_, resolved_parameters)
+            resolved_str_value = substitute_variables(value, variables)
+            convert_and_append_parameters(resolved_str_value, type_, resolved_parameters)
         else:
-            convert_and_push_parameters(value, type_, resolved_parameters)
+            convert_and_append_parameters(value, type_, resolved_parameters)
     return resolved_parameters
 
 
-def convert_and_push_parameters(value, type, resolved_parameters):
+def convert_and_append_parameters(value, type, resolved_parameters):
     if type == 'int4' or type == 'int8':
         resolved_parameters.append(int(value))
     elif type == 'float4' or type == 'float8':
@@ -144,13 +143,10 @@ async def execute_step(step, variables, connection):
     types_parameters = step.get('parameters', [])
     expect = step.get('expect', {})
 
-    # Substitute variables in query
-    query_with_vars = substitute_variables(query_template, variables)
+    with_vars_substituted = substitute_variables(query_template, variables)
+    query = adjust_placeholder_syntax(with_vars_substituted)
 
-    # Replace parameter placeholders in query
-    query = replace_param_placeholders(query_with_vars)
-
-    resolved_parameters = extract_parameters(types_parameters, variables)
+    resolved_parameters = resolve_parameters(types_parameters, variables)
     result = await execute_query(connection, query, resolved_parameters)
 
     # Assert result
