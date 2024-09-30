@@ -32,6 +32,15 @@ import org.jetbrains.annotations.NotNull;
 
 public final class TimestampSamplerFactory {
 
+    /**
+     * Find the end of the interval token in the input string. The interval token is expected to be a number followed by
+     * a single letter qualifier.
+     *
+     * @param cs       input string
+     * @param position position in SQL text to report error against
+     * @return index of the first character after the interval token
+     * @throws SqlException
+     */
     public static int findIntervalEndIndex(CharSequence cs, int position) throws SqlException {
         int k = -1;
 
@@ -40,6 +49,9 @@ public final class TimestampSamplerFactory {
         }
 
         final int len = cs.length();
+        if (len == 0) {
+            throw SqlException.$(position, "expected interval qualifier");
+        }
 
         // look for end of digits
         for (int i = 0; i < len; i++) {
@@ -48,6 +60,10 @@ public final class TimestampSamplerFactory {
                 k = i;
                 break;
             }
+        }
+
+        if (k == 0 && cs.charAt(0) == '-') {
+            throw SqlException.$(position, "negative interval is not allowed");
         }
 
         if (k == -1) {
@@ -122,22 +138,29 @@ public final class TimestampSamplerFactory {
         return getInstance(n, cs.charAt(k), position + k);
     }
 
+    /**
+     * Parse interval value from string. Expected to be called after {@link #findIntervalEndIndex(CharSequence, int)}
+     * has been called and returned a valid index. Behavior is undefined if called with invalid index.
+     *
+     * @param cs          token to parse interval from
+     * @param intervalEnd end of interval token, exclusive
+     * @param position    position in SQL text to report error against
+     * @return parsed interval value
+     * @throws SqlException when input string is invalid
+     */
     public static long parseInterval(CharSequence cs, int intervalEnd, int position) throws SqlException {
-        final int n;
         if (intervalEnd == 0) {
-            n = 1;
-        } else {
-            try {
-                n = Numbers.parseInt(cs, 0, intervalEnd);
-                if (n == 0) {
-                    throw SqlException.$(position, "zero is not a valid sample value");
-                }
-            } catch (NumericException e) {
-                // we are parsing a pre-validated number
-                // but we have to deal with checked exception anyway
-                throw new AssertionError("bug in interval parser. please report. [cs=" + cs + ", interval-end=" + intervalEnd + "]", e);
-            }
+            // 'SAMPLE BY m' is the same as 'SAMPLE BY 1m' etc.
+            return 1;
         }
-        return n;
+        try {
+            int n = Numbers.parseInt(cs, 0, intervalEnd);
+            if (n == 0) {
+                throw SqlException.$(position, "zero is not a valid sample value");
+            }
+            return n;
+        } catch (NumericException e) {
+            throw SqlException.$(position, "invalid sample value [value=").put(cs).put(']');
+        }
     }
 }
