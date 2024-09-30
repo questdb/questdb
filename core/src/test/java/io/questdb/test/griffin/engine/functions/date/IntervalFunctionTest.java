@@ -24,11 +24,16 @@
 
 package io.questdb.test.griffin.engine.functions.date;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Interval;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class IntervalFunctionTest extends AbstractCairoTest {
@@ -198,6 +203,31 @@ public class IntervalFunctionTest extends AbstractCairoTest {
                             "        Row forward scan\n" +
                             "        Frame forward scan on: x\n"
             );
+        });
+    }
+
+    @Test
+    public void testInvalidIntervalBoundaries() throws Exception {
+        assertMemoryLeak(() -> {
+            assertExceptionNoLeakCheck(
+                    "select interval(2,1)",
+                    7,
+                    "invalid interval boundaries"
+            );
+
+            try {
+                try (
+                        RecordCursorFactory factory = select("select interval(x+1,x) from long_sequence(1)");
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    Assert.assertTrue(cursor.hasNext());
+                    cursor.getRecord().getInterval(0);
+                }
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid interval boundaries");
+                Assert.assertEquals(0, e.getPosition());
+            }
         });
     }
 

@@ -25,9 +25,12 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntervalFunction;
@@ -53,32 +56,41 @@ public class IntervalFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.getQuick(0), args.getQuick(1));
+        final Function loFunc = args.getQuick(0);
+        final Function hiFunc = args.getQuick(1);
+        if ((loFunc.isConstant() || loFunc.isRuntimeConstant())
+                || (hiFunc.isConstant() || hiFunc.isRuntimeConstant())) {
+            return new RuntimeConstFunc(position, loFunc, hiFunc);
+        }
+        return new Func(loFunc, hiFunc);
     }
 
     private static class Func extends IntervalFunction implements BinaryFunction {
-        private final Function hi;
+        private final Function hiFunc;
         private final Interval interval = new Interval();
-        private final Function lo;
+        private final Function loFunc;
 
-        public Func(Function lo, Function hi) {
-            this.lo = lo;
-            this.hi = hi;
+        public Func(Function loFunc, Function hiFunc) {
+            this.loFunc = loFunc;
+            this.hiFunc = hiFunc;
         }
 
         @Override
         public @NotNull Interval getInterval(Record rec) {
-            long l = lo.getTimestamp(rec);
-            long r = hi.getTimestamp(rec);
+            long l = loFunc.getTimestamp(rec);
+            long r = hiFunc.getTimestamp(rec);
             if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL) {
                 return Interval.NULL;
+            }
+            if (l > r) {
+                throw CairoException.nonCritical().put("invalid interval boundaries");
             }
             return interval.of(l, r);
         }
 
         @Override
         public Function getLeft() {
-            return lo;
+            return loFunc;
         }
 
         @Override
@@ -88,7 +100,54 @@ public class IntervalFunctionFactory implements FunctionFactory {
 
         @Override
         public Function getRight() {
-            return hi;
+            return hiFunc;
+        }
+    }
+
+    private static class RuntimeConstFunc extends IntervalFunction implements BinaryFunction {
+        private final Function hiFunc;
+        private final Interval interval = new Interval();
+        private final Function loFunc;
+        private final int position;
+
+        public RuntimeConstFunc(int position, Function loFunc, Function hiFunc) {
+            this.position = position;
+            this.loFunc = loFunc;
+            this.hiFunc = hiFunc;
+        }
+
+        @Override
+        public @NotNull Interval getInterval(Record rec) {
+            return interval;
+        }
+
+        @Override
+        public Function getLeft() {
+            return loFunc;
+        }
+
+        @Override
+        public String getName() {
+            return "interval";
+        }
+
+        @Override
+        public Function getRight() {
+            return hiFunc;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            long l = loFunc.getTimestamp(null);
+            long r = hiFunc.getTimestamp(null);
+            if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL) {
+                interval.of(Interval.NULL.getLo(), Interval.NULL.getHi());
+            }
+            if (l > r) {
+                throw SqlException.position(position).put("invalid interval boundaries");
+            }
+            interval.of(l, r);
         }
     }
 }

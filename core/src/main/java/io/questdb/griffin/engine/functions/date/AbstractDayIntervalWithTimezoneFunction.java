@@ -25,20 +25,16 @@
 package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.IntervalFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.Chars;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
@@ -52,11 +48,6 @@ public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDa
     @Override
     public Function getArg() {
         return tzFunc;
-    }
-
-    @Override
-    public @NotNull Interval getInterval(Record rec) {
-        return interval;
     }
 
     @Override

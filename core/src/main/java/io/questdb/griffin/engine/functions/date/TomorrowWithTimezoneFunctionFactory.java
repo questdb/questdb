@@ -35,7 +35,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.Timestamps;
 import org.jetbrains.annotations.NotNull;
 
 public class TomorrowWithTimezoneFunctionFactory implements FunctionFactory {
