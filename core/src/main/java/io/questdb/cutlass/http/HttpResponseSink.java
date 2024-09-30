@@ -43,7 +43,7 @@ import static io.questdb.cutlass.http.HttpConstants.*;
 import static io.questdb.std.Chars.isBlank;
 
 public class HttpResponseSink implements Closeable, Mutable {
-    private final static Log LOG = LogFactory.getLog(HttpResponseSink.class);
+    private static final Log LOG = LogFactory.getLog(HttpResponseSink.class);
     private static final IntObjHashMap<String> httpStatusMap = new IntObjHashMap<>();
     private static final ThreadLocal<Utf8StringSink> tlSink = new ThreadLocal<>(Utf8StringSink::new);
     private final ChunkUtf8Sink buffer;
@@ -233,7 +233,7 @@ public class HttpResponseSink implements Closeable, Mutable {
         sendBuffer(buffer);
     }
 
-    private int getFd() {
+    private long getFd() {
         return socket != null ? socket.getFd() : -1;
     }
 

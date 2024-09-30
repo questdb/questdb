@@ -24,6 +24,7 @@
 
 package io.questdb.network;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.mp.EagerThreadSetup;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjectFactory;
@@ -62,8 +63,23 @@ public class IOContextFactoryImpl<C extends IOContext<C>> implements IOContextFa
         Misc.free(contextPool);
     }
 
-    public C newInstance(int fd, @NotNull IODispatcher<C> dispatcher) {
-        return contextPool.get().pop().of(fd, dispatcher);
+    public C newInstance(long fd, @NotNull IODispatcher<C> dispatcher) {
+        WeakMutableObjectPool<C> pool = contextPool.get();
+        C context = pool.pop();
+        try {
+            return context.of(fd, dispatcher);
+        } catch (CairoException e) {
+            if (e.isCritical()) {
+                context.close();
+            } else {
+                context.clear();
+                pool.push(context);
+            }
+            throw e;
+        } catch (Throwable t) {
+            context.close();
+            throw t;
+        }
     }
 
     @Override

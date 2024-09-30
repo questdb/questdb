@@ -80,7 +80,7 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
         for (int i = watermark, sz = pending.size(), offset = 0; i < sz; i++, offset += EpollAccessor.SIZEOF_EVENT) {
             final C context = pending.get(i);
             final long id = pending.get(i, OPM_ID);
-            final int fd = (int) pending.get(i, OPM_FD);
+            final long fd = pending.get(i, OPM_FD);
             final int operation = initialBias == IODispatcherConfiguration.BIAS_READ ? IOOperation.READ : IOOperation.WRITE;
             pending.set(i, OPM_OPERATION, operation);
             if (epoll.control(fd, id, EpollAccessor.EPOLL_CTL_ADD, epollOp(operation, context)) < 0) {
@@ -189,7 +189,7 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
             final C context = pending.get(i);
 
             // De-register pending operation from epoll. We'll register it later when we get a heartbeat pong.
-            final int fd = context.getFd();
+            final long fd = context.getFd();
             final long opId = pending.get(i, OPM_ID);
             if (epoll.control(fd, opId, EpollAccessor.EPOLL_CTL_DEL, 0) < 0) {
                 LOG.critical().$("internal error: epoll_ctl remove operation failure [id=").$(opId)
@@ -251,7 +251,7 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
 
             useful = true;
             final long opId = nextOpId();
-            final int fd = context.getFd();
+            final long fd = context.getFd();
 
             int operation = requestedOperation;
             final SuspendEvent suspendEvent = context.getSuspendEvent();

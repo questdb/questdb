@@ -30,15 +30,14 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpAuthenticator;
 import io.questdb.cutlass.http.HttpAuthenticatorFactory;
 import io.questdb.cutlass.http.HttpRequestHeader;
+import io.questdb.cutlass.http.StaticHttpAuthenticatorFactory;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractTest;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Rule;
@@ -53,11 +52,6 @@ public class HttpSecurityTest extends AbstractTest {
         @Override
         public boolean authenticate(HttpRequestHeader headers) {
             return false;
-        }
-
-        @Override
-        public @Nullable ObjList<CharSequence> getGroups() {
-            return null;
         }
 
         @Override
@@ -85,11 +79,6 @@ public class HttpSecurityTest extends AbstractTest {
         }
 
         @Override
-        public @Nullable ObjList<CharSequence> getGroups() {
-            return null;
-        }
-
-        @Override
         public CharSequence getPrincipal() {
             return "foo";
         }
@@ -100,11 +89,6 @@ public class HttpSecurityTest extends AbstractTest {
         @Override
         public boolean authenticate(HttpRequestHeader headers) {
             return Utf8s.equalsNcAscii(VALID_REST_TOKEN_AUTH_CREDENTIALS, headers.getHeader(new Utf8String("Authorization")));
-        }
-
-        @Override
-        public @Nullable ObjList<CharSequence> getGroups() {
-            return null;
         }
 
         @Override
@@ -503,6 +487,34 @@ public class HttpSecurityTest extends AbstractTest {
                                 null,
                                 null
                         )
+        );
+    }
+
+    @Test
+    public void testStaticHttpAuthenticatorFactory_badPassword() throws Exception {
+        StaticHttpAuthenticatorFactory factory = new StaticHttpAuthenticatorFactory("foo", "bar");
+        testHttpEndpoint(factory, SecurityContext.AUTH_TYPE_CREDENTIALS, SecurityContext.AUTH_TYPE_CREDENTIALS, code ->
+                testHttpClient.assertGet(
+                        "/query",
+                        "Unauthorized\r\n",
+                        "select 1",
+                        "foo",
+                        "notbar"
+                )
+        );
+    }
+
+    @Test
+    public void testStaticHttpAuthenticatorFactory_success() throws Exception {
+        StaticHttpAuthenticatorFactory factory = new StaticHttpAuthenticatorFactory("foo", "bar");
+        testHttpEndpoint(factory, SecurityContext.AUTH_TYPE_CREDENTIALS, SecurityContext.AUTH_TYPE_CREDENTIALS, code ->
+                testHttpClient.assertGet(
+                        "/query",
+                        "{\"query\":\"select 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
+                        "select 1",
+                        "foo",
+                        "bar"
+                )
         );
     }
 

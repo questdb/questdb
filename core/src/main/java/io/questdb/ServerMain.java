@@ -27,6 +27,7 @@ package io.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.FlushQueryCacheJob;
 import io.questdb.cairo.security.ReadOnlySecurityContextFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -36,10 +37,11 @@ import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.DefaultLineAuthenticatorFactory;
 import io.questdb.cutlass.auth.EllipticCurveAuthenticatorFactory;
 import io.questdb.cutlass.auth.LineAuthenticatorFactory;
-import io.questdb.cutlass.http.HttpContextConfiguration;
-import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.http.*;
 import io.questdb.cutlass.line.tcp.StaticChallengeResponseMatcher;
-import io.questdb.cutlass.pgwire.*;
+import io.questdb.cutlass.pgwire.PGWireConfiguration;
+import io.questdb.cutlass.pgwire.PGWireServer;
+import io.questdb.cutlass.pgwire.ReadOnlyUsersAwareSecurityContextFactory;
 import io.questdb.cutlass.text.CopyJob;
 import io.questdb.cutlass.text.CopyRequestJob;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
@@ -48,9 +50,12 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
-import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectUtf8Sink;
+import io.questdb.std.Misc;
+import io.questdb.std.filewatch.FileWatcher;
+import io.questdb.std.filewatch.FileWatcherFactory;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.io.File;
@@ -66,6 +71,8 @@ public class ServerMain implements Closeable {
     private final CairoEngine engine;
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean running = new AtomicBoolean();
+    protected PGWireServer pgWireServer;
+    private FileWatcher fileWatcher;
     private HttpServer httpServer;
     private boolean initialized;
     private WorkerPoolManager workerPoolManager;
@@ -81,11 +88,10 @@ public class ServerMain implements Closeable {
         try {
             final ServerConfiguration config = bootstrap.getConfiguration();
             config.init(engine, freeOnExit);
-            Unsafe.setWriterMemLimit(config.getCairoConfiguration().getWriterMemoryLimit());
             freeOnExit.register(config.getFactoryProvider());
             engine.load();
         } catch (Throwable th) {
-            freeOnExit.close();
+            Misc.free(freeOnExit);
             throw th;
         }
     }
@@ -124,6 +130,15 @@ public class ServerMain implements Closeable {
         };
     }
 
+    public static HttpAuthenticatorFactory getHttpAuthenticatorFactory(ServerConfiguration configuration) {
+        HttpServerConfiguration httpConfig = configuration.getHttpServerConfiguration();
+        String username = httpConfig.getUsername();
+        if (Chars.empty(username)) {
+            return DefaultHttpAuthenticatorFactory.INSTANCE;
+        }
+        return new StaticHttpAuthenticatorFactory(username, httpConfig.getPassword());
+    }
+
     public static LineAuthenticatorFactory getLineAuthenticatorFactory(ServerConfiguration configuration) {
         LineAuthenticatorFactory authenticatorFactory;
         // create default authenticator for Line TCP protocol
@@ -137,15 +152,6 @@ public class ServerMain implements Closeable {
             authenticatorFactory = DefaultLineAuthenticatorFactory.INSTANCE;
         }
         return authenticatorFactory;
-    }
-
-    public static PgWireAuthenticatorFactory getPgWireAuthenticatorFactory(
-            ServerConfiguration configuration,
-            DirectUtf8Sink defaultUserPasswordSink,
-            DirectUtf8Sink readOnlyUserPasswordSink
-    ) {
-        UsernamePasswordMatcher usernamePasswordMatcher = newPgWireUsernamePasswordMatcher(configuration.getPGWireConfiguration(), defaultUserPasswordSink, readOnlyUserPasswordSink);
-        return new UsernamePasswordPgWireAuthenticatorFactory(usernamePasswordMatcher);
     }
 
     public static SecurityContextFactory getSecurityContextFactory(ServerConfiguration configuration) {
@@ -166,39 +172,20 @@ public class ServerMain implements Closeable {
     public static void main(String[] args) {
         try {
             new ServerMain(args).start(true);
+        } catch (Bootstrap.BootstrapException e) {
+            if (e.isSilentStacktrace()) {
+                System.err.println(e.getMessage());
+            } else {
+                //noinspection CallToPrintStackTrace
+                e.printStackTrace();
+            }
+            LogFactory.closeInstance();
+            System.exit(55);
         } catch (Throwable thr) {
+            //noinspection CallToPrintStackTrace
             thr.printStackTrace();
             LogFactory.closeInstance();
             System.exit(55);
-        }
-    }
-
-    public static UsernamePasswordMatcher newPgWireUsernamePasswordMatcher(PGWireConfiguration configuration, DirectUtf8Sink defaultUserPasswordSink, DirectUtf8Sink readOnlyUserPasswordSink) {
-        String defaultUsername = configuration.getDefaultUsername();
-        String defaultPassword = configuration.getDefaultPassword();
-        boolean defaultUserEnabled = !Chars.empty(defaultUsername) && !Chars.empty(defaultPassword);
-
-        String readOnlyUsername = configuration.getReadOnlyUsername();
-        String readOnlyPassword = configuration.getReadOnlyPassword();
-        boolean readOnlyUserValid = !Chars.empty(readOnlyUsername) && !Chars.empty(readOnlyPassword);
-        boolean readOnlyUserEnabled = configuration.isReadOnlyUserEnabled() && readOnlyUserValid;
-
-        if (defaultUserEnabled && readOnlyUserEnabled) {
-            defaultUserPasswordSink.put(defaultPassword);
-            readOnlyUserPasswordSink.put(readOnlyPassword);
-
-            return new CombiningUsernamePasswordMatcher(
-                    new StaticUsernamePasswordMatcher(defaultUsername, defaultUserPasswordSink.ptr(), defaultUserPasswordSink.size()),
-                    new StaticUsernamePasswordMatcher(readOnlyUsername, readOnlyUserPasswordSink.ptr(), readOnlyUserPasswordSink.size())
-            );
-        } else if (defaultUserEnabled) {
-            defaultUserPasswordSink.put(defaultPassword);
-            return new StaticUsernamePasswordMatcher(defaultUsername, defaultUserPasswordSink.ptr(), defaultUserPasswordSink.size());
-        } else if (readOnlyUserEnabled) {
-            readOnlyUserPasswordSink.put(readOnlyPassword);
-            return new StaticUsernamePasswordMatcher(readOnlyUsername, readOnlyUserPasswordSink.ptr(), readOnlyUserPasswordSink.size());
-        } else {
-            return NeverMatchUsernamePasswordMatcher.INSTANCE;
         }
     }
 
@@ -211,14 +198,21 @@ public class ServerMain implements Closeable {
     }
 
     public void awaitTxn(String tableName, long txn) {
-        getEngine().awaitTxn(tableName, txn, 1, TimeUnit.SECONDS);
+        getEngine().awaitTxn(tableName, txn, 15, TimeUnit.SECONDS);
     }
 
     @Override
     public void close() {
         if (closed.compareAndSet(false, true)) {
+            System.err.println("QuestDB is shutting down...");
+            System.out.println("QuestDB is shutting down...");
+            if (bootstrap != null && bootstrap.getLog() != null) {
+                // Still useful in case of custom logger
+                bootstrap.getLog().info().$("QuestDB is shutting down...").$();
+            }
             if (initialized) {
                 workerPoolManager.halt();
+                fileWatcher = Misc.free(fileWatcher);
             }
             freeOnExit.close();
         }
@@ -257,6 +251,11 @@ public class ServerMain implements Closeable {
         return running.get();
     }
 
+    @TestOnly
+    public void resetQueryCache() {
+        pgWireServer.resetQueryCache();
+    }
+
     public void start() {
         start(false);
     }
@@ -278,14 +277,19 @@ public class ServerMain implements Closeable {
     private void addShutdownHook() {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
-                System.err.println("QuestDB is shutting down...");
-                System.err.println("Pre-touch magic number: " + AsyncFilterAtom.PRE_TOUCH_BLACK_HOLE.sum());
+                System.err.println("SIGTERM received");
+                System.out.println("SIGTERM received");
+                // It's fine if the magic number doesn't get its way to logs.
+                // We log it merely to make sure that LOAD instructions generated by
+                // AsyncFilterAtom#preTouchColumns() aren't optimized away by JVM's JIT compiler.
+                bootstrap.getLog().debug().$("Pre-touch magic number: ").$(AsyncFilterAtom.PRE_TOUCH_BLACK_HOLE.sum()).$();
                 close();
                 LogFactory.closeInstance();
             } catch (Error ignore) {
                 // ignore
             } finally {
                 System.err.println("QuestDB is shutdown.");
+                System.out.println("QuestDB is shutdown.");
             }
         }));
     }
@@ -299,6 +303,19 @@ public class ServerMain implements Closeable {
         final boolean isReadOnly = config.getCairoConfiguration().isReadOnlyInstance();
         final boolean walApplyEnabled = config.getCairoConfiguration().isWalApplyEnabled();
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
+
+        if (config instanceof DynamicServerConfiguration) {
+            if (((DynamicServerConfiguration) config).isConfigReloadEnabled()) {
+                try (Path path = new Path()) {
+                    path.of(cairoConfig.getConfRoot()).concat(Bootstrap.CONFIG_FILE).$();
+                    fileWatcher = FileWatcherFactory.getFileWatcher(
+                            path,
+                            (DynamicServerConfiguration) config
+                    );
+                }
+                fileWatcher.start();
+            }
+        }
 
         workerPoolManager = new WorkerPoolManager(config, metrics) {
             @Override
@@ -331,7 +348,7 @@ public class ServerMain implements Closeable {
 
                         // text import
                         CopyJob.assignToPool(engine.getMessageBus(), sharedPool);
-                        if (cairoConfig.getSqlCopyInputRoot() != null) {
+                        if (!Chars.empty(cairoConfig.getSqlCopyInputRoot())) {
                             final CopyRequestJob copyRequestJob = new CopyRequestJob(
                                     engine,
                                     // save CPU resources for collecting and processing jobs
@@ -350,6 +367,7 @@ public class ServerMain implements Closeable {
                             sharedPool.assign(telemetryJob);
                         }
                     }
+
                 } catch (Throwable thr) {
                     throw new Bootstrap.BootstrapException(thr);
                 }
@@ -367,7 +385,7 @@ public class ServerMain implements Closeable {
 
         // http
         freeOnExit.register(httpServer = services().createHttpServer(
-                config.getHttpServerConfiguration(),
+                config,
                 engine,
                 workerPoolManager,
                 metrics
@@ -376,17 +394,22 @@ public class ServerMain implements Closeable {
         // http min
         freeOnExit.register(services().createMinHttpServer(
                 config.getHttpMinServerConfiguration(),
-                engine,
                 workerPoolManager,
                 metrics
         ));
 
         // pg wire
-        freeOnExit.register(services().createPGWireServer(
+        freeOnExit.register(pgWireServer = services().createPGWireServer(
                 config.getPGWireConfiguration(),
                 engine,
                 workerPoolManager,
                 metrics
+        ));
+
+        workerPoolManager.getSharedPool().assign(new FlushQueryCacheJob(
+                engine.getMessageBus(),
+                httpServer,
+                pgWireServer
         ));
 
         if (!isReadOnly && config.getLineTcpReceiverConfiguration().isEnabled()) {
@@ -405,6 +428,10 @@ public class ServerMain implements Closeable {
                     workerPoolManager
             ));
         }
+
+        // metadata hydration
+        Thread hydrateMetadataThread = new Thread(engine::metadataCacheAsyncHydrator);
+        hydrateMetadataThread.start();
 
         System.gc(); // GC 1
         bootstrap.getLog().advisoryW().$("server is ready to be started").$();

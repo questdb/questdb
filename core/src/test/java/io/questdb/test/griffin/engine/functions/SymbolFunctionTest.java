@@ -24,11 +24,11 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
-import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -69,8 +69,43 @@ public class SymbolFunctionTest {
     };
 
     @Test(expected = UnsupportedOperationException.class)
+    public void testGetBin() {
+        function.getBin(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetBinLen() {
+        function.getBinLen(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetBool() {
+        function.getBool(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetByte() {
+        function.getByte(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
     public void testGetChar() {
         function.getChar(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDate() {
+        function.getDate(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetDouble() {
+        function.getDouble(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetFloat() {
+        function.getFloat(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -94,83 +129,18 @@ public class SymbolFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetBin() {
-        function.getBin(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetBinLen() {
-        function.getBinLen(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetBool() {
-        function.getBool(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetByte() {
-        function.getByte(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDate() {
-        function.getDate(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetDouble() {
-        function.getDouble(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetFloat() {
-        function.getFloat(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testGetIPv4() {
         function.getIPv4(null);
+    }
+
+    @Test(expected = CairoException.class)
+    public void testGetInvalidTimestamp() {
+        function.getTimestamp(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong() {
         function.getLong(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetRecordCursorFactory() {
-        function.getRecordCursorFactory();
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetShort() {
-        function.getShort(null);
-    }
-
-    @Test
-    public void testGetStr() {
-        Assert.assertEquals("XYZ", function.getStrA(null));
-    }
-
-    @Test
-    public void testGetStrB() {
-        Assert.assertEquals("XYZ", function.getStrB(null));
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetStrLen() {
-        function.getStrLen(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetStrSink() {
-        function.getStr(null, null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetTimestamp() {
-        function.getTimestamp(null);
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -198,11 +168,29 @@ public class SymbolFunctionTest {
         function.getLong256B(null);
     }
 
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetRecordCursorFactory() {
+        function.getRecordCursorFactory();
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetShort() {
+        function.getShort(null);
+    }
+
     @Test
-    public void testGetVarcharToSink() {
-        Utf8Sink sink = new Utf8StringSink();
-        function.getVarchar(null, sink);
-        TestUtils.assertEquals("XYZ", sink.toString());
+    public void testGetStr() {
+        Assert.assertEquals("XYZ", function.getStrA(null));
+    }
+
+    @Test
+    public void testGetStrB() {
+        Assert.assertEquals("XYZ", function.getStrB(null));
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetStrLen() {
+        function.getStrLen(null);
     }
 
     @Test
@@ -217,5 +205,41 @@ public class SymbolFunctionTest {
         Utf8Sequence value = function.getVarcharB(null);
         Assert.assertNotNull(value);
         TestUtils.assertEquals("XYZ", value.toString());
+    }
+
+    @Test
+    public void testTimestamp() {
+        SymbolFunction symbolFunction = new SymbolFunction() {
+            @Override
+            public int getInt(Record rec) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public CharSequence getSymbol(Record rec) {
+                return "2024-04-09";
+            }
+
+            @Override
+            public CharSequence getSymbolB(Record rec) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public boolean isSymbolTableStatic() {
+                return false;
+            }
+
+            @Override
+            public CharSequence valueBOf(int key) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public CharSequence valueOf(int key) {
+                throw new UnsupportedOperationException();
+            }
+        };
+        Assert.assertEquals("2024-04-09T00:00:00.000Z", Timestamps.toString(symbolFunction.getTimestamp(null)));
     }
 }

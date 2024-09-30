@@ -44,7 +44,7 @@ import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 
-import static io.questdb.cairo.sql.DataFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 public class TouchTableFunctionFactory implements FunctionFactory {
 
@@ -99,27 +99,16 @@ public class TouchTableFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            touchTable();
-            utf16Sink.put("{\"data_pages\": ")
-                    .put(dataPages)
-                    .put(", \"index_key_pages\":")
-                    .put(indexKeyPages)
-                    .put(", \"index_values_pages\": ")
-                    .put(indexValuePages).put("}");
-        }
-
-        @Override
         public CharSequence getStrA(Record rec) {
             sinkA.clear();
-            getStr(rec, sinkA);
+            getStr(sinkA);
             return sinkA;
         }
 
         @Override
         public CharSequence getStrB(Record rec) {
             sinkB.clear();
-            getStr(rec, sinkB);
+            getStr(sinkB);
             return sinkB;
         }
 
@@ -129,10 +118,25 @@ public class TouchTableFunctionFactory implements FunctionFactory {
             this.sqlExecutionContext = executionContext;
         }
 
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
+        }
+
         private void clearCounters() {
             dataPages = 0;
             indexKeyPages = 0;
             indexValuePages = 0;
+        }
+
+        private void getStr(Utf16Sink utf16Sink) {
+            touchTable();
+            utf16Sink.put("{\"data_pages\": ")
+                    .put(dataPages)
+                    .put(", \"index_key_pages\":")
+                    .put(indexKeyPages)
+                    .put(", \"index_values_pages\": ")
+                    .put(indexValuePages).put("}");
         }
 
         private long touchMemory(long pageSize, long baseAddress, long memorySize) {

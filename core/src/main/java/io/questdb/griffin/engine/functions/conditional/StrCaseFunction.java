@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.Utf16Sink;
 
 class StrCaseFunction extends StrFunction implements CaseFunction {
     private final ObjList<Function> args;
@@ -42,11 +41,6 @@ class StrCaseFunction extends StrFunction implements CaseFunction {
     @Override
     public ObjList<Function> getArgs() {
         return args;
-    }
-
-    @Override
-    public void getStr(Record rec, Utf16Sink utf16Sink) {
-        picker.pick(rec).getStr(rec, utf16Sink);
     }
 
     @Override

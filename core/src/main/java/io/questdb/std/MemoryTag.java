@@ -41,9 +41,11 @@ public final class MemoryTag {
     public static final int MMAP_TX_LOG = MMAP_TABLE_WRITER + 1;
     public static final int MMAP_TX_LOG_CURSOR = MMAP_TX_LOG + 1;
     public static final int MMAP_UPDATE = MMAP_TX_LOG_CURSOR + 1;
+    public static final int MMAP_PARTITION_CONVERTER = MMAP_UPDATE + 1;
 
     // All malloc calls should use NATIVE_* tags
-    public static final int NATIVE_DEFAULT = MMAP_UPDATE + 1;
+    public static final int NATIVE_PATH = MMAP_PARTITION_CONVERTER + 1;
+    public static final int NATIVE_DEFAULT = NATIVE_PATH + 1;
     public static final int NATIVE_CB1 = NATIVE_DEFAULT + 1;
     public static final int NATIVE_CB2 = NATIVE_CB1 + 1;
     public static final int NATIVE_CB3 = NATIVE_CB2 + 1;
@@ -73,8 +75,7 @@ public final class MemoryTag {
     public static final int NATIVE_O3 = NATIVE_MIG_MMAP + 1;
     public static final int NATIVE_OFFLOAD = NATIVE_O3 + 1;
     public static final int NATIVE_PARALLEL_IMPORT = NATIVE_OFFLOAD + 1;
-    public static final int NATIVE_PATH = NATIVE_PARALLEL_IMPORT + 1;
-    public static final int NATIVE_PGW_CONN = NATIVE_PATH + 1;
+    public static final int NATIVE_PGW_CONN = NATIVE_PARALLEL_IMPORT + 1;
     public static final int NATIVE_RECORD_CHAIN = NATIVE_PGW_CONN + 1;
     public static final int NATIVE_REPL = NATIVE_RECORD_CHAIN + 1;
     public static final int NATIVE_ROSTI = NATIVE_REPL + 1;
@@ -88,7 +89,9 @@ public final class MemoryTag {
     public static final int NATIVE_UNORDERED_MAP = NATIVE_TREE_CHAIN + 1;
     public static final int NATIVE_INDEX_READER = NATIVE_UNORDERED_MAP + 1;
     public static final int NATIVE_TABLE_WAL_WRITER = NATIVE_INDEX_READER + 1;
-    public static final int SIZE = NATIVE_TABLE_WAL_WRITER + 1;
+    public static final int NATIVE_METADATA_READER = NATIVE_TABLE_WAL_WRITER + 1;
+    public static final int SIZE = NATIVE_METADATA_READER + 1;
+
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
     public static String nameOf(int tag) {
@@ -122,6 +125,7 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_JIT, "NATIVE_JIT");
         tagNameMap.extendAndSet(NATIVE_OFFLOAD, "NATIVE_OFFLOAD");
         tagNameMap.extendAndSet(MMAP_UPDATE, "MMAP_UPDATE");
+        tagNameMap.extendAndSet(MMAP_PARTITION_CONVERTER, "MMAP_PARTITION_CONVERTER");
         tagNameMap.extendAndSet(NATIVE_PATH, "NATIVE_PATH");
         tagNameMap.extendAndSet(NATIVE_TABLE_READER, "NATIVE_TABLE_READER");
         tagNameMap.extendAndSet(NATIVE_TABLE_WRITER, "NATIVE_TABLE_WRITER");
@@ -157,5 +161,6 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_GROUP_BY_FUNCTION, "NATIVE_GROUP_BY_FUNCTION");
         tagNameMap.extendAndSet(NATIVE_INDEX_READER, "NATIVE_INDEX_READER");
         tagNameMap.extendAndSet(NATIVE_TABLE_WAL_WRITER, "NATIVE_TABLE_WAL_WRITER");
+        tagNameMap.extendAndSet(NATIVE_METADATA_READER, "NATIVE_METADATA_READER");
     }
 }

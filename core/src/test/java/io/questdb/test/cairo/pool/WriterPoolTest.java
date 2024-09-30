@@ -151,7 +151,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             int count = 1;
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, zTableToken.getDirName() + ".lock") && count-- > 0) {
                     return -1;
                 }
@@ -651,16 +651,17 @@ public class WriterPoolTest extends AbstractCairoTest {
             Assert.assertEquals(WriterPool.OWNERSHIP_REASON_NONE, pool.lock(tableToken, "testing"));
 
             TableWriter writer = new TableWriter(
-                    configuration,
+                    engine.getConfiguration(),
                     tableToken,
-                    messageBus,
+                    engine.getMessageBus(),
                     null,
                     false,
                     DefaultLifecycleManager.INSTANCE,
-                    configuration.getRoot(),
+                    engine.getConfiguration().getRoot(),
                     engine.getDdlListener(tableToken),
-                    () -> false,
-                    metrics
+                    engine.getCheckpointStatus(),
+                    engine.getMetrics(),
+                    engine
             );
             for (int i = 0; i < 100; i++) {
                 TableWriter.Row row = writer.newRow();
@@ -885,7 +886,7 @@ public class WriterPoolTest extends AbstractCairoTest {
             int count = 1;
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (Utf8s.endsWithAscii(name, zTableToken.getDirName() + ".lock") && count-- > 0) {
                     return -1;
                 }

@@ -50,8 +50,10 @@ public class FunctionListFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testFunctionsWithFilter() throws Exception {
-        printSql("SELECT name FROM (SELECT name, count(name) FROM functions() GROUP BY name, type ORDER BY name)");
-        Assert.assertEquals(expectedFunctionNames(), extractFunctionNamesFromSink());
+        assertMemoryLeak(() -> {
+            printSql("SELECT name FROM (SELECT name, count(name) FROM functions() GROUP BY name, type ORDER BY name)");
+            Assert.assertEquals(expectedFunctionNames(), extractFunctionNamesFromSink());
+        });
     }
 
     private static Set<String> expectedFunctionNames() {

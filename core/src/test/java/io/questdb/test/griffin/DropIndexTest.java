@@ -214,7 +214,7 @@ public class DropIndexTest extends AbstractCairoTest {
                 ddl(dropIndexStatement(), sqlExecutionContext);
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Cannot DROP INDEX for [txn=1, table=sensors, column=sensor_id]");
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot remove index for [txn=1, table=sensors, column=sensor_id]");
                 TestUtils.assertContains(e.getFlyweightMessage(), "[-1] cannot hardLink ");
                 path.trimTo(tablePathLen);
                 checkMetadataAndTxn(

@@ -77,7 +77,22 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     }
 
     @Override
+    public boolean isDevModeEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean mangleTableDirNames() {
         return true;
+    }
+
+    @Override
+    public int getPartitionEncoderParquetRowGroupSize() {
+        return 1000;
+    }
+
+    @Override
+    public int getPartitionEncoderParquetDataPageSize() {
+        return 1024; // 1KB
     }
 }

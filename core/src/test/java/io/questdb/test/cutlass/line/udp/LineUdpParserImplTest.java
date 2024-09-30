@@ -38,6 +38,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestFilesFacade;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.tools.TestMicroClock;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -752,7 +753,7 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
         try (Path path = new Path()) {
             CharSequence dirName = "x" + TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
-            Files.mkdirs(path.of(root).concat(dirName).slash$(), configuration.getMkDirMode());
+            Files.mkdirs(path.of(root).concat(dirName).slash(), configuration.getMkDirMode());
             assertThat(expected, lines, "y", configuration);
             Assert.assertEquals(TableUtils.TABLE_RESERVED, TableUtils.exists(configuration.getFilesFacade(), path, root, dirName));
         }
@@ -890,8 +891,11 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     private void assertTable(CharSequence expected, CharSequence tableName) {
         refreshTablesInBaseEngine();
-        try (TableReader reader = newOffPoolReader(configuration, tableName)) {
-            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
+        try (
+                TableReader reader = newOffPoolReader(configuration, tableName);
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
+            assertCursorTwoPass(expected, cursor, reader.getMetadata());
         }
     }
 

@@ -38,7 +38,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf16Sink;
 
 public class Base64FunctionFactory implements FunctionFactory {
     @Override
@@ -81,14 +80,11 @@ public class Base64FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void getStr(Record rec, Utf16Sink utf16Sink) {
-            final BinarySequence sequence = getArg().getBin(rec);
-            Chars.base64Encode(sequence, this.maxLength, utf16Sink);
-        }
-
-        @Override
         public CharSequence getStrA(final Record rec) {
             final BinarySequence sequence = getArg().getBin(rec);
+            if (sequence == null) {
+                return null;
+            }
             sinkA.clear();
             Chars.base64Encode(sequence, this.maxLength, sinkA);
             return sinkA;
@@ -97,6 +93,9 @@ public class Base64FunctionFactory implements FunctionFactory {
         @Override
         public CharSequence getStrB(final Record rec) {
             final BinarySequence sequence = getArg().getBin(rec);
+            if (sequence == null) {
+                return null;
+            }
             sinkB.clear();
             Chars.base64Encode(sequence, this.maxLength, sinkB);
             return sinkB;

@@ -46,21 +46,23 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testExpression() throws Exception {
-        final String expected = "a\tcount_distinct\n" +
-                "a\t3\n" +
-                "b\t3\n" +
-                "c\t3\n";
-        assertQuery(
-                expected,
-                "select a, count_distinct(concat(s, s)) from x order by a",
-                "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))",
-                null,
-                true,
-                true
-        );
-        // self-concatenation shouldn't affect the number of distinct values,
-        // so the result should stay the same
-        assertSql(expected, "select a, count_distinct(s) from x order by a");
+        assertMemoryLeak(() -> {
+            final String expected = "a\tcount_distinct\n" +
+                    "a\t3\n" +
+                    "b\t3\n" +
+                    "c\t3\n";
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select a, count_distinct(concat(s, s)) from x order by a",
+                    "create table x as (select * from (select rnd_symbol('a','b','c') a, rnd_str('aaa','bbb','ccc') s from long_sequence(20)))",
+                    null,
+                    true,
+                    true
+            );
+            // self-concatenation shouldn't affect the number of distinct values,
+            // so the result should stay the same
+            assertSql(expected, "select a, count_distinct(s) from x order by a");
+        });
     }
 
     @Test
@@ -187,7 +189,7 @@ public class CountStringGroupByFunctionFactoryTest extends AbstractCairoTest {
                 "select ts, count_distinct(s) from x sample by 1s fill(99)",
                 "create table x as (select * from (select rnd_str('344', 'xx2', '00s', '544', 'rraa', '0llp') s,  timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))",
                 "ts",
-                false
+                true
         );
     }
 

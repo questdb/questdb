@@ -57,6 +57,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -345,7 +346,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private int count = 1;
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (
                         Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
                                 && Utf8s.containsAscii(name, weather)
@@ -683,7 +684,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private final AtomicInteger count = new AtomicInteger(1);
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (
                         Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
                                 && count.decrementAndGet() == 0
@@ -739,7 +740,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             private int count = 1;
 
             @Override
-            public int openRW(LPSZ name, long opts) {
+            public long openRW(LPSZ name, long opts) {
                 if (
                         Utf8s.endsWithAscii(name, Files.SEPARATOR + "wal1" + Files.SEPARATOR + "1.lock")
                                 && Utf8s.containsAscii(name, weather)
@@ -1632,9 +1633,11 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 mayDrainWalQueue();
 
                 CharSequenceIntHashMap symbolCounts = new CharSequenceIntHashMap();
-                try (TableReader reader = getReader(tableName)) {
-                    Assert.assertEquals(2 * symbols, reader.size());
-                    RecordCursor cursor = reader.getCursor();
+                try (
+                        TableReader reader = getReader(tableName);
+                        TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+                ) {
+                    Assert.assertEquals(2 * symbols, cursor.size());
                     Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
                         symbolCounts.increment(record.getSymA(1));
@@ -2042,8 +2045,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         for (int n = 0; n < tables.size(); n++) {
                             CharSequence tableName = tables.get(n);
                             while (true) {
-                                try (TableReader reader = getReader(tableName)) {
-                                    TableReaderRecordCursor cursor = reader.getCursor();
+                                try (
+                                        TableReader reader = getReader(tableName);
+                                        TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+                                ) {
                                     while (cursor.hasNext()) {
                                         nRowsWritten++;
                                     }

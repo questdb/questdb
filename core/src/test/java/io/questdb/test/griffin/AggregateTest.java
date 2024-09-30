@@ -111,7 +111,7 @@ public class AggregateTest extends AbstractCairoTest {
 
         String sql = "select ts, count() from tt1 SAMPLE BY d ALIGN TO FIRST OBSERVATION";
 
-        assertSqlWithTypes(sql, expected);
+        assertSqlWithTypes(expected, sql);
     }
 
     @Test
@@ -124,14 +124,14 @@ public class AggregateTest extends AbstractCairoTest {
                 "null:LONG\t0:LONG\n";
         String sql = "select max(tts), count() from tt1";
 
-        assertSqlWithTypes(sql, expected);
-        assertSqlWithTypes(sql + " where now() > '1000-01-01'", expected);
+        assertSqlWithTypes(expected, sql);
+        assertSqlWithTypes(expected, sql + " where now() > '1000-01-01'");
 
         expected = "count\n" +
                 "0:LONG\n";
         sql = "select count() from tt1";
-        assertSqlWithTypes(sql, expected);
-        assertSqlWithTypes(sql + " where now() > '1000-01-01'", expected);
+        assertSqlWithTypes(expected, sql);
+        assertSqlWithTypes(expected, sql + " where now() > '1000-01-01'");
     }
 
     @Test
@@ -169,7 +169,7 @@ public class AggregateTest extends AbstractCairoTest {
 
         String sql = "select ts, count() from tt1 WHERE id > 0 ORDER BY ts LIMIT 2";
 
-        assertSqlWithTypes(sql, expected);
+        assertSqlWithTypes(expected, sql);
     }
 
     @Test
@@ -223,7 +223,8 @@ public class AggregateTest extends AbstractCairoTest {
             testAggregations(aggregateFunctions, aggregateColTypes);
             Assert.fail();
         } catch (SqlException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument for function: first");
+            Assert.assertEquals(7, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "there is no matching function `first` with the argument types: (BINARY)");
         }
     }
 
@@ -267,7 +268,7 @@ public class AggregateTest extends AbstractCairoTest {
                     "    and ts < '2023-02-02' " +
                     "order by 1 asc";
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     query,
                     "Sort light\n" +
                             "  keys: [account_uuid]\n" +
@@ -281,7 +282,7 @@ public class AggregateTest extends AbstractCairoTest {
                             "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n"
             );
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "account_uuid\trequest_count\n" +
                             "s0\t0\n" +
                             "s1\t100\n" +
@@ -314,21 +315,21 @@ public class AggregateTest extends AbstractCairoTest {
                     "order by 1 asc";
 
             if (enableParallelGroupBy) {
-                assertPlan(
+                assertPlanNoLeakCheck(
                         query,
                         "Sort light\n" +
                                 "  keys: [account_uuid]\n" +
                                 "    GroupBy vectorized: true workers: 1\n" +
                                 "      keys: [account_uuid]\n" +
                                 "      values: [sum(requests)]\n" +
-                                "        DataFrame\n" +
+                                "        PageFrame\n" +
                                 "            Row forward scan\n" +
                                 "            Interval forward scan on: records\n" +
                                 "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n"
                 );
             }
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "account_uuid\trequest_count\n" +
                             "s0\t0\n" +
                             "s1\t100\n" +
@@ -369,7 +370,7 @@ public class AggregateTest extends AbstractCairoTest {
                         "      keys: [org_uuid,account_uuid]\n" +
                         "      values: [sum(price)]\n" +
                         "      filter: null\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Interval forward scan on: records\n" +
                         "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n";
@@ -379,14 +380,14 @@ public class AggregateTest extends AbstractCairoTest {
                         "    GroupBy vectorized: false\n" +
                         "      keys: [org_uuid,account_uuid]\n" +
                         "      values: [sum(price)]\n" +
-                        "        DataFrame\n" +
+                        "        PageFrame\n" +
                         "            Row forward scan\n" +
                         "            Interval forward scan on: records\n" +
                         "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n";
             }
-            assertPlan(query, plan);
+            assertPlanNoLeakCheck(query, plan);
 
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "org_uuid\taccount_uuid\ttotal_price\n" +
                             "o0\ts0\t0.0\n" +
                             "o1\ts1\t100.0\n" +
@@ -1292,7 +1293,7 @@ public class AggregateTest extends AbstractCairoTest {
             compiler.compile("create table tab as (select rnd_double() d, cast(x as int) i, x l from long_sequence(1000))", sqlExecutionContext);
             long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
             try {
-                assertQuery(
+                assertQueryNoLeakCheck(
                         compiler,
                         "",
                         "select i, sum(d) from tab group by i",
@@ -1931,10 +1932,10 @@ public class AggregateTest extends AbstractCairoTest {
                 }
 
                 String expected = resultHeader.append("\n").append(resultData).append("\n").toString();
-                assertSqlWithTypes(sql, expected);
+                assertSqlWithTypes(expected, sql);
 
                 // Force to go to non-vector execution
-                assertSqlWithTypes(sql + " where now() > '1000-01-01'", expected);
+                assertSqlWithTypes(expected, sql + " where now() > '1000-01-01'");
             }
         }
     }
@@ -2018,7 +2019,7 @@ public class AggregateTest extends AbstractCairoTest {
         AbstractCairoTest.create(tt1);
 
         // Insert a lot of empty rows to test function's merge correctness.
-        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("tt1"))) {
+        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("tt1"), engine)) {
             for (int i = 0; i < 2 * PAGE_FRAME_MAX_ROWS; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.append();

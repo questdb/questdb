@@ -54,7 +54,6 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void configureWindowContext(@Nullable VirtualRecord partitionByRecord, @Nullable RecordSink partitionBySink, @Nullable ColumnTypes keyTypes, boolean isOrdered, int orderByDirection, int orderByPos, boolean baseSupportsRandomAccess, int framingMode, long rowsLo, int rowsLoExprPos, long rowsHi, int rowsHiExprPos, int exclusionKind, int exclusionKindPos, int timestampIndex) {
-
     }
 
     @Override
@@ -103,7 +102,7 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public int getRequestFd() {
+    public long getRequestFd() {
         return 0;
     }
 
@@ -129,6 +128,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
 
     @Override
     public void initNow() {
+    }
+
+    @Override
+    public boolean isCacheHit() {
+        return false;
     }
 
     @Override
@@ -160,8 +164,11 @@ public class SqlExecutionContextStub implements SqlExecutionContext {
     }
 
     @Override
-    public void setCancelledFlag(AtomicBoolean cancelled) {
+    public void setCacheHit(boolean value) {
+    }
 
+    @Override
+    public void setCancelledFlag(AtomicBoolean cancelled) {
     }
 
     @Override

@@ -93,6 +93,11 @@ public interface CairoConfiguration {
     @NotNull
     BuildInformation getBuildInformation();
 
+    boolean getCairoSqlLegacyOperatorPrecedence();
+
+    @NotNull
+    CharSequence getCheckpointRoot(); // same as root/../.checkpoint
+
     @NotNull
     SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration();
 
@@ -182,6 +187,10 @@ public interface CairoConfiguration {
 
     int getGroupByPoolCapacity();
 
+    long getGroupByPresizeMaxHeapSize();
+
+    long getGroupByPresizeMaxSize();
+
     int getGroupByShardingThreshold();
 
     @NotNull
@@ -206,6 +215,11 @@ public interface CairoConfiguration {
     int getInsertModelPoolCapacity();
 
     int getLatestByQueueCapacity();
+
+    @NotNull
+    CharSequence getLegacyCheckpointRoot(); // same as root/../snapshot
+
+    boolean getLogSqlQueryProgressExe();
 
     int getMaxCrashFiles();
 
@@ -296,9 +310,7 @@ public interface CairoConfiguration {
 
     int getPartitionPurgeListCapacity();
 
-    default QueryLogger getQueryLogger() {
-        return DefaultQueryLogger.INSTANCE;
-    }
+    int getQueryCacheEventQueueCapacity();
 
     int getQueryRegistryPoolSize();
 
@@ -337,20 +349,17 @@ public interface CairoConfiguration {
 
     int getSampleByIndexSearchPageSize();
 
-    boolean getSimulateCrashEnabled();
+    long getSequencerCheckInterval();
 
     /**
      * Returns database instance id. The instance id is used by the snapshot recovery mechanism:
-     * on database start the id is compared with the id stored in a snapshot, if any. If the ids
+     * on database start the id is compared with the id stored in the checkpoint, if any. If the ids
      * are different, snapshot recovery is being triggered.
      *
      * @return instance id.
      */
     @NotNull
     CharSequence getSnapshotInstanceId();
-
-    @NotNull
-    CharSequence getSnapshotRoot(); // same as root/../snapshot
 
     long getSpinLockTimeout();
 
@@ -366,7 +375,7 @@ public interface CairoConfiguration {
 
     int getSqlCopyBufferSize();
 
-    // null input root disables "copy" sql
+    // null or empty input root disables "copy" sql
     CharSequence getSqlCopyInputRoot();
 
     CharSequence getSqlCopyInputWorkRoot();
@@ -428,13 +437,17 @@ public interface CairoConfiguration {
 
     int getSqlModelPoolCapacity();
 
+    int getSqlOrderByRadixSortThreshold();
+
     int getSqlPageFrameMaxRows();
 
     int getSqlPageFrameMinRows();
 
+    int getSqlParallelWorkStealingThreshold();
+
     int getSqlSmallMapKeyCapacity();
 
-    int getSqlSmallMapPageSize();
+    long getSqlSmallMapPageSize();
 
     int getSqlSortKeyMaxPages();
 
@@ -508,6 +521,8 @@ public interface CairoConfiguration {
 
     long getWalEventAppendPageSize();
 
+    double getWalLagRowsMultiplier();
+
     long getWalMaxLagSize();
 
     int getWalMaxLagTxnCount();
@@ -538,8 +553,6 @@ public interface CairoConfiguration {
      */
     long getWalSegmentRolloverSize();
 
-    double getWalSquashUncommittedRowsMultiplier();
-
     int getWalTxnNotificationQueueCapacity();
 
     int getWalWriterPoolMaxSegments();
@@ -560,9 +573,18 @@ public interface CairoConfiguration {
 
     long getWriterFileOpenOpts();
 
-    long getWriterMemoryLimit();
-
     int getWriterTickRowsCountMod();
+
+    /**
+     * A flag to enable/disable checkpoint recovery mechanism. Defaults to {@code true}.
+     *
+     * @return enable/disable flag for recovering from the checkpoint
+     */
+    boolean isCheckpointRecoveryEnabled();
+
+    boolean isDevModeEnabled();
+
+    boolean isGroupByPresizeEnabled();
 
     boolean isIOURingEnabled();
 
@@ -574,14 +596,9 @@ public interface CairoConfiguration {
 
     boolean isReadOnlyInstance();
 
-    /**
-     * A flag to enable/disable snapshot recovery mechanism. Defaults to {@code true}.
-     *
-     * @return enable/disable snapshot recovery flag
-     */
-    boolean isSnapshotRecoveryEnabled();
-
     boolean isSqlJitDebugEnabled();
+
+    boolean isSqlOrderBySortEnabled();
 
     boolean isSqlParallelFilterEnabled();
 
@@ -609,4 +626,18 @@ public interface CairoConfiguration {
 
     default void populateSettings(CharSequenceObjHashMap<CharSequence> settings) {
     }
+
+    boolean useFastAsOfJoin();
+
+    int getPartitionEncoderParquetVersion();
+
+    boolean isPartitionEncoderParquetStatisticsEnabled();
+
+    int getPartitionEncoderParquetCompressionCodec();
+
+    int getPartitionEncoderParquetCompressionLevel();
+
+    int getPartitionEncoderParquetRowGroupSize();
+
+    int getPartitionEncoderParquetDataPageSize();
 }

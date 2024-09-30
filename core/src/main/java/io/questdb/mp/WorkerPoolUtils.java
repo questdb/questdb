@@ -74,10 +74,10 @@ public class WorkerPoolUtils {
     public static void setupWriterJobs(WorkerPool workerPool, CairoEngine cairoEngine) throws SqlException {
         final MessageBus messageBus = cairoEngine.getMessageBus();
         final O3PartitionPurgeJob purgeDiscoveryJob = new O3PartitionPurgeJob(
-                messageBus,
-                cairoEngine.getSnapshotAgent(),
+                cairoEngine,
                 workerPool.getWorkerCount()
         );
+        workerPool.freeOnExit(purgeDiscoveryJob);
         workerPool.assign(purgeDiscoveryJob);
 
         // ColumnPurgeJob has expensive init (it creates a table), disable it in some tests.
@@ -92,6 +92,5 @@ public class WorkerPoolUtils {
         workerPool.assign(new O3OpenColumnJob(messageBus));
         workerPool.assign(new O3CopyJob(messageBus));
         workerPool.assign(new ColumnTaskJob(messageBus));
-        workerPool.freeOnExit(purgeDiscoveryJob);
     }
 }

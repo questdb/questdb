@@ -41,17 +41,17 @@ import java.io.Closeable;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 class WalEventWriter implements Closeable {
+    private final CairoConfiguration configuration;
     private final MemoryMARW eventMem = Vm.getMARWInstance();
     private final FilesFacade ff;
     private final StringSink sink = new StringSink();
-    private int indexFd;
+    private long indexFd;
     private AtomicIntList initialSymbolCounts;
     private long longBuffer;
     private long startOffset = 0;
     private BoolList symbolMapNullFlags;
     private int txn = 0;
     private ObjList<CharSequenceIntHashMap> txnSymbolMaps;
-    private final CairoConfiguration configuration;
 
     WalEventWriter(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -76,6 +76,30 @@ class WalEventWriter implements Closeable {
      */
     public long size() {
         return eventMem.getAppendOffset();
+    }
+
+    private void appendBindVariableValuesByIndex(BindVariableService bindVariableService) {
+        final int count = bindVariableService != null ? bindVariableService.getIndexedVariableCount() : 0;
+        eventMem.putInt(count);
+        for (int i = 0; i < count; i++) {
+            appendFunctionValue(bindVariableService.getFunction(i));
+        }
+    }
+
+    private void appendBindVariableValuesByName(BindVariableService bindVariableService) {
+        final int count = bindVariableService != null ? bindVariableService.getNamedVariables().size() : 0;
+        eventMem.putInt(count);
+
+        if (count > 0) {
+            final ObjList<CharSequence> namedVariables = bindVariableService.getNamedVariables();
+            for (int i = 0; i < count; i++) {
+                final CharSequence name = namedVariables.get(i);
+                eventMem.putStr(name);
+                sink.clear();
+                sink.put(':').put(name);
+                appendFunctionValue(bindVariableService.getFunction(sink));
+            }
+        }
     }
 
     private void appendFunctionValue(Function function) {
@@ -132,7 +156,7 @@ class WalEventWriter implements Closeable {
                 eventMem.putStr(function.getStrA(null));
                 break;
             case ColumnType.VARCHAR:
-                VarcharTypeDriver.appendValue(eventMem, function.getVarcharA(null));
+                VarcharTypeDriver.appendPlainValue(eventMem, function.getVarcharA(null));
                 break;
             case ColumnType.BINARY:
                 eventMem.putBin(function.getBin(null));
@@ -157,30 +181,6 @@ class WalEventWriter implements Closeable {
 
         appendIndex(WALE_HEADER_SIZE);
         txn = 0;
-    }
-
-    private void appendBindVariableValuesByIndex(BindVariableService bindVariableService) {
-        final int count = bindVariableService != null ? bindVariableService.getIndexedVariableCount() : 0;
-        eventMem.putInt(count);
-        for (int i = 0; i < count; i++) {
-            appendFunctionValue(bindVariableService.getFunction(i));
-        }
-    }
-
-    private void appendBindVariableValuesByName(BindVariableService bindVariableService) {
-        final int count = bindVariableService != null ? bindVariableService.getNamedVariables().size() : 0;
-        eventMem.putInt(count);
-
-        if (count > 0) {
-            final ObjList<CharSequence> namedVariables = bindVariableService.getNamedVariables();
-            for (int i = 0; i < count; i++) {
-                final CharSequence name = namedVariables.get(i);
-                eventMem.putStr(name);
-                sink.clear();
-                sink.put(':').put(name);
-                appendFunctionValue(bindVariableService.getFunction(sink));
-            }
-        }
     }
 
     private void writeSymbolMapDiffs() {

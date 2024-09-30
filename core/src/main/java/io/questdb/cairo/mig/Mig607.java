@@ -77,8 +77,7 @@ final class Mig607 {
                     );
                     final long columnRowCount = rowCount - columnTop;
                     long offset = columnRowCount * 8L;
-                    iFile(path.trimTo(plen2), columnName);
-                    int fd = TableUtils.openRW(ff, path, MigrationActions.LOG, migrationContext.getConfiguration().getWriterFileOpenOpts());
+                    long fd = TableUtils.openRW(ff, iFile(path.trimTo(plen2), columnName), MigrationActions.LOG, migrationContext.getConfiguration().getWriterFileOpenOpts());
                     try {
                         long fileLen = ff.length(fd);
 
@@ -87,12 +86,11 @@ final class Mig607 {
                         }
 
                         TableUtils.allocateDiskSpace(ff, fd, offset + 8);
-                        long dataOffset = TableUtils.readLongOrFail(ff, fd, offset - 8L, mem, path);
-                        dFile(path.trimTo(plen2), columnName);
-                        final int fd2 = TableUtils.openRO(ff, path, MigrationActions.LOG);
+                        long dataOffset = TableUtils.readLongOrFail(ff, fd, offset - 8L, mem, path.$());
+                        final long fd2 = TableUtils.openRO(ff, dFile(path.trimTo(plen2), columnName), MigrationActions.LOG);
                         try {
                             if (columnType == ColumnType.BINARY) {
-                                long len = TableUtils.readLongOrFail(ff, fd2, dataOffset, mem, path);
+                                long len = TableUtils.readLongOrFail(ff, fd2, dataOffset, mem, path.$());
                                 if (len == -1) {
                                     dataOffset += 8;
                                 } else {
@@ -132,7 +130,7 @@ final class Mig607 {
     public static long readColumnTop(FilesFacade ff, Path path, CharSequence name, int plen, boolean failIfCouldNotRead) {
         try {
             if (ff.exists(topFile(path, name))) {
-                final int fd = TableUtils.openRO(ff, path, LOG);
+                final long fd = TableUtils.openRO(ff, path.$(), LOG);
                 try {
                     long n;
                     if ((n = ff.readNonNegativeLong(fd, 0)) < 0) {
@@ -163,21 +161,21 @@ final class Mig607 {
         path.concat(columnName).put(".c").$();
     }
 
-    private static void dFile(Path path, CharSequence columnName) {
+    private static LPSZ dFile(Path path, CharSequence columnName) {
         path.concat(columnName).put(FILE_SUFFIX_D);
-        path.$();
+        return path.$();
     }
 
-    private static void iFile(Path path, CharSequence columnName) {
-        path.concat(columnName).put(FILE_SUFFIX_I).$();
+    private static LPSZ iFile(Path path, CharSequence columnName) {
+        return path.concat(columnName).put(FILE_SUFFIX_I).$();
     }
 
     private static void offsetFileName(Path path, CharSequence columnName) {
         path.concat(columnName).put(".o").$();
     }
 
-    private static void trimFile(FilesFacade ff, Path path, long size, long opts) {
-        final int fd = TableUtils.openFileRWOrFail(ff, path, opts);
+    private static void trimFile(FilesFacade ff, LPSZ path, long size, long opts) {
+        final long fd = TableUtils.openFileRWOrFail(ff, path, opts);
         if (!ff.truncate(fd, size)) {
             // This should never happen on migration but better to be on safe side anyway
             throw CairoException.critical(ff.errno()).put("Cannot trim to size [file=").put(path).put(']');
@@ -193,11 +191,11 @@ final class Mig607 {
         Path path = migrationContext.getTablePath();
         int plen = path.size();
 
-        path.trimTo(plen).concat(META_FILE_NAME).$();
+        path.trimTo(plen).concat(META_FILE_NAME);
         long metaFileSize;
         long txFileSize;
         try (MemoryMARW metaMem = migrationContext.getRwMemory()) {
-            metaMem.of(ff, path, ff.getPageSize(), ff.length(path), MemoryTag.NATIVE_MIG_MMAP);
+            metaMem.of(ff, path.$(), ff.getPageSize(), ff.length(path.$()), MemoryTag.NATIVE_MIG_MMAP);
             final int columnCount = metaMem.getInt(0);
             final int partitionBy = metaMem.getInt(4);
             final long columnNameOffset = MigrationActions.prefixedBlockOffset(
@@ -210,7 +208,7 @@ final class Mig607 {
                     ff,
                     path.trimTo(plen).concat(TXN_FILE_NAME).$(),
                     ff.getPageSize(),
-                    ff.length(path),
+                    ff.length(path.$()),
                     MemoryTag.NATIVE_MIG_MMAP,
                     migrationContext.getConfiguration().getWriterFileOpenOpts()
             )
@@ -265,7 +263,7 @@ final class Mig607 {
                         final long offset = MigrationActions.prefixedBlockOffset(SymbolMapWriter.HEADER_SIZE, symbolCount, 8L);
 
                         offsetFileName(path.trimTo(plen), columnName);
-                        final int fd = TableUtils.openRW(ff, path, MigrationActions.LOG, migrationContext.getConfiguration().getWriterFileOpenOpts());
+                        final long fd = TableUtils.openRW(ff, path.$(), MigrationActions.LOG, migrationContext.getConfiguration().getWriterFileOpenOpts());
                         try {
                             long fileLen = ff.length(fd);
                             if (symbolCount > 0) {
@@ -273,10 +271,10 @@ final class Mig607 {
                                     MigrationActions.LOG.error().$("file is too short [path=").$(path).I$();
                                 } else {
                                     TableUtils.allocateDiskSpace(ff, fd, offset + 8);
-                                    long dataOffset = TableUtils.readLongOrFail(ff, fd, offset - 8L, tmpMem, path);
+                                    long dataOffset = TableUtils.readLongOrFail(ff, fd, offset - 8L, tmpMem, path.$());
                                     // string length
                                     charFileName(path.trimTo(plen), columnName);
-                                    final int fd2 = TableUtils.openRO(ff, path, MigrationActions.LOG);
+                                    final long fd2 = TableUtils.openRO(ff, path.$(), MigrationActions.LOG);
                                     try {
                                         long len = TableUtils.readIntOrFail(ff, fd2, dataOffset, tmpMem, path);
                                         if (len == -1) {
@@ -304,11 +302,11 @@ final class Mig607 {
         // This migration when written originally used implementation of MemoryMARW which truncated files to size on close
         // MemoryMARW now truncate to page size. To test old migrations here we simulate the migration as it is originally released
         // So trim TX and META files to their sizes
-        path.trimTo(plen).concat(META_FILE_NAME).$();
-        trimFile(ff, path, metaFileSize, migrationContext.getConfiguration().getWriterFileOpenOpts());
+        path.trimTo(plen).concat(META_FILE_NAME);
+        trimFile(ff, path.$(), metaFileSize, migrationContext.getConfiguration().getWriterFileOpenOpts());
 
-        path.trimTo(plen).concat(TXN_FILE_NAME).$();
-        trimFile(ff, path, txFileSize, migrationContext.getConfiguration().getWriterFileOpenOpts());
+        path.trimTo(plen).concat(TXN_FILE_NAME);
+        trimFile(ff, path.$(), txFileSize, migrationContext.getConfiguration().getWriterFileOpenOpts());
     }
 
     static LPSZ topFile(Path path, CharSequence columnName) {

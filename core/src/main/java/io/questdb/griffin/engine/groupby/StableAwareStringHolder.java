@@ -26,7 +26,7 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSequence;
-import io.questdb.std.str.StableDirectString;
+import io.questdb.std.str.DirectString;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -39,8 +39,8 @@ import org.jetbrains.annotations.Nullable;
  * sequence itself.
  * <br>
  * The information about whether a stored sequence is direct or not is not stored in the header of the Holder. Instead, the
- * top bit of the pointer returned by {@link #ptr()} is used to store this information. This is done to save space in the
- * header and to avoid the need to store this information separately. Thus, the value returned by {@link #ptr()} cannot
+ * top bit of the pointer returned by {@link #colouredPtr()} is used to store this information. This is done to save space in the
+ * header and to avoid the need to store this information separately. Thus, the value returned by {@link #colouredPtr()} cannot
  * be used as a pointer directly and should be treated as an opaque value.
  * <p>
  * Uses provided {@link GroupByAllocatorImpl} to allocate the underlying buffer. Grows the buffer when needed.
@@ -79,21 +79,28 @@ public class StableAwareStringHolder implements CharSequence {
         if (cs == null) {
             return;
         }
-        if (cs instanceof StableDirectString) {
-            direct = true;
-            StableDirectString sds = (StableDirectString) cs;
-            checkCapacity(4); // pointer is 8 bytes = 4 chars
-            Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE, sds.ptr());
-            Unsafe.getUnsafe().putInt(ptr + LEN_OFFSET, cs.length());
-        } else {
-            int thatLen = cs.length();
-            checkCapacity(thatLen);
-            long lo = ptr + HEADER_SIZE;
-            for (int i = 0; i < thatLen; i++) {
-                Unsafe.getUnsafe().putChar(lo + 2L * i, cs.charAt(i));
+        if (cs instanceof DirectString) {
+            DirectString ds = (DirectString) cs;
+            if (ds.isStable()) {
+                direct = true;
+                checkCapacity(4); // pointer is 8 bytes = 4 chars
+                Unsafe.getUnsafe().putLong(ptr + HEADER_SIZE, ds.ptr());
+                Unsafe.getUnsafe().putInt(ptr + LEN_OFFSET, cs.length());
+                return;
             }
-            Unsafe.getUnsafe().putInt(ptr + LEN_OFFSET, thatLen);
         }
+
+        int thatLen = cs.length();
+        checkCapacity(thatLen);
+        long lo = ptr + HEADER_SIZE;
+        for (int i = 0; i < thatLen; i++) {
+            Unsafe.getUnsafe().putChar(lo + 2L * i, cs.charAt(i));
+        }
+        Unsafe.getUnsafe().putInt(ptr + LEN_OFFSET, thatLen);
+    }
+
+    public long colouredPtr() {
+        return ptr | (direct ? 0x8000000000000000L : 0);
     }
 
     @Override
@@ -107,10 +114,6 @@ public class StableAwareStringHolder implements CharSequence {
         // extract the top bit
         this.direct = (ptr & 0x8000000000000000L) != 0;
         return this;
-    }
-
-    public long ptr() {
-        return ptr | (direct ? 0x8000000000000000L : 0);
     }
 
     public void setAllocator(GroupByAllocator allocator) {

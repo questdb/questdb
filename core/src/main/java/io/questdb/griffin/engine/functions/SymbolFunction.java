@@ -24,12 +24,17 @@
 
 package io.questdb.griffin.engine.functions;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
-import io.questdb.std.str.*;
+import io.questdb.std.NumericException;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -154,11 +159,6 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     }
 
     @Override
-    public void getStr(Record rec, Utf16Sink utf16Sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public CharSequence getStrA(Record rec) {
         return getSymbol(rec);
     }
@@ -175,17 +175,17 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
 
     @Override
     public final long getTimestamp(Record rec) {
-        throw new UnsupportedOperationException();
+        final CharSequence value = getSymbol(rec);
+        try {
+            return IntervalUtils.parseFloorPartialTimestamp(value);
+        } catch (NumericException e) {
+            throw CairoException.nonCritical().position(0).put("invalid timestamp: [").put(value).put(']');
+        }
     }
 
     @Override
     public final int getType() {
         return ColumnType.SYMBOL;
-    }
-
-    @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        utf8Sink.put(getStrA(rec));
     }
 
     @Override

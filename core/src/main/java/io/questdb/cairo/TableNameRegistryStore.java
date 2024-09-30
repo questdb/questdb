@@ -30,15 +30,11 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.*;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8StringSink;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.*;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.Map;
-import java.util.function.Predicate;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.*;
@@ -48,15 +44,15 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
     private static final Log LOG = LogFactory.getLog(TableNameRegistryStore.class);
     private final CairoConfiguration configuration;
     private final StringSink nameSink = new StringSink();
-    private final Predicate<CharSequence> protectedTableResolver;
+    private final TableFlagResolver tableFlagResolver;
     private final MemoryCMR tableNameRoMemory = Vm.getCMRInstance();
-    private int lockFd = -1;
+    private long lockFd = -1;
     private long longBuffer;
 
-    public TableNameRegistryStore(CairoConfiguration configuration, Predicate<CharSequence> protectedTableResolver) {
+    public TableNameRegistryStore(CairoConfiguration configuration, TableFlagResolver tableFlagResolver) {
         super(configuration.getFilesFacade());
         this.configuration = configuration;
-        this.protectedTableResolver = protectedTableResolver;
+        this.tableFlagResolver = tableFlagResolver;
     }
 
     public static int findLastTablesFileVersion(FilesFacade ff, Path path, StringSink nameSink) {
@@ -110,7 +106,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
 
         // Windows does not allow to lock directories, so we lock a special lock file
         FilesFacade ff = configuration.getFilesFacade();
-        Path path = Path.getThreadLocal(configuration.getRoot()).concat(TABLE_REGISTRY_NAME_FILE).put(".lock").$();
+        LPSZ path = Path.getThreadLocal(configuration.getRoot()).concat(TABLE_REGISTRY_NAME_FILE).put(".lock").$();
         if (ff.exists(path)) {
             ff.touch(path);
         }
@@ -136,7 +132,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         }
         tableNameMemory.close();
 
-        final Path path = Path.getThreadLocal(configuration.getRoot()).concat(TABLE_REGISTRY_NAME_FILE).put(".0").$();
+        final LPSZ path = Path.getThreadLocal(configuration.getRoot()).concat(TABLE_REGISTRY_NAME_FILE).put(".0").$();
         configuration.getFilesFacade().remove(path);
 
         tableNameMemory.smallFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_DEFAULT);
@@ -156,8 +152,8 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
             longBuffer = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
 
-        path.trimTo(plimit).concat(tableToken.getDirName()).concat(SEQ_DIR).concat(META_FILE_NAME).$();
-        int seqMetaFd = ff.openRO(path);
+        path.trimTo(plimit).concat(tableToken.getDirName()).concat(SEQ_DIR).concat(META_FILE_NAME);
+        long seqMetaFd = ff.openRO(path.$());
         if (seqMetaFd == -1) {
             LOG.error().$("cannot open seq meta file, assume table is being dropped [path=").$(path).I$();
             return true;
@@ -209,11 +205,11 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         // compact the memory, remove deleted entries.
         // write to the tmp file.
         int pathRootLen = path.size();
-        path.concat(TABLE_REGISTRY_NAME_FILE).putAscii(".tmp").$();
+        path.concat(TABLE_REGISTRY_NAME_FILE).putAscii(".tmp");
         long currentOffset;
 
         tableNameMemory.close(false);
-        tableNameMemory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+        tableNameMemory.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
         tableNameMemory.putLong(0L);
 
         // Save tables not fully deleted yet to complete the deletion.
@@ -233,25 +229,25 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         tableNameMemory.close();
 
         // rename tmp to next version file, everyone will automatically switch to new file
-        Path path2 = Path.getThreadLocal2(configuration.getRoot())
+        LPSZ path2 = Path.getThreadLocal2(configuration.getRoot())
                 .concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion + 1).$();
-        if (ff.rename(path, path2) == Files.FILES_RENAME_OK) {
+        if (ff.rename(path.$(), path2) == Files.FILES_RENAME_OK) {
             LOG.info().$("compacted tables file [path=").$(path2).I$();
             lastFileVersion++;
             currentOffset = newAppendOffset;
             // best effort to remove old files, but we don't care if it fails
-            path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(lastFileVersion - 1).$();
-            ff.removeQuiet(path);
+            path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(lastFileVersion - 1);
+            ff.removeQuiet(path.$());
 
-            path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(lastFileVersion).$();
-            tableNameMemory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+            path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(lastFileVersion);
+            tableNameMemory.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
             tableNameMemory.jumpTo(currentOffset);
         } else {
             // Not critical, if rename fails, compaction will be done next time
             // Reopen the existing, non-compacted file
             path2 = Path.getThreadLocal2(configuration.getRoot())
                     .concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion).$();
-            tableNameMemory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+            tableNameMemory.smallFile(ff, path2, MemoryTag.MMAP_DEFAULT);
             long appendOffset = tableNameMemory.getLong(0);
             tableNameMemory.jumpTo(appendOffset);
 
@@ -299,8 +295,8 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
     }
 
     private int readTableId(Path path, CharSequence dirName, FilesFacade ff) {
-        path.of(configuration.getRoot()).concat(dirName).concat(META_FILE_NAME).$();
-        int fd = ff.openRO(path);
+        path.of(configuration.getRoot()).concat(dirName).concat(META_FILE_NAME);
+        long fd = ff.openRO(path.$());
         if (fd < 1) {
             return 0;
         }
@@ -322,10 +318,10 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
             ConcurrentHashMap<TableToken> tableNameToTableTokenMap,
             ConcurrentHashMap<ReverseTableMapItem> dirNameToTableTokenMap
     ) {
-        Path path = Path.getThreadLocal(configuration.getRoot()).$();
+        Path path = Path.getThreadLocal(configuration.getRoot());
         int plimit = path.size();
         FilesFacade ff = configuration.getFilesFacade();
-        long findPtr = ff.findFirst(path);
+        long findPtr = ff.findFirst(path.$());
         try {
             Utf8StringSink dirNameSink = Misc.getThreadLocalUtf8Sink();
             do {
@@ -361,9 +357,10 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                         }
 
                         if (tableId > -1L) {
-                            boolean isProtected = protectedTableResolver.test(tableName);
-                            boolean isSystem = TableUtils.isSystemTable(tableName, configuration);
-                            TableToken token = new TableToken(tableName, dirName, tableId, isWal, isSystem, isProtected);
+                            boolean isProtected = tableFlagResolver.isProtected(tableName);
+                            boolean isSystem = tableFlagResolver.isSystem(tableName);
+                            boolean isPublic = tableFlagResolver.isPublic(tableName);
+                            TableToken token = new TableToken(tableName, dirName, tableId, isWal, isSystem, isProtected, isPublic);
                             TableToken existingTableToken = tableNameToTableTokenMap.get(tableName);
 
                             if (existingTableToken != null) {
@@ -403,10 +400,10 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
 
         MemoryMR memory = isLocked() ? tableNameMemory : tableNameRoMemory;
         do {
-            lastFileVersion = findLastTablesFileVersion(ff, path.trimTo(plimit).$());
+            lastFileVersion = findLastTablesFileVersion(ff, path.trimTo(plimit));
             path.trimTo(plimit).concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(lastFileVersion).$();
             try {
-                memory.smallFile(ff, path, MemoryTag.MMAP_DEFAULT);
+                memory.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                 LOG.info()
                         .$("reloading tables file [path=").$(path)
                         .$(", threadId=").$(Thread.currentThread().getId())
@@ -456,9 +453,10 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                     dirNameToTableTokenMap.remove(dirName);
                 } else {
                     if (token == null) {
-                        boolean isProtected = protectedTableResolver.test(tableName);
-                        boolean isSystem = TableUtils.isSystemTable(tableName, configuration);
-                        token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL, isSystem, isProtected);
+                        boolean isProtected = tableFlagResolver.isProtected(tableName);
+                        boolean isSystem = tableFlagResolver.isSystem(tableName);
+                        boolean isPublic = tableFlagResolver.isPublic(tableName);
+                        token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL, isSystem, isProtected, isPublic);
                     }
                     dirNameToTableTokenMap.put(dirName, ReverseTableMapItem.ofDropped(token));
                 }
@@ -468,9 +466,10 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                     // This can be BAU, remove record will follow
                     tableToCompact++;
                 } else {
-                    boolean isProtected = protectedTableResolver.test(tableName);
-                    boolean isSystem = TableUtils.isSystemTable(tableName, configuration);
-                    final TableToken token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL, isSystem, isProtected);
+                    boolean isProtected = tableFlagResolver.isProtected(tableName);
+                    boolean isSystem = tableFlagResolver.isSystem(tableName);
+                    boolean isPublic = tableFlagResolver.isPublic(tableName);
+                    final TableToken token = new TableToken(tableName, dirName, tableId, tableType == TableUtils.TABLE_TYPE_WAL, isSystem, isProtected, isPublic);
                     TableToken existing = tableNameToTableTokenMap.get(tableName);
 
                     if (existing != null) {

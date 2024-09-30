@@ -43,7 +43,12 @@ public interface MemoryM extends Closeable {
     @Override
     void close();
 
-    int getFd();
+    /**
+     * Extracts File Descriptor to reuse and unmaps the memory.
+     */
+    long detachFdClose();
+
+    long getFd();
 
     FilesFacade getFilesFacade();
 

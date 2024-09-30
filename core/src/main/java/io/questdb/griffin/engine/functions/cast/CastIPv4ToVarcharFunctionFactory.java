@@ -33,7 +33,6 @@ import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 import io.questdb.std.str.Utf8StringSink;
 
 public class CastIPv4ToVarcharFunctionFactory implements FunctionFactory {
@@ -66,14 +65,6 @@ public class CastIPv4ToVarcharFunctionFactory implements FunctionFactory {
 
         public Func(Function arg) {
             super(arg);
-        }
-
-        @Override
-        public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-            final int value = arg.getIPv4(rec);
-            if (value != Numbers.IPv4_NULL) {
-                Numbers.intToIPv4Sink(utf8Sink, value);
-            }
         }
 
         @Override

@@ -70,7 +70,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.keyFunctions = keyFunctions;
             this.recordFunctions = recordFunctions;
             // sink will be storing record columns to map key
-            this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, keyFunctions, false);
+            this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, keyFunctions, null);
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             this.cursor = new GroupByRecordCursor(configuration, recordFunctions, groupByFunctions, updater, keyTypes, valueTypes);
         } catch (Throwable e) {
@@ -103,11 +103,17 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         try {
             // init all record functions for this cursor, in case functions require metadata and/or symbol tables
             Function.init(recordFunctions, baseCursor, executionContext);
+        } catch (Throwable th) {
+            baseCursor.close();
+            throw th;
+        }
+
+        try {
             cursor.of(baseCursor, executionContext);
             return cursor;
-        } catch (Throwable e) {
-            baseCursor.close();
-            throw e;
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
         }
     }
 
@@ -161,11 +167,16 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 @Transient @NotNull ArrayColumnTypes valueTypes
         ) {
             super(functions);
-            this.dataMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
-            this.groupByFunctionsUpdater = groupByFunctionsUpdater;
-            this.allocator = GroupByAllocatorFactory.createThreadUnsafeAllocator(configuration);
-            GroupByUtils.setAllocator(groupByFunctions, allocator);
-            this.isOpen = true;
+            try {
+                this.isOpen = true;
+                this.dataMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
+                this.groupByFunctionsUpdater = groupByFunctionsUpdater;
+                this.allocator = GroupByAllocatorFactory.createThreadUnsafeAllocator(configuration);
+                GroupByUtils.setAllocator(groupByFunctions, allocator);
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
         }
 
         @Override
@@ -196,12 +207,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         public void of(RecordCursor managedCursor, SqlExecutionContext executionContext) throws SqlException {
+            this.managedCursor = managedCursor;
             if (!isOpen) {
                 isOpen = true;
                 dataMap.reopen();
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
-            this.managedCursor = managedCursor;
             Function.init(keyFunctions, managedCursor, executionContext);
             isDataMapBuilt = false;
             rowId = 0;

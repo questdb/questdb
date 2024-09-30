@@ -189,7 +189,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                     "  notional_base_ccy DOUBLE\n" +
                     ") timestamp (trade_timestamp) PARTITION BY DAY;");
 
-            assertPlan(
+            assertPlanNoLeakCheck(
                     "SELECT  \n" +
                             "    trade_timestamp as candle_st,\n" +
                             "    venue,\n" +
@@ -203,7 +203,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                             "    AND venue in ('CBS', 'FUS', 'LMX', 'BTS')\n" +
                             "  SAMPLE BY 1h \n" +
                             "  ALIGN TO CALENDAR TIME ZONE 'UTC'",
-                    "Sort light\n" +
+                    "Radix sort light\n" +
                             "  keys: [candle_st]\n" +
                             "    VirtualRecord\n" +
                             "      functions: [candle_st,venue,num_ticks,quote_volume,quote_volume/SUM]\n" +
@@ -211,7 +211,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
                             "          keys: [candle_st,venue]\n" +
                             "          values: [count(*),sum(qty*price),sum(qty)]\n" +
                             "          filter: (instrument_key ~ ETH.USD.S..*? and venue in [CBS,FUS,LMX,BTS])\n" +
-                            "            DataFrame\n" +
+                            "            PageFrame\n" +
                             "                Row forward scan\n" +
                             "                Interval forward scan on: spot_trades\n" +
                             "                  intervals: [(\"2022-01-01T00:00:00.000000Z\",\"MAX\")]\n"
@@ -225,7 +225,7 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
 
     private void assertExecutionPlan(StringSink sink, String typeName, String function, CharSequence expectedPlan) throws Exception {
         try {
-            assertPlan(sink, expectedPlan);
+            assertPlanNoLeakCheck(sink, expectedPlan);
         } catch (AssertionError ae) {
             throwWithContext(typeName, function, ae);
         }
@@ -233,24 +233,21 @@ public class GroupByFunctionCaseTest extends AbstractCairoTest {
 
     private void prepareExpectedPlan(int t, int f, String keys, String function, String expectedFunction) {
         boolean rosti = (t >= INT && t <= TIMESTAMP && f > 1) || t == DOUBLE || (t == SHORT && !function.contains("KSum") && !function.contains("NSum"));
-        boolean parallel = !function.contains("KSum") && !function.contains("NSum");
 
         planSink.clear();
         if (rosti) {
             planSink.put("GroupBy vectorized: true workers: 1\n");
-        } else if (parallel) {
-            planSink.put("Async Group By workers: 1\n");
         } else {
-            planSink.put("GroupBy vectorized: false\n");
+            planSink.put("Async Group By workers: 1\n");
         }
         if (keys != null) {
             planSink.put("  keys: [").put(keys).put("]\n");
         }
         planSink.put("  values: [").put(expectedFunction).put("]\n");
-        if (!rosti && parallel) {
+        if (!rosti) {
             planSink.put("  filter: null\n");
         }
-        planSink.put("    DataFrame\n" +
+        planSink.put("    PageFrame\n" +
                 "        Row forward scan\n" +
                 "        Frame forward scan on: test\n");
     }

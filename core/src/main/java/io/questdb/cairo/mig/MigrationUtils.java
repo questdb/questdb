@@ -31,10 +31,10 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.str.Path;
+import io.questdb.std.str.LPSZ;
 
 class MigrationUtils {
-    static MemoryCMARW openFileSafe(FilesFacade ff, Path path, long readOffset) {
+    static MemoryCMARW openFileSafe(FilesFacade ff, LPSZ path, long readOffset) {
         long fileLen = ff.length(path);
 
         if (fileLen < 0) {

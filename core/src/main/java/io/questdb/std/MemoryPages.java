@@ -47,7 +47,12 @@ public class MemoryPages implements Closeable, Mutable, Reopenable {
         this.bits = Numbers.msb(this.pageSize);
         this.mask = this.pageSize - 1;
         this.maxPages = maxPages;
-        allocate0(0);
+        try {
+            allocate0(0);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     public long addressOf(long offset) {
@@ -82,12 +87,6 @@ public class MemoryPages implements Closeable, Mutable, Reopenable {
         pages.clear();
         cachePageLo = 0;
         cachePageHi = 0;
-    }
-
-    /* Returns number of chunks of chunkSize that fits in allocated memory (assuming there could be unused space at end of each page) */
-    public long countNumberOf(int chunkSize) {
-        return (cachePageLo >> bits) * (pageSize / chunkSize) + //full pages
-                (cachePageLo & mask) / chunkSize; //last page
     }
 
     @Override

@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
 
 public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -53,12 +54,16 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         // Forcefully disable column pre-touch for LIMIT K,N queries for all downstream
         // async filtered factories to avoid redundant disk reads.
         executionContext.setColumnPreTouchEnabled(preTouchEnabled && cursor.hiFunction == null);
+        final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
-            cursor.of(base.getCursor(executionContext), executionContext);
+            cursor.of(baseCursor, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            cursor.close();
+            throw th;
         } finally {
             executionContext.setColumnPreTouchEnabled(preTouchEnabled);
         }
-        return cursor;
     }
 
     @Override
@@ -144,7 +149,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public void close() {
-            base.close();
+            base = Misc.free(base);
         }
 
         @Override

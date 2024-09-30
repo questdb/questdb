@@ -78,7 +78,7 @@ public interface CharSink<T extends CharSink<?>> {
 
     /**
      * Appends a UTF-8-encoded sequence to this sink.
-     * <br/>
+     * <br>
      * For impls that care about the distinction between ASCII and non-ASCII:
      * If the sequence's `isAscii` status is false, this sink's `isAscii`
      * status drops to false as well.
@@ -97,6 +97,14 @@ public interface CharSink<T extends CharSink<?>> {
      * Appends a string representation of the supplied number to this sink.
      */
     default T put(long value) {
+        Numbers.append(this, value);
+        return (T) this;
+    }
+
+    /**
+     * Appends a string representation of the supplied number to this sink.
+     */
+    default T put(float value) {
         Numbers.append(this, value);
         return (T) this;
     }
@@ -189,7 +197,7 @@ public interface CharSink<T extends CharSink<?>> {
     /**
      * Accepts a range of memory addresses from lo to hi (exclusive), expecting it to
      * point to a block of valid UTF-8 bytes, and appends it to this sink.
-     * <br/>
+     * <br>
      * For impls that care about the distinction between ASCII and non-ASCII:
      * Drops the `isAscii` status of this sink.
      */

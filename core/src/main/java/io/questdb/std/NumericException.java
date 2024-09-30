@@ -25,8 +25,7 @@
 package io.questdb.std;
 
 public class NumericException extends Exception {
-
-    public final static NumericException INSTANCE = new NumericException();
+    public static final NumericException INSTANCE = new NumericException();
 
     private NumericException() {
     }

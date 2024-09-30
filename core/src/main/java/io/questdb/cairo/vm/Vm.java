@@ -29,8 +29,6 @@ import io.questdb.log.Log;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.StableDirectString;
-import io.questdb.std.str.Utf8Sequence;
 
 public class Vm {
     // Set to true to enable the assertion of pointers and buffer sizes which are too expensive for production.
@@ -39,7 +37,7 @@ public class Vm {
     public static final byte TRUNCATE_TO_PAGE = 0;
     public static final byte TRUNCATE_TO_POINTER = 1;
 
-    public static void bestEffortClose(FilesFacade ff, Log log, int fd, long size, byte truncateMode) {
+    public static void bestEffortClose(FilesFacade ff, Log log, long fd, long size, byte truncateMode) {
         try {
             if (size > -1L) {
                 bestEffortTruncate(ff, log, fd, size, truncateMode);
@@ -51,11 +49,11 @@ public class Vm {
         }
     }
 
-    public static void bestEffortClose(FilesFacade ff, Log log, int fd, long size) {
+    public static void bestEffortClose(FilesFacade ff, Log log, long fd, long size) {
         bestEffortClose(ff, log, fd, size, TRUNCATE_TO_PAGE);
     }
 
-    public static long bestEffortTruncate(FilesFacade ff, Log log, int fd, long size, byte truncateMode) {
+    public static long bestEffortTruncate(FilesFacade ff, Log log, long fd, long size, byte truncateMode) {
         long sz = (truncateMode == TRUNCATE_TO_PAGE) ? Files.ceilPageSize(size) : size;
         if (ff.truncate(Math.abs(fd), sz)) {
             log.debug()
@@ -68,7 +66,7 @@ public class Vm {
         return -1;
     }
 
-    public static long bestEffortTruncate(FilesFacade ff, Log log, int fd, long size) {
+    public static long bestEffortTruncate(FilesFacade ff, Log log, long fd, long size) {
         return bestEffortTruncate(ff, log, fd, size, TRUNCATE_TO_PAGE);
     }
 
@@ -96,6 +94,10 @@ public class Vm {
         return new MemoryCMRImpl();
     }
 
+    public static MemoryCMR getCMRInstance(FilesFacade ff, LPSZ name, long size, int memoryTag) {
+        return new MemoryCMRImpl(ff, name, size, memoryTag);
+    }
+
     public static MemoryMA getMAInstance(int commitMode) {
         return new MemoryPMARImpl(commitMode);
     }
@@ -114,21 +116,6 @@ public class Vm {
 
     public static MemoryMR getMRInstance() {
         return new MemoryCMRImpl();
-    }
-
-    public static MemoryMR getMRInstance(FilesFacade ff, LPSZ name, long size, int memoryTag) {
-        return new MemoryCMRImpl(ff, name, size, memoryTag, false);
-    }
-
-    /**
-     * note: set stable strings to true if the memory is used for query evaluation and strings are expected to be stable
-     * for the duration of the query.
-     *
-     * @see StableDirectString
-     * @see Utf8Sequence#isStable()
-     */
-    public static MemoryMR getMRInstance(FilesFacade ff, LPSZ name, long size, int memoryTag, boolean stableStrings) {
-        return new MemoryCMRImpl(ff, name, size, memoryTag, stableStrings);
     }
 
     public static MemoryCMOR getMemoryCMOR() {

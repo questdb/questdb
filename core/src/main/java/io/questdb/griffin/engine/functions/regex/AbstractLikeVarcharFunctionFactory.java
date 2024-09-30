@@ -32,8 +32,11 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.eq.EqVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.str.StartsWithVarcharFunctionFactory;
 import io.questdb.std.*;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
@@ -61,16 +64,14 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
             final CharSequence likeSeq = pattern.getStrA(null);
             int len;
             if (likeSeq != null && (len = likeSeq.length()) > 0) {
-                int oneCount = countChar(likeSeq, '_');
-                if (oneCount == 0) {
-                    if (likeSeq.charAt(len - 1) == '\\') {
-                        throw SqlException.parserErr(len - 1, likeSeq, "LIKE pattern must not end with escape character");
-                    }
-
-                    int anyCount = countChar(likeSeq, '%');
+                if (countChar(likeSeq, '_') == 0 && countChar(likeSeq, '\\') == 0) {
+                    final int anyCount = countChar(likeSeq, '%');
                     if (anyCount == 1) {
                         if (len == 1) {
-                            return BooleanConstant.TRUE; // LIKE '%' case
+                            // LIKE '%' case
+                            final NegatableBooleanFunction notNullFunc = new EqVarcharFunctionFactory.NullCheckFunc(value);
+                            notNullFunc.setNegated();
+                            return notNullFunc;
                         } else if (likeSeq.charAt(0) == '%') {
                             // LIKE/ILIKE '%abc' case
                             final CharSequence subPattern = likeSeq.subSequence(1, len);
@@ -98,7 +99,10 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
                         }
                     } else if (anyCount == 2) {
                         if (len == 2) {
-                            return BooleanConstant.TRUE; // LIKE '%%' case
+                            // LIKE '%%' case
+                            final NegatableBooleanFunction notNullFunc = new EqVarcharFunctionFactory.NullCheckFunc(value);
+                            notNullFunc.setNegated();
+                            return notNullFunc;
                         } else if (likeSeq.charAt(0) == '%' && likeSeq.charAt(len - 1) == '%') {
                             // LIKE/ILIKE '%abc%' case
                             final CharSequence subPattern = likeSeq.subSequence(1, len - 1);
@@ -190,29 +194,22 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
             int i = 0;
             for (int n = size - 7 - patternSize + 1; i < n; i += 8) {
                 long zeroBytesWord = SwarUtils.markZeroBytes(us.longAt(i) ^ searchWord);
-                if (zeroBytesWord != 0) {
+                while (zeroBytesWord != 0) {
                     // We've found a match for the first pattern byte,
                     // slow down and check the full pattern.
-                    int firstIndex = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
-                    int pos = firstIndex;
-                    while (pos < 8) {
-                        // Check if the pattern matches only for matched first bytes.
-                        if (size - i - pos > 7) {
-                            // It's safe to load full word.
-                            if ((us.longAt(i + pos) & patternMask) == patternWord) {
-                                return true;
-                            }
-                        } else {
-                            // We can't call longAt safely near the sequence end,
-                            // so construct the word from individual bytes.
-                            if ((tailWord(us, i + pos) & patternMask) == patternWord) {
-                                return true;
-                            }
+                    int pos = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
+                    // Check if the pattern matches only for matched first bytes.
+                    if (size - i - pos > 7) {
+                        // It's safe to load full word.
+                        if ((us.longAt(i + pos) & patternMask) == patternWord) {
+                            return true;
                         }
-                        zeroBytesWord >>>= ((firstIndex + 1) << 3);
-                        firstIndex = SwarUtils.indexOfFirstMarkedByte(zeroBytesWord);
-                        pos += firstIndex + 1;
+                        // Else, we can't call longAt safely near the sequence end,
+                        // so construct the word from individual bytes.
+                    } else if ((tailWord(us, i + pos) & patternMask) == patternWord) {
+                        return true;
                     }
+                    zeroBytesWord &= zeroBytesWord - 1;
                 }
             }
 
@@ -390,31 +387,16 @@ public abstract class AbstractLikeVarcharFunctionFactory implements FunctionFact
         }
     }
 
-    private static class ConstStartsWithVarcharFunction extends BooleanFunction implements UnaryFunction {
-        private final Utf8String pattern;
-        private final Function value;
-
-        public ConstStartsWithVarcharFunction(Function value, @Transient CharSequence pattern) {
-            this.value = value;
-            this.pattern = new Utf8String(pattern);
-        }
-
-        @Override
-        public Function getArg() {
-            return value;
-        }
-
-        @Override
-        public boolean getBool(Record rec) {
-            Utf8Sequence us = value.getVarcharA(rec);
-            return us != null && Utf8s.startsWith(us, pattern);
+    private static class ConstStartsWithVarcharFunction extends StartsWithVarcharFunctionFactory.ConstFunc {
+        ConstStartsWithVarcharFunction(Function value, CharSequence startsWith) {
+            super(value, startsWith);
         }
 
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(value);
             sink.val(" like ");
-            sink.val(pattern);
+            sink.val(startsWith);
             sink.val('%');
         }
     }

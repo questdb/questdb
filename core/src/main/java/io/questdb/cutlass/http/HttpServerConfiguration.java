@@ -26,7 +26,6 @@ package io.questdb.cutlass.http;
 
 import io.questdb.cutlass.http.processors.JsonQueryProcessorConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
-import io.questdb.cutlass.http.processors.LineHttpProcessorState;
 import io.questdb.cutlass.http.processors.StaticContentProcessorConfiguration;
 import io.questdb.mp.WorkerPoolConfiguration;
 
@@ -38,11 +37,15 @@ public interface HttpServerConfiguration extends WorkerPoolConfiguration, HttpMi
 
     LineHttpProcessorConfiguration getLineHttpProcessorConfiguration();
 
+    String getPassword();
+
     int getQueryCacheBlockCount();
 
     int getQueryCacheRowCount();
 
     StaticContentProcessorConfiguration getStaticContentProcessorConfiguration();
+
+    String getUsername();
 
     boolean isQueryCacheEnabled();
 }

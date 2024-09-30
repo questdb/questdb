@@ -31,9 +31,7 @@ import io.questdb.cairo.sql.ScalarFunction;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 
 public abstract class RecordFunction implements ScalarFunction {
     @Override
@@ -147,11 +145,6 @@ public abstract class RecordFunction implements ScalarFunction {
     }
 
     @Override
-    public void getStr(Record rec, Utf16Sink utf16Sink) {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public CharSequence getStrA(Record rec) {
         throw new UnsupportedOperationException();
     }
@@ -184,11 +177,6 @@ public abstract class RecordFunction implements ScalarFunction {
     @Override
     public int getType() {
         return ColumnType.RECORD;
-    }
-
-    @Override
-    public void getVarchar(Record rec, Utf8Sink utf8Sink) {
-        throw new UnsupportedOperationException();
     }
 
     @Override

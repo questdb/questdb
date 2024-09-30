@@ -74,7 +74,6 @@ public class LineTcpReceiverDropTableFuzzTest extends AbstractLineTcpReceiverFuz
                 -1,
                 false,
                 false,
-                false,
                 false
         );
         runTest();

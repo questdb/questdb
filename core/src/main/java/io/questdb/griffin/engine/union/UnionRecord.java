@@ -27,9 +27,7 @@ package io.questdb.griffin.engine.union;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 
 public class UnionRecord extends AbstractUnionRecord {
 
@@ -205,15 +203,6 @@ public class UnionRecord extends AbstractUnionRecord {
     }
 
     @Override
-    public void getStr(int col, Utf16Sink utf16Sink) {
-        if (useA) {
-            recordA.getStr(col, utf16Sink);
-        } else {
-            recordB.getStr(col, utf16Sink);
-        }
-    }
-
-    @Override
     public CharSequence getStrA(int col) {
         if (useA) {
             return recordA.getStrA(col);
@@ -243,15 +232,6 @@ public class UnionRecord extends AbstractUnionRecord {
             return recordA.getTimestamp(col);
         }
         return recordB.getTimestamp(col);
-    }
-
-    @Override
-    public void getVarchar(int col, Utf8Sink utf8Sink) {
-        if (useA) {
-            recordA.getVarchar(col, utf8Sink);
-        } else {
-            recordB.getVarchar(col, utf8Sink);
-        }
     }
 
     @Override

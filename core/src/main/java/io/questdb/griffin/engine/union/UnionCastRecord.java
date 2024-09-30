@@ -29,9 +29,7 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 
 public class UnionCastRecord extends AbstractUnionRecord {
 
@@ -227,15 +225,6 @@ public class UnionCastRecord extends AbstractUnionRecord {
     }
 
     @Override
-    public void getStr(int col, Utf16Sink utf16Sink) {
-        if (useA) {
-            castFunctionsA.getQuick(col).getStr(recordA, utf16Sink);
-        } else {
-            castFunctionsB.getQuick(col).getStr(recordB, utf16Sink);
-        }
-    }
-
-    @Override
     public CharSequence getStrA(int col) {
         if (useA) {
             return castFunctionsA.getQuick(col).getStrA(recordA);
@@ -265,15 +254,6 @@ public class UnionCastRecord extends AbstractUnionRecord {
             return castFunctionsA.getQuick(col).getTimestamp(recordA);
         }
         return castFunctionsB.getQuick(col).getTimestamp(recordB);
-    }
-
-    @Override
-    public void getVarchar(int col, Utf8Sink utf8Sink) {
-        if (useA) {
-            castFunctionsA.getQuick(col).getVarchar(recordA, utf8Sink);
-        } else {
-            castFunctionsB.getQuick(col).getVarchar(recordB, utf8Sink);
-        }
     }
 
     @Override

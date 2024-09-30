@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class CastLongToBooleanFunctionFactory implements FunctionFactory {
@@ -50,7 +51,8 @@ public class CastLongToBooleanFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return arg.getLong(rec) != 0;
+            long val = arg.getLong(rec);
+            return val != Numbers.LONG_NULL && val != 0;
         }
     }
 }

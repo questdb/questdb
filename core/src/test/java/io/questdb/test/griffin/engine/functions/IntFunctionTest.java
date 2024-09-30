@@ -26,29 +26,14 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.IntFunction;
-import io.questdb.std.str.Utf16Sink;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class IntFunctionTest {
     // assert that all type casts that are not possible will throw exception
 
-    private static final IntFunction function = new IntFunction() {
-        @Override
-        public int getInt(Record rec) {
-            return 150;
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return true;
-        }
-    };
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetChar() {
-        function.getChar(null);
-    }
+    private static final IntFunction function = makeIntFunction();
 
     @Test(expected = UnsupportedOperationException.class)
     public void testGeoByte() {
@@ -90,6 +75,11 @@ public class IntFunctionTest {
         function.getByte(null);
     }
 
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetChar() {
+        function.getChar(null);
+    }
+
     @Test
     public void testGetDate() {
         Assert.assertEquals(150, function.getDate(null));
@@ -103,51 +93,6 @@ public class IntFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetIPv4() {
         function.getIPv4(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetRecordCursorFactory() {
-        function.getRecordCursorFactory();
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetShort() {
-        function.getShort(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetStr() {
-        function.getStrA(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetStr2() {
-        function.getStr(null, null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetStrB() {
-        function.getStrB(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetStrLen() {
-        function.getStrLen(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetSym() {
-        function.getSymbol(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetSymbolB() {
-        function.getSymbolB(null);
-    }
-
-    @Test
-    public void testGetTimestamp() {
-        Assert.assertEquals(150, function.getTimestamp(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -176,8 +121,43 @@ public class IntFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetVarcharUtf8Sink() {
-        function.getVarchar(null, null);
+    public void testGetRecordCursorFactory() {
+        function.getRecordCursorFactory();
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetShort() {
+        function.getShort(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetStr() {
+        function.getStrA(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetStrB() {
+        function.getStrB(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetStrLen() {
+        function.getStrLen(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetSym() {
+        function.getSymbol(null);
+    }
+
+    @Test(expected = UnsupportedOperationException.class)
+    public void testGetSymbolB() {
+        function.getSymbolB(null);
+    }
+
+    @Test
+    public void testGetTimestamp() {
+        Assert.assertEquals(150, function.getTimestamp(null));
     }
 
     @Test(expected = UnsupportedOperationException.class)
@@ -188,5 +168,19 @@ public class IntFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetVarcharB() {
         function.getVarcharB(null);
+    }
+
+    private static @NotNull IntFunction makeIntFunction() {
+        return new IntFunction() {
+            @Override
+            public int getInt(Record rec) {
+                return 150;
+            }
+
+            @Override
+            public boolean isReadThreadSafe() {
+                return true;
+            }
+        };
     }
 }

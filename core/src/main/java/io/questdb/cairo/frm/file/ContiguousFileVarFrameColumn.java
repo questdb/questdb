@@ -43,13 +43,13 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     private final long fileOpts;
     private final boolean mixedIOFlag;
     private long appendOffsetRowCount = -1;
-    private int auxFd = -1;
+    private long auxFd = -1;
     private int columnIndex;
     private long columnTop;
     private int columnType;
     private ColumnTypeDriver columnTypeDriver;
     private long dataAppendOffsetBytes = -1;
-    private int dataFd = -1;
+    private long dataFd = -1;
     private RecycleBin<ContiguousFileVarFrameColumn> recycleBin;
 
     public ContiguousFileVarFrameColumn(CairoConfiguration configuration) {
@@ -193,24 +193,32 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
                 } finally {
                     TableUtils.mapAppendColumnBufferRelease(ff, targetDataMemAddr, targetDataOffset, srcDataSize, MEMORY_TAG);
                 }
+
+                // Cache the new data append offset
+                this.appendOffsetRowCount = rowCount + sourceColumnTop;
+                this.dataAppendOffsetBytes = targetDataOffset + srcDataSize;
             }
 
             // Set pointers to nulls
             long srcAuxSize = columnTypeDriver.getAuxVectorSize(sourceColumnTop);
-            long srcAuxOffset = columnTypeDriver.getAuxVectorSize(rowCount);
-            TableUtils.allocateDiskSpaceToPage(ff, auxFd, srcAuxOffset + srcAuxSize);
-            long targetAuxMemAddr = TableUtils.mapAppendColumnBuffer(ff, auxFd, srcAuxOffset, srcAuxSize, true, MEMORY_TAG);
+            long dstAuxOffset = columnTypeDriver.getAuxVectorSize(rowCount);
+            TableUtils.allocateDiskSpaceToPage(ff, auxFd, dstAuxOffset + srcAuxSize);
+            long targetAuxMemAddr = TableUtils.mapAppendColumnBuffer(ff, auxFd, dstAuxOffset, srcAuxSize, true, MEMORY_TAG);
             try {
+                // We need to write pointer to nulls in aux vector.
+                // If the destination is empty (0 rows) and we need to write 1 null
+                // then we need to write value -1 to offset 0 (targetDataOffset) in data vector
+                // and value 4 (targetDataOffset + columnTypeDriver.getDataVectorMinEntrySize()) at offset 8 (dstAuxOffset) at aux vector.
                 columnTypeDriver.setPartAuxVectorNull(
                         targetAuxMemAddr,
-                        targetDataOffset,
+                        targetDataOffset + columnTypeDriver.getDataVectorMinEntrySize(),
                         sourceColumnTop
                 );
                 if (commitMode != CommitMode.NOSYNC) {
                     TableUtils.msync(ff, targetAuxMemAddr, srcAuxSize, commitMode == CommitMode.ASYNC);
                 }
             } finally {
-                TableUtils.mapAppendColumnBufferRelease(ff, targetAuxMemAddr, srcAuxOffset, srcAuxSize, MEMORY_TAG);
+                TableUtils.mapAppendColumnBufferRelease(ff, targetAuxMemAddr, dstAuxOffset, srcAuxSize, MEMORY_TAG);
             }
         }
     }
@@ -249,12 +257,12 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     }
 
     @Override
-    public int getPrimaryFd() {
+    public long getPrimaryFd() {
         return dataFd;
     }
 
     @Override
-    public int getSecondaryFd() {
+    public long getSecondaryFd() {
         return auxFd;
     }
 
@@ -269,6 +277,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         this.columnTypeDriver = ColumnType.getDriver(columnType);
         this.columnTop = columnTop;
         this.columnIndex = columnIndex;
+        this.appendOffsetRowCount = -1;
 
         int plen = partitionPath.size();
         try {
@@ -293,6 +302,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         this.columnTypeDriver = ColumnType.getDriver(columnType);
         this.columnTop = columnTop;
         this.columnIndex = columnIndex;
+        this.appendOffsetRowCount = -1;
 
         int plen = partitionPath.size();
         try {

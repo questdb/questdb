@@ -151,12 +151,12 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
     @Test
     public void testCMARWToleratesLengthFailureOnClose() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final Path path = Path.getThreadLocal(root).concat("t.d").$();
+            final Path path = Path.getThreadLocal(root).concat("t.d");
             AtomicBoolean trigger = new AtomicBoolean();
 
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
-                public long length(int fd) {
+                public long length(long fd) {
                     long r = Files.length(fd);
                     if (r < 0 || trigger.get()) {
                         throw CairoException.critical(Os.errno()).put("Checking file size failed");
@@ -167,7 +167,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
 
             MemoryCMARW rwMem1 = Vm.getCMARWInstance(
                     ff,
-                    path,
+                    path.$(),
                     Files.PAGE_SIZE,
                     (long) (Files.PAGE_SIZE * 3.5),
                     MemoryTag.MMAP_DEFAULT,
@@ -178,7 +178,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
             trigger.set(true);
             rwMem1.close();
 
-            rwMem1.of(TestFilesFacadeImpl.INSTANCE, path, Files.PAGE_SIZE,
+            rwMem1.of(TestFilesFacadeImpl.INSTANCE, path.$(), Files.PAGE_SIZE,
                     (long) (Files.PAGE_SIZE * 1.5),
                     MemoryTag.MMAP_DEFAULT);
             rwMem1.putLong(123);
@@ -337,9 +337,9 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
     @Test
     public void testForcedExtend() {
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
-        try (Path path = new Path().of(root).concat("tmp1").$()) {
-            ff.touch(path);
-            final int fd = TableUtils.openRW(ff, path, LOG, configuration.getWriterFileOpenOpts());
+        try (Path path = new Path().of(root).concat("tmp1")) {
+            ff.touch(path.$());
+            final long fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
             try (MemoryMARW mem = Vm.getMARWInstance()) {
                 mem.of(ff, fd, null, -1, MemoryTag.MMAP_DEFAULT);
 
@@ -403,11 +403,11 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
     @Test
     public void testJumpToSetAppendPosition() {
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
-        try (Path path = new Path().of(root).concat("tmp3").$()) {
-            ff.touch(path);
+        try (Path path = new Path().of(root).concat("tmp3")) {
+            ff.touch(path.$());
             try {
                 try (MemoryMARW mem = Vm.getMARWInstance()) {
-                    mem.of(ff, TableUtils.openRW(ff, path, LOG, configuration.getWriterFileOpenOpts()), null, -1, MemoryTag.MMAP_DEFAULT);
+                    mem.of(ff, TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts()), null, -1, MemoryTag.MMAP_DEFAULT);
 
                     mem.extend(ff.getMapPageSize() * 2);
 
@@ -417,9 +417,9 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
                     mem.jumpTo(1024);
                 }
 
-                Assert.assertEquals(ff.length(path), Files.PAGE_SIZE);
+                Assert.assertEquals(ff.length(path.$()), Files.PAGE_SIZE);
             } finally {
-                Assert.assertTrue(ff.removeQuiet(path));
+                Assert.assertTrue(ff.removeQuiet(path.$()));
             }
         }
     }
@@ -622,11 +622,11 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
     public void testPageCountIsZeroAfterClose() throws Exception {
         assertMemoryLeak(() -> {
             final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
-            try (final Path path = Path.getThreadLocal(root).concat("t.d").$()) {
+            try (final Path path = Path.getThreadLocal(root).concat("t.d")) {
                 rnd.reset();
                 MemoryMARW rwMem = Vm.getMARWInstance(
                         ff,
-                        path,
+                        path.$(),
                         ff.getMapPageSize(),
                         0,
                         MemoryTag.MMAP_DEFAULT,
@@ -690,11 +690,11 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
     @Test
     public void testTruncate() {
         FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
-        try (Path path = new Path().of(root).concat("tmp1").$()) {
-            ff.touch(path);
+        try (Path path = new Path().of(root).concat("tmp1")) {
+            ff.touch(path.$());
             try {
                 try (MemoryMARW mem = Vm.getMARWInstance()) {
-                    mem.of(ff, path, FilesFacadeImpl._16M, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+                    mem.of(ff, path.$(), FilesFacadeImpl._16M, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
                     // this is larger than page size
                     for (int i = 0; i < 3_000_000; i++) {
                         mem.putLong(i * 8, i + 1);
@@ -705,9 +705,9 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
                     Assert.assertEquals(0, mem.getAppendOffset());
                 }
 
-                Assert.assertEquals(0, ff.length(path));
+                Assert.assertEquals(0, ff.length(path.$()));
             } finally {
-                Assert.assertTrue(ff.removeQuiet(path));
+                Assert.assertTrue(ff.removeQuiet(path.$()));
             }
         }
     }
@@ -719,7 +719,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
             boolean failTruncate = false;
 
             @Override
-            public long mremap(int fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
                 if (--counter < 0) {
                     failTruncate = true;
                     return -1;
@@ -728,7 +728,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean truncate(int fd, long size) {
+            public boolean truncate(long fd, long size) {
                 if (failTruncate) {
                     return false;
                 }
@@ -736,11 +736,11 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
             }
         };
 
-        try (Path path = new Path().of(root).concat("tmp4").$()) {
-            ff.touch(path);
+        try (Path path = new Path().of(root).concat("tmp4")) {
+            ff.touch(path.$());
             try {
                 try (MemoryMARW mem = Vm.getMARWInstance()) {
-                    mem.of(ff, path, FilesFacadeImpl._16M, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
+                    mem.of(ff, path.$(), FilesFacadeImpl._16M, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE);
                     // this is larger than page size
                     for (int i = 0; i < 3_000_000; i++) {
                         mem.putLong(i * 8, i + 1);
@@ -754,12 +754,12 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
                     }
                 }
 
-                long fileLen = ff.length(path);
+                long fileLen = ff.length(path.$());
                 Assert.assertNotEquals(0, fileLen);
 
                 // we expect memory to zero out the file, which failed to truncate
 
-                try (MemoryMR roMem = new MemoryCMRImpl(ff, path, fileLen, MemoryTag.MMAP_DEFAULT, false)) {
+                try (MemoryMR roMem = new MemoryCMRImpl(ff, path.$(), fileLen, MemoryTag.MMAP_DEFAULT)) {
                     Assert.assertEquals(fileLen, roMem.size());
 
                     for (int i = 0; i < fileLen; i++) {
@@ -767,18 +767,18 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
                     }
                 }
             } finally {
-                Assert.assertTrue(ff.removeQuiet(path));
+                Assert.assertTrue(ff.removeQuiet(path.$()));
             }
         }
     }
 
     @Test
     public void testTruncateSameFileWithDifferentFd() {
-        final Path path = Path.getThreadLocal(root).concat("t.d").$();
+        final Path path = Path.getThreadLocal(root).concat("t.d");
 
         MemoryCMARW rwMem1 = Vm.getCMARWInstance(
                 TestFilesFacadeImpl.INSTANCE,
-                path,
+                path.$(),
                 Files.PAGE_SIZE,
                 (long) (Files.PAGE_SIZE * 1.5),
                 MemoryTag.MMAP_DEFAULT,
@@ -787,7 +787,7 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
 
         MemoryCMARW rwMem2 = Vm.getCMARWInstance(
                 TestFilesFacadeImpl.INSTANCE,
-                path,
+                path.$(),
                 Files.PAGE_SIZE,
                 (long) (Files.PAGE_SIZE * 3.5),
                 MemoryTag.MMAP_DEFAULT,
@@ -971,24 +971,23 @@ public class ContiguousMemoryMTest extends AbstractCairoTest {
 
     private void withMem(long appendSz, long sz, MemTestCode code) throws Exception {
         assertMemoryLeak(() -> {
-            final Path path = Path.getThreadLocal(root).concat("t.d").$();
+            final Path path = Path.getThreadLocal(root).concat("t.d");
             rnd.reset();
             try (
                     MemoryCMARW rwMem = Vm.getCMARWInstance(
                             TestFilesFacadeImpl.INSTANCE,
-                            path,
+                            path.$(),
                             appendSz,
                             -1,
                             MemoryTag.MMAP_DEFAULT,
                             configuration.getWriterFileOpenOpts()
                     );
-
                     MemoryCMR roMem = new MemoryCMRImpl(
                             TestFilesFacadeImpl.INSTANCE,
-                            path,
+                            path.$(),
                             sz,
-                            MemoryTag.MMAP_DEFAULT,
-                            false)
+                            MemoryTag.MMAP_DEFAULT
+                    )
             ) {
                 code.run(rwMem, roMem);
             } finally {

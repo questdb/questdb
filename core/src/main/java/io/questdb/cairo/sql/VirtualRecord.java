@@ -30,9 +30,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
-import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8Sink;
 
 public class VirtualRecord implements ColumnTypes, Record {
     private final int columnCount;
@@ -183,11 +181,6 @@ public class VirtualRecord implements ColumnTypes, Record {
     }
 
     @Override
-    public void getStr(int col, Utf16Sink utf16Sink) {
-        getFunction(col).getStr(base, utf16Sink);
-    }
-
-    @Override
     public CharSequence getStrA(int col) {
         return getFunction(col).getStrA(base);
     }
@@ -220,11 +213,6 @@ public class VirtualRecord implements ColumnTypes, Record {
     @Override
     public long getUpdateRowId() {
         return base.getUpdateRowId();
-    }
-
-    @Override
-    public void getVarchar(int col, Utf8Sink utf8Sink) {
-        getFunction(col).getVarchar(base, utf8Sink);
     }
 
     @Override

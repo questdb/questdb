@@ -60,43 +60,47 @@ public class NoOpGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testNoopGroupByBindVariable() throws Exception {
-        ddl("create table y (id int, ref int, val double)");
-        engine.releaseAllWriters();
-        assertException(
-                "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, :var, y.ref",
-                "create table x (id int, ref int, ref3 int)",
-                73,
-                "literal expected"
-        );
+        assertMemoryLeak(() -> {
+            ddl("create table y (id int, ref int, val double)");
+            engine.releaseAllWriters();
+            assertExceptionNoLeakCheck(
+                    "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, :var, y.ref",
+                    "create table x (id int, ref int, ref3 int)",
+                    73,
+                    "literal expected"
+            );
+        });
     }
 
     // with where clause
     @Test
     public void testNoopGroupByFailureWhenUsing1KeyInSelectStatementBut2InGroupBy() throws Exception {
-        ddl("create table x ( " +
-                "    sym1 symbol," +
-                "    sym2 symbol," +
-                "    bid int," +
-                "    ask int )");
-        engine.releaseAllWriters();
+        assertMemoryLeak(() -> {
+            ddl("create table x ( " +
+                    "    sym1 symbol," +
+                    "    sym2 symbol," +
+                    "    bid int," +
+                    "    ask int )");
+            engine.releaseAllWriters();
 
-        String query = "select sym1, avg(bid) avgBid " +
-                "from x " +
-                "where sym1 in ('AA', 'BB' ) " +
-                "group by sym1, sym2";
-        assertPlan(
-                query,
-                "VirtualRecord\n" +
-                        "  functions: [sym1,avgBid]\n" +
-                        "    Async Group By workers: 1\n" +
-                        "      keys: [sym1,sym2]\n" +
-                        "      values: [avg(bid)]\n" +
-                        "      filter: sym1 in [AA,BB]\n" +
-                        "        DataFrame\n" +
-                        "            Row forward scan\n" +
-                        "            Frame forward scan on: x\n"
-        );
-        assertQuery("sym1\tavgBid\n", query, null, true, false);
+            String query = "select sym1, avg(bid) avgBid " +
+                    "from x " +
+                    "where sym1 in ('AA', 'BB' ) " +
+                    "group by sym1, sym2";
+            assertPlanNoLeakCheck(
+                    query,
+                    "VirtualRecord\n" +
+                            "  functions: [sym1,avgBid]\n" +
+                            "    Async JIT Group By workers: 1\n" +
+                            "      keys: [sym1,sym2]\n" +
+                            "      values: [avg(bid)]\n" +
+                            "      filter: sym1 in [AA,BB]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: x\n"
+            );
+            assertQueryNoLeakCheck("sym1\tavgBid\n", query, null, true, false);
+        });
     }
 
     @Test
@@ -211,7 +215,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
             compile("create table y (id int, ref int, val double)");
             insert("insert into y values (1,1,1), (1,2,2);");
             engine.releaseAllWriters();
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "id\tcolumn\tsum\n" +
                             "1\t2\t1.0\n" +
                             "1\t3\t3.0\n" +
@@ -230,7 +234,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
             compile("create table y(id int, ref int, val double)");
             compile("create table x (id int, ref int, ref3 int)");
             engine.releaseAllWriters();
-            assertException(
+            assertExceptionNoLeakCheck(
                     "select x.id, x.ref - y.ref, sum(val) from x join y on (id) group by x.id, y.ref - x.ref",
                     21,
                     "column must appear in GROUP BY clause or aggregate function"
@@ -244,7 +248,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
             compile("create table x (id int, ref int, ref3 int)");
             compile("create table y(id int, ref int, val double)");
             engine.releaseAllWriters();
-            assertQuery(
+            assertQueryNoLeakCheck(
                     "z\tsum\n",
                     "select 'x' z, sum(val) from x join y on (id) group by 'x'",
                     null,
@@ -255,37 +259,43 @@ public class NoOpGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testNoopGroupByJoinReference() throws Exception {
-        ddl("create table y(id int, ref int, val double)");
-        engine.releaseAllWriters();
-        assertQuery(
-                "id\tref\tref1\tsum\n",
-                "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, x.ref, y.ref",
-                "create table x (id int, ref int, ref3 int)",
-                null,
-                true,
-                true
-        );
+        assertMemoryLeak(() -> {
+            ddl("create table y(id int, ref int, val double)");
+            engine.releaseAllWriters();
+            assertQueryNoLeakCheck(
+                    "id\tref\tref1\tsum\n",
+                    "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, x.ref, y.ref",
+                    "create table x (id int, ref int, ref3 int)",
+                    null,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testNoopGroupByJoinReferenceNonSelected() throws Exception {
-        ddl("create table y(id int, ref int, val double)");
-        engine.releaseAllWriters();
-        assertException(
-                "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, x.ref3, y.ref",
-                "create table x (id int, ref int, ref3 int)",
-                13,
-                "column must appear in GROUP BY clause or aggregate function"
-        );
+        assertMemoryLeak(() -> {
+            ddl("create table y(id int, ref int, val double)");
+            engine.releaseAllWriters();
+            assertExceptionNoLeakCheck(
+                    "select x.id, x.ref, y.ref, sum(val) from x join y on (id) group by x.id, x.ref3, y.ref",
+                    "create table x (id int, ref int, ref3 int)",
+                    13,
+                    "column must appear in GROUP BY clause or aggregate function"
+            );
+        });
     }
 
     @Test
     public void testNoopGroupByJoinStringConst() throws Exception {
-        ddl("create table x (id int, ref int, ref3 int)");
-        ddl("create table y(id int, ref int, val double)");
-        engine.releaseAllWriters();
-        String query = "select 'x' z, sum(val) from x join y on (id) group by 'y'";
-        assertQuery("z\tsum\n", query, null, true);
+        assertMemoryLeak(() -> {
+            ddl("create table x (id int, ref int, ref3 int)");
+            ddl("create table y(id int, ref int, val double)");
+            engine.releaseAllWriters();
+            String query = "select 'x' z, sum(val) from x join y on (id) group by 'y'";
+            assertQueryNoLeakCheck("z\tsum\n", query, null, true);
+        });
     }
 
     @Test
@@ -338,7 +348,7 @@ public class NoOpGroupByTest extends AbstractCairoTest {
     public void testNoopGroupByValidColumnNameWithHourFunction() throws Exception {
         assertQuery(
                 "hour\tavgBid\n",
-                //select hour(pickup_datetime), sum(passenger_count) from trips group by hour(pickup_datetime);
+                // select hour(pickup_datetime), sum(passenger_count) from trips group by hour(pickup_datetime);
                 "select hour(ts), avg(bid) avgBid from x group by hour(ts) order by hour",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
@@ -424,14 +434,17 @@ public class NoOpGroupByTest extends AbstractCairoTest {
 
     @Test // sym1 is aliased as ccy at stage later than group by
     public void testNoopGroupByWhenUsingAliasedColumnAndAliasedTable() throws Exception {
-        assertException("select sym1 as ccy, avg(bid) avgBid from x a where sym1 in ('A', 'B' ) group by a.ccy",
+        assertException(
+                "select sym1 as ccy, avg(bid) avgBid from x a where sym1 in ('A', 'B' ) group by a.ccy",
                 "create table x (\n" +
                         "    sym1 symbol,\n" +
                         "    sym2 symbol,\n" +
                         "    bid double,\n" +
                         "    ask double,\n" +
                         "    ts timestamp\n" +
-                        ") timestamp(ts) partition by DAY", 80, "Invalid column: a.ccy"
+                        ") timestamp(ts) partition by DAY",
+                80,
+                "Invalid column: a.ccy"
         );
     }
 

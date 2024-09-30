@@ -63,11 +63,10 @@ public class RPadStrFunctionFactory implements FunctionFactory {
     }
 
     public static class RPadStrFunc extends StrFunction implements TernaryFunction {
-
         private final Function fillTextFunc;
         private final Function lenFunc;
         private final int maxLength;
-        private final StringSink sink = new StringSink();
+        private final StringSink sinkA = new StringSink();
         private final StringSink sinkB = new StringSink();
         private final Function strFunc;
 
@@ -100,7 +99,7 @@ public class RPadStrFunctionFactory implements FunctionFactory {
 
         @Override
         public CharSequence getStrA(final Record rec) {
-            return rPadStr(strFunc.getStrA(rec), lenFunc.getInt(rec), fillTextFunc.getStrA(rec), sink);
+            return rPadStr(strFunc.getStrA(rec), lenFunc.getInt(rec), fillTextFunc.getStrA(rec), sinkA);
         }
 
         @Override
@@ -118,6 +117,11 @@ public class RPadStrFunctionFactory implements FunctionFactory {
             } else {
                 return TableUtils.NULL_LEN;
             }
+        }
+
+        @Override
+        public boolean isReadThreadSafe() {
+            return false;
         }
 
         @Nullable

@@ -37,7 +37,7 @@ import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
 
-abstract class BaseDoubleWindowFunction extends DoubleFunction implements WindowFunction, ScalarFunction {
+public abstract class BaseDoubleWindowFunction extends DoubleFunction implements WindowFunction, ScalarFunction {
     protected final Function arg;
     protected int columnIndex;
 
@@ -48,6 +48,11 @@ abstract class BaseDoubleWindowFunction extends DoubleFunction implements Window
     @Override
     public void close() {
         arg.close();
+    }
+
+    @Override
+    public void cursorClosed() {
+        arg.cursorClosed();
     }
 
     @Override

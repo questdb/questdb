@@ -101,7 +101,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
             // Check logging is ok. This test reproduces logging failure because of exception in the middle of logging.
             // The result can be that this loop never finishes.
-            for(int i = 0; i < 1025; i++) {
+            for (int i = 0; i < 1025; i++) {
                 LOG.infoW().$("test").$();
             }
         });
@@ -243,15 +243,15 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             ff = new TestFilesFacadeImpl() {
 
                 @Override
-                public boolean allocate(int fd, long size) {
+                public boolean allocate(long fd, long size) {
                     if (this.fd == fd) {
                         throw new RuntimeException("TEST ERROR");
                     }
                     return super.allocate(fd, size);
                 }
 
-                public int openRW(LPSZ name, long opts) {
-                    int fd = super.openRW(name, opts);
+                public long openRW(LPSZ name, long opts) {
+                    long fd = super.openRW(name, opts);
                     if (Utf8s.endsWithAscii(name, "completed.d")) {
                         this.fd = fd;
                     }
@@ -417,7 +417,7 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                     // Delete failure
                     TableToken tableToken = engine.verifyTableName("up_part");
                     path.of(configuration.getRoot()).concat(tableToken).concat("1970-01-02").concat("str.i").$();
-                    Assert.assertTrue(Utf8s.toString(path), TestFilesFacadeImpl.INSTANCE.exists(path));
+                    Assert.assertTrue(Utf8s.toString(path), TestFilesFacadeImpl.INSTANCE.exists(path.$()));
 
                     // Should retry
                     runPurgeJob(purgeJob);
@@ -917,22 +917,22 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     private void assertFilesExist(Path path, String up_part, String partition, String colSuffix, boolean exist) {
         TableToken tableToken = engine.verifyTableName(up_part);
         path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("x.d").put(colSuffix).$();
-        Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
+        Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
 
         path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("str.d").put(colSuffix).$();
-        Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
+        Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
 
         path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("str.i").put(colSuffix).$();
-        Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
+        Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
 
         path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("sym2.d").put(colSuffix).$();
-        Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
+        Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
 
         path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("sym2.k").put(colSuffix).$();
-        Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
+        Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
 
         path.of(configuration.getRoot()).concat(tableToken).concat(partition).concat("sym2.v").put(colSuffix).$();
-        Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path));
+        Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
     }
 
     @NotNull

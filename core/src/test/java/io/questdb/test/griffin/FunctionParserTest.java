@@ -58,6 +58,7 @@ import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import static io.questdb.cairo.ColumnType.OVERLOAD_NONE;
@@ -78,14 +79,17 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     @Test
     public void overloadToUndefinedDoesNotExist() {
         boolean assertsEnabled = false;
+        //noinspection AssertWithSideEffects
         assert assertsEnabled = true;
-        if (assertsEnabled) {
-            try {
-                ColumnType.overloadDistance(ColumnType.INT, ColumnType.UNDEFINED);
-                Assert.fail();
-            } catch (AssertionError e) {
-                TestUtils.assertContains(e.getMessage(), "Undefined not supported in overloads");
-            }
+
+        // test asserts the assert in the production code
+        Assume.assumeTrue(assertsEnabled);
+
+        try {
+            ColumnType.overloadDistance(ColumnType.INT, ColumnType.UNDEFINED);
+            Assert.fail();
+        } catch (AssertionError e) {
+            TestUtils.assertContains(e.getMessage(), "Undefined not supported in overloads");
         }
     }
 
@@ -543,11 +547,11 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
         Function function = parseFunction("to_str(a, 'EE, dd-MMM-yyyy hh:mm:ss')", metadata, functionParser);
         Assert.assertEquals(ColumnType.STRING, function.getType());
-        TestUtils.assertEquals("Thursday, 03-Apr-150577 03:54:03", function.getStrA(record));
+        TestUtils.assertEquals("Thursday, 03-Apr-150577 02:54:03", function.getStrA(record));
 
         Function function2 = parseFunction("to_str(b, 'EE, dd-MMM-yyyy hh:mm:ss')", metadata, functionParser);
         Assert.assertEquals(ColumnType.STRING, function2.getType());
-        TestUtils.assertEquals("Tuesday, 21-Nov-2119 08:50:58", function2.getStrA(record));
+        TestUtils.assertEquals("Tuesday, 21-Nov-2119 07:50:58", function2.getStrA(record));
 
         Function function3 = parseFunction("to_char(c)", metadata, functionParser);
 
@@ -1170,21 +1174,19 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         functions.add(new SysdateFunctionFactory());
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("a", ColumnType.BOOLEAN));
-        assertFail(7, "unexpected argument", "a or   sysdate(a)", metadata);
+        assertFail(7, "wrong number of arguments for function `sysdate`; expected: 0, provided: 1", "a or   sysdate(a)", metadata);
     }
 
     @Test
     public void testOverloadBetweenNullAndAnyType() {
         for (short type = ColumnType.BOOLEAN; type < ColumnType.NULL; type++) {
+            String msg = "type: " + ColumnType.nameOf(type) + "(" + type + ")";
             if (type == ColumnType.STRING || type == ColumnType.SYMBOL) {
-                String msg = "type: " + ColumnType.nameOf(type) + "(" + type + ")";
                 Assert.assertEquals(msg, -1, ColumnType.overloadDistance(ColumnType.NULL, type));
-                Assert.assertEquals(msg, OVERLOAD_NONE, ColumnType.overloadDistance(type, ColumnType.NULL));
             } else {
-                String msg = "type: " + ColumnType.nameOf(type) + "(" + type + ")";
                 Assert.assertEquals(msg, 0, ColumnType.overloadDistance(ColumnType.NULL, type));
-                Assert.assertEquals(msg, OVERLOAD_NONE, ColumnType.overloadDistance(type, ColumnType.NULL));
             }
+            Assert.assertEquals(msg, OVERLOAD_NONE, ColumnType.overloadDistance(type, ColumnType.NULL));
         }
     }
 
@@ -1217,7 +1219,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             Assert.fail();
         } catch (SqlException e) {
             Assert.assertEquals(0, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument");
+            TestUtils.assertContains(e.getFlyweightMessage(), "bad function factory (NULL), check log");
         }
     }
 
@@ -1241,9 +1243,8 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             parseFunction("x(a)", metadata, createFunctionParser());
             Assert.fail();
         } catch (SqlException e) {
-            Assert.assertEquals(0, e.getPosition());
-            TestUtils.assertContains(e.getFlyweightMessage(), "unexpected argument");
-            TestUtils.assertContains(e.getFlyweightMessage(), "constant");
+            Assert.assertEquals(2, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "argument type mismatch for function `x` at #1 expected: INT constant, actual: INT");
         }
     }
 
@@ -1505,17 +1506,17 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
-    public void testUndefinedBindVariableDefineVarArg() throws SqlException {
-        // bind variable is sparse
-        assertBindVariableTypes(
-                "case $1 when 'A' then $3 else $4 end",
-                new SwitchFunctionFactory(),
-                "io.questdb.griffin.engine.functions.conditional.StrCaseFunction",
-                ColumnType.STRING,
-                -1, // not defined
-                ColumnType.STRING,
-                ColumnType.STRING
-        );
+    public void testUndefinedBindVariableDefineVarArg() {
+        // not defined
+        bindVariableService.clear();
+        functions.add(new SwitchFunctionFactory());
+        try {
+            parseFunction("case $1 when 'A' then $3 else $4 end", null, createFunctionParser());
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(5, e.getPosition());
+            TestUtils.assertContains("bind variable is not supported here, please use column instead", e.getFlyweightMessage());
+        }
     }
 
     @Test

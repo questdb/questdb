@@ -37,13 +37,17 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
-import io.questdb.network.*;
+import io.questdb.network.IODispatcher;
+import io.questdb.network.IORequestProcessor;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
@@ -66,16 +70,15 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     protected boolean disconnected;
     protected short floatDefaultColumnType;
     protected short integerDefaultColumnType;
-    protected boolean useLegacyString;
     protected LineTcpReceiverConfiguration lineTcpConfiguration;
     protected long microSecondTicks;
     protected int nWriterThreads;
     protected NoNetworkIOJob noNetworkIOJob;
     protected String recvBuffer;
     protected LineTcpMeasurementScheduler scheduler;
-    protected boolean stringAsTagSupported;
     protected boolean stringToCharCastAllowed;
     protected boolean symbolAsFieldSupported;
+    protected boolean useLegacyString;
     protected WorkerPool workerPool;
 
     @Before
@@ -117,8 +120,11 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
     }
 
     protected void assertTable(CharSequence expected, String tableName) {
-        try (TableReader reader = newOffPoolReader(configuration, tableName)) {
-            assertCursorTwoPass(expected, reader.getCursor(), reader.getMetadata());
+        try (
+                TableReader reader = newOffPoolReader(configuration, tableName);
+                TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+        ) {
+            assertCursorTwoPass(expected, cursor, reader.getMetadata());
         }
     }
 
@@ -175,11 +181,6 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean isUseLegacyStringDefault() {
-                return useLegacyString;
-            }
-
-            @Override
             public boolean getDisconnectOnError() {
                 return disconnectOnError;
             }
@@ -223,18 +224,13 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             }
 
             @Override
-            public boolean isStringAsTagSupported() {
-                return stringAsTagSupported;
-            }
-
-            @Override
             public boolean isStringToCharCastAllowed() {
                 return stringToCharCastAllowed;
             }
 
             @Override
-            public boolean isSymbolAsFieldSupported() {
-                return symbolAsFieldSupported;
+            public boolean isUseLegacyStringDefault() {
+                return useLegacyString;
             }
         };
     }
@@ -434,12 +430,12 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
 
     class LineTcpNetworkFacade extends NetworkFacadeImpl {
         @Override
-        public void close(int fd, Log log) {
+        public void close(long fd, Log log) {
             Assert.assertEquals(FD, fd);
         }
 
         @Override
-        public int recvRaw(int fd, long buffer, int bufferLen) {
+        public int recvRaw(long fd, long buffer, int bufferLen) {
             Assert.assertEquals(FD, fd);
             if (recvBuffer == null) {
                 return -1;

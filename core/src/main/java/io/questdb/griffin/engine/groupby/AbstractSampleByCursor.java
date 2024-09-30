@@ -44,6 +44,10 @@ import static io.questdb.std.datetime.microtime.Timestamps.MINUTE_MICROS;
 public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCursor, Closeable {
     protected final Function offsetFunc;
     protected final int offsetFuncPos;
+    protected final Function sampleFromFunc;
+    protected final int sampleFromFuncPos;
+    protected final Function sampleToFunc;
+    protected final int sampleToFuncPos;
     protected final TimestampSampler timestampSampler;
     protected final Function timezoneNameFunc;
     protected final int timezoneNameFuncPos;
@@ -59,13 +63,21 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
+            int offsetFuncPos,
+            Function sampleFromFunc,
+            int sampleFromFuncPos,
+            Function sampleToFunc,
+            int sampleToFuncPos
     ) {
         this.timestampSampler = timestampSampler;
         this.timezoneNameFunc = timezoneNameFunc;
         this.timezoneNameFuncPos = timezoneNameFuncPos;
         this.offsetFunc = offsetFunc;
         this.offsetFuncPos = offsetFuncPos;
+        this.sampleFromFunc = sampleFromFunc;
+        this.sampleFromFuncPos = sampleFromFuncPos;
+        this.sampleToFunc = sampleToFunc;
+        this.sampleToFuncPos = sampleToFuncPos;
     }
 
     @Override

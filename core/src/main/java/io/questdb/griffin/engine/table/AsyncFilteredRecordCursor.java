@@ -40,9 +40,12 @@ import io.questdb.std.Rows;
 class AsyncFilteredRecordCursor implements RecordCursor {
 
     private static final Log LOG = LogFactory.getLog(AsyncFilteredRecordCursor.class);
+
     private final Function filter;
+    // Used for random access: we may have to deserialize Parquet page frame.
+    private final PageFrameMemoryPool frameMemoryPool;
     private final boolean hasDescendingOrder;
-    private final PageAddressCacheRecord record;
+    private final PageFrameMemoryRecord record;
     private boolean allFramesActive;
     private long cursor = -1;
     private int frameIndex;
@@ -53,7 +56,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     private boolean isOpen;
     // The OG rows remaining, used to reset the counter when re-running cursor from top().
     private long ogRowsRemaining;
-    private PageAddressCacheRecord recordB;
+    private PageFrameMemoryRecord recordB;
     private DirectLongList rows;
     // Artificial limit on remaining rows to be returned from this cursor.
     // It is typically copied from LIMIT clause on SQL statement.
@@ -62,7 +65,8 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     public AsyncFilteredRecordCursor(Function filter, int scanDirection) {
         this.filter = filter;
         this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
-        record = new PageAddressCacheRecord();
+        record = new PageFrameMemoryRecord();
+        frameMemoryPool = new PageFrameMemoryPool();
     }
 
     @Override
@@ -134,6 +138,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                 }
                 frameSequence.clear();
             }
+            Misc.free(frameMemoryPool);
             isOpen = false;
         }
     }
@@ -141,6 +146,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     public void freeRecords() {
         Misc.free(record);
         Misc.free(recordB);
+        Misc.free(frameMemoryPool);
     }
 
     @Override
@@ -153,7 +159,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         if (recordB != null) {
             return recordB;
         }
-        recordB = new PageAddressCacheRecord(record);
+        recordB = new PageFrameMemoryRecord(record);
         return recordB;
     }
 
@@ -209,8 +215,9 @@ class AsyncFilteredRecordCursor implements RecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        ((PageAddressCacheRecord) record).setFrameIndex(Rows.toPartitionIndex(atRowId));
-        ((PageAddressCacheRecord) record).setRowIndex(Rows.toLocalRowID(atRowId));
+        final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
+        frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId), frameMemoryRecord);
+        frameMemoryRecord.setRowIndex(Rows.toLocalRowID(atRowId));
     }
 
     @Override
@@ -317,8 +324,11 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                             .I$();
 
                     if (task.hasError()) {
-                        throw CairoException.nonCritical().put(task.getErrorMsg())
-                                .setCancellation(task.isCancelled()).setInterruption(task.isCancelled());
+                        throw CairoException.nonCritical()
+                                .position(task.getErrorMessagePosition())
+                                .put(task.getErrorMsg())
+                                .setCancellation(task.isCancelled())
+                                .setInterruption(task.isCancelled());
                     }
 
                     allFramesActive &= frameSequence.isActive();
@@ -327,7 +337,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
                     frameIndex = task.getFrameIndex();
                     frameRowIndex = 0;
                     if (frameRowCount > 0 && frameSequence.isActive()) {
-                        record.setFrameIndex(task.getFrameIndex());
+                        record.init(task.getFrameMemory());
                         break;
                     } else {
                         // Force reset frame size if frameSequence was canceled or failed.
@@ -371,14 +381,15 @@ class AsyncFilteredRecordCursor implements RecordCursor {
     void of(PageFrameSequence<?> frameSequence, long rowsRemaining) {
         isOpen = true;
         this.frameSequence = frameSequence;
+        this.rowsRemaining = rowsRemaining;
+        ogRowsRemaining = rowsRemaining;
         frameIndex = -1;
         frameLimit = -1;
-        ogRowsRemaining = rowsRemaining;
-        this.rowsRemaining = rowsRemaining;
         allFramesActive = true;
-        record.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
+        frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
+        record.of(frameSequence.getSymbolTableSource());
         if (recordB != null) {
-            recordB.of(frameSequence.getSymbolTableSource(), frameSequence.getPageAddressCache());
+            recordB.of(frameSequence.getSymbolTableSource());
         }
     }
 }

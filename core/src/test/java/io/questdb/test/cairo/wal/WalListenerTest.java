@@ -310,11 +310,6 @@ public class WalListenerTest extends AbstractCairoTest {
                     oldTableToken
             ));
         }
-
-        @Override
-        public long getLastProcessedTxn(TableToken tableToken) {
-            return Long.MAX_VALUE;
-        }
     }
 
     static class WalListenerEvent {

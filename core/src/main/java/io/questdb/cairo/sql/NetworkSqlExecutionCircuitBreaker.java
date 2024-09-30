@@ -26,13 +26,14 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.network.NetworkFacade;
+import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBreaker, Closeable {
+public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBreaker, Closeable, Mutable {
     private final int bufferSize;
     private final MillisecondClock clock;
     private final SqlExecutionCircuitBreakerConfiguration configuration;
@@ -42,7 +43,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private final int throttle;
     private long buffer;
     private AtomicBoolean cancelledFlag;
-    private int fd = -1;
+    private long fd = -1;
     private volatile long powerUpTime = Long.MAX_VALUE;
     private int secret;
     private int testCount;
@@ -81,7 +82,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public boolean checkIfTripped(long millis, int fd) {
+    public boolean checkIfTripped(long millis, long fd) {
         if (clock.getTicks() - timeout > millis) {
             return true;
         }
@@ -111,7 +112,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public int getFd() {
+    public long getFd() {
         return fd;
     }
 
@@ -125,7 +126,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public int getState(long millis, int fd) {
+    public int getState(long millis, long fd) {
         if (clock.getTicks() - timeout > millis) {
             return STATE_TIMEOUT;
         }
@@ -143,7 +144,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         return powerUpTime < Long.MAX_VALUE;
     }
 
-    public NetworkSqlExecutionCircuitBreaker of(int fd) {
+    public NetworkSqlExecutionCircuitBreaker of(long fd) {
         assert buffer != 0;
         testCount = 0;
         this.fd = fd;
@@ -165,7 +166,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public void setFd(int fd) {
+    public void setFd(long fd) {
         this.fd = fd;
     }
 
@@ -232,7 +233,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         }
     }
 
-    protected boolean testConnection(int fd) {
+    protected boolean testConnection(long fd) {
         if (fd == -1 || !configuration.checkConnection()) {
             return false;
         }

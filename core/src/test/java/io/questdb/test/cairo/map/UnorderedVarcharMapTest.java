@@ -31,10 +31,10 @@ import io.questdb.cairo.map.*;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.*;
 import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TestDirectUtf8String;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -180,7 +180,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
                 final int N = 100000;
                 final LongList keyHashCodes = new LongList(N);
                 long lo = sinkA.hi();
-                DirectUtf8String directUtf8 = new DirectUtf8String(true);
+                TestDirectUtf8String directUtf8 = new TestDirectUtf8String(true);
                 for (int i = 0; i < N; i++) {
                     MapKey mapKey = map.withKey();
                     sinkA.put("foo").put(i);
@@ -223,7 +223,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
                     sinkA.put('k');
                 }
                 MapKey mapKey = map.withKey();
-                DirectUtf8String directUtf8 = new DirectUtf8String(true);
+                TestDirectUtf8String directUtf8 = new TestDirectUtf8String(true);
                 directUtf8.of(sinkA.lo(), sinkA.hi(), true);
                 mapKey.putVarchar(directUtf8);
                 mapKey.commit();
@@ -350,7 +350,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
     public void testSmoke() throws Exception {
         assertMemoryLeak(() -> {
             SingleColumnType valueType = new SingleColumnType(ColumnType.INT);
-            UnorderedVarcharMap danglingMap = null;
+            UnorderedVarcharMap danglingMap;
             try (DirectUtf8Sink sinkA = new DirectUtf8Sink(1024 * 1024);
                  DirectUtf8Sink sinkB = new DirectUtf8Sink(1024 * 1024);
                  UnorderedVarcharMap map = newDefaultMap(valueType)
@@ -440,7 +440,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
         }
         try (DirectUtf8Sink sink = new DirectUtf8Sink(stringKey.length() * 4L)) {
             sink.put(stringKey);
-            DirectUtf8String key = new DirectUtf8String(false);
+            TestDirectUtf8String key = new TestDirectUtf8String(false);
             key.of(sink.lo(), sink.hi(), sink.isAscii());
             mapKey.putVarchar(key);
             return mapKey.findValue();
@@ -465,7 +465,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
         } else {
             long lo = sink.hi();
             sink.put(stringKey);
-            DirectUtf8String key = new DirectUtf8String(true);
+            TestDirectUtf8String key = new TestDirectUtf8String(true);
             key.of(lo, sink.hi(), Chars.isAscii(stringKey));
             mapKey.putVarchar(key);
         }
@@ -477,7 +477,7 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
         return mapKey;
     }
 
-    private static MapKey putUnstable(String stringKey, int intValue, UnorderedVarcharMap map, boolean isNew) {
+    private static void putUnstable(String stringKey, int intValue, UnorderedVarcharMap map, boolean isNew) {
         MapKey mapKey = map.withKey();
         if (stringKey == null) {
             mapKey.putVarchar((Utf8Sequence) null);
@@ -488,7 +488,5 @@ public class UnorderedVarcharMapTest extends AbstractCairoTest {
         Assert.assertNotNull(value);
         Assert.assertEquals(isNew, value.isNew());
         value.putInt(0, intValue);
-
-        return mapKey;
     }
 }

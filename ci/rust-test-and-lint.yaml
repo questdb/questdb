@@ -1,0 +1,44 @@
+jobs:
+  - job: RunOn
+    displayName: "on"
+    strategy:
+      matrix:
+        linux-jdk17:
+          imageName: "ubuntu-latest"
+          poolName: "Azure Pipelines"
+          os: Linux
+          jdk: "1.17"
+          testset: "all"
+    pool:
+      vmImage: $(imageName)
+      name: $(poolName)
+    timeoutInMinutes: 60
+    steps:
+      - checkout: self
+        fetchDepth: 1
+        lfs: false
+        submodules: true
+      - script: |
+          python3 .github/prepare_rust_env.py --export-cargo-install-env --components rustfmt clippy
+        displayName: "Ensure Rust is installed"
+        # Note, the `prepare_rust_env.py` script exports a number of variables.
+      - task: Cache@2
+        inputs:
+          key: '"cargo-registry" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)"'
+          path: $(CARGO_HOME)/registry
+        displayName: "Cache ~/.cargo/registry"
+      - script: |
+          cd core/rust/qdbr
+          cargo test --all-targets --all-features --no-fail-fast --verbose
+        displayName: "cargo test"
+        # We run these as part of the other CI runs anyway through the rust-maven-plugin,
+        # but if the Rust tests fail it's easier to see the output here
+        # since it doesn't get buried thousands of lines deep in the Java test logs.
+      - script: |
+          cd core/rust/qdbr
+          cargo clippy --all-targets --all-features -- -D warnings
+        displayName: "cargo clippy"
+      - script: |
+          cd core/rust/qdbr
+          cargo fmt --check
+        displayName: "cargo fmt"

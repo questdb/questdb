@@ -30,7 +30,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class DateFormatUtilsTest {
-    
+
     @Test
     public void testParseDate() throws NumericException {
         // PG_DATE_FORMAT: y-MM-dd

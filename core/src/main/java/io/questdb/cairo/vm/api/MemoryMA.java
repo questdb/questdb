@@ -28,7 +28,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
-//mapped appendable 
+// mapped appendable
 public interface MemoryMA extends MemoryM, MemoryA {
 
     default void close(boolean truncate) {
@@ -47,7 +47,7 @@ public interface MemoryMA extends MemoryM, MemoryA {
         jumpTo(size);
     }
 
-    void switchTo(int fd, long offset, boolean truncate, byte truncateMode);
+    void switchTo(FilesFacade ff, long fd, long extendSegmentSize, long offset, boolean truncate, byte truncateMode);
 
     void sync(boolean async);
 

@@ -26,7 +26,6 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.ByteFunction;
-import io.questdb.std.str.Utf16Sink;
 import org.junit.Test;
 
 public class ByteFunctionTest {
@@ -104,11 +103,6 @@ public class ByteFunctionTest {
     }
 
     @Test(expected = UnsupportedOperationException.class)
-    public void testGetStr2() {
-        function.getStr(null, null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
     public void testGetStrB() {
         function.getStrB(null);
     }
@@ -156,11 +150,6 @@ public class ByteFunctionTest {
     @Test(expected = UnsupportedOperationException.class)
     public void testGetLong256B() {
         function.getLong256B(null);
-    }
-
-    @Test(expected = UnsupportedOperationException.class)
-    public void testGetVarcharToSink() {
-        function.getVarchar(null, null);
     }
 
     @Test(expected = UnsupportedOperationException.class)

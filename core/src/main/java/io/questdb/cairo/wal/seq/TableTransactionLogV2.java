@@ -26,7 +26,6 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MemorySerializer;
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalUtils;
@@ -39,6 +38,7 @@ import org.jetbrains.annotations.NotNull;
 import java.lang.ThreadLocal;
 import java.util.concurrent.atomic.AtomicLong;
 
+import static io.questdb.cairo.TableUtils.openRO;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 /**
@@ -59,7 +59,6 @@ import static io.questdb.cairo.wal.WalUtils.*;
  * Header and record is described in @link TableTransactionLogFile
  * <p>
  * Transaction record: 60 bytes
- * <p>
  */
 public class TableTransactionLogV2 implements TableTransactionLogFile {
     public static final long MIN_TIMESTAMP_OFFSET = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
@@ -85,7 +84,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         rootPath = new Path();
     }
 
-    public static long readMaxStructureVersion(Path path, int logFileFd, FilesFacade ff) {
+    public static long readMaxStructureVersion(Path path, long logFileFd, FilesFacade ff) {
         long lastTxn = ff.readNonNegativeLong(logFileFd, TableTransactionLogFile.MAX_TXN_OFFSET_64);
         if (lastTxn < 0) {
             return -1;
@@ -100,10 +99,10 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             long prevTxn = lastTxn - 1;
             long part = prevTxn / partTransactionCount;
             int size = path.size();
-            path.concat(TXNLOG_PARTS_DIR).slash().put(part).$();
-            int partFd = -1;
+            path.concat(TXNLOG_PARTS_DIR).slash().put(part);
+            long partFd = -1;
             try {
-                partFd = TableUtils.openRO(ff, path, LOG);
+                partFd = openRO(ff, path.$(), LOG);
                 long fileReadOffset = (prevTxn % partTransactionCount) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET;
                 return ff.readNonNegativeLong(partFd, fileReadOffset);
             } finally {
@@ -184,7 +183,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     public TransactionLogCursor getCursor(long txnLo, @Transient Path path) {
         TransactionLogCursorImpl cursor = tlTransactionLogCursor.get();
         if (cursor == null) {
-            cursor = new TransactionLogCursorImpl(ff, txnLo, path.$(), partTransactionCount);
+            cursor = new TransactionLogCursorImpl(ff, txnLo, path, partTransactionCount);
             tlTransactionLogCursor.set(cursor);
             return cursor;
         }
@@ -247,9 +246,9 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
     private void createPartsDir(int mkDirMode) {
         int rootLen = rootPath.size();
-        rootPath.concat(TXNLOG_PARTS_DIR).$();
+        rootPath.concat(TXNLOG_PARTS_DIR);
         try {
-            if (!ff.exists(rootPath) && ff.mkdir(rootPath, mkDirMode) != 0) {
+            if (!ff.exists(rootPath.$()) && ff.mkdir(rootPath.$(), mkDirMode) != 0) {
                 throw CairoException.critical(ff.errno()).put("could not create directory [path='").put(rootPath).put("']");
             }
         } finally {
@@ -271,9 +270,9 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     private void openTxnMem(Path path) {
         rootPath.of(path);
         int rootLen = rootPath.size();
-        rootPath.concat(TXNLOG_FILE_NAME).$();
+        rootPath.concat(TXNLOG_FILE_NAME);
         try {
-            txnMem.of(ff, rootPath, HEADER_SIZE, HEADER_SIZE, MemoryTag.MMAP_TX_LOG);
+            txnMem.of(ff, rootPath.$(), HEADER_SIZE, HEADER_SIZE, MemoryTag.MMAP_TX_LOG);
         } finally {
             rootPath.trimTo(rootLen);
         }
@@ -284,10 +283,10 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         if (partId != part) {
             int size = rootPath.size();
             try {
-                rootPath.concat(TXNLOG_PARTS_DIR).slash().put(part).$();
+                rootPath.concat(TXNLOG_PARTS_DIR).slash().put(part);
                 long partSize = partTransactionCount * RECORD_SIZE;
                 txnPartMem.close(false);
-                txnPartMem.of(ff, rootPath, partSize, partSize, MemoryTag.MMAP_TX_LOG);
+                txnPartMem.of(ff, rootPath.$(), partSize, partSize, MemoryTag.MMAP_TX_LOG);
                 txnPartMem.jumpTo((txn % partTransactionCount) * RECORD_SIZE);
                 partId = part;
             } finally {
@@ -305,14 +304,14 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     }
 
     private static class TransactionLogCursorImpl implements TransactionLogCursor {
+        private final Path rootPath;
         private long address;
         private FilesFacade ff;
-        private int headerFd;
-        private int partFd = -1;
+        private long headerFd;
+        private long partFd = -1;
         private long partId = -1;
         private long partMapSize;
         private int partTransactionCount;
-        private Path rootPath;
         private long txn = -2;
         private long txnCount = -1;
         private long txnLo;
@@ -361,6 +360,11 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         @Override
         public long getMaxTxn() {
             return txnCount - 1;
+        }
+
+        @Override
+        public int getPartitionSize() {
+            return partTransactionCount;
         }
 
         @Override
@@ -444,14 +448,13 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             int rootPathLen = rootPath.size();
             try {
                 for (long part = partId - 1; part > -1L; part--) {
-                    rootPath.trimTo(rootPathLen).put(part).$();
-                    if (ff.exists(rootPath)) {
+                    rootPath.trimTo(rootPathLen).put(part);
+                    if (ff.exists(rootPath.$())) {
                         minTxn = part * partTransactionCount;
                     } else {
                         break;
                     }
                 }
-
             } finally {
                 rootPath.trimTo(rootLen);
             }
@@ -460,24 +463,9 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
         }
 
         @Override
-        public int getPartitionSize() {
-            return partTransactionCount;
-        }
-
-        @Override
         public void toTop() {
             if (txnCount > -1L) {
                 this.txn = txnLo;
-            }
-        }
-
-        private static int openFileRO(final FilesFacade ff, final Path path, final String fileName) {
-            final int rootLen = path.size();
-            path.concat(fileName).$();
-            try {
-                return TableUtils.openRO(ff, path, LOG);
-            } finally {
-                path.trimTo(rootLen);
             }
         }
 
@@ -496,7 +484,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             this.partTransactionCount = partTransactionCount;
             partMapSize = partTransactionCount * RECORD_SIZE;
             this.ff = ff;
-            this.headerFd = openFileRO(ff, path, TXNLOG_FILE_NAME);
+            this.headerFd = openRO(ff, path, WalUtils.TXNLOG_FILE_NAME, LOG);
             long newTxnCount = ff.readNonNegativeLong(headerFd, MAX_TXN_OFFSET_64);
             rootPath.of(path);
 
@@ -517,8 +505,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                 closePart();
                 int size = rootPath.size();
                 try {
-                    rootPath.concat(TXNLOG_PARTS_DIR).slash().put(part).$();
-                    partFd = TableUtils.openRO(ff, rootPath, LOG);
+                    rootPath.concat(TXNLOG_PARTS_DIR).slash().put(part);
+                    partFd = openRO(ff, rootPath.$(), LOG);
                     address = ff.mmap(partFd, partMapSize, 0, Files.MAP_RO, MemoryTag.MMAP_TX_LOG_CURSOR);
                     partId = part;
                 } finally {

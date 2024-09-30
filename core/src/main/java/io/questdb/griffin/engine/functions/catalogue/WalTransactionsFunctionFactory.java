@@ -100,14 +100,16 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
             cursor.close();
             long txnLo = 0;
             while (true) {
+                TransactionLogCursor cursor = null;
                 try {
-                    TransactionLogCursor cursor = executionContext.getCairoEngine().getTableSequencerAPI().getCursor(tableToken, txnLo);
+                    cursor = executionContext.getCairoEngine().getTableSequencerAPI().getCursor(tableToken, txnLo);
                     cursor.toMinTxn();
                     this.cursor.logCursor = cursor;
                     break;
                 } catch (CairoException e) {
+                    Misc.free(cursor);
                     if (e.errnoReadPathDoesNotExist()) {
-                        // Txn sequencer can have it's parts deleted due to housekeeping
+                        // Txn sequencer can have its parts deleted due to housekeeping
                         // Need to keep scanning until we find a valid part
                         if (txnLo == 0) {
                             long writerTxn = executionContext.getCairoEngine().getTableSequencerAPI().getTxnTracker(tableToken).getWriterTxn();

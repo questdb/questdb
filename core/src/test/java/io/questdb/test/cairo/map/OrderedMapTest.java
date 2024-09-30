@@ -34,6 +34,7 @@ import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -876,7 +877,10 @@ public class OrderedMapTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
                 EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
@@ -900,12 +904,16 @@ public class OrderedMapTest extends AbstractCairoTest {
                                 1
                         )
                 ) {
-
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
+                    BitSet writeSymbolAsString = new BitSet();
+                    for (int i = 0, n = reader.getMetadata().getColumnCount(); i < n; i++) {
+                        if (reader.getMetadata().getColumnType(i) == ColumnType.SYMBOL) {
+                            writeSymbolAsString.set(i);
+                        }
+                    }
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString);
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
 
-                    RecordCursor cursor = reader.getCursor();
                     populateMap(map, rnd2, cursor, sink);
 
                     try (RecordCursor mapCursor = map.getCursor()) {
@@ -1557,7 +1565,10 @@ public class OrderedMapTest extends AbstractCairoTest {
 
             BytecodeAssembler asm = new BytecodeAssembler();
 
-            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
                 EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
@@ -1581,14 +1592,19 @@ public class OrderedMapTest extends AbstractCairoTest {
                                 1
                         )
                 ) {
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
+                    BitSet writeSymbolAsString = new BitSet();
+                    for (int i = 0, n = reader.getMetadata().getColumnCount(); i < n; i++) {
+                        if (reader.getMetadata().getColumnType(i) == ColumnType.SYMBOL) {
+                            writeSymbolAsString.set(i);
+                        }
+                    }
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString);
 
                     final int keyColumnOffset = map.getValueColumnCount();
 
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
 
-                    RecordCursor cursor = reader.getCursor();
                     populateMap(map, rnd2, cursor, sink);
 
                     try (RecordCursor mapCursor = map.getCursor()) {
@@ -1652,7 +1668,10 @@ public class OrderedMapTest extends AbstractCairoTest {
 
             BytecodeAssembler asm = new BytecodeAssembler();
 
-            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
                 EntityColumnFilter entityColumnFilter = new EntityColumnFilter();
                 entityColumnFilter.of(reader.getMetadata().getColumnCount());
 
@@ -1679,12 +1698,17 @@ public class OrderedMapTest extends AbstractCairoTest {
                                 1
                         )
                 ) {
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, true);
+                    BitSet writeSymbolAsString = new BitSet();
+                    for (int i = 0, n = reader.getMetadata().getColumnCount(); i < n; i++) {
+                        if (reader.getMetadata().getColumnType(i) == ColumnType.SYMBOL) {
+                            writeSymbolAsString.set(i);
+                        }
+                    }
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), entityColumnFilter, writeSymbolAsString);
 
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
 
-                    RecordCursor cursor = reader.getCursor();
                     Record record = cursor.getRecord();
                     populateMapGeo(map, rnd2, cursor, sink);
 
@@ -1726,7 +1750,10 @@ public class OrderedMapTest extends AbstractCairoTest {
 
             BytecodeAssembler asm = new BytecodeAssembler();
 
-            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
                 ListColumnFilter listColumnFilter = new ListColumnFilter();
                 for (int i = 0, n = reader.getMetadata().getColumnCount(); i < n; i++) {
                     listColumnFilter.add(i + 1);
@@ -1749,12 +1776,11 @@ public class OrderedMapTest extends AbstractCairoTest {
                                 N, 0.9f, 1
                         )
                 ) {
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), listColumnFilter, false);
+                    RecordSink sink = RecordSinkFactory.getInstance(asm, reader.getMetadata(), listColumnFilter);
 
                     // this random will be populating values
                     Rnd rnd2 = new Rnd();
 
-                    RecordCursor cursor = reader.getCursor();
                     final Record record = cursor.getRecord();
                     long counter = 0;
                     while (cursor.hasNext()) {
@@ -1886,16 +1912,12 @@ public class OrderedMapTest extends AbstractCairoTest {
                 Assert.assertNull(record.getStrB(keyColumnOffset + 8));
                 Assert.assertEquals(-1, record.getStrLen(keyColumnOffset + 8));
                 AbstractCairoTest.sink.clear();
-                record.getStr(keyColumnOffset + 8, AbstractCairoTest.sink);
-                Assert.assertEquals(0, AbstractCairoTest.sink.length());
             } else {
                 CharSequence tmp = rnd.nextChars(5);
                 TestUtils.assertEquals(tmp, record.getStrA(keyColumnOffset + 8));
                 TestUtils.assertEquals(tmp, record.getStrB(keyColumnOffset + 8));
                 Assert.assertEquals(tmp.length(), record.getStrLen(keyColumnOffset + 8));
                 AbstractCairoTest.sink.clear();
-                record.getStr(keyColumnOffset + 8, AbstractCairoTest.sink);
-                TestUtils.assertEquals(tmp, AbstractCairoTest.sink);
             }
 
             // we are storing symbol as string, assert as such

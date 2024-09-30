@@ -50,7 +50,8 @@ public class CastBooleanToDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            return arg.getDouble(rec);
+            boolean val = arg.getBool(rec);
+            return val ? 1.0f : 0.0f;
         }
     }
 }

@@ -58,20 +58,20 @@ public class SumShortVectorAggregateFunction extends LongFunction implements Vec
     }
 
     @Override
-    public void aggregate(long address, long addressSize, int columnSizeHint, int workerId) {
+    public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {
-            final long value = Vect.sumShort(address, addressSize / Short.BYTES);
+            final long value = Vect.sumShort(address, frameRowCount);
             sum.add(value);
             this.count.increment();
         }
     }
 
     @Override
-    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long valueAddressSize, int columnSizeShr, int workerId) {
+    public boolean aggregate(long pRosti, long keyAddress, long valueAddress, long frameRowCount) {
         if (valueAddress == 0) {
-            return distinctFunc.run(pRosti, keyAddress, valueAddressSize / Short.BYTES);
+            return distinctFunc.run(pRosti, keyAddress, frameRowCount);
         } else {
-            return keyValueFunc.run(pRosti, keyAddress, valueAddress, valueAddressSize / Short.BYTES, valueOffset);
+            return keyValueFunc.run(pRosti, keyAddress, valueAddress, frameRowCount, valueOffset);
         }
     }
 

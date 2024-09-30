@@ -36,17 +36,21 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNullRegex() throws Exception {
-        assertFailure(
-                "[29] NULL regex",
-                "select regexp_replace('abc', null, 'def')"
+        assertQuery(
+                "regexp_replace\n" +
+                        "\n",
+                "select regexp_replace('abc', null, 'def')",
+                true
         );
     }
 
     @Test
     public void testNullReplacement() throws Exception {
-        assertFailure(
-                "[34] NULL replacement",
-                "select regexp_replace('abc', 'a', null)"
+        assertQuery(
+                "regexp_replace\n" +
+                        "\n",
+                "select regexp_replace('abc', 'a', null)",
+                true
         );
     }
 
@@ -88,7 +92,7 @@ public class RegexpReplaceStrFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testWhenChainedCallsExceedsMaxLengthExceptionIsThrown() throws Exception {
         assertFailure(
-                "[-1] breached memory limit set for regexp_replace(SSS) [maxLength=1048576]",
+                "breached memory limit set for regexp_replace(SSS) [maxLength=1048576]",
                 "select regexp_replace(regexp_replace(regexp_replace(regexp_replace( 'aaaaaaaaaaaaaaaaaaaa', 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa'), 'a', 'aaaaaaaaaaaaaaaaaaaa')"
         );
     }

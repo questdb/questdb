@@ -57,7 +57,11 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
             Function timezoneNameFunc,
             int timezoneNameFuncPos,
             Function offsetFunc,
-            int offsetFuncPos
+            int offsetFuncPos,
+            Function sampleFromFunc,
+            int sampleFromFuncPos,
+            Function sampleToFunc,
+            int sampleToFuncPos
     ) throws SqlException {
         super(
                 asm,
@@ -85,7 +89,11 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
                     timezoneNameFunc,
                     timezoneNameFuncPos,
                     offsetFunc,
-                    offsetFuncPos
+                    offsetFuncPos,
+                    sampleFromFunc,
+                    sampleFromFuncPos,
+                    sampleToFunc,
+                    sampleToFuncPos
             );
         } catch (Throwable e) {
             Misc.freeObjList(recordFunctions);
@@ -101,7 +109,7 @@ public class SampleByFillNullRecordCursorFactory extends AbstractSampleByFillRec
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("SampleBy");
+        sink.type("Sample By");
         sink.attr("fill").val("null");
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.optAttr("values", cursor.groupByFunctions, true);
