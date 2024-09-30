@@ -37,7 +37,7 @@ pub struct ColumnMeta {
     pub id: i32,
     pub name_size: i32,
     pub name_ptr: *const u16,
-    pub name_vec: Vec<u16>,
+    pub name_vec: AcVec<u16>,
 }
 
 // The fields are accessed from Java.

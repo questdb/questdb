@@ -1,4 +1,4 @@
-use crate::allocator::QdbAllocator;
+use crate::allocator::{AcVec, QdbAllocator};
 use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
 use crate::parquet::error::ParquetResult;
 use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
@@ -46,7 +46,8 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                 Self::descriptor_to_column_type(&f.descriptor, column_id, qdb_meta.as_ref())
             {
                 let name_str = &f.descriptor.primitive_type.field_info.name;
-                let name: Vec<u16> = name_str.encode_utf16().collect();
+                let mut name = AcVec::new_in(allocator);
+                name.extend(name_str.encode_utf16())?;
 
                 columns.push(ColumnMeta {
                     column_type,
