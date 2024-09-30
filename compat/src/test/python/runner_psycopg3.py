@@ -20,7 +20,6 @@
 #   limitations under the License.
 #
 
-import datetime
 import psycopg
 import re
 import sys

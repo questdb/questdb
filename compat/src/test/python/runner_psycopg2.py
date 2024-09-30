@@ -21,7 +21,6 @@
 #
 
 
-import datetime
 import psycopg2
 import re
 import sys

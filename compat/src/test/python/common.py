@@ -20,6 +20,7 @@
 #   limitations under the License.
 #
 
+import datetime
 import yaml
 from string import Template
 

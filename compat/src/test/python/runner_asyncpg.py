@@ -23,7 +23,6 @@
 
 import asyncio
 import asyncpg
-import datetime
 import re
 import sys
 from asyncpg import Connection
