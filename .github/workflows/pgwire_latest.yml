@@ -64,7 +64,8 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@4d1965c9142484e48d40c19de54b5cba84953a06
         with:
           toolchain: stable
-          cache-workspaces: compat/src/test/rust/scenarios
+          # No cache when testing latest
+          cache: 'false'
       - name: Compile Rust scenarios runner
         run: |
           cd compat/src/test/rust/scenarios
