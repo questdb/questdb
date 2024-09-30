@@ -68,7 +68,15 @@ def convert_and_append_parameters(value, type, resolved_parameters):
 
 
 def convert_query_result(result):
-    result_converted = [list(record.values()) for record in result]
+    first_item = next(iter(result), None)
+    if first_item is None:
+        return result
+
+    if isinstance(first_item, dict):
+        result_converted = [list(record.values()) for record in result]
+    else:
+        result_converted = [list(record) for record in result]
+
     # Convert timestamps to strings for comparison, format: '2021-09-01T12:34:56.123456Z'
     for row in result_converted:
         for i, value in enumerate(row):
