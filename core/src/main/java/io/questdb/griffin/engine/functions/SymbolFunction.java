@@ -180,7 +180,7 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
             try {
                 return IntervalUtils.parseFloorPartialTimestamp(value);
             } catch (NumericException e) {
-                throw CairoException.nonCritical().position(0).put("invalid timestamp: [").put(value).put(']');
+                throw CairoException.nonCritical().put("invalid timestamp: [").put(value).put(']');
             }
         }
         return Numbers.LONG_NULL;
