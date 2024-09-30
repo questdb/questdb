@@ -1,8 +1,14 @@
-name: PGWire
+name: PGWire - Latest clients
+# Testing PGWire with the latest versions of clients
+# So we are notified of any issues with just released versions
+# It's intentionally not triggered on every PR since we do not want
+# CI to fail if a new version of a client is released and it's not compatible
+# Instead, we want to be notified asynchronously, e.g. via Slack
 
 on:
-  pull_request:
-    types: [ synchronize, opened, reopened, edited ]
+  schedule:
+    - cron: "5 0 * * *"
+  workflow_dispatch:
 
 jobs:
   build:
@@ -24,12 +30,12 @@ jobs:
       - name: Setup Python version
         uses: actions/setup-python@v2
         with:
-          python-version: 3.8
+          python-version: 3
       - name: Create and start virtual environment for psycopg2
         run: |
           python3 -m venv venv_psycopg2
           source venv_psycopg2/bin/activate
-          pip install -r compat/src/test/python/requirements_psycopg2.txt
+          pip install -r compat/src/test/python/requirements_psycopg2_latest.txt
       - name: Run tests with psycopg2
         run: |
           source venv_psycopg2/bin/activate
@@ -38,7 +44,7 @@ jobs:
         run: |
           python3 -m venv venv_psycopg3
           source venv_psycopg3/bin/activate
-          pip install -r compat/src/test/python/requirements_psycopg3.txt
+          pip install -r compat/src/test/python/requirements_psycopg3_latest.txt
       - name: Run tests with psycopg3
         run: |
           source venv_psycopg3/bin/activate
@@ -47,7 +53,7 @@ jobs:
         run: |
           python3 -m venv venv_asyncpg
           source venv_asyncpg/bin/activate
-          pip install -r compat/src/test/python/requirements_asyncpg.txt
+          pip install -r compat/src/test/python/requirements_asyncpg_latest.txt
       - name: Run tests with asyncpg
         run: |
           source venv_asyncpg/bin/activate
@@ -68,6 +74,4 @@ jobs:
           compat/src/test/rust/scenarios/target/release/questrun_rust compat/src/test/resources/test_cases.yaml
       - name: Stop QuestDB
         run: ./questdb-*bin/questdb.sh stop
-
-        
-
+# TODO: Add notification via Slack webhook
