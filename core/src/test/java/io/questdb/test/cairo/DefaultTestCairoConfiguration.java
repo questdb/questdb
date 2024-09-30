@@ -85,4 +85,14 @@ public class DefaultTestCairoConfiguration extends DefaultCairoConfiguration {
     public boolean mangleTableDirNames() {
         return true;
     }
+
+    @Override
+    public int getPartitionEncoderParquetRowGroupSize() {
+        return 1000;
+    }
+
+    @Override
+    public int getPartitionEncoderParquetDataPageSize() {
+        return 1024; // 1KB
+    }
 }

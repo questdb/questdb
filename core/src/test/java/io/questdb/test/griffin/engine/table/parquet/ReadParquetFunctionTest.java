@@ -79,7 +79,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
 
             engine.releaseInactive();
             try (Path path = new Path()) {
-                path.concat(engine.verifyTableName("x")).concat("2015.parquet");
+                path.concat(engine.verifyTableName("x")).concat("2015.1").concat("data.parquet");
 
                 sink.clear();
                 sink.put("select * from read_parquet('").put(path).put("')");

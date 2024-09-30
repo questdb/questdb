@@ -33,9 +33,9 @@ import java.io.Closeable;
  * The data structure has to match dedup_column struct in dedup.cpp
  */
 public class DedupColumnCommitAddresses implements Closeable {
+    public static final long NULL = 0;
     // The data structure in below offsets has to match dedup_column struct in dedup.cpp
     private static final long COL_TYPE_32 = 0L;
-    public static final long NULL = 0;
     private static final long VAL_SIZE_32 = COL_TYPE_32 + 4L;
     private static final long COL_TOP_64 = VAL_SIZE_32 + 4L;
     private static final long COL_DATA_64 = COL_TOP_64 + 8L;
@@ -54,28 +54,6 @@ public class DedupColumnCommitAddresses implements Closeable {
     private static final int RECORD_BYTES = (int) (NULL_VAL_256 + 32L);
     private PagedDirectLongList addresses;
     private int columnCount;
-
-    public long allocateBlock() {
-        if (columnCount == 0) {
-            return -1;
-        }
-        return addresses.allocateBlock();
-    }
-
-    public void clear(long dedupColSinkAddr) {
-        Vect.memset(dedupColSinkAddr, (long) columnCount * RECORD_BYTES, 0);
-    }
-
-    public void clear() {
-        if (addresses != null) {
-            addresses.clear();
-        }
-    }
-
-    @Override
-    public void close() {
-        addresses = Misc.free(addresses);
-    }
 
     public static long getAddress(long dedupCommitAddr) {
         return dedupCommitAddr;
@@ -101,12 +79,12 @@ public class DedupColumnCommitAddresses implements Closeable {
         return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + RESERVED5);
     }
 
-    public static long getVarDataLen(long dedupBlockAddress, int keyIndex) {
+    public static long getColVarDataLen(long dedupBlockAddress, int keyIndex) {
         return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + COL_VAR_DATA_LEN_64);
     }
 
-    public int getColumnCount() {
-        return columnCount;
+    public static long getO3VarDataLen(long dedupBlockAddress, int keyIndex) {
+        return Unsafe.getUnsafe().getLong(dedupBlockAddress + (long) keyIndex * RECORD_BYTES + O3_VAR_DATA_LEN_64);
     }
 
     public static void setColAddressValues(
@@ -186,6 +164,32 @@ public class DedupColumnCommitAddresses implements Closeable {
     ) {
         Unsafe.getUnsafe().putLong(addr + RESERVED4, reserved4);
         Unsafe.getUnsafe().putLong(addr + RESERVED5, reserved5);
+    }
+
+    public long allocateBlock() {
+        if (columnCount == 0) {
+            return -1;
+        }
+        return addresses.allocateBlock();
+    }
+
+    public void clear(long dedupColSinkAddr) {
+        Vect.memset(dedupColSinkAddr, (long) columnCount * RECORD_BYTES, 0);
+    }
+
+    public void clear() {
+        if (addresses != null) {
+            addresses.clear();
+        }
+    }
+
+    @Override
+    public void close() {
+        addresses = Misc.free(addresses);
+    }
+
+    public int getColumnCount() {
+        return columnCount;
     }
 
     public void setDedupColumnCount(int dedupColumnCount) {
