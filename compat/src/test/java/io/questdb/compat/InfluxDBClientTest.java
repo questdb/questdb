@@ -103,17 +103,17 @@ public class InfluxDBClientTest extends AbstractTest {
                             "timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=100"
             );
             List<String> lines = new ArrayList<>();
-            String goodLine = "wal_low_max_uncomitted,sym=aaa\n";
+            String goodLine = "wal_low_max_uncomitted,sym=aaa";
             for (int i = 0; i < count; i++) {
                 lines.add(goodLine);
             }
 
             // New column added
-            lines.add("wal_low_max_uncomitted i=123i\n");
+            lines.add("wal_low_max_uncomitted,sym i=123");
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
                 // Bad line which should roll back the transaction
-                assertRequestErrorContains(influxDB, lines, "ailed to parse line protocol:errors encountered on line(s):" +
-                        "\\nerror in line 10002: Could not parse entire line. Symbol value is missing: bla");
+                assertRequestErrorContains(influxDB, lines, "", "ailed to parse line protocol:errors encountered on line(s):" +
+                        "\\nerror in line 10001: Could not parse entire line. Symbol value is missing: sym");
             }
 
             serverMain.awaitTable("wal_low_max_uncomitted");
@@ -331,6 +331,36 @@ public class InfluxDBClientTest extends AbstractTest {
     }
 
     @Test
+    public void testLastEmptyLineIsOk() throws Exception {
+        int count = 10000;
+        try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
+            put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048");
+            put(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS.getEnvVarName(), String.valueOf(count));
+        }})) {
+            serverMain.start();
+            serverMain.getEngine().compile(
+                    "create table wal_low_max_uncomitted(sym symbol, ts timestamp) " +
+                            "timestamp(ts) partition by DAY WAL WITH maxUncommittedRows=100"
+            );
+            List<String> lines = new ArrayList<>();
+            String goodLine = "wal_low_max_uncomitted,sym=aaa\n";
+            for (int i = 0; i < count; i++) {
+                lines.add(goodLine);
+            }
+
+            // New column added
+            lines.add("wal_low_max_uncomitted i=123i\n");
+            try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
+                influxDB.write(lines);
+            }
+
+            serverMain.awaitTable("wal_low_max_uncomitted");
+            serverMain.getEngine().print("SELECT count() FROM wal_low_max_uncomitted", sink);
+            Assert.assertTrue(Chars.equals(sink, "count\n10001\n"));
+        }
+    }
+
+    @Test
     public void testLineDoesNotFitBuffer() throws Exception {
         try (final ServerMain serverMain = ServerMain.create(root, new HashMap<String, String>() {{
             put(PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "512");
@@ -346,7 +376,7 @@ public class InfluxDBClientTest extends AbstractTest {
                 List<String> points = new ArrayList<>();
 
                 // Fail on first line
-                points.add("very_long_table_name_very_very_long,tag1=value1 " +
+                String line = "very_long_table_name_very_very_long,tag1=value1 " +
                         "very_long_field_name_very_very_long1=92827743.02924732," +
                         "very_long_field_name_very_very_long2=92827743.02924732," +
                         "very_long_field_name_very_very_long3=92827743.02924732," +
@@ -355,9 +385,9 @@ public class InfluxDBClientTest extends AbstractTest {
                         "very_long_field_name_very_very_long4=92827743.02924732," +
                         "very_long_field_name_very_very_long4=92827743.02924732," +
                         "very_long_field_name_very_very_long4=92827743.02924732," +
-                        "very_long_field=92827791");
+                        "very_long_field=92827791";
 
-                assertRequestErrorContains(influxDB, points, "{\"code\":\"request too large\"," +
+                assertRequestErrorContains(influxDB, points, line, "{\"code\":\"request too large\"," +
                         "\"message\":\"failed to parse line protocol:errors encountered on line(s):unable to read data: ILP line does not fit QuestDB ILP buffer size\"," +
                         "\"line\":1,\"errorId\":");
 
@@ -366,7 +396,7 @@ public class InfluxDBClientTest extends AbstractTest {
                         "very_long_field_name_very_very_long1=92827743.02924732," +
                         "very_long_field_name_very_very_long2=92827743.02924732," +
                         "very_long_field_name_very_very_long3=92827743.02924732");
-                points.add("very_long_table_name_very_very_long,tag1=value1 " +
+                String line2 = "very_long_table_name_very_very_long,tag1=value1 " +
                         "very_long_field_name_very_very_long1=92827743.02924732," +
                         "very_long_field_name_very_very_long2=92827743.02924732," +
                         "very_long_field_name_very_very_long3=92827743.02924732," +
@@ -375,9 +405,9 @@ public class InfluxDBClientTest extends AbstractTest {
                         "very_long_field_name_very_very_long4=92827743.02924732," +
                         "very_long_field_name_very_very_long4=92827743.02924732," +
                         "very_long_field_name_very_very_long4=92827743.02924732," +
-                        "very_long_field=92827791");
+                        "very_long_field=92827791";
 
-                assertRequestErrorContains(influxDB, points, "{\"code\":\"request too large\"," +
+                assertRequestErrorContains(influxDB, points, line2, "{\"code\":\"request too large\"," +
                         "\"message\":\"failed to parse line protocol:errors encountered on line(s):unable to read data: ILP line does not fit QuestDB ILP buffer size\"," +
                         "\"line\":2,\"errorId\":");
             }
@@ -621,9 +651,7 @@ public class InfluxDBClientTest extends AbstractTest {
             try (final InfluxDB influxDB = InfluxDBUtils.getConnection(serverMain)) {
                 influxDB.setLogLevel(InfluxDB.LogLevel.BASIC);
 
-                List<String> points = new ArrayList<>();
                 long milliTime = IntervalUtils.parseFloorPartialTimestamp("2022-02-24T05:00:00.000001Z");
-                points.add("m1,tag1=\"value1\" f1=1i,y=12i " + milliTime);
                 influxDB.write(Point.measurement("m1")
                         .tag("tag1", "\"value1\"")
                         .addField("f1", 1)
