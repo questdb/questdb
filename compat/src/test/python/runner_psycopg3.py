@@ -25,7 +25,6 @@ import psycopg
 import re
 import sys
 from psycopg import Connection, Cursor
-from string import Template
 from common import *
 
 

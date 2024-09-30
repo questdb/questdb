@@ -25,7 +25,6 @@ import datetime
 import psycopg2
 import re
 import sys
-from string import Template
 from common import *
 
 

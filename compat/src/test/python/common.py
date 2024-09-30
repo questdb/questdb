@@ -21,6 +21,7 @@
 #
 
 import yaml
+from string import Template
 
 
 def load_yaml(file_path):

@@ -27,7 +27,6 @@ import datetime
 import re
 import sys
 from asyncpg import Connection
-from string import Template
 from common import *
 
 
