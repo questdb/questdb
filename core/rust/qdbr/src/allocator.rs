@@ -124,6 +124,10 @@ impl TaggedWatermarkAllocator {
         unsafe { &*self.malloc_count }
     }
 
+    fn free_count(&self) -> &AtomicUsize {
+        unsafe { &*self.free_count }
+    }
+
     fn check_alloc_limit(&self, layout: Layout) -> Result<(), AllocFailure> {
         let rss_mem_limit = self.rss_mem_limit().load(RSS_ORDERING);
         if rss_mem_limit > 0 {
@@ -152,7 +156,7 @@ impl TaggedWatermarkAllocator {
         let size = layout.size();
         self.tagged_used().fetch_sub(size, COUNTER_ORDERING);
         self.rss_mem_used().fetch_sub(size, COUNTER_ORDERING);
-        self.malloc_count().fetch_sub(1, COUNTER_ORDERING);
+        self.free_count().fetch_add(1, COUNTER_ORDERING);
     }
 }
 
