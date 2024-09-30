@@ -26,7 +26,6 @@ import asyncpg
 import datetime
 import re
 import sys
-import yaml
 from asyncpg import Connection
 from string import Template
 from common import *

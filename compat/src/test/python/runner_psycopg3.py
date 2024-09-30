@@ -24,7 +24,6 @@ import datetime
 import psycopg
 import re
 import sys
-import yaml
 from psycopg import Connection, Cursor
 from string import Template
 from common import *
