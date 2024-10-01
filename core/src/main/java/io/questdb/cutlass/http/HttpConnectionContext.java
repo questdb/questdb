@@ -248,6 +248,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return totalBytesSent;
     }
 
+    public long getTotalReceived() {
+        return totalReceived;
+    }
+
     public boolean handleClientOperation(int operation, HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext)
             throws HeartBeatException, PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
         boolean keepGoing;
