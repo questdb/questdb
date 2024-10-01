@@ -26,15 +26,11 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.datetime.microtime.Timestamps;
 
 public class YesterdayFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = "yesterday()";
@@ -45,37 +41,31 @@ public class YesterdayFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new YesterdayFunction();
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new Func();
     }
 
-    private static class YesterdayFunction extends TimestampFunction implements Function {
-        private SqlExecutionContext context;
+    private static class Func extends AbstractDayIntervalFunction {
 
         @Override
-        public long getTimestamp(Record rec) {
-            return Timestamps.floorDD(Timestamps.addDays(context.getNow(), -1));
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            executionContext.initNow();
-            context = executionContext;
-        }
-
-        @Override
-        public boolean isReadThreadSafe() {
-            return true;
-        }
-
-        @Override
-        public boolean isRuntimeConstant() {
-            return true;
+        public String getName() {
+            return "yesterday";
         }
 
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(SIGNATURE);
+        }
+
+        @Override
+        protected int shiftFromToday() {
+            return -1;
         }
     }
 }

@@ -29,10 +29,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Chars;
-import io.questdb.std.Numbers;
-import io.questdb.std.Uuid;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.CharSink;
@@ -159,6 +156,12 @@ public class CursorPrinter {
                     sink.put(varchar);
                 } else {
                     sink.put(nullStringValue);
+                }
+                break;
+            case ColumnType.INTERVAL:
+                Interval interval = record.getInterval(columnIndex);
+                if (!Interval.NULL.equals(interval)) {
+                    interval.toSink(sink);
                 }
                 break;
             default:

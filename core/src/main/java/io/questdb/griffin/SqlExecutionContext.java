@@ -167,6 +167,8 @@ public interface SqlExecutionContext extends Closeable {
 
     void initNow();
 
+    boolean isCacheHit();
+
     boolean isColumnPreTouchEnabled();
 
     boolean isParallelFilterEnabled();
@@ -182,6 +184,8 @@ public interface SqlExecutionContext extends Closeable {
     void popTimestampRequiredFlag();
 
     void pushTimestampRequiredFlag(boolean flag);
+
+    void setCacheHit(boolean value);
 
     void setCancelledFlag(AtomicBoolean cancelled);
 
@@ -201,8 +205,4 @@ public interface SqlExecutionContext extends Closeable {
 
     default void storeTelemetry(short event, short origin) {
     }
-
-    void setCacheHit(boolean value);
-
-    boolean isCacheHit();
 }
