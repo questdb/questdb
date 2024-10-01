@@ -22,28 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.functions.date;
+package io.questdb.griffin.engine.functions.constants;
 
-import io.questdb.std.Os;
-import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.test.AbstractCairoTest;
-import org.junit.Test;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.TypeConstant;
+import io.questdb.griffin.engine.functions.IntervalFunction;
+import io.questdb.std.Interval;
+import org.jetbrains.annotations.NotNull;
 
-public class TodayTomorrowYesterdayTest extends AbstractCairoTest {
+public class IntervalTypeConstant extends IntervalFunction implements TypeConstant {
+    public static final IntervalTypeConstant INSTANCE = new IntervalTypeConstant();
 
-    @Test
-    public void testToday() throws Exception {
-        assertSql("cast\n" + Timestamps.floorDD(Os.currentTimeMicros()) + "\n", "select today()::long");
+    @Override
+    public @NotNull Interval getInterval(Record rec) {
+        return Interval.NULL;
     }
-
-    @Test
-    public void testTomorrow() throws Exception {
-        assertSql("cast\n" + Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), 1)) + "\n", "select tomorrow()::long");
-    }
-
-    @Test
-    public void testYesterday() throws Exception {
-        assertSql("cast\n" + Timestamps.floorDD(Timestamps.addDays(Os.currentTimeMicros(), -1)) + "\n", "select yesterday()::long");
-    }
-
 }

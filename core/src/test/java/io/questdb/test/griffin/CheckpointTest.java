@@ -617,7 +617,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointStatus() throws Exception {
         assertMemoryLeak(() -> {
-            currentMicros = 0;
+            setCurrentMicros(0);
             assertSql(
                     "in_progress\tstarted_at\n" +
                             "false\t\n",
@@ -1017,7 +1017,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testSuspendResumeWalPurgeJob() throws Exception {
         assertMemoryLeak(() -> {
-            currentMicros = 0;
+            setCurrentMicros(0);
             String tableName = testName.getMethodName();
             ddl(
                     "create table " + tableName + " as (" +
@@ -1050,7 +1050,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
             ddl("checkpoint create");
             Thread controlThread1 = new Thread(() -> {
-                currentMicros = interval;
+                setCurrentMicros(interval);
                 job.drain(0);
                 Path.clearThreadLocals();
             });
@@ -1065,7 +1065,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
             ddl("checkpoint release");
             Thread controlThread2 = new Thread(() -> {
-                currentMicros = 2 * interval;
+                setCurrentMicros(2 * interval);
                 job.drain(0);
                 Path.clearThreadLocals();
             });

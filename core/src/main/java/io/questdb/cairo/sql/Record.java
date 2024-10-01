@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableUtils;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.MutableUtf16Sink;
@@ -200,6 +201,10 @@ public interface Record {
      * @return 32-bit integer
      */
     default int getInt(int col) {
+        throw new UnsupportedOperationException();
+    }
+
+    default Interval getInterval(int col) {
         throw new UnsupportedOperationException();
     }
 

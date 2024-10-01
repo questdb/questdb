@@ -66,6 +66,7 @@ public interface FunctionFactory {
      * <li>W = string array</li>
      * <li>X = ipv4</li>
      * <li>Ø(ø) = varchar</li>
+     * <li>Δ(δ) = interval</li>
      * </ul>
      * <p>
      * Lower-case letters will require arguments to be constant expressions. Upper-case letters allow both constant and
