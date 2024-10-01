@@ -157,11 +157,14 @@ public final class Unsafe {
 
     public static long free(long ptr, long usefulSize, int memoryTag) {
         if (ptr != 0) {
-            long rawPtr = ptr - usefulSize;
+            long prologSize = prologSize(usefulSize);
+            long epilogSize = epilogSize(usefulSize);
+
+            long rawPtr = ptr - prologSize;
             checkMemoryTag(rawPtr, usefulSize);
             Unsafe.getUnsafe().freeMemory(rawPtr);
 
-            long rawSize = 3 * usefulSize;
+            long rawSize = prologSize + usefulSize + epilogSize;
             FREE_COUNT.incrementAndGet();
             recordMemAlloc(-rawSize, memoryTag);
         }
@@ -238,13 +241,14 @@ public final class Unsafe {
         try {
             assert memoryTag >= MemoryTag.NATIVE_PATH;
             checkAllocLimit(usefulSize, memoryTag);
-            long rawSize = 3 * usefulSize;
+            long prologSize = prologSize(usefulSize);
+            long epilogSize = epilogSize(usefulSize);
+            long rawSize = usefulSize + prologSize + epilogSize;
             long rawPtr = Unsafe.getUnsafe().allocateMemory(rawSize);
             tagMemoryAllocation(rawPtr, usefulSize);
-            checkMemoryTag(rawPtr, usefulSize);
             recordMemAlloc(rawSize, memoryTag);
             MALLOC_COUNT.incrementAndGet();
-            return rawPtr + usefulSize;
+            return rawPtr + prologSize;
         } catch (OutOfMemoryError oom) {
             CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.allocateMemory() OutOfMemoryError [RSS_MEM_USED=")
@@ -261,28 +265,35 @@ public final class Unsafe {
 
     public static long realloc(long usefulOldAddress, long usefulOldSize, long usefulNewSize, int memoryTag) {
         try {
+            if (usefulOldAddress == 0) {
+                return malloc(usefulNewSize, memoryTag);
+            }
+
             assert memoryTag >= MemoryTag.NATIVE_PATH;
+            long oldPrologSize = prologSize(usefulOldSize);
+            long oldEpilogSize = epilogSize(usefulOldSize);
+            long newPrologSize = prologSize(usefulNewSize);
+            long newEpilogSize = epilogSize(usefulNewSize);
 
-            long rawOldSize = 3 * usefulOldSize;
-            long rawOldPtr = usefulOldAddress - usefulOldSize;
+            long rawOldSize = oldPrologSize + usefulOldSize + oldEpilogSize;
+            long rawOldPtr = usefulOldAddress - oldPrologSize;
 
-            long rawNewSize = 3 * usefulNewSize;
+            long rawNewSize = newPrologSize + usefulNewSize + newEpilogSize;
             long rawSizeDiff = rawNewSize - rawOldSize;
 
-            checkMemoryTag(rawOldPtr, usefulOldSize);
+            if (rawOldPtr != 0) {
+                checkMemoryTag(rawOldPtr, usefulOldSize);
+            }
 
             long rawNewPtr = Unsafe.getUnsafe().allocateMemory(rawNewSize);
             tagMemoryAllocation(rawNewPtr, usefulNewSize);
-            checkMemoryTag(rawNewPtr, usefulNewSize);
 
-
-            Vect.memcpy(rawNewPtr + usefulNewSize, rawOldPtr + usefulOldSize, Math.min(usefulOldSize, usefulNewSize));
-            checkMemoryTag(rawNewPtr, usefulNewSize);
+            Vect.memcpy(rawNewPtr + newPrologSize, rawOldPtr + oldPrologSize, Math.min(usefulOldSize, usefulNewSize));
 
             Unsafe.getUnsafe().freeMemory(rawOldPtr);
             recordMemAlloc(rawSizeDiff, memoryTag);
             REALLOC_COUNT.incrementAndGet();
-            return rawNewPtr + usefulNewSize;
+            return rawNewPtr + newPrologSize;
         } catch (OutOfMemoryError oom) {
             CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.reallocateMemory() OutOfMemoryError [RSS_MEM_USED=")
@@ -346,19 +357,27 @@ public final class Unsafe {
             }
         }
     }
-    //#endif
 
     private static void checkMemoryTag(long rawPtr, long usefulSize) {
-        for (long l = rawPtr, hi = rawPtr + usefulSize; l < hi; l++) {
+        long prologSize = prologSize(usefulSize);
+        long epilogSize = epilogSize(usefulSize);
+        for (long l = rawPtr, hi = rawPtr + prologSize; l < hi; l++) {
             if (UNSAFE.getByte(l) != 42) {
                 throw new RuntimeException("Memory tag mismatch");
             }
         }
-        for (long l = rawPtr + (2 * usefulSize), hi = rawPtr + (3 * usefulSize); l < hi; l++) {
+        for (long l = rawPtr + prologSize + usefulSize, hi = rawPtr + prologSize + usefulSize + epilogSize; l < hi; l++) {
             if (UNSAFE.getByte(l) != 42) {
                 throw new RuntimeException("Memory tag mismatch");
             }
         }
+    }
+    //#endif
+
+    private static long epilogSize(long usefulSize) {
+//        return usefulSize;
+        return Math.min(64, usefulSize);
+//        return 8;
     }
 
     //#if jdk.version!=8
@@ -405,11 +424,19 @@ public final class Unsafe {
         return 31 - Integer.numberOfLeadingZeros(value);
     }
 
+    private static long prologSize(long usefulSize) {
+//        return usefulSize;
+//        return Math.min(64, usefulSize);
+        return 8;
+    }
+
     private static void tagMemoryAllocation(long rawPtr, long usefulSize) {
-        for (long l = rawPtr, hi = rawPtr + usefulSize; l < hi; l++) {
+        long prologSize = prologSize(usefulSize);
+        long epilogSize = epilogSize(usefulSize);
+        for (long l = rawPtr, hi = rawPtr + prologSize; l < hi; l++) {
             UNSAFE.putByte(l, (byte) 42);
         }
-        for (long l = rawPtr + (2 * usefulSize), hi = rawPtr + (3 * usefulSize); l < hi; l++) {
+        for (long l = rawPtr + prologSize + usefulSize, hi = rawPtr + prologSize + usefulSize + epilogSize; l < hi; l++) {
             UNSAFE.putByte(l, (byte) 42);
         }
     }
