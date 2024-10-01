@@ -95,8 +95,9 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
             sets.extendAndSet(sinkIndex, set = new BitSet(setInitialCapacity));
         } else {
             sink = sinks.getQuick(sinkIndex);
-            set = sets.getQuick(sinkIndex);
             sink.clear();
+            set = sets.getQuick(sinkIndex);
+            set.clear();
         }
 
         final int key = arg.getInt(record);

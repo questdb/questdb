@@ -33,97 +33,75 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.VarcharFunction;
-import io.questdb.std.CompactUtf8SequenceHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Utf8SequenceHashSet;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Utf8Sequence;
 
 class StringDistinctAggVarcharGroupByFunction extends VarcharFunction implements UnaryFunction, GroupByFunction {
-    // Cleared function retains up to INITIAL_SINK_CAPACITY * LIST_CLEAR_THRESHOLD bytes.
     private static final int INITIAL_SINK_CAPACITY = 128;
-    private static final int LIST_CLEAR_THRESHOLD = 64;
     private final Function arg;
     private final char delimiter;
     private final int setInitialCapacity;
     private final double setLoadFactor;
-    private final ObjList<CompactUtf8SequenceHashSet> sets = new ObjList<>();
-    private final ObjList<DirectUtf8Sink> sinks = new ObjList<>();
-    private int sinkIndex = 0; // also used for sets
+    private final ObjList<Utf8SequenceHashSet> sets = new ObjList<>();
+    private final DirectUtf8Sink sinkA;
+    private final DirectUtf8Sink sinkB;
+    private int setIndex = 0;
     private int valueIndex;
 
     public StringDistinctAggVarcharGroupByFunction(Function arg, char delimiter, int setInitialCapacity, double setLoadFactor) {
-        this.arg = arg;
-        this.delimiter = delimiter;
-        this.setInitialCapacity = setInitialCapacity;
-        this.setLoadFactor = setLoadFactor;
+        try {
+            this.arg = arg;
+            this.delimiter = delimiter;
+            this.setInitialCapacity = setInitialCapacity;
+            this.setLoadFactor = setLoadFactor;
+            this.sinkA = new DirectUtf8Sink(INITIAL_SINK_CAPACITY);
+            this.sinkB = new DirectUtf8Sink(INITIAL_SINK_CAPACITY);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
     public void clear() {
-        // Free extra sinks.
-        if (sinks.size() > LIST_CLEAR_THRESHOLD) {
-            for (int i = sinks.size() - 1; i > LIST_CLEAR_THRESHOLD - 1; i--) {
-                Misc.free(sinks.getQuick(i));
-                sinks.remove(i);
-                sets.remove(i);
-            }
-        }
-        // Reset capacity on the remaining ones.
-        for (int i = 0, n = sinks.size(); i < n; i++) {
-            DirectUtf8Sink sink = sinks.getQuick(i);
-            if (sink != null) {
-                sink.resetCapacity();
-            }
-            CompactUtf8SequenceHashSet set = sets.getQuick(i);
-            if (set != null) {
-                set.resetCapacity();
-            }
-        }
-        sinkIndex = 0;
+        sets.clear();
+        sinkA.resetCapacity();
+        sinkB.resetCapacity();
+        setIndex = 0;
     }
 
     @Override
     public void close() {
-        Misc.freeObjListAndClear(sinks);
+        Misc.free(sinkA);
+        Misc.free(sinkB);
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final DirectUtf8Sink sink;
-        final CompactUtf8SequenceHashSet set;
-        if (sinks.size() <= sinkIndex) {
-            sinks.extendAndSet(sinkIndex, sink = new DirectUtf8Sink(INITIAL_SINK_CAPACITY));
-            sets.extendAndSet(sinkIndex, set = new CompactUtf8SequenceHashSet(setInitialCapacity, setLoadFactor));
+        final Utf8SequenceHashSet set;
+        if (sets.size() <= setIndex) {
+            sets.extendAndSet(setIndex, set = new Utf8SequenceHashSet(setInitialCapacity, setLoadFactor));
         } else {
-            sink = sinks.getQuick(sinkIndex);
-            set = sets.getQuick(sinkIndex);
-            sink.clear();
+            set = sets.getQuick(setIndex);
+            set.clear();
         }
 
         final Utf8Sequence str = arg.getVarcharA(record);
         if (str != null) {
             set.add(str);
-            sink.put(str);
-            mapValue.putBool(valueIndex + 1, false);
-        } else {
-            mapValue.putBool(valueIndex + 1, true);
         }
-        mapValue.putInt(valueIndex, sinkIndex++);
+        mapValue.putInt(valueIndex, setIndex++);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final DirectUtf8Sink sink = sinks.getQuick(mapValue.getInt(valueIndex));
-        final CompactUtf8SequenceHashSet set = sets.getQuick(mapValue.getInt(valueIndex));
+        final Utf8SequenceHashSet set = sets.getQuick(mapValue.getInt(valueIndex));
         final Utf8Sequence str = arg.getVarcharA(record);
-        if (str != null && set.add(str)) {
-            final boolean nullValue = mapValue.getBool(valueIndex + 1);
-            if (!nullValue) {
-                sink.putAscii(delimiter);
-            }
-            sink.put(str);
-            mapValue.putBool(valueIndex + 1, false);
+        if (str != null) {
+            set.add(str);
         }
     }
 
@@ -139,16 +117,12 @@ class StringDistinctAggVarcharGroupByFunction extends VarcharFunction implements
 
     @Override
     public Utf8Sequence getVarcharA(Record rec) {
-        final boolean nullValue = rec.getBool(valueIndex + 1);
-        if (nullValue) {
-            return null;
-        }
-        return sinks.getQuick(rec.getInt(valueIndex));
+        return getVarchar(rec, sinkA);
     }
 
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
-        return getVarcharA(rec);
+        return getVarchar(rec, sinkB);
     }
 
     @Override
@@ -159,8 +133,7 @@ class StringDistinctAggVarcharGroupByFunction extends VarcharFunction implements
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT); // sink index
-        columnTypes.add(ColumnType.BOOLEAN); // null flag
+        columnTypes.add(ColumnType.INT); // set index
     }
 
     @Override
@@ -175,7 +148,7 @@ class StringDistinctAggVarcharGroupByFunction extends VarcharFunction implements
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putBool(valueIndex + 1, true);
+        mapValue.putInt(valueIndex, -1);
     }
 
     @Override
@@ -191,6 +164,28 @@ class StringDistinctAggVarcharGroupByFunction extends VarcharFunction implements
     @Override
     public void toTop() {
         UnaryFunction.super.toTop();
-        sinkIndex = 0;
+        setIndex = 0;
+    }
+
+    private Utf8Sequence getVarchar(Record rec, DirectUtf8Sink sink) {
+        final int setIndex = rec.getInt(valueIndex);
+        if (setIndex == -1) {
+            return null;
+        }
+
+        final Utf8SequenceHashSet set = sets.getQuick(setIndex);
+        if (set.size() == 0) {
+            return null;
+        }
+
+        sink.clear();
+        ObjList<Utf8Sequence> list = set.getList();
+        for (int i = 0, n = list.size(); i < n; i++) {
+            if (i > 0) {
+                sink.putAscii(delimiter);
+            }
+            sink.put(set.get(i));
+        }
+        return sink;
     }
 }

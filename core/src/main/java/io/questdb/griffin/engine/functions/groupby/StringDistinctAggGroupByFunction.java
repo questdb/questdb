@@ -33,96 +33,74 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.CompactCharSequenceHashSet;
+import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf16Sink;
 
 class StringDistinctAggGroupByFunction extends StrFunction implements UnaryFunction, GroupByFunction {
-    // Cleared function retains up to INITIAL_SINK_CAPACITY * LIST_CLEAR_THRESHOLD bytes.
     private static final int INITIAL_SINK_CAPACITY = 128;
-    private static final int LIST_CLEAR_THRESHOLD = 64;
     private final Function arg;
     private final char delimiter;
     private final int setInitialCapacity;
     private final double setLoadFactor;
-    private final ObjList<CompactCharSequenceHashSet> sets = new ObjList<>();
-    private final ObjList<DirectUtf16Sink> sinks = new ObjList<>();
-    private int sinkIndex = 0; // also used for sets
+    private final ObjList<CharSequenceHashSet> sets = new ObjList<>();
+    private final DirectUtf16Sink sinkA;
+    private final DirectUtf16Sink sinkB;
+    private int setIndex = 0;
     private int valueIndex;
 
     public StringDistinctAggGroupByFunction(Function arg, char delimiter, int setInitialCapacity, double setLoadFactor) {
-        this.arg = arg;
-        this.delimiter = delimiter;
-        this.setInitialCapacity = setInitialCapacity;
-        this.setLoadFactor = setLoadFactor;
+        try {
+            this.arg = arg;
+            this.delimiter = delimiter;
+            this.setInitialCapacity = setInitialCapacity;
+            this.setLoadFactor = setLoadFactor;
+            this.sinkA = new DirectUtf16Sink(INITIAL_SINK_CAPACITY);
+            this.sinkB = new DirectUtf16Sink(INITIAL_SINK_CAPACITY);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override
     public void clear() {
-        // Free extra sinks.
-        if (sinks.size() > LIST_CLEAR_THRESHOLD) {
-            for (int i = sinks.size() - 1; i > LIST_CLEAR_THRESHOLD - 1; i--) {
-                Misc.free(sinks.getQuick(i));
-                sinks.remove(i);
-                sets.remove(i);
-            }
-        }
-        // Reset capacity on the remaining ones.
-        for (int i = 0, n = sinks.size(); i < n; i++) {
-            DirectUtf16Sink sink = sinks.getQuick(i);
-            if (sink != null) {
-                sink.resetCapacity();
-            }
-            CompactCharSequenceHashSet set = sets.getQuick(i);
-            if (set != null) {
-                set.resetCapacity();
-            }
-        }
-        sinkIndex = 0;
+        sets.clear();
+        sinkA.resetCapacity();
+        sinkB.resetCapacity();
+        setIndex = 0;
     }
 
     @Override
     public void close() {
-        Misc.freeObjListAndClear(sinks);
+        Misc.free(sinkA);
+        Misc.free(sinkB);
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final DirectUtf16Sink sink;
-        final CompactCharSequenceHashSet set;
-        if (sinks.size() <= sinkIndex) {
-            sinks.extendAndSet(sinkIndex, sink = new DirectUtf16Sink(INITIAL_SINK_CAPACITY));
-            sets.extendAndSet(sinkIndex, set = new CompactCharSequenceHashSet(setInitialCapacity, setLoadFactor));
+        final CharSequenceHashSet set;
+        if (sets.size() <= setIndex) {
+            sets.extendAndSet(setIndex, set = new CharSequenceHashSet(setInitialCapacity, setLoadFactor));
         } else {
-            sink = sinks.getQuick(sinkIndex);
-            set = sets.getQuick(sinkIndex);
-            sink.clear();
+            set = sets.getQuick(setIndex);
+            set.clear();
         }
 
         final CharSequence str = arg.getStrA(record);
         if (str != null) {
             set.add(str);
-            sink.put(str);
-            mapValue.putBool(valueIndex + 1, false);
-        } else {
-            mapValue.putBool(valueIndex + 1, true);
         }
-        mapValue.putInt(valueIndex, sinkIndex++);
+        mapValue.putInt(valueIndex, setIndex++);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final DirectUtf16Sink sink = sinks.getQuick(mapValue.getInt(valueIndex));
-        final CompactCharSequenceHashSet set = sets.getQuick(mapValue.getInt(valueIndex));
+        final CharSequenceHashSet set = sets.getQuick(mapValue.getInt(valueIndex));
         final CharSequence str = arg.getStrA(record);
-        if (str != null && set.add(str)) {
-            final boolean nullValue = mapValue.getBool(valueIndex + 1);
-            if (!nullValue) {
-                sink.putAscii(delimiter);
-            }
-            sink.put(str);
-            mapValue.putBool(valueIndex + 1, false);
+        if (str != null) {
+            set.add(str);
         }
     }
 
@@ -133,16 +111,12 @@ class StringDistinctAggGroupByFunction extends StrFunction implements UnaryFunct
 
     @Override
     public CharSequence getStrA(Record rec) {
-        final boolean nullValue = rec.getBool(valueIndex + 1);
-        if (nullValue) {
-            return null;
-        }
-        return sinks.getQuick(rec.getInt(valueIndex));
+        return getStr(rec, sinkA);
     }
 
     @Override
     public CharSequence getStrB(Record rec) {
-        return getStrA(rec);
+        return getStr(rec, sinkB);
     }
 
     @Override
@@ -158,8 +132,7 @@ class StringDistinctAggGroupByFunction extends StrFunction implements UnaryFunct
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.INT); // sink index
-        columnTypes.add(ColumnType.BOOLEAN); // null flag
+        columnTypes.add(ColumnType.INT); // set index
     }
 
     @Override
@@ -174,7 +147,7 @@ class StringDistinctAggGroupByFunction extends StrFunction implements UnaryFunct
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putBool(valueIndex + 1, true);
+        mapValue.putInt(valueIndex, -1);
     }
 
     @Override
@@ -190,6 +163,28 @@ class StringDistinctAggGroupByFunction extends StrFunction implements UnaryFunct
     @Override
     public void toTop() {
         UnaryFunction.super.toTop();
-        sinkIndex = 0;
+        setIndex = 0;
+    }
+
+    private CharSequence getStr(Record rec, DirectUtf16Sink sink) {
+        final int setIndex = rec.getInt(valueIndex);
+        if (setIndex == -1) {
+            return null;
+        }
+
+        final CharSequenceHashSet set = sets.getQuick(setIndex);
+        if (set.size() == 0) {
+            return null;
+        }
+
+        sink.clear();
+        ObjList<CharSequence> list = set.getList();
+        for (int i = 0, n = list.size(); i < n; i++) {
+            if (i > 0) {
+                sink.putAscii(delimiter);
+            }
+            sink.put(set.get(i));
+        }
+        return sink;
     }
 }
