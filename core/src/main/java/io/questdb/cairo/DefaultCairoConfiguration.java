@@ -393,6 +393,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean getLogLevelVerbose() {
+        return false;
+    }
+
+    @Override
     public boolean getLogSqlQueryProgressExe() {
         return true;
     }

@@ -79,6 +79,8 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
         FilesFacade ff = configuration.getCairoConfiguration().getFilesFacade();
+
+        Assert.assertFalse(configuration.getCairoConfiguration().getLogLevelVerbose());
         Assert.assertEquals(4, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionPoolInitialCapacity());
         Assert.assertEquals(128, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionStringPoolCapacity());
         Assert.assertEquals(512, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartHeaderBufferSize());

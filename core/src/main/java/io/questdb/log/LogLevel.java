@@ -24,23 +24,34 @@
 
 package io.questdb.log;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.std.Numbers;
 
 public final class LogLevel {
-    public static final int ADVISORY = 16;
-    public static final String ADVISORY_HEADER = " A ";
-    public static final int CRITICAL = 8;
-    public static final String CRITICAL_HEADER = " C ";
-    public static final int DEBUG = 1;
-    public static final String DEBUG_HEADER = " D ";
-    public static final int ERROR = 4;
-    public static final String ERROR_HEADER = " E ";
-    public static final int INFO = 2;
-    public static final int ALL = DEBUG | INFO | ERROR | CRITICAL | ADVISORY;
-    public static final String INFO_HEADER = " I ";
-    public static final int MAX = Numbers.msb(LogLevel.ADVISORY) + 1;
-    public static final int MASK = ~(-1 << (MAX));
+    public static int ADVISORY = 16;
+    public static String ADVISORY_HEADER = " A ";
+    public static int CRITICAL = 8;
+    public static String CRITICAL_HEADER = " C ";
+    public static int DEBUG = 1;
+    public static String DEBUG_HEADER = " D ";
+    public static int ERROR = 4;
+    public static String ERROR_HEADER = " E ";
+    public static int INFO = 2;
+    public static int ALL = DEBUG | INFO | ERROR | CRITICAL | ADVISORY;
+    public static String INFO_HEADER = " I ";
+    public static int MAX = Numbers.msb(LogLevel.ADVISORY) + 1;
+    public static int MASK = ~(-1 << (MAX));
 
     private LogLevel() {
+    }
+
+    public static void init(CairoConfiguration config) {
+        if (config.getLogLevelVerbose()) {
+            ADVISORY_HEADER = " ADVISORY ";
+            CRITICAL_HEADER = " CRITICAL ";
+            DEBUG_HEADER = " DEBUG ";
+            ERROR_HEADER = " ERROR ";
+            INFO_HEADER = " INFO ";
+        }
     }
 }
