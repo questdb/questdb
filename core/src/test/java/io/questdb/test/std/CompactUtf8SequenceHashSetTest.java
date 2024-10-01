@@ -24,45 +24,46 @@
 
 package io.questdb.test.std;
 
+import io.questdb.std.CompactUtf8SequenceHashSet;
 import io.questdb.std.Rnd;
-import io.questdb.std.Utf8SequenceHashSet;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.HashSet;
-
-public class Utf8SequenceHashSetTest {
+public class CompactUtf8SequenceHashSetTest {
 
     @Test
-    public void testNullHandling() {
+    public void testResetCapacity() {
         Rnd rnd = new Rnd();
         Utf8StringSink sink = new Utf8StringSink();
-        Utf8SequenceHashSet set = new Utf8SequenceHashSet();
+        CompactUtf8SequenceHashSet set = new CompactUtf8SequenceHashSet();
         int n = 1000;
 
         for (int i = 0; i < n; i++) {
             set.add(next(rnd, sink));
         }
 
-        Assert.assertFalse(set.contains(null));
-        Assert.assertTrue(set.add(null));
-        Assert.assertEquals(n + 1, set.size());
-        Assert.assertFalse(set.add(null));
-        Assert.assertEquals(n + 1, set.size());
-        Assert.assertTrue(set.contains(null));
-        Assert.assertTrue(set.remove(null) > -1);
+        rnd.reset();
         Assert.assertEquals(n, set.size());
-        Assert.assertEquals(set.remove(null), -1);
-        Assert.assertEquals(n, set.size());
+        for (int i = 0; i < n; i++) {
+            Assert.assertTrue(set.contains(next(rnd, sink)));
+        }
+
+        set.resetCapacity();
+
+        rnd.reset();
+        Assert.assertEquals(0, set.size());
+        for (int i = 0; i < n; i++) {
+            Assert.assertFalse(set.contains(next(rnd, sink)));
+        }
     }
 
     @Test
     public void testStress() {
         Rnd rnd = new Rnd();
         Utf8StringSink sink = new Utf8StringSink();
-        Utf8SequenceHashSet set = new Utf8SequenceHashSet();
+        CompactUtf8SequenceHashSet set = new CompactUtf8SequenceHashSet();
         int n = 10000;
 
         for (int i = 0; i < n; i++) {
@@ -70,13 +71,6 @@ public class Utf8SequenceHashSetTest {
         }
 
         Assert.assertEquals(n, set.size());
-
-        HashSet<String> check = new HashSet<>();
-        for (int i = 0, m = set.size(); i < m; i++) {
-            check.add(set.get(i).toString());
-        }
-
-        Assert.assertEquals(n, check.size());
 
         Rnd rnd2 = new Rnd();
         for (int i = 0; i < n; i++) {

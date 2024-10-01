@@ -39,6 +39,32 @@ import org.junit.Test;
 public class IntervalFunctionTest extends AbstractCairoTest {
 
     @Test
+    public void testInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            assertSql(
+                    "interval\n" +
+                            "('2000-01-01T01:00:00.000Z', '2000-01-02T01:00:00.000Z')\n",
+                    "select interval('2000-01-01T01:00:00.000Z', '2000-01-02T01:00:00.000Z')"
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setStr("lo", "2000-01-03T01:00:00.000Z");
+            bindVariableService.setStr("hi", "2000-01-04T01:00:00.000Z");
+            assertSql(
+                    "interval\n" +
+                            "('2000-01-03T01:00:00.000Z', '2000-01-04T01:00:00.000Z')\n",
+                    "select interval(:lo, :hi)"
+            );
+
+            assertSql(
+                    "interval\n" +
+                            "('1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.010Z')\n",
+                    "select interval(x,x+10000) from long_sequence(1)"
+            );
+        });
+    }
+
+    @Test
     public void testIntervalStartEnd() throws Exception {
         assertMemoryLeak(() -> {
             assertSql(

@@ -24,35 +24,30 @@
 
 package io.questdb.std;
 
-import io.questdb.std.str.*;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 import java.util.Arrays;
 
-public class Utf8SequenceHashSet extends AbstractUtf8SequenceHashSet implements Sinkable {
+/**
+ * Unlike {@link Utf8SequenceHashSet} doesn't keep an additional list for faster iteration and index-based access
+ * and also has a slightly higher load factor. One more difference is that this set doesn't support {@code null} keys.
+ */
+public class CompactUtf8SequenceHashSet extends AbstractUtf8SequenceHashSet {
     private static final int MIN_INITIAL_CAPACITY = 16;
-    private final ObjList<Utf8Sequence> list;
-    private boolean hasNull = false;
 
-    public Utf8SequenceHashSet() {
+    public CompactUtf8SequenceHashSet() {
         this(MIN_INITIAL_CAPACITY);
     }
 
-    @SuppressWarnings("CopyConstructorMissesField")
-    public Utf8SequenceHashSet(Utf8SequenceHashSet that) {
-        this(that.capacity, that.loadFactor);
-        addAll(that);
+    public CompactUtf8SequenceHashSet(int initialCapacity) {
+        this(initialCapacity, 0.6);
     }
 
-    public Utf8SequenceHashSet(int initialCapacity) {
-        this(initialCapacity, 0.4);
-    }
-
-    public Utf8SequenceHashSet(int initialCapacity, double loadFactor) {
+    public CompactUtf8SequenceHashSet(int initialCapacity, double loadFactor) {
         super(initialCapacity, loadFactor);
-        list = new ObjList<>(free);
-        clear();
     }
 
     /**
@@ -61,11 +56,7 @@ public class Utf8SequenceHashSet extends AbstractUtf8SequenceHashSet implements 
      * @param key immutable sequence of characters.
      * @return false if key is already in the set and true otherwise.
      */
-    public boolean add(@Nullable Utf8Sequence key) {
-        if (key == null) {
-            return addNull();
-        }
-
+    public boolean add(@NotNull Utf8Sequence key) {
         int index = keyIndex(key);
         if (index < 0) {
             return false;
@@ -75,60 +66,19 @@ public class Utf8SequenceHashSet extends AbstractUtf8SequenceHashSet implements 
         return true;
     }
 
-    public final void addAll(@NotNull Utf8SequenceHashSet that) {
-        for (int i = 0, k = that.size(); i < k; i++) {
-            add(that.get(i));
-        }
-    }
-
     public void addAt(int index, @NotNull Utf8Sequence key) {
         final Utf8String s = Utf8s.toUtf8String(key);
         keys[index] = s;
         hashCodes[index] = Utf8s.hashCode(key);
-        list.add(s);
         if (--free < 1) {
             rehash();
         }
-    }
-
-    public boolean addNull() {
-        if (hasNull) {
-            return false;
-        }
-        --free;
-        hasNull = true;
-        list.add(null);
-        return true;
     }
 
     @Override
     public final void clear() {
         Arrays.fill(keys, null);
         free = capacity;
-        list.clear();
-        hasNull = false;
-    }
-
-    @Override
-    public boolean contains(@Nullable Utf8Sequence key) {
-        return key == null ? hasNull : keyIndex(key) < 0;
-    }
-
-    @Override
-    public boolean excludes(@Nullable Utf8Sequence key) {
-        return key == null ? !hasNull : keyIndex(key) > -1;
-    }
-
-    public Utf8Sequence get(int index) {
-        return list.getQuick(index);
-    }
-
-    public Utf8Sequence getLast() {
-        return list.getLast();
-    }
-
-    public ObjList<Utf8Sequence> getList() {
-        return list;
     }
 
     @Override
@@ -137,47 +87,12 @@ public class Utf8SequenceHashSet extends AbstractUtf8SequenceHashSet implements 
         return keys[index1];
     }
 
-    @Override
-    public int remove(@Nullable Utf8Sequence key) {
-        if (key == null) {
-            return removeNull();
-        }
-
-        int keyIndex = keyIndex(key);
-        if (keyIndex < 0) {
-            removeAt(keyIndex);
-            return -keyIndex - 1;
-        }
-        return -1;
-    }
-
-    @Override
-    public void removeAt(int index) {
-        if (index < 0) {
-            Utf8Sequence key = keys[-index - 1];
-            super.removeAt(index);
-            list.remove(key);
-        }
-    }
-
-    public int removeNull() {
-        if (hasNull) {
-            hasNull = false;
-            int index = list.remove(null);
-            free++;
-            return index;
-        }
-        return -1;
-    }
-
-    @Override
-    public void toSink(@NotNull CharSink<?> sink) {
-        sink.put(list);
-    }
-
-    @Override
-    public String toString() {
-        return list.toString();
+    public void resetCapacity() {
+        free = capacity = this.initialCapacity;
+        final int len = Numbers.ceilPow2((int) (capacity / loadFactor));
+        keys = new Utf8String[len];
+        hashCodes = new int[len];
+        mask = len - 1;
     }
 
     private void rehash() {

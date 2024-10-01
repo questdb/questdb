@@ -639,6 +639,9 @@ open module io.questdb {
 //                  'agg' group by function
             io.questdb.griffin.engine.functions.groupby.StringAggGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.StringAggVarcharGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.StringDistinctAggGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.StringDistinctAggSymbolGroupByFunctionFactory,
+            io.questdb.griffin.engine.functions.groupby.StringDistinctAggVarcharGroupByFunctionFactory,
 //                  'sum' group by function
             io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunctionFactory,
             io.questdb.griffin.engine.functions.groupby.SumFloatGroupByFunctionFactory,
