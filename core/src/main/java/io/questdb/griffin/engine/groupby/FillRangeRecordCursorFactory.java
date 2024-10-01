@@ -343,6 +343,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private boolean notAtEndOfBitset() {
+            assert finalBucketIndex != -1;
             if (rangeBound == RANGE_LOWER_BOUND || rangeBound == RANGE_UNBOUNDED || nextBucketTimestamp == maxTimestamp) {
                 return bucketIndex < finalBucketIndex;
             } else {
@@ -375,6 +376,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private boolean recordWasPresent() {
+            assert finalBucketIndex != -1;
             return presentRecords.get(bucketIndex) && bucketIndex <= finalBucketIndex;
         }
 
