@@ -45,17 +45,21 @@ import static io.questdb.cairo.sql.SymbolTable.VALUE_IS_NULL;
 
 public class CountDistinctSymbolGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private final GroupByIntHashSet set;
+    private final GroupByIntHashSet setA;
+    private final GroupByIntHashSet setB;
     private int knownSymbolCount = -1;
     private int valueIndex;
 
     public CountDistinctSymbolGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
-        this.set = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
+        this.setA = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
+        this.setB = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
     }
 
     @Override
     public void clear() {
+        setA.resetPtr();
+        setB.resetPtr();
         knownSymbolCount = -1;
     }
 
@@ -64,8 +68,8 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
         final int key = arg.getInt(record);
         if (key != VALUE_IS_NULL) {
             mapValue.putLong(valueIndex, 1);
-            set.of(0).add(key);
-            mapValue.putLong(valueIndex + 1, set.ptr());
+            setA.of(0).add(key);
+            mapValue.putLong(valueIndex + 1, setA.ptr());
         } else {
             mapValue.putLong(valueIndex, 0);
             mapValue.putLong(valueIndex + 1, 0);
@@ -77,11 +81,11 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
         final int key = arg.getInt(record);
         if (key != VALUE_IS_NULL) {
             long ptr = mapValue.getLong(valueIndex + 1);
-            final long index = set.of(ptr).keyIndex(key);
+            final long index = setA.of(ptr).keyIndex(key);
             if (index >= 0) {
-                set.addAt(index, key);
+                setA.addAt(index, key);
                 mapValue.addLong(valueIndex, 1);
-                mapValue.putLong(valueIndex + 1, set.ptr());
+                mapValue.putLong(valueIndex + 1, setA.ptr());
             }
         }
     }
@@ -153,8 +157,40 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
     }
 
     @Override
+    public void merge(MapValue destValue, MapValue srcValue) {
+        long srcCount = srcValue.getLong(valueIndex);
+        if (srcCount == 0 || srcCount == Numbers.LONG_NULL) {
+            return;
+        }
+        long srcPtr = srcValue.getLong(valueIndex + 1);
+
+        long destCount = destValue.getLong(valueIndex);
+        if (destCount == 0 || destCount == Numbers.LONG_NULL) {
+            destValue.putLong(valueIndex, srcCount);
+            destValue.putLong(valueIndex + 1, srcPtr);
+            return;
+        }
+        long destPtr = destValue.getLong(valueIndex + 1);
+
+        setA.of(destPtr);
+        setB.of(srcPtr);
+
+        if (setA.size() > (setB.size() >> 1)) {
+            setA.merge(setB);
+            destValue.putLong(valueIndex, setA.size());
+            destValue.putLong(valueIndex + 1, setA.ptr());
+        } else {
+            // Set A is significantly smaller than set B, so we merge it into set B.
+            setB.merge(setA);
+            destValue.putLong(valueIndex, setB.size());
+            destValue.putLong(valueIndex + 1, setB.ptr());
+        }
+    }
+
+    @Override
     public void setAllocator(GroupByAllocator allocator) {
-        set.setAllocator(allocator);
+        setA.setAllocator(allocator);
+        setB.setAllocator(allocator);
     }
 
     @Override
@@ -177,6 +213,6 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
 
     @Override
     public boolean supportsParallelism() {
-        return false;
+        return UnaryFunction.super.supportsParallelism();
     }
 }

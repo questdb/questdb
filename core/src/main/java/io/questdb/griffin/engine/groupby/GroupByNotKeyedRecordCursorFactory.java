@@ -40,8 +40,7 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
-
-    protected final RecordCursorFactory base;
+    private final RecordCursorFactory base;
     private final GroupByNotKeyedRecordCursor cursor;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final SimpleMapValue simpleMapValue;

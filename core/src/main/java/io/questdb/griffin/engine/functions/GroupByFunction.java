@@ -67,7 +67,7 @@ public interface GroupByFunction extends Function, Mutable {
      */
     void computeNext(MapValue mapValue, Record record, long rowId);
 
-    // only makes sense for non-keyed group by
+    // only makes sense for non-keyed, single-threaded group by
     default boolean earlyExit(MapValue mapValue) {
         return false;
     }
