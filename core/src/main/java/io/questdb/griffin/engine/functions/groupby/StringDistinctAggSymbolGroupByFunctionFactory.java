@@ -54,7 +54,8 @@ public class StringDistinctAggSymbolGroupByFunctionFactory implements FunctionFa
         return new StringDistinctAggSymbolGroupByFunction(
                 args.getQuick(0),
                 args.getQuick(1).getChar(null),
-                configuration.getCountDistinctCapacity()
+                configuration.getCountDistinctCapacity(),
+                configuration.getCountDistinctLoadFactor()
         );
     }
 }

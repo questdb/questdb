@@ -37,60 +37,52 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.columns.SymbolColumn;
-import io.questdb.std.*;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
+import io.questdb.std.Numbers;
 
 import static io.questdb.cairo.sql.SymbolTable.VALUE_IS_NULL;
 
 public class CountDistinctSymbolGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
-    private final int setInitialCapacity;
-    private final ObjList<DirectBitSet> sets = new ObjList<>();
+    private final GroupByIntHashSet set;
     private int knownSymbolCount = -1;
-    private int setIndex;
     private int valueIndex;
 
-    public CountDistinctSymbolGroupByFunction(Function arg, int setInitialCapacity) {
+    public CountDistinctSymbolGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
-        this.setInitialCapacity = setInitialCapacity * BitSet.BITS_PER_WORD;
+        this.set = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
     }
 
     @Override
     public void clear() {
-        Misc.freeObjListAndClear(sets);
-        setIndex = 0;
         knownSymbolCount = -1;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final DirectBitSet set;
-        if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new DirectBitSet(setInitialCapacity));
+        final int key = arg.getInt(record);
+        if (key != VALUE_IS_NULL) {
+            mapValue.putLong(valueIndex, 1);
+            set.of(0).add(key);
+            mapValue.putLong(valueIndex + 1, set.ptr());
         } else {
-            set = sets.getQuick(setIndex);
-            set.clear();
+            mapValue.putLong(valueIndex, 0);
+            mapValue.putLong(valueIndex + 1, 0);
         }
-
-        final int val = arg.getInt(record);
-        if (val != VALUE_IS_NULL) {
-            set.set(val);
-            mapValue.putLong(valueIndex, 1L);
-        } else {
-            mapValue.putLong(valueIndex, 0L);
-        }
-        mapValue.putInt(valueIndex + 1, setIndex++);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final DirectBitSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
-        final int val = arg.getInt(record);
-        if (val != VALUE_IS_NULL) {
-            if (set.get(val)) {
-                return;
+        final int key = arg.getInt(record);
+        if (key != VALUE_IS_NULL) {
+            long ptr = mapValue.getLong(valueIndex + 1);
+            final long index = set.of(ptr).keyIndex(key);
+            if (index >= 0) {
+                set.addAt(index, key);
+                mapValue.addLong(valueIndex, 1);
+                mapValue.putLong(valueIndex + 1, set.ptr());
             }
-            set.set(val);
-            mapValue.addLong(valueIndex, 1);
         }
     }
 
@@ -141,8 +133,8 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);
-        columnTypes.add(ColumnType.INT);
+        columnTypes.add(ColumnType.LONG); // count
+        columnTypes.add(ColumnType.LONG); // GroupByIntHashSet pointer
     }
 
     @Override
@@ -161,28 +153,30 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
     }
 
     @Override
+    public void setAllocator(GroupByAllocator allocator) {
+        set.setAllocator(allocator);
+    }
+
+    @Override
     public void setEmpty(MapValue mapValue) {
-        mapValue.putLong(valueIndex, 0L);
+        mapValue.putLong(valueIndex, 0);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override
     public void setLong(MapValue mapValue, long value) {
         mapValue.putLong(valueIndex, value);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override
     public boolean supportsParallelism() {
         return false;
-    }
-
-    @Override
-    public void toTop() {
-        UnaryFunction.super.toTop();
-        setIndex = 0;
     }
 }

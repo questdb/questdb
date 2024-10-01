@@ -34,31 +34,32 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.DirectBitSet;
+import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.griffin.engine.groupby.GroupByIntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf16Sink;
+
+import static io.questdb.cairo.sql.SymbolTable.VALUE_IS_NULL;
 
 class StringDistinctAggSymbolGroupByFunction extends StrFunction implements UnaryFunction, GroupByFunction {
     private static final int INITIAL_SINK_CAPACITY = 128;
     private final Function arg;
     private final char delimiter;
-    private final int setInitialCapacity;
-    private final ObjList<DirectBitSet> sets = new ObjList<>();
+    private final GroupByIntHashSet set;
     private final ObjList<DirectUtf16Sink> sinks = new ObjList<>();
-    private int sinkIndex = 0; // also used for sets
+    private int sinkIndex = 0;
     private int valueIndex;
 
-    public StringDistinctAggSymbolGroupByFunction(Function arg, char delimiter, int setInitialCapacity) {
+    public StringDistinctAggSymbolGroupByFunction(Function arg, char delimiter, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
         this.delimiter = delimiter;
-        this.setInitialCapacity = setInitialCapacity;
+        this.set = new GroupByIntHashSet(setInitialCapacity, setLoadFactor, VALUE_IS_NULL);
     }
 
     @Override
     public void clear() {
         Misc.freeObjListAndClear(sinks);
-        Misc.freeObjListAndClear(sets);
         sinkIndex = 0;
     }
 
@@ -70,41 +71,39 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final DirectUtf16Sink sink;
-        final DirectBitSet set;
         if (sinks.size() <= sinkIndex) {
             sinks.extendAndSet(sinkIndex, sink = new DirectUtf16Sink(INITIAL_SINK_CAPACITY));
-            sets.extendAndSet(sinkIndex, set = new DirectBitSet(setInitialCapacity));
         } else {
             sink = sinks.getQuick(sinkIndex);
             sink.clear();
-            set = sets.getQuick(sinkIndex);
-            set.clear();
         }
 
         final int key = arg.getInt(record);
         if (key != SymbolTable.VALUE_IS_NULL) {
-            set.set(key);
+            set.of(0).add(key);
+            mapValue.putLong(valueIndex, set.ptr());
             sink.put(arg.getSymbol(record));
-            mapValue.putBool(valueIndex + 1, false);
         } else {
-            mapValue.putBool(valueIndex + 1, true);
+            mapValue.putLong(valueIndex, 0);
         }
-        mapValue.putInt(valueIndex, sinkIndex++);
+        mapValue.putInt(valueIndex + 1, sinkIndex++);
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final DirectUtf16Sink sink = sinks.getQuick(mapValue.getInt(valueIndex));
-        final DirectBitSet set = sets.getQuick(mapValue.getInt(valueIndex));
+        final DirectUtf16Sink sink = sinks.getQuick(mapValue.getInt(valueIndex + 1));
         final int key = arg.getInt(record);
-        if (key != SymbolTable.VALUE_IS_NULL && !set.getAndSet(key)) {
-            final CharSequence str = arg.getSymbol(record);
-            final boolean nullValue = mapValue.getBool(valueIndex + 1);
-            if (!nullValue) {
-                sink.putAscii(delimiter);
+        if (key != SymbolTable.VALUE_IS_NULL) {
+            long ptr = mapValue.getLong(valueIndex);
+            final long index = set.of(ptr).keyIndex(key);
+            if (index >= 0) {
+                if (ptr != 0) {
+                    sink.putAscii(delimiter);
+                }
+                set.addAt(index, key);
+                mapValue.putLong(valueIndex, set.ptr());
+                sink.put(arg.getSymbol(record));
             }
-            sink.put(str);
-            mapValue.putBool(valueIndex + 1, false);
         }
     }
 
@@ -115,11 +114,11 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
 
     @Override
     public CharSequence getStrA(Record rec) {
-        final boolean nullValue = rec.getBool(valueIndex + 1);
-        if (nullValue) {
+        final long ptr = rec.getLong(valueIndex);
+        if (ptr == 0) {
             return null;
         }
-        return sinks.getQuick(rec.getInt(valueIndex));
+        return sinks.getQuick(rec.getInt(valueIndex + 1));
     }
 
     @Override
@@ -140,8 +139,8 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.LONG); // GroupByIntHashSet pointer
         columnTypes.add(ColumnType.INT); // sink index
-        columnTypes.add(ColumnType.BOOLEAN); // null flag
     }
 
     @Override
@@ -155,8 +154,13 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
     }
 
     @Override
+    public void setAllocator(GroupByAllocator allocator) {
+        set.setAllocator(allocator);
+    }
+
+    @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putBool(valueIndex + 1, true);
+        mapValue.putLong(valueIndex, 0);
     }
 
     @Override
