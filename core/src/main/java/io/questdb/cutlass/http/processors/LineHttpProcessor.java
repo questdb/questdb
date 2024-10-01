@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.Metrics;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cutlass.http.*;
 import io.questdb.log.Log;
@@ -146,6 +147,9 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
         if (state.isOk()) {
             state.setSendStatus(SendStatus.HEADER);
             context.simpleResponse().sendStatusNoContent(204);
+            Metrics metrics = engine.getMetrics();
+            long totalReceivedHttpBytes = metrics.line().totalHttpBytesGauge().getValue();
+            metrics.line().totalHttpBytesGauge().setValue(totalReceivedHttpBytes + context.getTotalReceived());
         } else {
             state.setSendStatus(SendStatus.HEADER);
             sendErrorHeader(context);
