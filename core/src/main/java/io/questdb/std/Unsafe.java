@@ -268,6 +268,9 @@ public final class Unsafe {
             if (usefulOldAddress == 0) {
                 return malloc(usefulNewSize, memoryTag);
             }
+            if (usefulNewSize == 0) {
+                return free(usefulOldAddress, usefulOldSize, memoryTag);
+            }
 
             assert memoryTag >= MemoryTag.NATIVE_PATH;
             long oldPrologSize = prologSize(usefulOldSize);
@@ -427,7 +430,7 @@ public final class Unsafe {
     private static long prologSize(long usefulSize) {
 //        return usefulSize;
 //        return Math.min(64, usefulSize);
-        return 8;
+        return 16;
     }
 
     private static void tagMemoryAllocation(long rawPtr, long usefulSize) {
