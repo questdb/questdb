@@ -155,11 +155,15 @@ public final class Unsafe {
         return anonymousClassDefiner.define(hostClass, data);
     }
 
-    public static long free(long ptr, long size, int memoryTag) {
+    public static long free(long ptr, long usefulSize, int memoryTag) {
         if (ptr != 0) {
-            Unsafe.getUnsafe().freeMemory(ptr);
+            long rawPtr = ptr - usefulSize;
+            checkMemoryTag(rawPtr, usefulSize);
+            Unsafe.getUnsafe().freeMemory(rawPtr);
+
+            long rawSize = 3 * usefulSize;
             FREE_COUNT.incrementAndGet();
-            recordMemAlloc(-size, memoryTag);
+            recordMemAlloc(-rawSize, memoryTag);
         }
         return 0;
     }
@@ -230,20 +234,23 @@ public final class Unsafe {
     }
     //#endif
 
-    public static long malloc(long size, int memoryTag) {
+    public static long malloc(long usefulSize, int memoryTag) {
         try {
             assert memoryTag >= MemoryTag.NATIVE_PATH;
-            checkAllocLimit(size, memoryTag);
-            long ptr = Unsafe.getUnsafe().allocateMemory(size);
-            recordMemAlloc(size, memoryTag);
+            checkAllocLimit(usefulSize, memoryTag);
+            long rawSize = 3 * usefulSize;
+            long rawPtr = Unsafe.getUnsafe().allocateMemory(rawSize);
+            tagMemoryAllocation(rawPtr, usefulSize);
+            checkMemoryTag(rawPtr, usefulSize);
+            recordMemAlloc(rawSize, memoryTag);
             MALLOC_COUNT.incrementAndGet();
-            return ptr;
+            return rawPtr + usefulSize;
         } catch (OutOfMemoryError oom) {
             CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.allocateMemory() OutOfMemoryError [RSS_MEM_USED=")
                     .put(RSS_MEM_USED.get())
                     .put(", size=")
-                    .put(size)
+                    .put(usefulSize)
                     .put(", memoryTag=").put(memoryTag)
                     .put("], original message: ")
                     .put(oom.getMessage());
@@ -252,22 +259,38 @@ public final class Unsafe {
         }
     }
 
-    public static long realloc(long address, long oldSize, long newSize, int memoryTag) {
+    public static long realloc(long usefulOldAddress, long usefulOldSize, long usefulNewSize, int memoryTag) {
         try {
             assert memoryTag >= MemoryTag.NATIVE_PATH;
-            checkAllocLimit(-oldSize + newSize, memoryTag);
-            long ptr = Unsafe.getUnsafe().reallocateMemory(address, newSize);
-            recordMemAlloc(-oldSize + newSize, memoryTag);
+
+            long rawOldSize = 3 * usefulOldSize;
+            long rawOldPtr = usefulOldAddress - usefulOldSize;
+
+            long rawNewSize = 3 * usefulNewSize;
+            long rawSizeDiff = rawNewSize - rawOldSize;
+
+            checkMemoryTag(rawOldPtr, usefulOldSize);
+
+            long rawNewPtr = Unsafe.getUnsafe().allocateMemory(rawNewSize);
+            tagMemoryAllocation(rawNewPtr, usefulNewSize);
+            checkMemoryTag(rawNewPtr, usefulNewSize);
+
+
+            Vect.memcpy(rawNewPtr + usefulNewSize, rawOldPtr + usefulOldSize, Math.min(usefulOldSize, usefulNewSize));
+            checkMemoryTag(rawNewPtr, usefulNewSize);
+
+            Unsafe.getUnsafe().freeMemory(rawOldPtr);
+            recordMemAlloc(rawSizeDiff, memoryTag);
             REALLOC_COUNT.incrementAndGet();
-            return ptr;
+            return rawNewPtr + usefulNewSize;
         } catch (OutOfMemoryError oom) {
             CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.reallocateMemory() OutOfMemoryError [RSS_MEM_USED=")
                     .put(RSS_MEM_USED.get())
                     .put(", oldSize=")
-                    .put(oldSize)
+                    .put(usefulOldSize)
                     .put(", newSize=")
-                    .put(newSize)
+                    .put(usefulNewSize)
                     .put(", memoryTag=").put(memoryTag)
                     .put("], original message: ")
                     .put(oom.getMessage());
@@ -305,7 +328,6 @@ public final class Unsafe {
         }
         return 16L;
     }
-    //#endif
 
     private static void checkAllocLimit(long size, int memoryTag) {
         if (size <= 0) {
@@ -321,6 +343,20 @@ public final class Unsafe {
                         .put(", size=").put(size)
                         .put(", memoryTag=").put(memoryTag)
                         .put(']');
+            }
+        }
+    }
+    //#endif
+
+    private static void checkMemoryTag(long rawPtr, long usefulSize) {
+        for (long l = rawPtr, hi = rawPtr + usefulSize; l < hi; l++) {
+            if (UNSAFE.getByte(l) != 42) {
+                throw new RuntimeException("Memory tag mismatch");
+            }
+        }
+        for (long l = rawPtr + (2 * usefulSize), hi = rawPtr + (3 * usefulSize); l < hi; l++) {
+            if (UNSAFE.getByte(l) != 42) {
+                throw new RuntimeException("Memory tag mismatch");
             }
         }
     }
@@ -367,6 +403,15 @@ public final class Unsafe {
     // most significant bit
     private static int msb(int value) {
         return 31 - Integer.numberOfLeadingZeros(value);
+    }
+
+    private static void tagMemoryAllocation(long rawPtr, long usefulSize) {
+        for (long l = rawPtr, hi = rawPtr + usefulSize; l < hi; l++) {
+            UNSAFE.putByte(l, (byte) 42);
+        }
+        for (long l = rawPtr + (2 * usefulSize), hi = rawPtr + (3 * usefulSize); l < hi; l++) {
+            UNSAFE.putByte(l, (byte) 42);
+        }
     }
 
     interface AnonymousClassDefiner {
