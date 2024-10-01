@@ -2789,7 +2789,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         Assume.assumeTrue(enableParallelGroupBy);
         assertMemoryLeak(() -> {
             SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
-            currentMicros = 0;
+            setCurrentMicros(0);
             NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
                     new DefaultSqlExecutionCircuitBreakerConfiguration() {
                         @Override

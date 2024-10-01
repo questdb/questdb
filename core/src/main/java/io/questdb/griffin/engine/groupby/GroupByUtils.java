@@ -530,6 +530,9 @@ public class GroupByUtils {
             case ColumnType.UUID:
                 func = UuidColumn.newInstance(keyColumnIndex - 1);
                 break;
+            case ColumnType.INTERVAL:
+                func = IntervalColumn.newInstance(keyColumnIndex - 1);
+                break;
             default:
                 func = BinColumn.newInstance(keyColumnIndex - 1);
                 break;

@@ -1524,7 +1524,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
 
     @Test
     public void testWriterAllLongs() throws Exception {
-        currentMicros = 1;
+        setCurrentMicros(1);
         String lineData = "messages id=843530699759026177i,author=820703963477180437i,guild=820704412095479830i,channel=820704412095479833i,flags=6i\n";
         runInContext((receiver) -> {
             TableModel m = new TableModel(configuration, "messages", PartitionBy.MONTH);

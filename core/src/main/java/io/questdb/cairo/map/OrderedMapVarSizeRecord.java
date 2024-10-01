@@ -45,6 +45,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     private final DirectBinarySequence[] bs;
     private final DirectString[] csA;
     private final DirectString[] csB;
+    private final Interval[] intervals;
     private final Long256Impl[] keyLong256A;
     private final Long256Impl[] keyLong256B;
     private final ColumnTypes keyTypes;
@@ -93,6 +94,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         DirectBinarySequence[] bs = null;
         Long256Impl[] long256A = null;
         Long256Impl[] long256B = null;
+        Interval[] intervals = null;
 
         final ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
         for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
@@ -129,6 +131,12 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
                     long256A[i + keyIndexOffset] = new Long256Impl();
                     long256B[i + keyIndexOffset] = new Long256Impl();
                     break;
+                case ColumnType.INTERVAL:
+                    if (intervals == null) {
+                        intervals = new Interval[nColumns];
+                    }
+                    intervals[i + keyIndexOffset] = new Interval();
+                    break;
                 default:
                     break;
             }
@@ -155,6 +163,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         this.bs = bs;
         this.keyLong256A = long256A;
         this.keyLong256B = long256B;
+        this.intervals = intervals;
     }
 
     private OrderedMapVarSizeRecord(
@@ -168,7 +177,8 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
             DirectUtf8String[] usB,
             DirectBinarySequence[] bs,
             Long256Impl[] keyLong256A,
-            Long256Impl[] keyLong256B
+            Long256Impl[] keyLong256B,
+            Interval[] intervals
     ) {
         this.valueSize = valueSize;
         this.valueOffsets = valueOffsets;
@@ -182,6 +192,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         this.bs = bs;
         this.keyLong256A = keyLong256A;
         this.keyLong256B = keyLong256B;
+        this.intervals = intervals;
     }
 
     @SuppressWarnings("MethodDoesntCallSuperMethod")
@@ -194,6 +205,7 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         final DirectBinarySequence[] bs;
         final Long256Impl[] long256A;
         final Long256Impl[] long256B;
+        final Interval[] intervals;
 
         // csA and csB are pegged, checking one for null should be enough
         if (this.csA != null) {
@@ -255,7 +267,20 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
             long256A = null;
             long256B = null;
         }
-        return new OrderedMapVarSizeRecord(valueSize, valueOffsets, keyTypes, splitIndex, csA, csB, usA, usB, bs, long256A, long256B);
+
+        if (this.intervals != null) {
+            int n = this.intervals.length;
+            intervals = new Interval[n];
+            for (int i = 0; i < n; i++) {
+                if (this.intervals[i] != null) {
+                    intervals[i] = new Interval();
+                }
+            }
+        } else {
+            intervals = null;
+        }
+
+        return new OrderedMapVarSizeRecord(valueSize, valueOffsets, keyTypes, splitIndex, csA, csB, usA, usB, bs, long256A, long256B, intervals);
     }
 
     @Override
@@ -341,6 +366,15 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
     @Override
     public int getInt(int columnIndex) {
         return Unsafe.getUnsafe().getInt(addressOfColumn(columnIndex));
+    }
+
+    @Override
+    public Interval getInterval(int columnIndex) {
+        long address = addressOfColumn(columnIndex);
+        long lo = Unsafe.getUnsafe().getLong(address);
+        long hi = Unsafe.getUnsafe().getLong(address + Long.BYTES);
+        Interval interval = this.intervals[columnIndex];
+        return interval.of(lo, hi);
     }
 
     @Override
