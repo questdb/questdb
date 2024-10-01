@@ -34,19 +34,17 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
-import io.questdb.std.BitSet;
+import io.questdb.std.DirectBitSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf16Sink;
 
 class StringDistinctAggSymbolGroupByFunction extends StrFunction implements UnaryFunction, GroupByFunction {
-    // Cleared function retains up to INITIAL_SINK_CAPACITY * LIST_CLEAR_THRESHOLD bytes.
     private static final int INITIAL_SINK_CAPACITY = 128;
-    private static final int LIST_CLEAR_THRESHOLD = 64;
     private final Function arg;
     private final char delimiter;
     private final int setInitialCapacity;
-    private final ObjList<BitSet> sets = new ObjList<>();
+    private final ObjList<DirectBitSet> sets = new ObjList<>();
     private final ObjList<DirectUtf16Sink> sinks = new ObjList<>();
     private int sinkIndex = 0; // also used for sets
     private int valueIndex;
@@ -59,25 +57,8 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
 
     @Override
     public void clear() {
-        // Free extra sinks.
-        if (sinks.size() > LIST_CLEAR_THRESHOLD) {
-            for (int i = sinks.size() - 1; i > LIST_CLEAR_THRESHOLD - 1; i--) {
-                Misc.free(sinks.getQuick(i));
-                sinks.remove(i);
-                sets.remove(i);
-            }
-        }
-        // Reset capacity on the remaining ones.
-        for (int i = 0, n = sinks.size(); i < n; i++) {
-            DirectUtf16Sink sink = sinks.getQuick(i);
-            if (sink != null) {
-                sink.resetCapacity();
-            }
-            BitSet set = sets.getQuick(i);
-            if (set != null) {
-                set.resetCapacity();
-            }
-        }
+        Misc.freeObjListAndClear(sinks);
+        Misc.freeObjListAndClear(sets);
         sinkIndex = 0;
     }
 
@@ -89,10 +70,10 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final DirectUtf16Sink sink;
-        final BitSet set;
+        final DirectBitSet set;
         if (sinks.size() <= sinkIndex) {
             sinks.extendAndSet(sinkIndex, sink = new DirectUtf16Sink(INITIAL_SINK_CAPACITY));
-            sets.extendAndSet(sinkIndex, set = new BitSet(setInitialCapacity));
+            sets.extendAndSet(sinkIndex, set = new DirectBitSet(setInitialCapacity));
         } else {
             sink = sinks.getQuick(sinkIndex);
             sink.clear();
@@ -114,7 +95,7 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final DirectUtf16Sink sink = sinks.getQuick(mapValue.getInt(valueIndex));
-        final BitSet set = sets.getQuick(mapValue.getInt(valueIndex));
+        final DirectBitSet set = sets.getQuick(mapValue.getInt(valueIndex));
         final int key = arg.getInt(record);
         if (key != SymbolTable.VALUE_IS_NULL && !set.getAndSet(key)) {
             final CharSequence str = arg.getSymbol(record);

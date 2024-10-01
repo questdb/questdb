@@ -34,8 +34,8 @@ public class BitSetTest {
     @Test
     public void testGetAndSet() {
         final int N = 1000;
+        final Rnd rnd = new Rnd();
         BitSet set = new BitSet();
-        Rnd rnd = new Rnd();
 
         Assert.assertTrue(set.capacity() > 0);
 
@@ -61,8 +61,8 @@ public class BitSetTest {
     public void testResetCapacity() {
         final int N = 1000;
         final int max = 1_000_000;
+        final Rnd rnd = new Rnd();
         BitSet set = new BitSet();
-        Rnd rnd = new Rnd();
 
         final int initialCapacity = set.capacity();
         Assert.assertTrue(set.capacity() > 0);
@@ -87,8 +87,8 @@ public class BitSetTest {
     public void testSmoke() {
         final int N = 1000;
         final int max = 1_000_000;
+        final Rnd rnd = new Rnd();
         BitSet set = new BitSet();
-        Rnd rnd = new Rnd();
 
         Assert.assertTrue(set.capacity() > 0);
 

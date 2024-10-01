@@ -37,16 +37,14 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.columns.SymbolColumn;
-import io.questdb.std.BitSet;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 
 import static io.questdb.cairo.sql.SymbolTable.VALUE_IS_NULL;
 
 public class CountDistinctSymbolGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
     private final int setInitialCapacity;
-    private final ObjList<BitSet> sets = new ObjList<>();
+    private final ObjList<DirectBitSet> sets = new ObjList<>();
     private int knownSymbolCount = -1;
     private int setIndex;
     private int valueIndex;
@@ -58,16 +56,16 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
 
     @Override
     public void clear() {
-        sets.clear();
+        Misc.freeObjListAndClear(sets);
         setIndex = 0;
         knownSymbolCount = -1;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final BitSet set;
+        final DirectBitSet set;
         if (sets.size() <= setIndex) {
-            sets.extendAndSet(setIndex, set = new BitSet(setInitialCapacity));
+            sets.extendAndSet(setIndex, set = new DirectBitSet(setInitialCapacity));
         } else {
             set = sets.getQuick(setIndex);
             set.clear();
@@ -85,7 +83,7 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final BitSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
+        final DirectBitSet set = sets.getQuick(mapValue.getInt(valueIndex + 1));
         final int val = arg.getInt(record);
         if (val != VALUE_IS_NULL) {
             if (set.get(val)) {
