@@ -28,7 +28,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
         Err(mut err) => {
             err.add_context(format!("could not read parquet file with fd {raw_fd}"));
             err.add_context("error in PartitionDecoder.create");
-            err.to_cairo_exception().throw(&mut env)
+            err.into_cairo_exception().throw(&mut env)
         }
     }
 }
@@ -88,7 +88,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
                 "could not decode row group {row_group_index} with fd {raw_fd}"
             ));
             err.add_context("error in PartitionDecoder.decodeRowGroup");
-            err.to_cairo_exception().throw(&mut env)
+            err.into_cairo_exception().throw(&mut env)
         }
     }
 }
@@ -126,7 +126,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
                 "could not get row group stats with fd {raw_fd} in row group {row_group_index}"
             ));
             err.add_context("error in PartitionDecoder.getRowGroupStats");
-            err.to_cairo_exception().throw(&mut env)
+            err.into_cairo_exception().throw(&mut env)
         }
     }
 }

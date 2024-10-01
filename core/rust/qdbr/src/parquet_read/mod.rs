@@ -79,7 +79,6 @@ pub struct ColumnChunkStats {
 
 #[cfg(test)]
 mod tests {
-    use crate::allocator::QdbTestAllocator;
     use crate::parquet::col_type::ColumnTypeTag;
     use crate::parquet::error::ParquetResult;
     use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol};
@@ -92,6 +91,7 @@ mod tests {
     use parquet::schema::types::Type;
     use std::io::Cursor;
     use std::sync::Arc;
+    use crate::allocator::TEST_ALLOCATOR;
 
     #[test]
     fn fn_load_symbol_without_local_is_global_format_meta() -> ParquetResult<()> {
@@ -107,8 +107,8 @@ mod tests {
         let buf = gen_test_symbol_parquet(Some(qdb_meta.serialize()?))?;
 
         let reader = Cursor::new(buf);
-        let mut parquet_decoder = ParquetDecoder::read(QdbTestAllocator, reader)?;
-        let mut rgb = RowGroupBuffers::new();
+        let mut parquet_decoder = ParquetDecoder::read(TEST_ALLOCATOR, reader)?;
+        let mut rgb = RowGroupBuffers::new(TEST_ALLOCATOR);
         let res = parquet_decoder.decode_row_group(
             &mut rgb,
             &[(0, ColumnTypeTag::Symbol.into_type())],

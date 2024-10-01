@@ -1,3 +1,4 @@
+use crate::allocator::{AcVec, QdbAllocator};
 use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
 use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
@@ -34,7 +35,6 @@ use parquet2::write::Version;
 use std::collections::VecDeque;
 use std::io::{Read, Seek};
 use std::ptr;
-use crate::allocator::{AcVec, QdbAllocator};
 
 impl RowGroupBuffers {
     pub fn new(allocator: QdbAllocator) -> Self {
@@ -1098,7 +1098,7 @@ pub fn get_selected_rows(page: &DataPage) -> VecDeque<Interval> {
 
 #[cfg(test)]
 mod tests {
-    use crate::allocator::QdbTestAllocator;
+    use crate::allocator::{AcVec, TEST_ALLOCATOR};
     use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
     use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
     use crate::parquet_read::decode::{INT_NULL, LONG_NULL, UUID_NULL};
@@ -1134,11 +1134,11 @@ mod tests {
             expected_buff.data_vec.as_ref(),
         );
 
-        let mut decoder = ParquetDecoder::read(QdbTestAllocator, file).unwrap();
+        let mut decoder = ParquetDecoder::read(TEST_ALLOCATOR, file).unwrap();
         assert_eq!(decoder.columns.len(), column_count);
         assert_eq!(decoder.row_count, row_count);
         let row_group_count = decoder.row_group_count as usize;
-        let bufs = &mut ColumnChunkBuffers::new();
+        let bufs = &mut ColumnChunkBuffers::new(TEST_ALLOCATOR);
 
         for column_index in 0..column_count {
             let column_type = decoder.columns[column_index].column_type;
@@ -1333,11 +1333,11 @@ mod tests {
         let column_count = columns.len();
         let file = write_cols_to_parquet_file(row_group_size, data_page_size, version, columns);
 
-        let mut decoder = ParquetDecoder::read(QdbTestAllocator, file).unwrap();
+        let mut decoder = ParquetDecoder::read(TEST_ALLOCATOR, file).unwrap();
         assert_eq!(decoder.columns.len(), column_count);
         assert_eq!(decoder.row_count, row_count);
         let row_group_count = decoder.row_group_count as usize;
-        let bufs = &mut ColumnChunkBuffers::new();
+        let bufs = &mut ColumnChunkBuffers::new(TEST_ALLOCATOR);
 
         for (column_index, (column_buffs, column_type)) in expected_buffs.iter().enumerate() {
             let column_type = *column_type;
@@ -1384,19 +1384,19 @@ mod tests {
                     if col_row_count == 0 {
                         assert_eq!(&expected_aux_data[0..bufs.aux_size], bufs.aux_vec);
                     } else if column_type.tag() == ColumnTypeTag::String {
-                        let mut expected_aux_data_slice = vec![];
+                        let mut expected_aux_data_slice = AcVec::new_in(TEST_ALLOCATOR);
                         let vec_i64_ref = unsafe {
                             std::slice::from_raw_parts(
                                 expected_aux_data.as_ptr() as *const i64,
                                 expected_aux_data.len() / size_of::<i64>(),
                             )
                         };
-                        expected_aux_data_slice.extend_from_slice(&0u64.to_le_bytes());
+                        expected_aux_data_slice.extend_from_slice(&0u64.to_le_bytes()).unwrap();
                         for i in 0..row_count {
                             let row_data_offset = vec_i64_ref[col_row_count + 1 + i];
                             expected_aux_data_slice.extend_from_slice(
                                 &(row_data_offset - data_offset as i64).to_le_bytes(),
-                            );
+                            ).unwrap();
                         }
                         assert_eq!(expected_aux_data_slice, bufs.aux_vec);
                     }
@@ -1460,7 +1460,8 @@ mod tests {
 
     fn create_col_data_buff_bool(row_count: usize) -> ColumnBuffers {
         let value_size = 1;
-        let mut buff = vec![0u8; row_count * value_size];
+        let mut buff = AcVec::new_in(TEST_ALLOCATOR);
+        buff.extend_with(row_count * value_size, 0u8).unwrap();
         for i in 0..row_count {
             let value = i % 3 == 0;
             let offset = i * value_size;
@@ -1487,7 +1488,8 @@ mod tests {
         F: Fn(T) -> [u8; N],
     {
         let value_size = N;
-        let mut buff = vec![0u8; row_count * value_size];
+        let mut buff = AcVec::new_in(TEST_ALLOCATOR);
+        buff.extend_with(row_count * value_size, 0u8).unwrap();
         for i in 0..((row_count + 1) / 2) {
             let value = T::from(i as i16);
             let offset = 2 * i * value_size;
@@ -1530,18 +1532,18 @@ mod tests {
     }
 
     struct ColumnBuffers {
-        data_vec: Vec<u8>,
-        aux_vec: Option<Vec<u8>>,
-        sym_offsets: Option<Vec<u64>>,
-        sym_chars: Option<Vec<u8>>,
-        expected_data_buff: Option<Vec<u8>>,
-        expected_aux_buff: Option<Vec<u8>>,
+        data_vec: AcVec<u8>,
+        aux_vec: Option<AcVec<u8>>,
+        sym_offsets: Option<AcVec<u64>>,
+        sym_chars: Option<AcVec<u8>>,
+        expected_data_buff: Option<AcVec<u8>>,
+        expected_aux_buff: Option<AcVec<u8>>,
     }
 
     fn create_col_data_buff_symbol(row_count: usize, distinct_values: usize) -> ColumnBuffers {
-        let mut symbol_data_buff = Vec::new();
-        let mut expected_aux_buff = Vec::new();
-        let mut expected_data_buff = Vec::new();
+        let mut symbol_data_buff = AcVec::new_in(TEST_ALLOCATOR);
+        let mut expected_aux_buff = AcVec::new_in(TEST_ALLOCATOR);
+        let mut expected_data_buff = AcVec::new_in(TEST_ALLOCATOR);
 
         let str_values: Vec<String> = (0..distinct_values)
             .map(|_| generate_random_unicode_string(10))
@@ -1553,19 +1555,19 @@ mod tests {
         let null_sym_value = i32::MIN.to_le_bytes();
         while i < row_count {
             let symbol_value = i % distinct_values;
-            symbol_data_buff.extend_from_slice(&(symbol_value as i32).to_le_bytes());
+            symbol_data_buff.extend_from_slice(&(symbol_value as i32).to_le_bytes()).unwrap();
 
             let str_value = &str_values[i % distinct_values];
             append_varchar(
                 &mut expected_aux_buff,
                 &mut expected_data_buff,
                 str_value.as_bytes(),
-            );
+            ).unwrap();
             i += 1;
 
             if i < row_count {
-                symbol_data_buff.extend_from_slice(&null_sym_value);
-                append_varchar_null(&mut expected_aux_buff, &expected_data_buff);
+                symbol_data_buff.extend_from_slice(&null_sym_value).unwrap();
+                append_varchar_null(&mut expected_aux_buff, &expected_data_buff).unwrap();
                 i += 1;
             }
         }
@@ -1580,30 +1582,30 @@ mod tests {
         }
     }
 
-    fn serialize_as_symbols(symbol_chars: &Vec<String>) -> (Vec<u8>, Vec<u64>) {
-        let mut chars = vec![];
-        let mut offsets = vec![];
+    fn serialize_as_symbols(symbol_chars: &[String]) -> (AcVec<u8>, AcVec<u64>) {
+        let mut chars = AcVec::new_in(TEST_ALLOCATOR);
+        let mut offsets = AcVec::new_in(TEST_ALLOCATOR);
 
         for s in symbol_chars {
             let sym_chars: Vec<_> = s.encode_utf16().collect();
             let len = sym_chars.len();
-            offsets.push(chars.len() as u64);
-            chars.extend_from_slice(&(len as u32).to_le_bytes());
+            offsets.push(chars.len() as u64).unwrap();
+            chars.extend_from_slice(&(len as u32).to_le_bytes()).unwrap();
             let encoded: &[u8] = unsafe {
                 std::slice::from_raw_parts(
                     sym_chars.as_ptr() as *const u8,
                     sym_chars.len() * size_of::<u16>(),
                 )
             };
-            chars.extend_from_slice(encoded);
+            chars.extend_from_slice(encoded).unwrap();
         }
 
         (chars, offsets)
     }
 
     fn create_col_data_buff_varchar(row_count: usize, distinct_values: usize) -> ColumnBuffers {
-        let mut aux_buff = Vec::new();
-        let mut data_buff = Vec::new();
+        let mut aux_buff = AcVec::new_in(TEST_ALLOCATOR);
+        let mut data_buff = AcVec::new_in(TEST_ALLOCATOR);
 
         let str_values: Vec<String> = (0..distinct_values)
             .map(|_| generate_random_unicode_string(10))
@@ -1612,11 +1614,11 @@ mod tests {
         let mut i = 0;
         while i < row_count {
             let str_value = &str_values[i % distinct_values];
-            append_varchar(&mut aux_buff, &mut data_buff, str_value.as_bytes());
+            append_varchar(&mut aux_buff, &mut data_buff, str_value.as_bytes()).unwrap();
             i += 1;
 
             if i < row_count {
-                append_varchar_null(&mut aux_buff, &data_buff);
+                append_varchar_null(&mut aux_buff, &data_buff).unwrap();
                 i += 1;
             }
         }
@@ -1632,8 +1634,9 @@ mod tests {
 
     fn create_col_data_buff_string(row_count: usize, distinct_values: usize) -> ColumnBuffers {
         let value_size = size_of::<i64>();
-        let mut aux_buff = vec![0u8; value_size];
-        let mut data_buff = Vec::new();
+        let mut aux_buff = AcVec::new_in(TEST_ALLOCATOR);
+        aux_buff.extend_with(value_size, 0u8).unwrap();
+        let mut data_buff = AcVec::new_in(TEST_ALLOCATOR);
 
         let str_values: Vec<Vec<u16>> = (0..distinct_values)
             .map(|_| generate_random_unicode_string(10).encode_utf16().collect())
@@ -1642,14 +1645,14 @@ mod tests {
         let mut i = 0;
         while i < row_count {
             let str_value = &str_values[i % distinct_values];
-            data_buff.extend_from_slice(&(str_value.len() as i32).to_le_bytes());
-            data_buff.extend_from_slice(str_value.to_byte_slice());
-            aux_buff.extend_from_slice(&data_buff.len().to_le_bytes());
+            data_buff.extend_from_slice(&(str_value.len() as i32).to_le_bytes()).unwrap();
+            data_buff.extend_from_slice(str_value.to_byte_slice()).unwrap();
+            aux_buff.extend_from_slice(&data_buff.len().to_le_bytes()).unwrap();
             i += 1;
 
             if i < row_count {
-                data_buff.extend_from_slice(&(-1i32).to_le_bytes());
-                aux_buff.extend_from_slice(&data_buff.len().to_le_bytes());
+                data_buff.extend_from_slice(&(-1i32).to_le_bytes()).unwrap();
+                aux_buff.extend_from_slice(&data_buff.len().to_le_bytes()).unwrap();
                 i += 1;
             }
         }

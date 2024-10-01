@@ -33,7 +33,6 @@ import java.lang.reflect.AccessibleObject;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
 import static io.questdb.std.MemoryTag.NATIVE_DEFAULT;
@@ -60,7 +59,7 @@ public final class Unsafe {
     //#if jdk.version!=8
     private static final long OVERRIDE;
     //#endif
-    private static final AtomicLong REALLOC_COUNT = new AtomicLong(0);
+    private static final long REALLOC_COUNT_ADDR;
     private static final long RSS_MEM_USED_ADDR;
     private static final sun.misc.Unsafe UNSAFE;
     private static final AnonymousClassDefiner anonymousClassDefiner;
@@ -204,7 +203,7 @@ public final class Unsafe {
     }
 
     public static long getReallocCount() {
-        return REALLOC_COUNT.get();
+        return UNSAFE.getLongVolatile(null, REALLOC_COUNT_ADDR);
     }
 
     public static long getRssMemUsed() {
@@ -224,7 +223,7 @@ public final class Unsafe {
     }
 
     public static void incrReallocCount() {
-        REALLOC_COUNT.incrementAndGet();
+        UNSAFE.getAndAddLong(null, REALLOC_COUNT_ADDR, 1);
     }
 
     //#if jdk.version!=8
@@ -268,7 +267,7 @@ public final class Unsafe {
             checkAllocLimit(-oldSize + newSize, memoryTag);
             long ptr = Unsafe.getUnsafe().reallocateMemory(address, newSize);
             recordMemAlloc(-oldSize + newSize, memoryTag);
-            REALLOC_COUNT.incrementAndGet();
+            incrReallocCount();
             return ptr;
         } catch (OutOfMemoryError oom) {
             CairoException e = CairoException.nonCritical().setOutOfMemory(true)
@@ -303,18 +302,15 @@ public final class Unsafe {
         UNSAFE.putLongVolatile(null, RSS_MEM_LIMIT_ADDR, limit);
     }
 
-    private static long createTaggedWatermarkAllocator(int memoryTag) {
+    private static long createTaggedWatermarkAllocator(long nativeMemCountersArray, int memoryTag) {
         // See `allocator.rs` for the definition of `TaggedWatermarkAllocator`.
         // We construct here via `Unsafe` to avoid having initialization order issues with `Os.java`.
-        final long allocSize = 6 * 8;
+        final long allocSize = 3 * 8;
         final long addr = UNSAFE.allocateMemory(allocSize);
         Vect.memset(addr, allocSize, 0);
-        UNSAFE.putLong(addr, RSS_MEM_LIMIT_ADDR);
-        UNSAFE.putLong(addr + 8, RSS_MEM_USED_ADDR);
-        UNSAFE.putLong(addr + 16, NATIVE_MEM_COUNTER_ADDRS[memoryTag]);
-        UNSAFE.putLong(addr + 24, MALLOC_COUNT_ADDR);
-        UNSAFE.putLong(addr + 32, FREE_COUNT_ADDR);
-        UNSAFE.putInt(addr + 40, memoryTag);
+        UNSAFE.putLong(addr, nativeMemCountersArray);
+        UNSAFE.putLong(addr + 8, NATIVE_MEM_COUNTER_ADDRS[memoryTag]);
+        UNSAFE.putInt(addr + 16, memoryTag);
         return addr;
     }
 
@@ -533,27 +529,33 @@ public final class Unsafe {
         // A single allocation for all the off-heap native memory counters.
         // Might help with locality, given they're often incremented together.
         // All initial values set to 0.
-        final long nativeMemCountersArraySize = (5 + COUNTERS.length) * 8;
-        long nativeMemCountersArray = UNSAFE.allocateMemory(nativeMemCountersArraySize);
+        final long nativeMemCountersArraySize = (6 + COUNTERS.length) * 8;
+        final long nativeMemCountersArray = UNSAFE.allocateMemory(nativeMemCountersArraySize);
+        long ptr = nativeMemCountersArray;
         Vect.memset(nativeMemCountersArray, nativeMemCountersArraySize, 0);
 
-        RSS_MEM_USED_ADDR = nativeMemCountersArray;
-        nativeMemCountersArray += 8;
-        RSS_MEM_LIMIT_ADDR = nativeMemCountersArray;
-        nativeMemCountersArray += 8;
-        MALLOC_COUNT_ADDR = nativeMemCountersArray;
-        nativeMemCountersArray += 8;
-        FREE_COUNT_ADDR = nativeMemCountersArray;
-        nativeMemCountersArray += 8;
-        NON_RSS_MEM_USED_ADDR = nativeMemCountersArray;
-        nativeMemCountersArray += 8;
+        // N.B.: The layout here is also used in `allocator.rs` for the Rust side.
+        // See: `struct MemTracking`.
+        RSS_MEM_USED_ADDR = ptr;
+        ptr += 8;
+        RSS_MEM_LIMIT_ADDR = ptr;
+        ptr += 8;
+        MALLOC_COUNT_ADDR = ptr;
+        ptr += 8;
+        REALLOC_COUNT_ADDR = ptr;
+        ptr += 8;
+        FREE_COUNT_ADDR = ptr;
+        ptr += 8;
+        NON_RSS_MEM_USED_ADDR = ptr;
+        ptr += 8;
         for (int i = 0; i < COUNTERS.length; i++) {
             COUNTERS[i] = new LongAdder();
-            NATIVE_MEM_COUNTER_ADDRS[i] = nativeMemCountersArray;
-            nativeMemCountersArray += 8;
+            NATIVE_MEM_COUNTER_ADDRS[i] = ptr;
+            ptr += 8;
         }
         for (int memoryTag = NATIVE_DEFAULT; memoryTag < MemoryTag.SIZE; ++memoryTag) {
-            RUST_TAGGED_ALLOCATORS[memoryTag - NATIVE_DEFAULT] = createTaggedWatermarkAllocator(memoryTag);
+            RUST_TAGGED_ALLOCATORS[memoryTag - NATIVE_DEFAULT] = createTaggedWatermarkAllocator(
+                    nativeMemCountersArray, memoryTag);
         }
     }
 }

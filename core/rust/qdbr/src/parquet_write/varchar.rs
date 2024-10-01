@@ -1,13 +1,13 @@
 use std::mem;
 
 use super::util::ExactSizedIter;
+use crate::allocator::AcVec;
 use crate::parquet::error::{fmt_err, ParquetError, ParquetResult};
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{build_plain_page, encode_bool_iter, BinaryMaxMin};
 use parquet2::encoding::{delta_bitpacked, Encoding};
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
-use crate::allocator::AcVec;
 
 const HEADER_FLAG_INLINED: u8 = 1 << 0;
 const HEADER_FLAG_ASCII: u8 = 1 << 1;
@@ -166,7 +166,11 @@ fn is_inlined(header: u8) -> bool {
     (header & HEADER_FLAG_INLINED) == HEADER_FLAG_INLINED
 }
 
-pub fn append_varchar(aux_mem: &mut AcVec<u8>, data_mem: &mut AcVec<u8>, value: &[u8]) -> ParquetResult<()> {
+pub fn append_varchar(
+    aux_mem: &mut AcVec<u8>,
+    data_mem: &mut AcVec<u8>,
+    value: &[u8],
+) -> ParquetResult<()> {
     let value_size = value.len();
     if value_size <= VARCHAR_MAX_BYTES_FULLY_INLINED {
         let flags = HEADER_FLAG_INLINED | is_ascii_inlined(value);
@@ -218,7 +222,11 @@ fn append_offset(aux_mem: &mut AcVec<u8>, offset: usize) -> ParquetResult<()> {
     Ok(())
 }
 
-pub fn append_varchar_nulls(aux_mem: &mut AcVec<u8>, data_mem: &[u8], count: usize) -> ParquetResult<()> {
+pub fn append_varchar_nulls(
+    aux_mem: &mut AcVec<u8>,
+    data_mem: &[u8],
+    count: usize,
+) -> ParquetResult<()> {
     // TODO: optimize, inserting same values
     for _ in 0..count {
         append_varchar_null(aux_mem, data_mem)?;

@@ -78,7 +78,9 @@ impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
     fn reserve(&mut self) -> ParquetResult<()> {
         let count = self.slicer.count();
         if count > 0 {
-            self.buffers.aux_vec.reserve((count + 1) * STRING_AUX_SIZE)?;
+            self.buffers
+                .aux_vec
+                .reserve((count + 1) * STRING_AUX_SIZE)?;
             if self.buffers.aux_vec.is_empty() {
                 self.buffers
                     .aux_vec
@@ -177,7 +179,9 @@ impl<T: DataPageSlicer> Pushable for BinaryColumnSink<'_, T> {
     fn reserve(&mut self) -> ParquetResult<()> {
         let count = self.slicer.count();
         if count > 0 {
-            self.buffers.aux_vec.reserve((count + 1) * STRING_AUX_SIZE)?;
+            self.buffers
+                .aux_vec
+                .reserve((count + 1) * STRING_AUX_SIZE)?;
             if self.buffers.aux_vec.is_empty() {
                 self.buffers
                     .aux_vec

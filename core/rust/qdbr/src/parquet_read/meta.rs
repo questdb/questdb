@@ -33,7 +33,8 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         let metadata = read_metadata(&mut reader)?;
         let col_len = metadata.schema_descr.columns().len();
         let qdb_meta = extract_qdb_meta(&metadata)?;
-        let mut row_group_sizes: AcVec<i32> = AcVec::try_with_capacity_in(metadata.row_groups.len(), allocator)?;
+        let mut row_group_sizes: AcVec<i32> =
+            AcVec::try_with_capacity_in(metadata.row_groups.len(), allocator)?;
         let mut columns = AcVec::try_with_capacity_in(col_len, allocator)?;
 
         for row_group in metadata.row_groups.iter() {
@@ -46,7 +47,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                 Self::descriptor_to_column_type(&f.descriptor, column_id, qdb_meta.as_ref())
             {
                 let name_str = &f.descriptor.primitive_type.field_info.name;
-                let mut name = AcVec::new_in(allocator);
+                let mut name = AcVec::try_with_capacity_in(name_str.len() * 2, allocator)?;
                 name.extend(name_str.encode_utf16())?;
 
                 columns.push(ColumnMeta {
@@ -175,7 +176,6 @@ mod tests {
     use std::path::Path;
     use std::ptr::null;
 
-    use crate::allocator::QdbTestAllocator;
     use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
     use crate::parquet_read::meta::ParquetDecoder;
     use crate::parquet_write::file::ParquetWriter;
@@ -183,6 +183,7 @@ mod tests {
     use arrow::datatypes::ToByteSlice;
     use bytes::Bytes;
     use tempfile::NamedTempFile;
+    use crate::allocator::TEST_ALLOCATOR;
 
     #[test]
     fn test_decode_column_type_fixed() {
@@ -240,7 +241,7 @@ mod tests {
 
         let path = temp_file.path().to_str().unwrap();
         let file = File::open(Path::new(path)).unwrap();
-        let meta = ParquetDecoder::read(QdbTestAllocator, file).unwrap();
+        let meta = ParquetDecoder::read(TEST_ALLOCATOR, file).unwrap();
 
         assert_eq!(meta.columns.len(), column_count);
         assert_eq!(meta.row_count, row_count);

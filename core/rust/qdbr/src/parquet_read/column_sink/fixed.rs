@@ -1,9 +1,9 @@
+use crate::allocator::AcVec;
 use crate::parquet::error::ParquetResult;
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::DataPageSlicer;
 use crate::parquet_read::ColumnChunkBuffers;
 use std::ptr;
-use crate::allocator::AcVec;
 
 /// A sink for fixed length columns
 /// This is a sink that is used to push data into a column chunk buffer.
@@ -34,7 +34,9 @@ impl<const N: usize, const R: usize, T: DataPageSlicer> Pushable for FixedColumn
     #[inline]
     fn push(&mut self) -> ParquetResult<()> {
         if N == R {
-            self.buffers.data_vec.extend_from_slice(self.slicer.next())?;
+            self.buffers
+                .data_vec
+                .extend_from_slice(self.slicer.next())?;
         } else {
             self.buffers
                 .data_vec
@@ -214,7 +216,10 @@ impl<'a, T: DataPageSlicer> NanoTimestampColumnSink<'a, T> {
         Self { slicer, buffers, null_value }
     }
 
-    fn push_int96_as_epoch_microseconds(data_vec: &mut AcVec<u8>, bytes: &[u8]) -> ParquetResult<()> {
+    fn push_int96_as_epoch_microseconds(
+        data_vec: &mut AcVec<u8>,
+        bytes: &[u8],
+    ) -> ParquetResult<()> {
         // INT96 layout:
         // - bytes[0..8]: nanoseconds within the day (8 bytes)
         // - bytes[8..12]: Julian date (4 bytes)

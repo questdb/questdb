@@ -135,7 +135,7 @@ impl ParquetError {
         err
     }
 
-    pub fn to_cairo_exception(self) -> CairoException {
+    pub fn into_cairo_exception(self) -> CairoException {
         CairoException::new(self.to_string())
             .out_of_memory(matches!(self.cause, ParquetErrorCause::OutOfMemory(_)))
             .backtrace(self.backtrace.clone())

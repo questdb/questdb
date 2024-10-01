@@ -86,10 +86,10 @@ impl CairoException {
         let message: JValue = (&message).into();
         let backtrace: JObject = match self.backtrace.status() {
             BacktraceStatus::Captured => env
-                .new_string(&self.backtrace.to_string())
+                .new_string(self.backtrace.to_string())
                 .expect("failed to create Java string")
                 .into(),
-            _ => JObject::null().into(),
+            _ => JObject::null(),
         };
         let backtrace: JValue = (&backtrace).into();
         let cairo_exc: JThrowable = env

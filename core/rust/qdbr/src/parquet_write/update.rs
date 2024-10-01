@@ -42,6 +42,7 @@ pub struct ParquetUpdater {
 }
 
 impl ParquetUpdater {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         allocator: QdbAllocator,
         mut reader: File,

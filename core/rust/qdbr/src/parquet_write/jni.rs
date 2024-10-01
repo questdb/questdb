@@ -77,7 +77,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
                 src_path
             ));
             err.add_context("error in PartitionUpdater.create");
-            err.to_cairo_exception().throw(&mut env)
+            err.into_cairo_exception().throw(&mut env)
         }
     }
 }
@@ -113,7 +113,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
         Err(mut err) => {
             err.add_context("could not update partition");
             err.add_context("error in PartitionUpdater.finish");
-            err.to_cairo_exception().throw(&mut env)
+            err.into_cairo_exception().throw(&mut env)
         }
     }
 }
@@ -172,7 +172,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
                 "could not update row group {orig_row_group_id} for table {table_name}"
             ));
             err.add_context("error in PartitionUpdater.updateRowGroup");
-            err.to_cairo_exception().throw(&mut env)
+            err.into_cairo_exception().throw(&mut env)
         }
     }
 }
