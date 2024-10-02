@@ -54,7 +54,7 @@ public final class Unsafe {
     private static final long FREE_COUNT_ADDR;
     private static final long MALLOC_COUNT_ADDR;
     private static final long[] NATIVE_MEM_COUNTER_ADDRS = new long[MemoryTag.SIZE];
-    private static final long[] RUST_TAGGED_ALLOCATORS = new long[MemoryTag.SIZE - NATIVE_DEFAULT];
+    private static final long[] NATIVE_ALLOCATORS = new long[MemoryTag.SIZE - NATIVE_DEFAULT];
     private static final long NON_RSS_MEM_USED_ADDR;
     //#if jdk.version!=8
     private static final long OVERRIDE;
@@ -302,8 +302,8 @@ public final class Unsafe {
         UNSAFE.putLongVolatile(null, RSS_MEM_LIMIT_ADDR, limit);
     }
 
-    private static long createTaggedWatermarkAllocator(long nativeMemCountersArray, int memoryTag) {
-        // See `allocator.rs` for the definition of `TaggedWatermarkAllocator`.
+    private static long createNativeAllocator(long nativeMemCountersArray, int memoryTag) {
+        // See `allocator.rs` for the definition of `QdbAllocator`.
         // We construct here via `Unsafe` to avoid having initialization order issues with `Os.java`.
         final long allocSize = 8 + 8 + 4;  // two longs, one int
         final long addr = UNSAFE.allocateMemory(allocSize);
@@ -311,12 +311,13 @@ public final class Unsafe {
         UNSAFE.putLong(addr, nativeMemCountersArray);
         UNSAFE.putLong(addr + 8, NATIVE_MEM_COUNTER_ADDRS[memoryTag]);
         UNSAFE.putInt(addr + 16, memoryTag);
+        System.err.println("createTaggedWatermarkAllocator :: addr: " + addr + ", mem_tracking: " + nativeMemCountersArray + ", tagged_used: " + NATIVE_MEM_COUNTER_ADDRS[memoryTag] + ", memoryTag: " + memoryTag);
         return addr;
     }
 
     /** Returns a `*const QdbAllocator` for use in Rust. */
     public static long getNativeAllocator(int memoryTag) {
-        return RUST_TAGGED_ALLOCATORS[memoryTag - NATIVE_DEFAULT];
+        return NATIVE_ALLOCATORS[memoryTag - NATIVE_DEFAULT];
     }
 
     //#if jdk.version!=8
@@ -533,12 +534,14 @@ public final class Unsafe {
         final long nativeMemCountersArray = UNSAFE.allocateMemory(nativeMemCountersArraySize);
         long ptr = nativeMemCountersArray;
         Vect.memset(nativeMemCountersArray, nativeMemCountersArraySize, 0);
+        System.err.println("Unsafe{static} :: (A) nativeMemCountersArray" + nativeMemCountersArray);
 
         // N.B.: The layout here is also used in `allocator.rs` for the Rust side.
         // See: `struct MemTracking`.
         RSS_MEM_USED_ADDR = ptr;
         ptr += 8;
         RSS_MEM_LIMIT_ADDR = ptr;
+        System.err.println("Unsafe{static} :: (B) RSS_MEM_USED_ADDR=" + RSS_MEM_USED_ADDR + ", RSS_MEM_LIMIT_ADDR=" + RSS_MEM_LIMIT_ADDR);
         ptr += 8;
         MALLOC_COUNT_ADDR = ptr;
         ptr += 8;
@@ -550,11 +553,12 @@ public final class Unsafe {
         ptr += 8;
         for (int i = 0; i < COUNTERS.length; i++) {
             COUNTERS[i] = new LongAdder();
+            System.err.println("Unsafe{static} :: (C) NATIVE_MEM_COUNTER_ADDRS[" + i + "]=" + ptr);
             NATIVE_MEM_COUNTER_ADDRS[i] = ptr;
             ptr += 8;
         }
         for (int memoryTag = NATIVE_DEFAULT; memoryTag < MemoryTag.SIZE; ++memoryTag) {
-            RUST_TAGGED_ALLOCATORS[memoryTag - NATIVE_DEFAULT] = createTaggedWatermarkAllocator(
+            NATIVE_ALLOCATORS[memoryTag - NATIVE_DEFAULT] = createNativeAllocator(
                     nativeMemCountersArray, memoryTag);
         }
     }

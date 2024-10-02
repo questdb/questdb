@@ -79,6 +79,7 @@ pub struct ColumnChunkStats {
 
 #[cfg(test)]
 mod tests {
+    use crate::allocator::TestAllocatorState;
     use crate::parquet::col_type::ColumnTypeTag;
     use crate::parquet::error::ParquetResult;
     use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol};
@@ -91,7 +92,6 @@ mod tests {
     use parquet::schema::types::Type;
     use std::io::Cursor;
     use std::sync::Arc;
-    use crate::allocator::TestAllocatorState;
 
     #[test]
     fn fn_load_symbol_without_local_is_global_format_meta() -> ParquetResult<()> {

@@ -1396,12 +1396,16 @@ mod tests {
                                 expected_aux_data.len() / size_of::<i64>(),
                             )
                         };
-                        expected_aux_data_slice.extend_from_slice(&0u64.to_le_bytes()).unwrap();
+                        expected_aux_data_slice
+                            .extend_from_slice(&0u64.to_le_bytes())
+                            .unwrap();
                         for i in 0..row_count {
                             let row_data_offset = vec_i64_ref[col_row_count + 1 + i];
-                            expected_aux_data_slice.extend_from_slice(
-                                &(row_data_offset - data_offset as i64).to_le_bytes(),
-                            ).unwrap();
+                            expected_aux_data_slice
+                                .extend_from_slice(
+                                    &(row_data_offset - data_offset as i64).to_le_bytes(),
+                                )
+                                .unwrap();
                         }
                         assert_eq!(expected_aux_data_slice, bufs.aux_vec);
                     }
@@ -1569,14 +1573,17 @@ mod tests {
         let null_sym_value = i32::MIN.to_le_bytes();
         while i < row_count {
             let symbol_value = i % distinct_values;
-            symbol_data_buff.extend_from_slice(&(symbol_value as i32).to_le_bytes()).unwrap();
+            symbol_data_buff
+                .extend_from_slice(&(symbol_value as i32).to_le_bytes())
+                .unwrap();
 
             let str_value = &str_values[i % distinct_values];
             append_varchar(
                 &mut expected_aux_buff,
                 &mut expected_data_buff,
                 str_value.as_bytes(),
-            ).unwrap();
+            )
+            .unwrap();
             i += 1;
 
             if i < row_count {
@@ -1607,7 +1614,9 @@ mod tests {
             let sym_chars: Vec<_> = s.encode_utf16().collect();
             let len = sym_chars.len();
             offsets.push(chars.len() as u64).unwrap();
-            chars.extend_from_slice(&(len as u32).to_le_bytes()).unwrap();
+            chars
+                .extend_from_slice(&(len as u32).to_le_bytes())
+                .unwrap();
             let encoded: &[u8] = unsafe {
                 std::slice::from_raw_parts(
                     sym_chars.as_ptr() as *const u8,
@@ -1668,14 +1677,22 @@ mod tests {
         let mut i = 0;
         while i < row_count {
             let str_value = &str_values[i % distinct_values];
-            data_buff.extend_from_slice(&(str_value.len() as i32).to_le_bytes()).unwrap();
-            data_buff.extend_from_slice(str_value.to_byte_slice()).unwrap();
-            aux_buff.extend_from_slice(&data_buff.len().to_le_bytes()).unwrap();
+            data_buff
+                .extend_from_slice(&(str_value.len() as i32).to_le_bytes())
+                .unwrap();
+            data_buff
+                .extend_from_slice(str_value.to_byte_slice())
+                .unwrap();
+            aux_buff
+                .extend_from_slice(&data_buff.len().to_le_bytes())
+                .unwrap();
             i += 1;
 
             if i < row_count {
                 data_buff.extend_from_slice(&(-1i32).to_le_bytes()).unwrap();
-                aux_buff.extend_from_slice(&data_buff.len().to_le_bytes()).unwrap();
+                aux_buff
+                    .extend_from_slice(&data_buff.len().to_le_bytes())
+                    .unwrap();
                 i += 1;
             }
         }

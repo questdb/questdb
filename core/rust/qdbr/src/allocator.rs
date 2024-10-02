@@ -97,27 +97,26 @@ impl Display for AllocFailure {
 
 impl std::error::Error for AllocFailure {}
 
-#[cfg(not(test))]
-#[repr(C, packed)]
-struct MemTracking {
+#[repr(C)]
+pub struct MemTracking {
     /// Resident set size memory used. Updated on each allocation, reallocation and deallocation,
     /// also from Java. This is regardless of the memory tag used.
-    rss_mem_used: &'static AtomicUsize,
+    rss_mem_used: AtomicUsize,
 
     /// Resident set size memory limit. Can be updated. Set to 0 for no explicit limit.
-    rss_mem_limit: &'static AtomicUsize,
+    rss_mem_limit: AtomicUsize,
 
     /// The total number of allocation calls.
-    malloc_count: &'static AtomicUsize,
+    malloc_count: AtomicUsize,
 
     /// The total number of reallocation (grow or shrink) calls.
-    realloc_count: &'static AtomicUsize,
+    realloc_count: AtomicUsize,
 
     /// The total number of free calls.
-    free_count: &'static AtomicUsize,
+    free_count: AtomicUsize,
 
     /// Tracking non-rss memory, such as mmap.
-    _non_rss_mem_used: &'static AtomicUsize,
+    _non_rss_mem_used: AtomicUsize,
 }
 
 /// Custom allocator that fails once a memory limit watermark is reached.
@@ -128,23 +127,13 @@ struct MemTracking {
 #[repr(C, packed)]
 pub struct QdbAllocator {
     /// Global counters
-    mem_tracking: &'static MemTracking,
+    pub mem_tracking: *const MemTracking,
 
     /// The total memory used for the specific memory tag.
-    tagged_used: &'static AtomicUsize,
+    pub tagged_used: *const AtomicUsize,
 
     /// Memory category. See `MemoryTag.java` for possible values.
     memory_tag: i32,
-}
-
-#[cfg(test)]
-struct MemTracking {
-    rss_mem_used: AtomicUsize,
-    rss_mem_limit: AtomicUsize,
-    malloc_count: AtomicUsize,
-    realloc_count: AtomicUsize,
-    free_count: AtomicUsize,
-    _non_rss_mem_used: AtomicUsize,
 }
 
 #[cfg(test)]
@@ -161,27 +150,39 @@ const COUNTER_ORDERING: Ordering = Ordering::AcqRel;
 #[cfg(not(test))]
 impl QdbAllocator {
     fn rss_mem_used(&self) -> &AtomicUsize {
-        &*(*self.mem_tracking).rss_mem_used
+        unsafe {
+            &(*self.mem_tracking).rss_mem_used
+        }
     }
 
     fn rss_mem_limit(&self) -> &AtomicUsize {
-        &*(*self.mem_tracking).rss_mem_limit
+        unsafe {
+            &(*self.mem_tracking).rss_mem_limit
+        }
     }
 
     fn malloc_count(&self) -> &AtomicUsize {
-        &*(*self.mem_tracking).malloc_count
+        unsafe {
+            &(*self.mem_tracking).malloc_count
+        }
     }
 
     fn realloc_count(&self) -> &AtomicUsize {
-        &*(*self.mem_tracking).realloc_count
+        unsafe {
+            &(*self.mem_tracking).realloc_count
+        }
     }
 
     fn free_count(&self) -> &AtomicUsize {
-        &*(*self.mem_tracking).free_count
+        unsafe {
+            &(*self.mem_tracking).free_count
+        }
     }
 
     fn tagged_used(&self) -> &AtomicUsize {
-        &*self.tagged_used
+        unsafe {
+            &*self.tagged_used
+        }
     }
 }
 
@@ -220,7 +221,6 @@ impl QdbAllocator {
             let new_rss_mem_used = rss_mem_used + requested_size;
             if new_rss_mem_used > rss_mem_limit {
                 ALLOC_ERROR.with(|error| {
-                    // eprintln!("    ---> failed! {:?}", failure);
                     *error.borrow_mut() = Some(AllocFailure::MemoryLimitExceeded {
                         memory_tag: self.memory_tag,
                         requested_size,
@@ -335,44 +335,6 @@ unsafe impl Allocator for QdbAllocator {
 
 pub type AcVec<T> = alloc_checked::vec::Vec<T, QdbAllocator>;
 
-// #[cfg(test)]
-// pub static RSS_MEM_USED: AtomicUsize = AtomicUsize::new(0);
-//
-// #[cfg(test)]
-// pub static RSS_MEM_LIMIT: AtomicUsize = AtomicUsize::new(0);
-//
-// #[cfg(test)]
-// pub static MALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
-//
-// #[cfg(test)]
-// pub static REALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
-//
-// #[cfg(test)]
-// pub static FREE_COUNT: AtomicUsize = AtomicUsize::new(0);
-//
-// #[cfg(test)]
-// pub static NON_RSS_MEM_USED: AtomicUsize = AtomicUsize::new(0);
-//
-// #[cfg(test)]
-// pub static TAGGED_USED: AtomicUsize = AtomicUsize::new(0);
-//
-// #[cfg(test)]
-// static TEST_MEM_TRACKING: MemTracking = MemTracking {
-//     rss_mem_used: &RSS_MEM_USED,
-//     rss_mem_limit: &RSS_MEM_LIMIT,
-//     malloc_count: &MALLOC_COUNT,
-//     realloc_count: &REALLOC_COUNT,
-//     free_count: &FREE_COUNT,
-//     _non_rss_mem_used: &NON_RSS_MEM_USED,
-// };
-//
-// #[cfg(test)]
-// pub static TEST_ALLOCATOR: QdbAllocator = QdbAllocator {
-//     mem_tracking: &TEST_MEM_TRACKING,
-//     tagged_used: &TAGGED_USED,
-//     memory_tag: 64,
-// };
-
 #[cfg(test)]
 pub struct TestAllocatorState {
     mem_tracking: Arc<MemTracking>,
@@ -393,10 +355,7 @@ impl TestAllocatorState {
 
         let tagged_used = Arc::new(AtomicUsize::new(0));
 
-        Self {
-            mem_tracking,
-            tagged_used,
-        }
+        Self { mem_tracking, tagged_used }
     }
 
     pub fn allocator(&self) -> QdbAllocator {
@@ -416,7 +375,9 @@ impl TestAllocatorState {
     }
 
     pub fn set_mem_rss_limit(&self, limit: usize) {
-        self.mem_tracking.rss_mem_limit.store(limit, Ordering::SeqCst);
+        self.mem_tracking
+            .rss_mem_limit
+            .store(limit, Ordering::SeqCst);
     }
 
     pub fn malloc_count(&self) -> usize {
@@ -438,15 +399,20 @@ impl TestAllocatorState {
 
 #[cfg(test)]
 mod tests {
+    use crate::allocator::{take_last_alloc_error, AllocFailure, TestAllocatorState};
     use std::alloc::Allocator;
     use std::ptr::NonNull;
-    use crate::allocator::{take_last_alloc_error, AllocFailure, TestAllocatorState};
+
+    #[test]
+    fn test_mem_tracking_size() {
+        assert_eq!(size_of::<crate::allocator::MemTracking>(), 6 * size_of::<u64>());
+    }
 
     #[test]
     fn test_alloc_fail() {
         let tas = TestAllocatorState::new();
         let allocator = tas.allocator();
-        let too_large = 1024 * 1024 * 1024 * 1024 * 1024;  // 1024 TB
+        let too_large = 1024 * 1024 * 1024 * 1024 * 1024; // 1024 TB
         let layout = std::alloc::Layout::from_size_align(too_large, 16).unwrap();
         let result = allocator.allocate(layout);
         assert!(result.is_err());
@@ -490,12 +456,15 @@ mod tests {
             let result = allocator.allocate(layout);
             assert!(result.is_err());
             let last_err = take_last_alloc_error().unwrap();
-            assert!(matches!(last_err, AllocFailure::MemoryLimitExceeded {
-                requested_size: 2048,
-                memory_tag: 65,
-                rss_mem_limit: 1024,
-                rss_mem_used: 0,
-            }));
+            assert!(matches!(
+                last_err,
+                AllocFailure::MemoryLimitExceeded {
+                    requested_size: 2048,
+                    memory_tag: 65,
+                    rss_mem_limit: 1024,
+                    rss_mem_used: 0,
+                }
+            ));
             assert_eq!(tas.malloc_count(), 1);
             assert_eq!(tas.realloc_count(), 0);
             assert_eq!(tas.free_count(), 1);
