@@ -92,6 +92,11 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     static final byte MESSAGE_TYPE_PORTAL_SUSPENDED = 's';
     static final byte MESSAGE_TYPE_ROW_DESCRIPTION = 'T';
     static final int NO_TRANSACTION = 0;
+    private static final int CACHE_HIT_INSERT_INVALID = 1;
+    private static final int CACHE_HIT_INSERT_VALID = 2;
+    private static final int CACHE_HIT_SELECT_INVALID = 3;
+    private static final int CACHE_HIT_SELECT_VALID = 4;
+    private static final int CACHE_MISS = 0;
     private static final Log LOG = LogFactory.getLog(PGConnectionContextModern.class);
     private static final byte MESSAGE_TYPE_READY_FOR_QUERY = 'Z';
     private static final byte MESSAGE_TYPE_SSL_SUPPORTED_RESPONSE = 'S';
@@ -943,42 +948,36 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // If they are defined, the pipeline entry
         // will have the supplied parameter types.
 
-        // Let's try to see if we have this SQL cached
-        // possible cache hits or misses:
-        // 0 - did not hit any cache
-        // 1 - hit "insert" cache but decided not to use it
-        // 2 - hit "insert" cache and using it
-
-        int cachedHit = 0;
+        int cachedStatus = CACHE_MISS;
         final TypesAndInsertModern tai = taiCache.peek(utf16SqlText);
         if (tai != null) {
             if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tai)) {
                 pipelineCurrentEntry.ofInsert(utf16SqlText, tai);
-                cachedHit = 2;
+                cachedStatus = CACHE_HIT_INSERT_VALID;
             } else {
                 //todo: find more efficient way to remove from cache what we have already looked up
                 // remove cached item, we will create it again, may be
                 TypesAndInsertModern tai2 = taiCache.poll(utf16SqlText);
                 assert tai2 == tai;
                 tai.close();
-                cachedHit = 1;
+                cachedStatus = CACHE_HIT_INSERT_INVALID;
             }
         }
 
-        if (cachedHit == 0) {
+        if (cachedStatus == CACHE_MISS) {
             final TypesAndSelectModern tas = tasCache.poll(utf16SqlText);
             if (tas != null) {
                 if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tas)) {
                     pipelineCurrentEntry.ofSelect(utf16SqlText, tas);
-                    cachedHit = 4;
+                    cachedStatus = CACHE_HIT_SELECT_VALID;
                 } else {
                     tas.close();
-                    cachedHit = 3;
+                    cachedStatus = CACHE_HIT_SELECT_INVALID;
                 }
             }
         }
 
-        if (cachedHit != 2 && cachedHit != 4) {
+        if (cachedStatus != CACHE_HIT_INSERT_VALID && cachedStatus != CACHE_HIT_SELECT_VALID) {
             // When parameter types are not supplied we will assume that the types are STRING
             // this is done by default, when CairoEngine compiles the SQL text. Assuming we're
             // compiling the SQL from scratch.
