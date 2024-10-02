@@ -8779,6 +8779,76 @@ nodejs code:
     }
 
     @Test
+    public void testSchemaChangeBetweenUsagesOfPreparedStatement() throws Exception {
+        skipOnWalRun(); // non-partitioned table
+        Assume.assumeFalse(legacyMode); // legacy code has a bug
+        // JDBC driver has a bug for some modes: it doesn't take into account the changed schema.
+        // We'll test only those modes that don't exhibit the bug.
+        assertWithPgServer(
+                CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY
+                        | CONN_AWARE_EXTENDED_CACHED_TEXT | CONN_AWARE_EXTENDED_CACHED_BINARY,
+                (connection, binary, mode, port) -> {
+                    connection.prepareStatement(
+                            "create table x as (select 2 id, 'foobar' str, timestamp_sequence(1,10000) as ts from long_sequence(1))"
+                    ).execute();
+                    try (PreparedStatement ps = connection.prepareStatement("x")) {
+                        try (ResultSet resultSet = ps.executeQuery()) {
+                            sink.clear();
+                            assertResultSet(
+                                    "id[INTEGER],str[VARCHAR],ts[TIMESTAMP]\n" +
+                                            "2,foobar,1970-01-01 00:00:00.000001\n",
+                                    sink,
+                                    resultSet
+                            );
+                        }
+                        connection.prepareStatement("alter table x drop column str;").execute();
+                        drainWalQueue();
+
+                        // Query the data once again - this time the schema is different,
+                        // so the query should get recompiled.
+                        // The bug is here!
+                        try (ResultSet resultSet = ps.executeQuery()) {
+                            sink.clear();
+                            assertResultSet(
+                                    "id[INTEGER],ts[TIMESTAMP]\n" +
+                                            "2,1970-01-01 00:00:00.000001\n",
+                                    sink,
+                                    resultSet
+                            );
+                        }
+                    }
+                });
+    }
+
+    @Test
+    public void testSchemaChangeInvalidatesCachedQuery() throws Exception {
+        Assume.assumeFalse(legacyMode);
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            ddl("create table x as " +
+                    "(select x a, x b, timestamp_sequence(0, 600000000) ts from long_sequence(3))" +
+                    " timestamp(ts) partition by hour");
+            mayDrainWalQueue();
+            try (PreparedStatement stmt = connection.prepareStatement("x")) {
+                try (ResultSet rs = stmt.executeQuery()) {
+                    sink.clear();
+                    assertResultSet("a[BIGINT],b[BIGINT],ts[TIMESTAMP]\n" +
+                            "1,1,1970-01-01 00:00:00.0\n" +
+                            "2,2,1970-01-01 00:10:00.0\n" +
+                            "3,3,1970-01-01 00:20:00.0\n", sink, rs);
+                }
+                ddl("alter table x drop column b");
+                mayDrainWalQueue();
+                try (ResultSet rs = stmt.executeQuery()) {
+                    sink.clear();
+                    assertTrue(rs.next());
+                    assertTrue(rs.next());
+                    assertTrue(rs.next());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSchemasCall() throws Exception {
         skipOnWalRun(); // non-partitioned table
         recvBufferSize = 2048;
@@ -10010,46 +10080,6 @@ create table tab as (
             } catch (SQLException e) {
                 TestUtils.assertContains(e.getMessage(), "Invalid column: x2");
                 TestUtils.assertEquals("00000", e.getSQLState());
-            }
-        });
-    }
-
-    @Test
-    @Ignore("this is where we execute cached SQL against changed table")
-    public void testTableSchemaChangeExtended() throws Exception {
-        skipOnWalRun(); // non-partitioned table
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            connection.prepareStatement(
-                    "create table x as (select 2 id, 'foobar' str, timestamp_sequence(1,10000) as ts from long_sequence(1))"
-            ).execute();
-
-            try (PreparedStatement ps = connection.prepareStatement("x")) {
-                try (ResultSet resultSet = ps.executeQuery()) {
-                    sink.clear();
-                    assertResultSet(
-                            "id[INTEGER],str[VARCHAR],ts[TIMESTAMP]\n" +
-                                    "2,foobar,1970-01-01 00:00:00.000001\n",
-                            sink,
-                            resultSet
-                    );
-                }
-
-                connection.prepareStatement("alter table x drop column str;").execute();
-
-                drainWalQueue();
-
-                // Query the data once again - this time the schema is different,
-                // so the query should get recompiled.
-                // !!! The bug is here
-                try (ResultSet resultSet = ps.executeQuery()) {
-                    sink.clear();
-                    assertResultSet(
-                            "id[INTEGER],ts[TIMESTAMP]\n" +
-                                    "2,1970-01-01 00:00:00.000001\n",
-                            sink,
-                            resultSet
-                    );
-                }
             }
         });
     }
