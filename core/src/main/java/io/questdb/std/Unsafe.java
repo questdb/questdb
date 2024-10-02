@@ -60,13 +60,13 @@ public final class Unsafe {
     private static final long OVERRIDE;
     //#endif
     private static final long REALLOC_COUNT_ADDR;
-    //#endif
     private static final long RSS_MEM_LIMIT_ADDR;
     private static final long RSS_MEM_USED_ADDR;
     private static final sun.misc.Unsafe UNSAFE;
     private static final AnonymousClassDefiner anonymousClassDefiner;
     //#if jdk.version!=8
     private static final Method implAddExports;
+    //#endif
 
     private Unsafe() {
     }
@@ -227,12 +227,11 @@ public final class Unsafe {
         UNSAFE.getAndAddLong(null, MALLOC_COUNT_ADDR, 1);
     }
 
-    //#if jdk.version!=8
-
     public static void incrReallocCount() {
         UNSAFE.getAndAddLong(null, REALLOC_COUNT_ADDR, 1);
     }
-    //#endif
+
+    //#if jdk.version!=8
 
     /**
      * Equivalent to {@link AccessibleObject#setAccessible(boolean) AccessibleObject.setAccessible(true)}, except that
@@ -243,6 +242,7 @@ public final class Unsafe {
     public static void makeAccessible(AccessibleObject accessibleObject) {
         UNSAFE.putBooleanVolatile(accessibleObject, OVERRIDE, true);
     }
+    //#endif
 
     public static long malloc(long size, int memoryTag) {
         try {
@@ -303,8 +303,24 @@ public final class Unsafe {
         }
     }
 
+    private static long getRssMemLimit() {
+        return UNSAFE.getLongVolatile(null, RSS_MEM_LIMIT_ADDR);
+    }
+
     public static void setRssMemLimit(long limit) {
         UNSAFE.putLongVolatile(null, RSS_MEM_LIMIT_ADDR, limit);
+    }
+
+    private static long createNativeAllocator(long nativeMemCountersArray, int memoryTag) {
+        // See `allocator.rs` for the definition of `QdbAllocator`.
+        // We construct here via `Unsafe` to avoid having initialization order issues with `Os.java`.
+        final long allocSize = 8 + 8 + 4;  // two longs, one int
+        final long addr = UNSAFE.allocateMemory(allocSize);
+        Vect.memset(addr, allocSize, 0);
+        UNSAFE.putLong(addr, nativeMemCountersArray);
+        UNSAFE.putLong(addr + 8, NATIVE_MEM_COUNTER_ADDRS[memoryTag]);
+        UNSAFE.putInt(addr + 16, memoryTag);
+        return addr;
     }
 
     //#if jdk.version!=8
@@ -322,6 +338,7 @@ public final class Unsafe {
         }
         return 16L;
     }
+    //#endif
 
     private static void checkAllocLimit(long size, int memoryTag) {
         if (size <= 0) {
@@ -341,19 +358,6 @@ public final class Unsafe {
                         .put(']');
             }
         }
-    }
-    //#endif
-
-    private static long createNativeAllocator(long nativeMemCountersArray, int memoryTag) {
-        // See `allocator.rs` for the definition of `QdbAllocator`.
-        // We construct here via `Unsafe` to avoid having initialization order issues with `Os.java`.
-        final long allocSize = 8 + 8 + 4;  // two longs, one int
-        final long addr = UNSAFE.allocateMemory(allocSize);
-        Vect.memset(addr, allocSize, 0);
-        UNSAFE.putLong(addr, nativeMemCountersArray);
-        UNSAFE.putLong(addr + 8, NATIVE_MEM_COUNTER_ADDRS[memoryTag]);
-        UNSAFE.putInt(addr + 16, memoryTag);
-        return addr;
     }
 
     //#if jdk.version!=8
@@ -378,10 +382,6 @@ public final class Unsafe {
             }
         }
         return new Probe().probe();
-    }
-
-    private static long getRssMemLimit() {
-        return UNSAFE.getLongVolatile(null, RSS_MEM_LIMIT_ADDR);
     }
     //#endif
 
