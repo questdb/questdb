@@ -370,10 +370,11 @@ public final class Files {
     public static native int msync(long addr, long len, boolean async);
 
     public static void munmap(long address, long len, int memoryTag) {
-        if (address != 0)
+        if (address != 0) {
             Unsafe.onExternalFree(address);
-        if (munmap0(address, len) != -1) {
-            Unsafe.recordMemAlloc(-len, memoryTag);
+            if (munmap0(address, len) != -1) {
+                Unsafe.recordMemAlloc(-len, memoryTag);
+            }
         }
     }
 
