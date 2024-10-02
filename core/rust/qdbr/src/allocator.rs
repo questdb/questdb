@@ -342,7 +342,7 @@ mod tests {
     use std::alloc::Allocator;
     use std::ptr::NonNull;
     use std::sync::atomic::AtomicUsize;
-    use crate::allocator::{take_last_alloc_error, AllocFailure, MemTracking, QdbAllocator, TestAllocatorLimitGuard, RSS_MEM_LIMIT, RSS_MEM_USED, TEST_ALLOCATOR};
+    use crate::allocator::{take_last_alloc_error, AllocFailure, MemTracking, QdbAllocator, TestAllocatorLimitGuard, FREE_COUNT, MALLOC_COUNT, REALLOC_COUNT, RSS_MEM_LIMIT, RSS_MEM_USED, TEST_ALLOCATOR};
 
     #[test]
     fn test_size_assumptions() {
@@ -361,7 +361,7 @@ mod tests {
     fn test_alloc_fail() {
         let allocator = TEST_ALLOCATOR;
         let too_large = 1024 * 1024 * 1024 * 1024 * 1024;  // 1024 TB
-        let layout = std::alloc::Layout::from_size_align(too_large, 8).unwrap();
+        let layout = std::alloc::Layout::from_size_align(too_large, 16).unwrap();
         let result = allocator.allocate(layout);
         assert!(result.is_err());
         let last_err = take_last_alloc_error().unwrap();
@@ -377,21 +377,31 @@ mod tests {
         assert_eq!(RSS_MEM_USED.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert_eq!(TEST_ALLOCATOR.tagged_used().load(std::sync::atomic::Ordering::SeqCst), 0);
         assert_eq!(RSS_MEM_LIMIT.load(std::sync::atomic::Ordering::SeqCst), 1024);
+        MALLOC_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
+        REALLOC_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
+        FREE_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
 
         // Ask for 64 bytes, should be fine.
         {
-            let layout = std::alloc::Layout::from_size_align(64, 8).unwrap();
+            let layout = std::alloc::Layout::from_size_align(64, 16).unwrap();
             let allocation = allocator.allocate(layout).unwrap();
+            assert_eq!(MALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert_eq!(REALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 0);
+            assert_eq!(FREE_COUNT.load(std::sync::atomic::Ordering::SeqCst), 0);
+            assert_eq!(TEST_ALLOCATOR.tagged_used().load(std::sync::atomic::Ordering::SeqCst), 64);
 
             // Free said allocation.
             let allocation = NonNull::new(allocation.as_ptr() as *mut u8).unwrap();
             unsafe { allocator.deallocate(allocation, layout) };
+            assert_eq!(MALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert_eq!(REALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 0);
+            assert_eq!(FREE_COUNT.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert_eq!(TEST_ALLOCATOR.tagged_used().load(std::sync::atomic::Ordering::SeqCst), 0);
         }
-
 
         // Now allocate in excess of the limit, should fail.
         {
-            let layout = std::alloc::Layout::from_size_align(2048, 8).unwrap();
+            let layout = std::alloc::Layout::from_size_align(2048, 16).unwrap();
             let result = allocator.allocate(layout);
             assert!(result.is_err());
             let last_err = take_last_alloc_error().unwrap();
@@ -401,9 +411,43 @@ mod tests {
                 rss_mem_limit: 1024,
                 rss_mem_used: 0,
             }));
+            assert_eq!(MALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert_eq!(REALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 0);
+            assert_eq!(FREE_COUNT.load(std::sync::atomic::Ordering::SeqCst), 1);
         }
 
         drop(limit_guard);
         assert_eq!(RSS_MEM_LIMIT.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn test_grow() {
+        MALLOC_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
+        REALLOC_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
+        FREE_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
+        let allocator = TEST_ALLOCATOR;
+        let layout = std::alloc::Layout::from_size_align(64, 16).unwrap();
+        let allocation = allocator.allocate(layout).unwrap();
+        assert_eq!(RSS_MEM_USED.load(std::sync::atomic::Ordering::SeqCst), 64);
+        assert_eq!(TEST_ALLOCATOR.tagged_used().load(std::sync::atomic::Ordering::SeqCst), 64);
+        assert_eq!(MALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(REALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(FREE_COUNT.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+        let allocation = NonNull::new(allocation.as_ptr() as *mut u8).unwrap();
+        let new_layout = std::alloc::Layout::from_size_align(128, 16).unwrap();
+        let new_allocation = unsafe { allocator.grow(allocation, layout, new_layout).unwrap() };
+        assert_eq!(RSS_MEM_USED.load(std::sync::atomic::Ordering::SeqCst), 128);
+        assert_eq!(TEST_ALLOCATOR.tagged_used().load(std::sync::atomic::Ordering::SeqCst), 128);
+        assert_eq!(MALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(REALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(FREE_COUNT.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let new_allocation = NonNull::new(new_allocation.as_ptr() as *mut u8).unwrap();
+        unsafe { allocator.deallocate(new_allocation, new_layout) };
+        assert_eq!(RSS_MEM_USED.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(TEST_ALLOCATOR.tagged_used().load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(MALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(REALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(FREE_COUNT.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 }
