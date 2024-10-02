@@ -198,7 +198,7 @@ public class ServerMain implements Closeable {
     }
 
     public void awaitTxn(String tableName, long txn) {
-        getEngine().awaitTxn(tableName, txn, 1, TimeUnit.SECONDS);
+        getEngine().awaitTxn(tableName, txn, 15, TimeUnit.SECONDS);
     }
 
     @Override
@@ -367,6 +367,7 @@ public class ServerMain implements Closeable {
                             sharedPool.assign(telemetryJob);
                         }
                     }
+
                 } catch (Throwable thr) {
                     throw new Bootstrap.BootstrapException(thr);
                 }
@@ -427,6 +428,10 @@ public class ServerMain implements Closeable {
                     workerPoolManager
             ));
         }
+
+        // metadata hydration
+        Thread hydrateMetadataThread = new Thread(engine::metadataCacheAsyncHydrator);
+        hydrateMetadataThread.start();
 
         System.gc(); // GC 1
         bootstrap.getLog().advisoryW().$("server is ready to be started").$();

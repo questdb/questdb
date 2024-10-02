@@ -22,24 +22,18 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.functions.table;
+package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-import static io.questdb.griffin.engine.functions.catalogue.ShowTablesFunctionFactory.ShowTablesCursorFactory;
-
-public class AllTablesFunctionFactory implements FunctionFactory {
-
-    public static final RecordMetadata METADATA;
-    public static final String SIGNATURE = "all_tables()";
+public class TodayFunctionFactory implements FunctionFactory {
+    private static final String SIGNATURE = "today()";
 
     @Override
     public String getSignature() {
@@ -47,23 +41,31 @@ public class AllTablesFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public boolean isRuntimeConstant() {
-        return true;
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new Func();
     }
 
-    @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new CursorFunction(new ShowTablesCursorFactory(configuration, AllTablesFunctionFactory.METADATA, AllTablesFunctionFactory.SIGNATURE)) {
-            @Override
-            public boolean isRuntimeConstant() {
-                return true;
-            }
-        };
-    }
+    private static class Func extends AbstractDayIntervalFunction {
 
-    static {
-        GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(ShowTablesCursorFactory.TABLE_NAME_COLUMN_META);
-        METADATA = metadata;
+        @Override
+        public String getName() {
+            return "today";
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(SIGNATURE);
+        }
+
+        @Override
+        protected int shiftFromToday() {
+            return 0;
+        }
     }
 }

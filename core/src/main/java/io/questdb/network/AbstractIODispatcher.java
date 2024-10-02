@@ -157,7 +157,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
 
     @Override
     public void disconnect(C context, int reason) {
-        LOG.info()
+        LOG.debug()
                 .$("scheduling disconnect [fd=").$(context.getFd())
                 .$(", reason=").$(reason)
                 .I$();

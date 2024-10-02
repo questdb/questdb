@@ -84,38 +84,39 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static final SetRecordCursorFactoryConstructor SET_INTERSECT_CONSTRUCTOR = IntersectRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_UNION_CONSTRUCTOR = UnionRecordCursorFactory::new;
     private static final int[][] UNION_CAST_MATRIX = new int[][]{
-            {0, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 0,},
-            {11, 1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 1,},
-            {11, 11, 2, 3, 11, 5, 6, 7, 8, 9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 2,},
-            {11, 11, 3, 3, 3, 5, 6, 7, 8, 9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 3,},
-            {11, 11, 11, 3, 4, 5, 6, 7, 8, 9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11,},
-            {11, 11, 5, 5, 5, 5, 6, 7, 8, 9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 5,},
-            {11, 11, 6, 6, 6, 6, 6, 7, 8, 9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 6,},
-            {11, 11, 7, 7, 7, 7, 7, 7, 8, 9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 7,},
-            {11, 11, 8, 8, 8, 8, 8, 8, 8, 9, 10, 11, 8, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 8,},
-            {11, 11, 9, 9, 9, 9, 9, 9, 9, 9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 9,},
-            {11, 11, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 10,},
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 25, 11, 11, 11, 11, 11, 11,},
-            {11, 11, 11, 11, 11, 11, 11, 11, 8, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11,},
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 13, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 13,},
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,},
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,},
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,},
-            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,},
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 18, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 18,},
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 19, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 19,},
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 20, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 20,},
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 21, 11, 11, 11, 11, 26, 11, 11, 11, 11, 21,},
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 22, 11, 11, 11, 26, 11, 11, 11, 11, 22,},
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 23, 11, 11, 26, 11, 11, 11, 11, 23,},
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 24, 11, 26, 11, 11, 11, 11, 24,},
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 25, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 25, 26, 11, 11, 11, 11, 25,},
-            {26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 11, 26, 26, -1, -1, -1, -1, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26,},
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 27, 11, 11, 11, 27,},
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 28, 11, 11, 28,},
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 29, 11, 29,},
-            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 30, 30,},
-            {0, 1, 2, 3, 11, 5, 6, 7, 8, 9, 10, 11, 11, 13, -1, -1, -1, -1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,},
+            {0, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 0,},
+            {11, 1, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 1,},
+            {11, 11, 2, 3, 11, 5, 6, 7, 8, 9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 2,},
+            {11, 11, 3, 3, 3, 5, 6, 7, 8, 9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 3,},
+            {11, 11, 11, 3, 4, 5, 6, 7, 8, 9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11,},
+            {11, 11, 5, 5, 5, 5, 6, 7, 8, 9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 5,},
+            {11, 11, 6, 6, 6, 6, 6, 7, 8, 9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 6,},
+            {11, 11, 7, 7, 7, 7, 7, 7, 8, 9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 7,},
+            {11, 11, 8, 8, 8, 8, 8, 8, 8, 9, 10, 11, 8, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 8,},
+            {11, 11, 9, 9, 9, 9, 9, 9, 9, 9, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 9,},
+            {11, 11, 10, 10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 10,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 25, 11, 11, 11, 11, 11, 11, 11,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 8, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 11,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 13, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 13,},
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,},
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,},
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,},
+            {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 18, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 18,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 19, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 19,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 20, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 20,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 21, 11, 11, 11, 11, 26, 11, 11, 11, 11, 11, 21,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 22, 11, 11, 11, 26, 11, 11, 11, 11, 11, 22,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 23, 11, 11, 26, 11, 11, 11, 11, 11, 23,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 24, 11, 26, 11, 11, 11, 11, 11, 24,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 25, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 25, 26, 11, 11, 11, 11, 11, 25,},
+            {26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 11, 26, 26, -1, -1, -1, -1, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26, 26,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 27, 11, 11, 11, 11, 27,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 28, 11, 11, 11, 28,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 29, 11, 11, 29,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 30, 11, 30,},
+            {11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, -1, -1, -1, -1, 11, 11, 11, 11, 11, 11, 11, 11, 26, 11, 11, 11, 11, 31, 31,},
+            {0, 1, 2, 3, 11, 5, 6, 7, 8, 9, 10, 11, 11, 13, -1, -1, -1, -1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,},
     };
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
     private static final ModelOperator backupWhereClauseRef = QueryModel::backupWhereClause;
@@ -1370,6 +1371,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         )
                                 );
                                 break;
+                            case ColumnType.INTERVAL:
+                                castFunctions.add(new CastIntervalToStrFunctionFactory.Func(new IntervalColumn(i)));
+                                break;
                             case ColumnType.BINARY:
                                 throw SqlException.unsupportedCast(
                                         modelPosition,
@@ -1384,7 +1388,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 new SymbolColumn(
                                         i,
                                         castFromMetadata.isSymbolTableStatic(i)
-                                )));
+                                )
+                        ));
                         break;
                     case ColumnType.LONG256:
                         castFunctions.add(new Long256Column(i));
@@ -1685,6 +1690,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             default:
                                 assert false;
                         }
+                        break;
+                    case ColumnType.INTERVAL:
+                        castFunctions.add(new IntervalColumn(i));
+                        break;
                 }
             }
         }
@@ -1856,7 +1865,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                     final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
 
-                    LOG.info()
+                    LOG.debug()
                             .$("JIT enabled for (sub)query [tableName=").utf8(model.getName())
                             .$(", fd=").$(executionContext.getRequestFd())
                             .I$();
@@ -2773,7 +2782,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     int index = metadata.getColumnIndexQuiet(column);
 
                     // check if column type is supported
-                    if (ColumnType.isBinary(metadata.getColumnType(index))) {
+                    final int columnType = metadata.getColumnType(index);
+                    if (!ColumnType.isComparable(columnType)) {
                         // find position of offending column
                         ObjList<ExpressionNode> nodes = model.getOrderBy();
                         int position = 0;
@@ -2783,7 +2793,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             }
                         }
-                        throw SqlException.$(position, "unsupported column type: ").put(ColumnType.nameOf(metadata.getColumnType(index)));
+                        throw SqlException.$(position, "unsupported column type: ").put(ColumnType.nameOf(columnType));
                     }
 
                     // we also maintain unique set of column indexes for better performance
@@ -3477,6 +3487,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         if (entity) {
+            model.setSkipped(true);
             return factory;
         }
 
@@ -3943,18 +3954,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 Function filter = null;
                 // Try to steal the filter from the nested factory, if possible.
                 // We aim for simple cases such as select key, avg(value) from t where value > 0
-                if (!supportsParallelism && (factory instanceof StealableFilterRecordCursorFactory)) {
-                    StealableFilterRecordCursorFactory filterFactory = (StealableFilterRecordCursorFactory) factory;
-                    if (filterFactory.supportsFilterStealing()) {
-                        factory = factory.getBaseFactory();
-                        assert factory.supportsPageFrameCursor();
-                        compiledFilter = filterFactory.getCompiledFilter();
-                        bindVarMemory = filterFactory.getBindVarMemory();
-                        bindVarFunctions = filterFactory.getBindVarFunctions();
-                        filter = filterFactory.getFilter();
-                        supportsParallelism = true;
-                        filterFactory.halfClose();
-                    }
+                if (!supportsParallelism && factory.supportsFilterStealing()) {
+                    RecordCursorFactory filterFactory = factory;
+                    factory = factory.getBaseFactory();
+                    assert factory.supportsPageFrameCursor();
+                    compiledFilter = filterFactory.getCompiledFilter();
+                    bindVarMemory = filterFactory.getBindVarMemory();
+                    bindVarFunctions = filterFactory.getBindVarFunctions();
+                    filter = filterFactory.getFilter();
+                    supportsParallelism = true;
+                    filterFactory.halfClose();
                 }
 
                 if (supportsParallelism) {
@@ -3993,7 +4002,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         executionContext,
                                         filter,
                                         executionContext.getSharedWorkerCount(),
-                                        nested.getWhereClause(),
+                                        locatePotentiallyFurtherNestedWhereClause(nested),
                                         factory.getMetadata()
                                 ),
                                 executionContext.getSharedWorkerCount()
@@ -4039,7 +4048,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             executionContext,
                                             filter,
                                             executionContext.getSharedWorkerCount(),
-                                            nested.getWhereClause(),
+                                            locatePotentiallyFurtherNestedWhereClause(nested),
                                             factory.getMetadata()
                                     ),
                                     executionContext.getSharedWorkerCount()
@@ -4983,7 +4992,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         boolean orderDescendingByDesignatedTimestampOnly = isOrderDescendingByDesignatedTimestampOnly(model);
         if (withinExtracted != null) {
             CharSequence preferredKeyColumn = null;
-
             if (latestByColumnCount == 1) {
                 final int latestByIndex = listColumnFilterA.getColumnIndexFactored(0);
 
@@ -5672,6 +5680,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private boolean isSameTable(RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {
         return masterFactory.getTableToken() != null && masterFactory.getTableToken().equals(slaveFactory.getTableToken());
+    }
+
+    // skips skipped models until finding a WHERE clause
+    private ExpressionNode locatePotentiallyFurtherNestedWhereClause(QueryModel model) {
+        QueryModel curr = model;
+        ExpressionNode expr = curr.getWhereClause();
+
+        while (curr.isSkipped() && expr == null) {
+            expr = curr.getWhereClause();
+            curr = curr.getNestedModel();
+        }
+
+        if (expr == null) {
+            expr = curr.getWhereClause();
+        }
+
+        return expr;
     }
 
     private void lookupColumnIndexes(

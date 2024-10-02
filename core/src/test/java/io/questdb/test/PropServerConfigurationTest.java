@@ -79,6 +79,8 @@ public class PropServerConfigurationTest {
         Properties properties = new Properties();
         PropServerConfiguration configuration = newPropServerConfiguration(root, properties, null, new BuildInformationHolder());
         FilesFacade ff = configuration.getCairoConfiguration().getFilesFacade();
+
+        Assert.assertFalse(configuration.getCairoConfiguration().getLogLevelVerbose());
         Assert.assertEquals(4, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionPoolInitialCapacity());
         Assert.assertEquals(128, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getConnectionStringPoolCapacity());
         Assert.assertEquals(512, configuration.getHttpServerConfiguration().getHttpContextConfiguration().getMultipartHeaderBufferSize());
@@ -158,6 +160,8 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().getCircuitBreakerConfiguration().isEnabled());
         Assert.assertEquals(2_000_000, configuration.getCairoConfiguration().getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getCircuitBreakerConfiguration().getBufferSize());
+
+        Assert.assertTrue(configuration.getCairoConfiguration().getLogSqlQueryProgressExe());
 
         Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
         Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());

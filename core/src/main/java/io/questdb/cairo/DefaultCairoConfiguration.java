@@ -29,6 +29,8 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.std.*;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
@@ -388,6 +390,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public @NotNull CharSequence getLegacyCheckpointRoot() {
         return legacyCheckpointRoot;
+    }
+
+    @Override
+    public boolean getLogLevelVerbose() {
+        return false;
+    }
+
+    @Override
+    public boolean getLogSqlQueryProgressExe() {
+        return true;
     }
 
     @Override
@@ -1155,5 +1167,35 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean useFastAsOfJoin() {
         return true;
+    }
+
+    @Override
+    public int getPartitionEncoderParquetVersion() {
+        return ParquetVersion.PARQUET_VERSION_V1;
+    }
+
+    @Override
+    public boolean isPartitionEncoderParquetStatisticsEnabled() {
+        return true;
+    }
+
+    @Override
+    public int getPartitionEncoderParquetCompressionCodec() {
+        return ParquetCompression.COMPRESSION_UNCOMPRESSED;
+    }
+
+    @Override
+    public int getPartitionEncoderParquetCompressionLevel() {
+        return 0;
+    }
+
+    @Override
+    public int getPartitionEncoderParquetRowGroupSize() {
+        return 0; // use default (512*512) rows
+    }
+
+    @Override
+    public int getPartitionEncoderParquetDataPageSize() {
+        return 0; // use default (1024*1024) bytes
     }
 }

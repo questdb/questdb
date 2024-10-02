@@ -48,7 +48,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 
-public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFactory implements StealableFilterRecordCursorFactory {
+public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer REDUCER = AsyncJitFilteredRecordCursorFactory::filter;
 
     private final RecordCursorFactory base;

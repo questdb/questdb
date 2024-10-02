@@ -29,10 +29,13 @@ import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.jit.CompiledFilter;
 import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -64,6 +67,23 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         return base;
     }
 
+    // to be used in combination with compiled filter
+    @Nullable
+    public ObjList<Function> getBindVarFunctions() {
+        return base.getBindVarFunctions();
+    }
+
+    // to be used in combination with compiled filter
+    @Nullable
+    public MemoryCARW getBindVarMemory() {
+        return base.getBindVarMemory();
+    }
+
+    @Override
+    public CompiledFilter getCompiledFilter() {
+        return base.getCompiledFilter();
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
@@ -74,6 +94,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
             cursor.close();
             throw th;
         }
+    }
+
+    @Override
+    public Function getFilter() {
+        return base.getFilter();
     }
 
     @Override
@@ -91,6 +116,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public int getScanDirection() {
         return base.getScanDirection();
+    }
+
+    @Override
+    public void halfClose() {
+        base.halfClose();
     }
 
     @Override

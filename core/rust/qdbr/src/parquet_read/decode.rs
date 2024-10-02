@@ -119,6 +119,31 @@ impl ParquetDecoder {
 
         Ok(())
     }
+
+    pub fn update_column_chunk_stats(
+        &mut self,
+        row_group: usize,
+        file_column_index: usize,
+        column: usize,
+    ) {
+        let columns = self.metadata.row_groups[row_group].columns();
+        let column_metadata = &columns[file_column_index];
+        let column_chunk = column_metadata.column_chunk();
+        let stats = &mut self.column_chunk_stats[column];
+
+        stats.min_value.clear();
+
+        if let Some(meta_data) = &column_chunk.meta_data {
+            if let Some(statistics) = &meta_data.statistics {
+                if let Some(min) = statistics.min_value.as_ref() {
+                    stats.min_value.extend_from_slice(min);
+                }
+            }
+        }
+
+        stats.min_value_ptr = stats.min_value.as_mut_ptr();
+        stats.min_value_size = stats.min_value.len();
+    }
 }
 
 pub fn decoder_page(
@@ -352,6 +377,28 @@ pub fn decoder_page(
 
                     Ok(row_count)
                 }
+                (
+                    Encoding::RleDictionary | Encoding::PlainDictionary,
+                    Some(dict_page),
+                    _,
+                    ColumnType::Byte,
+                ) => {
+                    let dict_decoder = FixedDictDecoder::<4>::try_new(dict_page)?;
+                    let mut slicer = RleDictionarySlicer::try_new(
+                        values_buffer,
+                        dict_decoder,
+                        row_count,
+                        &INT_NULL,
+                    )?;
+                    decode_page(
+                        version,
+                        page,
+                        row_count,
+                        &mut FixedInt2ByteColumnSink::new(&mut slicer, buffers, &BYTE_NULL),
+                    )?;
+
+                    Ok(row_count)
+                }
                 _ => Err(encoding_error),
             }
         }
@@ -518,7 +565,11 @@ pub fn decoder_page(
                     Ok(row_count)
                 }
 
-                (Encoding::DeltaLengthByteArray, None, ColumnType::Varchar) => {
+                (
+                    Encoding::DeltaLengthByteArray,
+                    None,
+                    ColumnType::Varchar | ColumnType::Symbol,
+                ) => {
                     let mut slicer = DeltaLengthArraySlicer::try_new(values_buffer, row_count)?;
                     decode_page(
                         version,
@@ -532,7 +583,7 @@ pub fn decoder_page(
                 (
                     Encoding::RleDictionary | Encoding::PlainDictionary,
                     Some(dict_page),
-                    ColumnType::Varchar,
+                    ColumnType::Varchar | ColumnType::Symbol,
                 ) => {
                     let dict_decoder = VarDictDecoder::try_new(dict_page, true)?;
                     let mut slicer = RleDictionarySlicer::try_new(
@@ -561,7 +612,7 @@ pub fn decoder_page(
                     Ok(row_count)
                 }
 
-                (Encoding::Plain, _, ColumnType::Varchar) => {
+                (Encoding::Plain, _, ColumnType::Varchar | ColumnType::Symbol) => {
                     let mut slicer = PlainVarSlicer::new(values_buffer, row_count);
                     decode_page(
                         version,
@@ -572,7 +623,7 @@ pub fn decoder_page(
                     Ok(row_count)
                 }
 
-                (Encoding::DeltaByteArray, _, ColumnType::Varchar) => {
+                (Encoding::DeltaByteArray, _, ColumnType::Varchar | ColumnType::Symbol) => {
                     let mut slicer = DeltaBytesArraySlicer::try_new(values_buffer, row_count)?;
                     decode_page(
                         version,

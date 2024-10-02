@@ -22,45 +22,19 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.table;
+package io.questdb.griffin.engine.functions.constants;
 
-import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.jit.CompiledFilter;
-import io.questdb.std.ObjList;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.TypeConstant;
+import io.questdb.griffin.engine.functions.IntervalFunction;
+import io.questdb.std.Interval;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
-public interface StealableFilterRecordCursorFactory {
+public class IntervalTypeConstant extends IntervalFunction implements TypeConstant {
+    public static final IntervalTypeConstant INSTANCE = new IntervalTypeConstant();
 
-    // to be used in combination with compiled filter
-    @Nullable
-    default ObjList<Function> getBindVarFunctions() {
-        return null;
+    @Override
+    public @NotNull Interval getInterval(Record rec) {
+        return Interval.NULL;
     }
-
-    // to be used in combination with compiled filter
-    @Nullable
-    default MemoryCARW getBindVarMemory() {
-        return null;
-    }
-
-    @Nullable
-    default CompiledFilter getCompiledFilter() {
-        return null;
-    }
-
-    @NotNull
-    Function getFilter();
-
-    /**
-     * Closes everything but base factory and filter.
-     */
-    void halfClose();
-
-    /**
-     * Returns true if the factory stands for nothing more but a filter, so that
-     * the above factory (e.g. a parallel GROUP BY one) can steal the filter.
-     */
-    boolean supportsFilterStealing();
 }

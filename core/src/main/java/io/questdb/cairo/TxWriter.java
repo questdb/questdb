@@ -372,7 +372,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         long maskedSize = attachedPartitions.getQuick(offset);
 
         maskedSize = updatePartitionHasParquetFormat(maskedSize, true);
-        maskedSize = updatePartitionIsReadOnly(maskedSize, true);
 
         attachedPartitions.setQuick(offset, maskedSize);
 

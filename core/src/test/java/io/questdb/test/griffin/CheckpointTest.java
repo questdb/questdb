@@ -572,6 +572,12 @@ public class CheckpointTest extends AbstractCairoTest {
 
             drainWalQueue();
 
+            // Stale metadata so no change
+            assertSql("count\n0\n", "select count() from tables() where table_name = 'test';");
+            assertSql("count\n1\n", "select count() from tables() where table_name = 'test2';");
+
+            engine.metadataCacheHydrateAllTables();
+
             // Renamed table should be there under the original name.
             assertSql("count\n1\n", "select count() from tables() where table_name = 'test';");
             assertSql("count\n0\n", "select count() from tables() where table_name = 'test2';");
@@ -611,7 +617,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointStatus() throws Exception {
         assertMemoryLeak(() -> {
-            currentMicros = 0;
+            setCurrentMicros(0);
             assertSql(
                     "in_progress\tstarted_at\n" +
                             "false\t\n",
@@ -1011,7 +1017,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testSuspendResumeWalPurgeJob() throws Exception {
         assertMemoryLeak(() -> {
-            currentMicros = 0;
+            setCurrentMicros(0);
             String tableName = testName.getMethodName();
             ddl(
                     "create table " + tableName + " as (" +
@@ -1044,7 +1050,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
             ddl("checkpoint create");
             Thread controlThread1 = new Thread(() -> {
-                currentMicros = interval;
+                setCurrentMicros(interval);
                 job.drain(0);
                 Path.clearThreadLocals();
             });
@@ -1059,7 +1065,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
             ddl("checkpoint release");
             Thread controlThread2 = new Thread(() -> {
-                currentMicros = 2 * interval;
+                setCurrentMicros(2 * interval);
                 job.drain(0);
                 Path.clearThreadLocals();
             });

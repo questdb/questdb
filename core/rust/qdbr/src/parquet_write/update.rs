@@ -21,6 +21,120 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+use crate::parquet_write::file::{create_row_group, WriteOptions};
+use crate::parquet_write::schema::{to_encodings, Partition};
+use anyhow::Context;
+use parquet2::compression::CompressionOptions;
+use parquet2::metadata::{KeyValue, SortingColumn};
+use parquet2::read::read_metadata_with_size;
+use parquet2::write;
+use parquet2::write::{ParquetFile, Version};
+use std::fs::File;
+
+#[repr(C)]
+pub struct ParquetUpdater {
+    parquet_file: ParquetFile<File>,
+    compression_options: CompressionOptions,
+    row_group_size: Option<usize>,
+    data_page_size: Option<usize>,
+}
+
+impl ParquetUpdater {
+    pub fn new(
+        mut reader: File,
+        file_size: u64,
+        sorting_columns: Option<Vec<SortingColumn>>,
+        write_statistics: bool,
+        compression_options: CompressionOptions,
+        row_group_size: Option<usize>,
+        data_page_size: Option<usize>,
+    ) -> anyhow::Result<Self> {
+        fn from(value: i32) -> Version {
+            match value {
+                1 => Version::V1,
+                2 => Version::V2,
+                _ => panic!("Invalid version number: {}", value),
+            }
+        }
+
+        let metadata = read_metadata_with_size(&mut reader, file_size)?;
+        let version = from(metadata.version);
+        let created_by = metadata.created_by.clone();
+        let schema = metadata.schema_descr.clone();
+        let options = write::WriteOptions { write_statistics, version };
+        let parquet_file = ParquetFile::new_updater(
+            reader,
+            file_size,
+            schema,
+            options,
+            created_by,
+            sorting_columns,
+            metadata.into_thrift(),
+        );
+
+        Ok(ParquetUpdater {
+            parquet_file,
+            compression_options,
+            row_group_size,
+            data_page_size,
+        })
+    }
+
+    pub fn replace_row_group(
+        &mut self,
+        partition: &Partition,
+        row_group_id: i16,
+    ) -> anyhow::Result<()> {
+        let options = self.row_group_options();
+        let row_group = create_row_group(
+            partition,
+            0,
+            partition.columns[0].row_count,
+            self.parquet_file.schema().fields(),
+            &to_encodings(partition),
+            options,
+            false,
+        )?;
+
+        self.parquet_file
+            .replace(row_group, Some(row_group_id))
+            .context(format!("Failed to replace row group {}", row_group_id))
+    }
+
+    pub fn append_row_group(&mut self, partition: &Partition) -> anyhow::Result<()> {
+        let options = self.row_group_options();
+        let row_group = create_row_group(
+            partition,
+            0,
+            partition.columns[0].row_count,
+            self.parquet_file.schema().fields(),
+            &to_encodings(partition),
+            options,
+            false,
+        )?;
+
+        self.parquet_file
+            .append(row_group)
+            .context("Failed to append row group")
+    }
+
+    pub fn end(&mut self, key_value_metadata: Option<Vec<KeyValue>>) -> anyhow::Result<u64> {
+        self.parquet_file
+            .end(key_value_metadata)
+            .context("Failed to update parquet file")
+    }
+
+    fn row_group_options(&self) -> WriteOptions {
+        WriteOptions {
+            write_statistics: self.parquet_file.options().write_statistics,
+            compression: self.compression_options,
+            version: self.parquet_file.options().version,
+            row_group_size: self.row_group_size,
+            data_page_size: self.data_page_size,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;

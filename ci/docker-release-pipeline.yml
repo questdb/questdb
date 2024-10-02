@@ -1,7 +1,19 @@
 trigger:
   branches:
+    exclude:
+      - "*"
+  tags:
     include:
-      - 'master'
+      - '*.*.*'
+
+pr: none
+
+schedules:
+  - cron: "0 0 * * *"
+    displayName: Midnight Trigger
+    branches:
+      include:
+        - master
 
 pool:
   vmImage: 'ubuntu-20.04'
@@ -47,7 +59,14 @@ jobs:
             # We use cut instead to trim the first 2 components off the Build.SourceBranch ("refs/tags")
             tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
             echo $tag_name
-            docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$tag_name .
+            pattern='^[0-9]+\.[0-9]+\.[0-9]+$'
+            if [[ "$tag_name" =~ $pattern ]]; then
+              echo "labeling latest"
+              docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$tag_name -t questdb/questdb:latest .
+            else
+              echo "NOT labeling latest"
+              docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$tag_name .
+            fi
             docker buildx build --build-arg tag_name=$tag_name --platform linux/amd64,linux/arm64 --push -t questdb/questdb:$tag_name-rhel --target rhel  .
           workingDirectory: core
         condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/'))

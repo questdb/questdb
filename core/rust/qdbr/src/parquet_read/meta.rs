@@ -1,4 +1,4 @@
-use crate::parquet_read::{ColumnChunkBuffers, ColumnMeta, ParquetDecoder};
+use crate::parquet_read::{ColumnChunkBuffers, ColumnChunkStats, ColumnMeta, ParquetDecoder};
 use crate::parquet_write::schema::ColumnType;
 use crate::parquet_write::QDB_TYPE_META_PREFIX;
 use parquet2::metadata::Descriptor;
@@ -22,6 +22,7 @@ impl ParquetDecoder {
             });
         let mut columns = Vec::with_capacity(col_len);
         let mut column_buffers = Vec::with_capacity(col_len);
+        let mut column_chunk_stats = Vec::with_capacity(col_len);
 
         for (column_id, f) in metadata.schema_descr.columns().iter().enumerate() {
             // Some types are not supported, this will skip them.
@@ -41,6 +42,7 @@ impl ParquetDecoder {
                 });
 
                 column_buffers.push(ColumnChunkBuffers::new());
+                column_chunk_stats.push(ColumnChunkStats::new());
             }
         }
 
@@ -55,6 +57,7 @@ impl ParquetDecoder {
             columns_ptr: columns.as_ptr(),
             columns,
             column_buffers,
+            column_chunk_stats,
         };
 
         Ok(decoder)

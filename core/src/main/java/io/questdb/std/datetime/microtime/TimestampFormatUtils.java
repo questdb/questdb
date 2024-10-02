@@ -352,13 +352,13 @@ public class TimestampFormatUtils {
     }
 
     // YYYYMMDD
-    public static void formatYYYYMMDD(@NotNull CharSink<?> sink, long millis) {
-        int y = Timestamps.getYear(millis);
+    public static void formatYYYYMMDD(@NotNull CharSink<?> sink, long micros) {
+        int y = Timestamps.getYear(micros);
         boolean l = Timestamps.isLeapYear(y);
-        int m = Timestamps.getMonthOfYear(millis, y, l);
+        int m = Timestamps.getMonthOfYear(micros, y, l);
         Numbers.append(sink, y);
         append0(sink, m);
-        append0(sink, Timestamps.getDayOfMonth(millis, y, m, l));
+        append0(sink, Timestamps.getDayOfMonth(micros, y, m, l));
     }
 
     public static long getReferenceYear() {

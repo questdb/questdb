@@ -1793,6 +1793,20 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinByInterval() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "i\ts\ti1\ts1\n" +
+                        "('1970-01-01T00:00:00.100Z', '1970-01-01T00:00:00.200Z')\tfoo\t('1970-01-01T00:00:00.100Z', '1970-01-01T00:00:00.200Z')\tbar\n",
+                "select * from (" +
+                        "  (select interval(100000,200000) i, 'foo' s) a " +
+                        "  join " +
+                        "  (select interval(100000,200000) i, 'bar' s) b " +
+                        "  on a.i = b.i " +
+                        ")"
+        ));
+    }
+
+    @Test
     public void testJoinColumnPropagationIntoJoinModel() throws Exception {
         assertMemoryLeak(() -> {
             ddl(
@@ -2142,7 +2156,8 @@ public class JoinTest extends AbstractCairoTest {
             insert("INSERT INTO x VALUES (now(), 42)");
             assertQueryNoLeakCheck(
                     "count\n" +
-                            "1\n", "SELECT count(*) FROM x AS a INNER JOIN x AS b ON a.event = b.event WHERE now() = now()",
+                            "1\n",
+                    "SELECT count(*) FROM x AS a INNER JOIN x AS b ON a.event = b.event WHERE now() = now()",
                     null,
                     false,
                     true
@@ -5664,6 +5679,12 @@ public class JoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             AtomicInteger counter = new AtomicInteger();
             ff = new TestFilesFacadeImpl() {
+                @Override
+                public int errno() {
+                    // return "Too many open files" to avoid conflicting with ERRNO_FILE_DOES_NOT_EXIST.
+                    return 4;
+                }
+
                 @Override
                 public long openRO(LPSZ name) {
                     if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "ts.d") && counter.incrementAndGet() == 1) {

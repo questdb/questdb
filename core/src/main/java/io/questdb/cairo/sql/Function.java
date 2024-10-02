@@ -31,10 +31,12 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -122,6 +124,9 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     int getIPv4(Record rec);
 
     int getInt(Record rec);
+
+    @NotNull
+    Interval getInterval(Record rec);
 
     long getLong(Record rec);
 

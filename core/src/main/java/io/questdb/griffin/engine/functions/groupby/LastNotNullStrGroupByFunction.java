@@ -42,7 +42,7 @@ public class LastNotNullStrGroupByFunction extends FirstStrGroupByFunction {
             mapValue.putLong(valueIndex, rowId);
             long ptr = mapValue.getLong(valueIndex + 1);
             sink.of(ptr).clearAndSet(val);
-            mapValue.putLong(valueIndex + 1, sink.ptr());
+            mapValue.putLong(valueIndex + 1, sink.colouredPtr());
             mapValue.putBool(valueIndex + 2, false);
         }
     }
