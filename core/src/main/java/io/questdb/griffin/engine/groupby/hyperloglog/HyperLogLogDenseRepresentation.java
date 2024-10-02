@@ -179,7 +179,7 @@ public class HyperLogLogDenseRepresentation {
     }
 
     private void set(int idx, byte val) {
-        Unsafe.getUnsafe().putByte(ptr + HEADER_SIZE + idx, val);
+        Unsafe.putByte(ptr + HEADER_SIZE + idx, val);
     }
 
     static long calculateSizeInBytes(int precision) {

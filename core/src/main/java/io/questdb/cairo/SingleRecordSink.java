@@ -94,7 +94,7 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     @Override
     public void putByte(byte value) {
         checkCapacity(1);
-        Unsafe.getUnsafe().putByte(appendAddress, value);
+        Unsafe.putByte(appendAddress, value);
         appendAddress += 1;
     }
 

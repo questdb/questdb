@@ -171,7 +171,7 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
         if (blockAddress == -1) {
             return;
         }
-        Unsafe.getUnsafe().putByte(blockAddress + O_COLOUR, colour);
+        Unsafe.putByte(blockAddress + O_COLOUR, colour);
     }
 
     private static void setLeft(long blockAddress, long left) {

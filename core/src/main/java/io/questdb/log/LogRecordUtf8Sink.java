@@ -108,7 +108,7 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
     public Utf8Sink put(byte b) {
         final long left = lim - _wptr - EOL_LENGTH;
         if (left >= 4) { // 4 is the maximum byte length for a UTF-8 character.
-            Unsafe.getUnsafe().putByte(_wptr++, b);
+            Unsafe.putByte(_wptr++, b);
             return this;
         }
 
@@ -140,7 +140,7 @@ public class LogRecordUtf8Sink implements Utf8Sink, DirectUtf8Sequence, Sinkable
         }
 
         if (left >= needed) {
-            Unsafe.getUnsafe().putByte(_wptr++, b);
+            Unsafe.putByte(_wptr++, b);
         } else {
             done = true;
         }

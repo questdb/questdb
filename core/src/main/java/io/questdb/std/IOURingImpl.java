@@ -158,7 +158,7 @@ public class IOURingImpl implements IOURing {
         if (sqeAddr == 0) {
             return -1;
         }
-        Unsafe.getUnsafe().putByte(sqeAddr + SQE_OPCODE_OFFSET, op);
+        Unsafe.putByte(sqeAddr + SQE_OPCODE_OFFSET, op);
         Unsafe.putInt(sqeAddr + SQE_FD_OFFSET, toOsFd(fd));
         Unsafe.putLong(sqeAddr + SQE_OFF_OFFSET, offset);
         Unsafe.putLong(sqeAddr + SQE_ADDR_OFFSET, bufAddr);

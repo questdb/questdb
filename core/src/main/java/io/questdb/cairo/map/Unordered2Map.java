@@ -363,13 +363,13 @@ public class Unordered2Map implements Map, Reopenable {
 
         @Override
         public void putBool(boolean value) {
-            Unsafe.getUnsafe().putByte(appendAddress, (byte) (value ? 1 : 0));
+            Unsafe.putByte(appendAddress, (byte) (value ? 1 : 0));
             appendAddress += 1L;
         }
 
         @Override
         public void putByte(byte value) {
-            Unsafe.getUnsafe().putByte(appendAddress, value);
+            Unsafe.putByte(appendAddress, value);
             appendAddress += 1L;
         }
 

@@ -118,7 +118,7 @@ public interface Utf8Sequence extends ByteSequence {
             Unsafe.putLong(addr, longAt(i));
         }
         for (; i < hi; i++, addr++) {
-            Unsafe.getUnsafe().putByte(addr, byteAt(i));
+            Unsafe.putByte(addr, byteAt(i));
         }
     }
 

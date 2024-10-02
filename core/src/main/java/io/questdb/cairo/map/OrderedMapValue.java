@@ -44,7 +44,7 @@ final class OrderedMapValue implements MapValue {
     @Override
     public void addByte(int index, byte value) {
         final long p = address0(index);
-        Unsafe.getUnsafe().putByte(p, (byte) (Unsafe.getUnsafe().getByte(p) + value));
+        Unsafe.putByte(p, (byte) (Unsafe.getUnsafe().getByte(p) + value));
     }
 
     @Override
@@ -234,7 +234,7 @@ final class OrderedMapValue implements MapValue {
     public void putByte(int index, byte value) {
         final long p = address0(index);
         assert p + 1L <= limit;
-        Unsafe.getUnsafe().putByte(p, value);
+        Unsafe.putByte(p, value);
     }
 
     @Override

@@ -583,7 +583,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
 
     private void putToRollBuf(byte c) {
         if (fitsInBuffer((int) (fieldRollBufCur - fieldRollBufPtr + 1L))) {
-            Unsafe.getUnsafe().putByte(fieldRollBufCur++, c);
+            Unsafe.putByte(fieldRollBufCur++, c);
         }
     }
 

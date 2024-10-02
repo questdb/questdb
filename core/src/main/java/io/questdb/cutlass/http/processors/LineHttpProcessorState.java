@@ -169,7 +169,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
             // this is allowed by the protocol, no error in Influx
             // NEEDS_REED status means that there is still a buffer space to read to.
             assert recvBufPos < recvBufEnd;
-            Unsafe.getUnsafe().putByte(recvBufPos++, (byte) '\n');
+            Unsafe.putByte(recvBufPos++, (byte) '\n');
             currentStatus = processLocalBuffer();
             if (currentStatus == Status.NEEDS_READ) {
                 // added \n and parse result is still NEEDS_READ, means there was nothing in this line, e.g.

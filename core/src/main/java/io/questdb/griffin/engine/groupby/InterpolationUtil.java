@@ -212,7 +212,7 @@ public class InterpolationUtil {
     }
 
     static void storeYByte(GroupByFunction function, MapValue mapValue, long targetAddress) {
-        Unsafe.getUnsafe().putByte(targetAddress, function.getByte(mapValue));
+        Unsafe.putByte(targetAddress, function.getByte(mapValue));
     }
 
     static void storeYDouble(GroupByFunction function, MapValue mapValue, long targetAddress) {

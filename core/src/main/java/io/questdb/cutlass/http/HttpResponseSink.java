@@ -332,7 +332,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public Utf8Sink put(byte b) {
-            Unsafe.getUnsafe().putByte(getWriteAddress(1), b);
+            Unsafe.putByte(getWriteAddress(1), b);
             onWrite(1);
             return this;
         }
@@ -544,7 +544,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         @Override
         public Utf8Sink put(byte b) {
-            Unsafe.getUnsafe().putByte(buffer.getWriteAddress(1), b);
+            Unsafe.putByte(buffer.getWriteAddress(1), b);
             buffer.onWrite(1);
             return this;
         }

@@ -525,7 +525,7 @@ public class CleartextPasswordPgWireAuthenticator implements SocketAuthenticator
         @Override
         public Utf8Sink put(byte b) {
             checkCapacity(Byte.BYTES);
-            Unsafe.getUnsafe().putByte(sendBufWritePos++, b);
+            Unsafe.putByte(sendBufWritePos++, b);
             return this;
         }
 

@@ -75,11 +75,11 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
     }
 
     default void putByte(byte value) {
-        Unsafe.getUnsafe().putByte(appendAddressFor(Byte.BYTES), value);
+        Unsafe.putByte(appendAddressFor(Byte.BYTES), value);
     }
 
     default void putByte(long offset, byte value) {
-        Unsafe.getUnsafe().putByte(appendAddressFor(offset, Byte.BYTES), value);
+        Unsafe.putByte(appendAddressFor(offset, Byte.BYTES), value);
     }
 
     default void putChar(char value) {

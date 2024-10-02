@@ -278,7 +278,7 @@ public final class TableUtils {
             if (addr < 1) {
                 throw CairoException.critical(ff.errno()).put("Could not allocate 1 byte");
             }
-            Unsafe.getUnsafe().putByte(addr, walFlag);
+            Unsafe.putByte(addr, walFlag);
             ff.write(fd, addr, Byte.BYTES, 0);
         } finally {
             if (addr > 0) {

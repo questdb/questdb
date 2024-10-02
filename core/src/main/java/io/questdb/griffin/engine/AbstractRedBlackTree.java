@@ -389,7 +389,7 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     }
 
     protected void setColor(int blockOffset, byte colour) {
-        Unsafe.getUnsafe().putByte(keyHeapStart + uncompressKeyOffset(blockOffset) + OFFSET_COLOUR, colour);
+        Unsafe.putByte(keyHeapStart + uncompressKeyOffset(blockOffset) + OFFSET_COLOUR, colour);
     }
 
     protected void setLastRef(int blockOffset, int recRef) {

@@ -109,7 +109,7 @@ public class TableWriterTask implements Closeable {
 
     public void putByte(byte c) {
         checkCapacity(Byte.BYTES);
-        Unsafe.getUnsafe().putByte(appendPtr++, c);
+        Unsafe.putByte(appendPtr++, c);
     }
 
     public void putInt(int value) {

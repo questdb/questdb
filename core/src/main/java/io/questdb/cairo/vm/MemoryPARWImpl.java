@@ -471,7 +471,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public final void putByte(long offset, byte value) {
         if (roOffsetLo < offset && offset < roOffsetHi - 1) {
-            Unsafe.getUnsafe().putByte(absolutePointer + offset, value);
+            Unsafe.putByte(absolutePointer + offset, value);
         } else {
             putByteRnd(offset, value);
         }
@@ -482,7 +482,7 @@ public class MemoryPARWImpl implements MemoryARW {
         if (pageHi == appendPointer) {
             pageAt(getAppendOffset() + 1);
         }
-        Unsafe.getUnsafe().putByte(appendPointer++, value);
+        Unsafe.putByte(appendPointer++, value);
     }
 
     @Override
@@ -1056,7 +1056,7 @@ public class MemoryPARWImpl implements MemoryARW {
     }
 
     private void putByteRnd(long offset, byte value) {
-        Unsafe.getUnsafe().putByte(jumpTo0(offset) + offsetInPage(offset), value);
+        Unsafe.putByte(jumpTo0(offset) + offsetInPage(offset), value);
     }
 
     private void putLong256Null() {

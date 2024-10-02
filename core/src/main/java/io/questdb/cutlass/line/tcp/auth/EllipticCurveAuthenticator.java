@@ -177,11 +177,11 @@ public class EllipticCurveAuthenticator implements SocketAuthenticator {
             while (n < AuthUtils.CHALLENGE_LEN) {
                 assert recvBufStart + n < recvBufEnd;
                 int r = (int) (srand.nextDouble() * 0x5f) + 0x20;
-                Unsafe.getUnsafe().putByte(recvBufStart + n, (byte) r);
-                Unsafe.getUnsafe().putByte(challengePtr + n, (byte) r);
+                Unsafe.putByte(recvBufStart + n, (byte) r);
+                Unsafe.putByte(challengePtr + n, (byte) r);
                 n++;
             }
-            Unsafe.getUnsafe().putByte(recvBufStart + n, (byte) '\n');
+            Unsafe.putByte(recvBufStart + n, (byte) '\n');
             authState = AuthState.SENDING_CHALLENGE;
         }
     }

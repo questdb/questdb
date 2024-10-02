@@ -3009,7 +3009,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         @Override
         public Utf8Sink put(byte b) {
             checkCapacity(Byte.BYTES);
-            Unsafe.getUnsafe().putByte(sendBufferPtr++, b);
+            Unsafe.putByte(sendBufferPtr++, b);
             return this;
         }
 
@@ -3024,7 +3024,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 putInt(sendBufferPtr, (int) len);
                 sendBufferPtr += Integer.BYTES;
                 for (long x = 0; x < len; x++) {
-                    Unsafe.getUnsafe().putByte(sendBufferPtr + x, sequence.byteAt(x));
+                    Unsafe.putByte(sendBufferPtr + x, sequence.byteAt(x));
                 }
                 sendBufferPtr += len;
             }
@@ -3105,7 +3105,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         void putZ(CharSequence value) {
             put(value);
             checkCapacity(Byte.BYTES);
-            Unsafe.getUnsafe().putByte(sendBufferPtr++, (byte) 0);
+            Unsafe.putByte(sendBufferPtr++, (byte) 0);
         }
 
         void reset() {

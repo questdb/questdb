@@ -81,12 +81,12 @@ public class LineTcpParser {
     private final DirectUtf8String charSeq = new DirectUtf8String();
     private final ObjList<ProtoEntity> entityCache = new ObjList<>();
     private final DirectUtf8String measurementName = new DirectUtf8String();
+    private boolean asciiSegment;
     private long bufAt;
     private ProtoEntity currentEntity;
     private byte entityHandler = -1;
     private long entityLo;
     private ErrorCode errorCode;
-    private boolean asciiSegment;
     private boolean isQuotedFieldValue;
     private int nEntities;
     private int nEscapedChars;
@@ -297,7 +297,7 @@ public class LineTcpParser {
                 // from the result key / value.
                 // shift copy current byte back
                 if (nEscapedChars > 0) {
-                    Unsafe.getUnsafe().putByte(bufAt - nEscapedChars, b);
+                    Unsafe.putByte(bufAt - nEscapedChars, b);
                 }
                 bufAt++;
             }
@@ -570,7 +570,7 @@ public class LineTcpParser {
                         isQuotedFieldValue = true;
                         nQuoteCharacters--;
                         if (nEscapedChars > 0) {
-                            Unsafe.getUnsafe().putByte(bufAt - nEscapedChars, b);
+                            Unsafe.putByte(bufAt - nEscapedChars, b);
                         }
                         return true;
                     }
@@ -589,7 +589,7 @@ public class LineTcpParser {
             }
             nextValueCanBeOpenQuote = false;
             if (copyByte && nEscapedChars > 0) {
-                Unsafe.getUnsafe().putByte(bufAt - nEscapedChars, b);
+                Unsafe.putByte(bufAt - nEscapedChars, b);
             }
             bufAt++;
         }

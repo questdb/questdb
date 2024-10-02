@@ -112,7 +112,7 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
     @Override
     public Utf8Sink put(byte b) {
         checkCapacity(1);
-        Unsafe.getUnsafe().putByte(ptr + HEADER_SIZE + size(), b);
+        Unsafe.putByte(ptr + HEADER_SIZE + size(), b);
         Unsafe.putInt(ptr + SIZE_OFFSET, size() + 1);
         Unsafe.getUnsafe().putBoolean(null, ptr + IS_ASCII_OFFSET, false);
         return this;

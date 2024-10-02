@@ -203,6 +203,6 @@ public class HyperLogLog {
     }
 
     private void setType(byte type) {
-        Unsafe.getUnsafe().putByte(ptr, type);
+        Unsafe.putByte(ptr, type);
     }
 }

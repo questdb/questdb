@@ -219,7 +219,7 @@ public class HyperLogLogSparseRepresentation {
         long oldPtr = ptr;
         ptr = allocator.malloc(HEADER_SIZE + ((long) newCapacity << 2));
         zero(ptr, newCapacity);
-        Unsafe.getUnsafe().putByte(ptr, type);
+        Unsafe.putByte(ptr, type);
         Unsafe.putInt(ptr + CAPACITY_OFFSET, newCapacity);
         Unsafe.putInt(ptr + SIZE_OFFSET, 0);
         Unsafe.putInt(ptr + SIZE_LIMIT_OFFSET, newSizeLimit);
