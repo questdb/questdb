@@ -60,6 +60,19 @@ public class GrowOnlyTableNameRegistryStore implements Closeable {
         tableNameMemory.sync(false);
     }
 
+    public synchronized void logRenameTable(final TableToken oldTableToken, final TableToken newTableToken) {
+        final long offset = tableNameMemory.getAppendOffset();
+        try {
+            writeEntry(oldTableToken, OPERATION_REMOVE);
+            writeEntry(newTableToken, OPERATION_ADD);
+            tableNameMemory.sync(false);
+        } catch (Exception e) {
+            // make rename operation atomic
+            tableNameMemory.jumpTo(offset);
+            throw e;
+        }
+    }
+
     public GrowOnlyTableNameRegistryStore of(Path rootPath, int version) {
         rootPath.concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(version);
         tableNameMemory.smallFile(ff, rootPath.$(), MemoryTag.MMAP_DEFAULT);

@@ -117,8 +117,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
         if (tableNameToTableTokenMap.putIfAbsent(newTableNameStr, renamedTableToken) == null) {
             if (tableNameToTableTokenMap.remove(oldName, tableToken)) {
                 // Persist to file
-                nameStore.logDropTable(tableToken);
-                nameStore.logAddTable(renamedTableToken);
+                nameStore.logRenameTable(tableToken, renamedTableToken);
                 dirNameToTableTokenMap.put(renamedTableToken.getDirName(), ReverseTableMapItem.of(renamedTableToken));
                 return renamedTableToken;
             } else {
@@ -134,8 +133,7 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     @Override
     public void rename(TableToken oldToken, TableToken newToken) {
         if (tableNameToTableTokenMap.remove(oldToken.getTableName(), oldToken)) {
-            nameStore.logDropTable(oldToken);
-            nameStore.logAddTable(newToken);
+            nameStore.logRenameTable(oldToken, newToken);
             dirNameToTableTokenMap.put(newToken.getDirName(), ReverseTableMapItem.of(newToken));
         }
     }
