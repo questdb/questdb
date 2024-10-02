@@ -41,10 +41,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -58,7 +55,7 @@ import org.junit.Test;
 
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
-import java.util.Date;
+import java.util.TimeZone;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -4907,8 +4904,8 @@ public class SampleByTest extends AbstractCairoTest {
             String query = "select timestamp, count() from trades\n" +
                     "sample by 1m FROM date_trunc('day', now()) FILL (null) \n";
 
-            Date today = new Date();
-
+            SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd");
+            formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
             assertPlanNoLeakCheck(query, "Sample By\n" +
                     "  fill: null\n" +
                     "  range: (timestamp_floor('day',now()),null)\n" +
@@ -4916,7 +4913,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
                     "        Interval forward scan on: trades\n" +
-                    "          intervals: [(\"" + new SimpleDateFormat("yyyy-MM-dd").format(today) + "T00:00:00.000000Z\",\"MAX\")]\n");
+                    "          intervals: [(\"" + formatter.format(Os.currentTimeMicros() / 1000) + "T00:00:00.000000Z\",\"MAX\")]\n");
 
             assertSql("timestamp\tcount\n", query);
         });
