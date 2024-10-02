@@ -53,20 +53,20 @@ public final class Unsafe {
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
     private static final long FREE_COUNT_ADDR;
     private static final long MALLOC_COUNT_ADDR;
-    private static final long[] NATIVE_MEM_COUNTER_ADDRS = new long[MemoryTag.SIZE];
     private static final long[] NATIVE_ALLOCATORS = new long[MemoryTag.SIZE - NATIVE_DEFAULT];
+    private static final long[] NATIVE_MEM_COUNTER_ADDRS = new long[MemoryTag.SIZE];
     private static final long NON_RSS_MEM_USED_ADDR;
     //#if jdk.version!=8
     private static final long OVERRIDE;
     //#endif
     private static final long REALLOC_COUNT_ADDR;
+    //#endif
+    private static final long RSS_MEM_LIMIT_ADDR;
     private static final long RSS_MEM_USED_ADDR;
     private static final sun.misc.Unsafe UNSAFE;
     private static final AnonymousClassDefiner anonymousClassDefiner;
     //#if jdk.version!=8
     private static final Method implAddExports;
-    //#endif
-    private static final long RSS_MEM_LIMIT_ADDR;
 
     private Unsafe() {
     }
@@ -202,6 +202,11 @@ public final class Unsafe {
         return COUNTERS[memoryTag].sum() + UNSAFE.getLongVolatile(null, NATIVE_MEM_COUNTER_ADDRS[memoryTag]);
     }
 
+    /** Returns a `*const QdbAllocator` for use in Rust. */
+    public static long getNativeAllocator(int memoryTag) {
+        return NATIVE_ALLOCATORS[memoryTag - NATIVE_DEFAULT];
+    }
+
     public static long getReallocCount() {
         return UNSAFE.getLongVolatile(null, REALLOC_COUNT_ADDR);
     }
@@ -222,11 +227,12 @@ public final class Unsafe {
         UNSAFE.getAndAddLong(null, MALLOC_COUNT_ADDR, 1);
     }
 
+    //#if jdk.version!=8
+
     public static void incrReallocCount() {
         UNSAFE.getAndAddLong(null, REALLOC_COUNT_ADDR, 1);
     }
-
-    //#if jdk.version!=8
+    //#endif
 
     /**
      * Equivalent to {@link AccessibleObject#setAccessible(boolean) AccessibleObject.setAccessible(true)}, except that
@@ -237,7 +243,6 @@ public final class Unsafe {
     public static void makeAccessible(AccessibleObject accessibleObject) {
         UNSAFE.putBooleanVolatile(accessibleObject, OVERRIDE, true);
     }
-    //#endif
 
     public static long malloc(long size, int memoryTag) {
         try {
@@ -302,24 +307,6 @@ public final class Unsafe {
         UNSAFE.putLongVolatile(null, RSS_MEM_LIMIT_ADDR, limit);
     }
 
-    private static long createNativeAllocator(long nativeMemCountersArray, int memoryTag) {
-        // See `allocator.rs` for the definition of `QdbAllocator`.
-        // We construct here via `Unsafe` to avoid having initialization order issues with `Os.java`.
-        final long allocSize = 8 + 8 + 4;  // two longs, one int
-        final long addr = UNSAFE.allocateMemory(allocSize);
-        Vect.memset(addr, allocSize, 0);
-        UNSAFE.putLong(addr, nativeMemCountersArray);
-        UNSAFE.putLong(addr + 8, NATIVE_MEM_COUNTER_ADDRS[memoryTag]);
-        UNSAFE.putInt(addr + 16, memoryTag);
-        System.err.println("createTaggedWatermarkAllocator :: addr: " + addr + ", mem_tracking: " + nativeMemCountersArray + ", tagged_used: " + NATIVE_MEM_COUNTER_ADDRS[memoryTag] + ", memoryTag: " + memoryTag);
-        return addr;
-    }
-
-    /** Returns a `*const QdbAllocator` for use in Rust. */
-    public static long getNativeAllocator(int memoryTag) {
-        return NATIVE_ALLOCATORS[memoryTag - NATIVE_DEFAULT];
-    }
-
     //#if jdk.version!=8
     private static long AccessibleObject_override_fieldOffset() {
         if (isJava8Or11()) {
@@ -334,11 +321,6 @@ public final class Unsafe {
             return 12L;
         }
         return 16L;
-    }
-    //#endif
-
-    private static long getRssMemLimit() {
-        return UNSAFE.getLongVolatile(null, RSS_MEM_LIMIT_ADDR);
     }
 
     private static void checkAllocLimit(long size, int memoryTag) {
@@ -359,6 +341,19 @@ public final class Unsafe {
                         .put(']');
             }
         }
+    }
+    //#endif
+
+    private static long createNativeAllocator(long nativeMemCountersArray, int memoryTag) {
+        // See `allocator.rs` for the definition of `QdbAllocator`.
+        // We construct here via `Unsafe` to avoid having initialization order issues with `Os.java`.
+        final long allocSize = 8 + 8 + 4;  // two longs, one int
+        final long addr = UNSAFE.allocateMemory(allocSize);
+        Vect.memset(addr, allocSize, 0);
+        UNSAFE.putLong(addr, nativeMemCountersArray);
+        UNSAFE.putLong(addr + 8, NATIVE_MEM_COUNTER_ADDRS[memoryTag]);
+        UNSAFE.putInt(addr + 16, memoryTag);
+        return addr;
     }
 
     //#if jdk.version!=8
@@ -383,6 +378,10 @@ public final class Unsafe {
             }
         }
         return new Probe().probe();
+    }
+
+    private static long getRssMemLimit() {
+        return UNSAFE.getLongVolatile(null, RSS_MEM_LIMIT_ADDR);
     }
     //#endif
 
@@ -534,14 +533,12 @@ public final class Unsafe {
         final long nativeMemCountersArray = UNSAFE.allocateMemory(nativeMemCountersArraySize);
         long ptr = nativeMemCountersArray;
         Vect.memset(nativeMemCountersArray, nativeMemCountersArraySize, 0);
-        System.err.println("Unsafe{static} :: (A) nativeMemCountersArray" + nativeMemCountersArray);
 
         // N.B.: The layout here is also used in `allocator.rs` for the Rust side.
         // See: `struct MemTracking`.
         RSS_MEM_USED_ADDR = ptr;
         ptr += 8;
         RSS_MEM_LIMIT_ADDR = ptr;
-        System.err.println("Unsafe{static} :: (B) RSS_MEM_USED_ADDR=" + RSS_MEM_USED_ADDR + ", RSS_MEM_LIMIT_ADDR=" + RSS_MEM_LIMIT_ADDR);
         ptr += 8;
         MALLOC_COUNT_ADDR = ptr;
         ptr += 8;
@@ -553,7 +550,6 @@ public final class Unsafe {
         ptr += 8;
         for (int i = 0; i < COUNTERS.length; i++) {
             COUNTERS[i] = new LongAdder();
-            System.err.println("Unsafe{static} :: (C) NATIVE_MEM_COUNTER_ADDRS[" + i + "]=" + ptr);
             NATIVE_MEM_COUNTER_ADDRS[i] = ptr;
             ptr += 8;
         }

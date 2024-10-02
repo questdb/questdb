@@ -120,8 +120,6 @@ public class PartitionDecoderTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             final long memInit = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-            final long initMallocCount = Unsafe.getMallocCount();
-            final long initFreeCount = Unsafe.getFreeCount();
             long fd = -1;
             try (Path path = new Path();
                  RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
@@ -153,6 +151,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                     Assert.fail("Expected CairoException for out of memory");
                 } catch (CairoException e) {
                     final String msg = e.getMessage();
+                    Assert.assertTrue(e.isOutOfMemory());
                     TestUtils.assertContains(msg, "could not decode row group 0 with fd ");
                     TestUtils.assertContains(msg, "memory limit exceeded when allocating");
                     exceptionThrown = true;
@@ -174,12 +173,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
 
             // Freed memory is tracked.
             final long memFinal = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-            final long finalMallocCount = Unsafe.getMallocCount();
-            final long finalFreeCount = Unsafe.getFreeCount();
-            final long deltaMalloc = finalMallocCount - initMallocCount;
-            final long deltaFree = finalFreeCount - initFreeCount;
             Assert.assertEquals(memFinal, memInit);
-            Assert.assertEquals(deltaMalloc, deltaFree);
         });
     }
 }

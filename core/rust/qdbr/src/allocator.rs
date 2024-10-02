@@ -150,39 +150,27 @@ const COUNTER_ORDERING: Ordering = Ordering::AcqRel;
 #[cfg(not(test))]
 impl QdbAllocator {
     fn rss_mem_used(&self) -> &AtomicUsize {
-        unsafe {
-            &(*self.mem_tracking).rss_mem_used
-        }
+        unsafe { &(*self.mem_tracking).rss_mem_used }
     }
 
     fn rss_mem_limit(&self) -> &AtomicUsize {
-        unsafe {
-            &(*self.mem_tracking).rss_mem_limit
-        }
+        unsafe { &(*self.mem_tracking).rss_mem_limit }
     }
 
     fn malloc_count(&self) -> &AtomicUsize {
-        unsafe {
-            &(*self.mem_tracking).malloc_count
-        }
+        unsafe { &(*self.mem_tracking).malloc_count }
     }
 
     fn realloc_count(&self) -> &AtomicUsize {
-        unsafe {
-            &(*self.mem_tracking).realloc_count
-        }
+        unsafe { &(*self.mem_tracking).realloc_count }
     }
 
     fn free_count(&self) -> &AtomicUsize {
-        unsafe {
-            &(*self.mem_tracking).free_count
-        }
+        unsafe { &(*self.mem_tracking).free_count }
     }
 
     fn tagged_used(&self) -> &AtomicUsize {
-        unsafe {
-            &*self.tagged_used
-        }
+        unsafe { &*self.tagged_used }
     }
 }
 
@@ -405,7 +393,10 @@ mod tests {
 
     #[test]
     fn test_mem_tracking_size() {
-        assert_eq!(size_of::<crate::allocator::MemTracking>(), 6 * size_of::<u64>());
+        assert_eq!(
+            size_of::<crate::allocator::MemTracking>(),
+            6 * size_of::<u64>()
+        );
     }
 
     #[test]
