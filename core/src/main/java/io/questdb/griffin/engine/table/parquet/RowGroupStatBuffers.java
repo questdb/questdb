@@ -41,7 +41,7 @@ public class RowGroupStatBuffers implements QuietCloseable, Reopenable {
     private long ptr;
 
     public RowGroupStatBuffers(int memoryTag) {
-        this.ptr = create(Unsafe.getTaggedWatermarkAllocator(memoryTag));
+        this.ptr = create(Unsafe.getNativeAllocator(memoryTag));
         this.memoryTag = memoryTag;
     }
 
@@ -78,7 +78,7 @@ public class RowGroupStatBuffers implements QuietCloseable, Reopenable {
     @Override
     public void reopen() {
         if (ptr == 0) {
-            ptr = create(Unsafe.getTaggedWatermarkAllocator(memoryTag));
+            ptr = create(Unsafe.getNativeAllocator(memoryTag));
         }
     }
 

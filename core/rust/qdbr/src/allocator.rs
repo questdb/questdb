@@ -93,7 +93,7 @@ impl Display for AllocFailure {
 
 impl std::error::Error for AllocFailure {}
 
-#[repr(C)]
+#[repr(C, packed)]
 struct MemTracking {
     /// Resident set size memory used. Updated on each allocation, reallocation and deallocation,
     /// also from Java. This is regardless of the memory tag used.
@@ -119,7 +119,7 @@ struct MemTracking {
 /// It also tracks memory usage for a specific memory tag.
 /// See `Unsafe.java` for the Java side of this.
 #[derive(Clone, Copy)]
-#[repr(C)]
+#[repr(C, packed)]
 pub struct QdbAllocator {
     /// Global counters
     mem_tracking: &'static MemTracking,
@@ -320,16 +320,90 @@ pub static TEST_ALLOCATOR: QdbAllocator = QdbAllocator {
 };
 
 #[cfg(test)]
+pub struct TestAllocatorLimitGuard {}
+
+#[cfg(test)]
+impl TestAllocatorLimitGuard {
+    pub fn new(limit: usize) -> Self {
+        RSS_MEM_LIMIT.store(limit, RSS_ORDERING);
+        Self {}
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestAllocatorLimitGuard {
+    fn drop(&mut self) {
+        RSS_MEM_LIMIT.store(0, RSS_ORDERING);
+    }
+}
+
+#[cfg(test)]
 mod tests {
+    use std::alloc::Allocator;
+    use std::ptr::NonNull;
     use std::sync::atomic::AtomicUsize;
-    use crate::allocator::MemTracking;
+    use crate::allocator::{take_last_alloc_error, AllocFailure, MemTracking, QdbAllocator, TestAllocatorLimitGuard, RSS_MEM_LIMIT, RSS_MEM_USED, TEST_ALLOCATOR};
 
     #[test]
-    fn test_sizes() {
+    fn test_size_assumptions() {
+        // We rely on these sizes in `Unsafe.java`.
         assert_eq!(size_of::<&'static AtomicUsize>(), size_of::<*const AtomicUsize>());
         assert_eq!(size_of::<&'static AtomicUsize>(), 8);
 
         assert_eq!(size_of::<&'static MemTracking>(), size_of::<*const MemTracking>());
         assert_eq!(size_of::<&'static MemTracking>(), 8);
+
+        assert_eq!(size_of::<MemTracking>(), 6 * 8);
+        assert_eq!(size_of::<QdbAllocator>(), 8 + 8 + 4);
+    }
+
+    #[test]
+    fn test_alloc_fail() {
+        let allocator = TEST_ALLOCATOR;
+        let too_large = 1024 * 1024 * 1024 * 1024 * 1024;  // 1024 TB
+        let layout = std::alloc::Layout::from_size_align(too_large, 8).unwrap();
+        let result = allocator.allocate(layout);
+        assert!(result.is_err());
+        let last_err = take_last_alloc_error().unwrap();
+        assert!(matches!(last_err, AllocFailure::OutOfMemory { .. }));
+    }
+
+    #[test]
+    fn test_alloc_with_limit() {
+        let allocator = TEST_ALLOCATOR;
+        // Limit the memory to 1KiB.
+        let limit_guard = TestAllocatorLimitGuard::new(1024);
+
+        assert_eq!(RSS_MEM_USED.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(TEST_ALLOCATOR.tagged_used().load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(RSS_MEM_LIMIT.load(std::sync::atomic::Ordering::SeqCst), 1024);
+
+        // Ask for 64 bytes, should be fine.
+        {
+            let layout = std::alloc::Layout::from_size_align(64, 8).unwrap();
+            let allocation = allocator.allocate(layout).unwrap();
+
+            // Free said allocation.
+            let allocation = NonNull::new(allocation.as_ptr() as *mut u8).unwrap();
+            unsafe { allocator.deallocate(allocation, layout) };
+        }
+
+
+        // Now allocate in excess of the limit, should fail.
+        {
+            let layout = std::alloc::Layout::from_size_align(2048, 8).unwrap();
+            let result = allocator.allocate(layout);
+            assert!(result.is_err());
+            let last_err = take_last_alloc_error().unwrap();
+            assert!(matches!(last_err, AllocFailure::MemoryLimitExceeded {
+                requested_size: 2048,
+                memory_tag: 64,
+                rss_mem_limit: 1024,
+                rss_mem_used: 0,
+            }));
+        }
+
+        drop(limit_guard);
+        assert_eq!(RSS_MEM_LIMIT.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 }

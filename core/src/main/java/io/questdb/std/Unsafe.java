@@ -305,7 +305,7 @@ public final class Unsafe {
     private static long createTaggedWatermarkAllocator(long nativeMemCountersArray, int memoryTag) {
         // See `allocator.rs` for the definition of `TaggedWatermarkAllocator`.
         // We construct here via `Unsafe` to avoid having initialization order issues with `Os.java`.
-        final long allocSize = 3 * 8;
+        final long allocSize = 8 + 8 + 4;  // two longs, one int
         final long addr = UNSAFE.allocateMemory(allocSize);
         Vect.memset(addr, allocSize, 0);
         UNSAFE.putLong(addr, nativeMemCountersArray);
@@ -314,8 +314,8 @@ public final class Unsafe {
         return addr;
     }
 
-    /** Returns a `* const qdbr::TaggedWatermarkAllocator` in for use in Rust. */
-    public static long getTaggedWatermarkAllocator(int memoryTag) {
+    /** Returns a `*const QdbAllocator` for use in Rust. */
+    public static long getNativeAllocator(int memoryTag) {
         return RUST_TAGGED_ALLOCATORS[memoryTag - NATIVE_DEFAULT];
     }
 
