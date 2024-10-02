@@ -3942,7 +3942,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw e;
             }
 
-            // Check if we have a non-keyed query with early exit aggregate functions (e.g. count_distinct(symbol))
+            // Check if we have a non-keyed query with all early exit aggregate functions (e.g. count_distinct(symbol))
             // and no filter. In such a case, use single-threaded factories instead of the multithreaded ones.
             if (
                     enableParallelGroupBy
