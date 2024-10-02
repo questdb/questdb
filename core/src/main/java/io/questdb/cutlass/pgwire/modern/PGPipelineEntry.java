@@ -167,33 +167,34 @@ public class PGPipelineEntry implements QuietCloseable {
         // we do not need to create new objects until we know we're caching the entry
         this.sqlText = sqlText;
         this.empty = sqlText == null || sqlText.length() == 0;
-        cacheHit = true;
-        if (!empty) {
-            // try insert, peek because this is our private cache,
-            // and we do not want to remove statement from it
-            try {
-                cacheHit = false;
-                try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    // Define the provided PostgresSQL types on the BindVariableService. The compilation
-                    // below will use these types to build the plan, and it will also define any missing bind
-                    // variables.
-                    msgParseDefineBindVariableTypes(sqlExecutionContext.getBindVariableService());
-                    CompiledQuery cq = compiler.compile(this.sqlText, sqlExecutionContext);
-                    // copy actual bind variable types as supplied by the client + defined by the SQL
-                    // compiler
-                    msgParseCopyOutTypeDescriptionTypeOIDs(sqlExecutionContext.getBindVariableService());
-                    setupEntryAfterSQLCompilation(sqlExecutionContext, taiPool, cq);
-                }
-                copyPgResultSetColumnTypes();
-            } catch (SqlException e) {
-                if (e.getMessage().equals("[0] empty query")) {
-                    this.empty = true;
-                } else {
-                    throw kaput().put((Throwable) e);
-                }
-            } catch (Throwable e) {
-                throw kaput().put(e);
+        if (empty) {
+            cacheHit = true;
+            return;
+        }
+        // try insert, peek because this is our private cache,
+        // and we do not want to remove statement from it
+        try {
+            cacheHit = false;
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                // Define the provided PostgresSQL types on the BindVariableService. The compilation
+                // below will use these types to build the plan, and it will also define any missing bind
+                // variables.
+                msgParseDefineBindVariableTypes(sqlExecutionContext.getBindVariableService());
+                CompiledQuery cq = compiler.compile(this.sqlText, sqlExecutionContext);
+                // copy actual bind variable types as supplied by the client + defined by the SQL
+                // compiler
+                msgParseCopyOutTypeDescriptionTypeOIDs(sqlExecutionContext.getBindVariableService());
+                setupEntryAfterSQLCompilation(sqlExecutionContext, taiPool, cq);
             }
+            copyPgResultSetColumnTypes();
+        } catch (SqlException e) {
+            if (e.getMessage().equals("[0] empty query")) {
+                this.empty = true;
+            } else {
+                throw kaput().put((Throwable) e);
+            }
+        } catch (Throwable e) {
+            throw kaput().put(e);
         }
     }
 
