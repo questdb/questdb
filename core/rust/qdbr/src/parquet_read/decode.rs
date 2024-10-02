@@ -46,9 +46,9 @@ impl RowGroupBuffers {
 
     pub fn ensure_n_columns(&mut self, required_cols: usize) -> ParquetResult<()> {
         if self.column_bufs.len() < required_cols {
-            let allocator = *self.column_bufs.allocator();
+            let allocator = self.column_bufs.allocator().clone();
             self.column_bufs
-                .resize_with(required_cols, || ColumnChunkBuffers::new(allocator))?;
+                .resize_with(required_cols, || ColumnChunkBuffers::new(allocator.clone()))?;
             self.column_bufs_ptr = self.column_bufs.as_mut_ptr();
         }
         Ok(())
@@ -65,9 +65,9 @@ impl RowGroupStatBuffers {
 
     pub fn ensure_n_columns(&mut self, required_cols: usize) -> ParquetResult<()> {
         if self.column_chunk_stats.len() < required_cols {
-            let allocator = *self.column_chunk_stats.allocator();
+            let allocator = self.column_chunk_stats.allocator().clone();
             self.column_chunk_stats
-                .resize_with(required_cols, || ColumnChunkStats::new(allocator))?;
+                .resize_with(required_cols, || ColumnChunkStats::new(allocator.clone()))?;
             self.column_chunk_stats_ptr = self.column_chunk_stats.as_mut_ptr();
         }
         Ok(())
@@ -77,7 +77,7 @@ impl RowGroupStatBuffers {
 impl ColumnChunkBuffers {
     pub fn new(allocator: QdbAllocator) -> Self {
         Self {
-            data_vec: AcVec::new_in(allocator),
+            data_vec: AcVec::new_in(allocator.clone()),
             data_ptr: ptr::null_mut(),
             data_size: 0,
             aux_vec: AcVec::new_in(allocator),
@@ -1098,7 +1098,7 @@ pub fn get_selected_rows(page: &DataPage) -> VecDeque<Interval> {
 
 #[cfg(test)]
 mod tests {
-    use crate::allocator::{AcVec, TEST_ALLOCATOR};
+    use crate::allocator::{AcVec, TestAllocatorState};
     use crate::parquet::col_type::{ColumnType, ColumnTypeTag};
     use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
     use crate::parquet_read::decode::{INT_NULL, LONG_NULL, UUID_NULL};
@@ -1119,6 +1119,8 @@ mod tests {
 
     #[test]
     fn test_decode_int_column_v2_nulls() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
         let row_count = 10;
         let row_group_size = 50;
         let data_page_size = 50;
@@ -1134,11 +1136,11 @@ mod tests {
             expected_buff.data_vec.as_ref(),
         );
 
-        let mut decoder = ParquetDecoder::read(TEST_ALLOCATOR, file).unwrap();
+        let mut decoder = ParquetDecoder::read(allocator.clone(), file).unwrap();
         assert_eq!(decoder.columns.len(), column_count);
         assert_eq!(decoder.row_count, row_count);
         let row_group_count = decoder.row_group_count as usize;
-        let bufs = &mut ColumnChunkBuffers::new(TEST_ALLOCATOR);
+        let bufs = &mut ColumnChunkBuffers::new(allocator.clone());
 
         for column_index in 0..column_count {
             let column_type = decoder.columns[column_index].column_type;
@@ -1330,14 +1332,17 @@ mod tests {
         columns: Vec<Column>,
         expected_buffs: &[(ColumnBuffers, ColumnType)],
     ) {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
         let column_count = columns.len();
         let file = write_cols_to_parquet_file(row_group_size, data_page_size, version, columns);
 
-        let mut decoder = ParquetDecoder::read(TEST_ALLOCATOR, file).unwrap();
+        let mut decoder = ParquetDecoder::read(allocator.clone(), file).unwrap();
         assert_eq!(decoder.columns.len(), column_count);
         assert_eq!(decoder.row_count, row_count);
         let row_group_count = decoder.row_group_count as usize;
-        let bufs = &mut ColumnChunkBuffers::new(TEST_ALLOCATOR);
+        let bufs = &mut ColumnChunkBuffers::new(allocator.clone());
 
         for (column_index, (column_buffs, column_type)) in expected_buffs.iter().enumerate() {
             let column_type = *column_type;
@@ -1384,7 +1389,7 @@ mod tests {
                     if col_row_count == 0 {
                         assert_eq!(&expected_aux_data[0..bufs.aux_size], bufs.aux_vec);
                     } else if column_type.tag() == ColumnTypeTag::String {
-                        let mut expected_aux_data_slice = AcVec::new_in(TEST_ALLOCATOR);
+                        let mut expected_aux_data_slice = AcVec::new_in(allocator.clone());
                         let vec_i64_ref = unsafe {
                             std::slice::from_raw_parts(
                                 expected_aux_data.as_ptr() as *const i64,
@@ -1459,8 +1464,11 @@ mod tests {
     }
 
     fn create_col_data_buff_bool(row_count: usize) -> ColumnBuffers {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
         let value_size = 1;
-        let mut buff = AcVec::new_in(TEST_ALLOCATOR);
+        let mut buff = AcVec::new_in(allocator);
         buff.extend_with(row_count * value_size, 0u8).unwrap();
         for i in 0..row_count {
             let value = i % 3 == 0;
@@ -1487,8 +1495,11 @@ mod tests {
         T: From<i16> + Copy,
         F: Fn(T) -> [u8; N],
     {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
         let value_size = N;
-        let mut buff = AcVec::new_in(TEST_ALLOCATOR);
+        let mut buff = AcVec::new_in(allocator);
         buff.extend_with(row_count * value_size, 0u8).unwrap();
         for i in 0..((row_count + 1) / 2) {
             let value = T::from(i as i16);
@@ -1541,9 +1552,12 @@ mod tests {
     }
 
     fn create_col_data_buff_symbol(row_count: usize, distinct_values: usize) -> ColumnBuffers {
-        let mut symbol_data_buff = AcVec::new_in(TEST_ALLOCATOR);
-        let mut expected_aux_buff = AcVec::new_in(TEST_ALLOCATOR);
-        let mut expected_data_buff = AcVec::new_in(TEST_ALLOCATOR);
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let mut symbol_data_buff = AcVec::new_in(allocator.clone());
+        let mut expected_aux_buff = AcVec::new_in(allocator.clone());
+        let mut expected_data_buff = AcVec::new_in(allocator);
 
         let str_values: Vec<String> = (0..distinct_values)
             .map(|_| generate_random_unicode_string(10))
@@ -1583,8 +1597,11 @@ mod tests {
     }
 
     fn serialize_as_symbols(symbol_chars: &[String]) -> (AcVec<u8>, AcVec<u64>) {
-        let mut chars = AcVec::new_in(TEST_ALLOCATOR);
-        let mut offsets = AcVec::new_in(TEST_ALLOCATOR);
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let mut chars = AcVec::new_in(allocator.clone());
+        let mut offsets = AcVec::new_in(allocator);
 
         for s in symbol_chars {
             let sym_chars: Vec<_> = s.encode_utf16().collect();
@@ -1604,8 +1621,11 @@ mod tests {
     }
 
     fn create_col_data_buff_varchar(row_count: usize, distinct_values: usize) -> ColumnBuffers {
-        let mut aux_buff = AcVec::new_in(TEST_ALLOCATOR);
-        let mut data_buff = AcVec::new_in(TEST_ALLOCATOR);
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let mut aux_buff = AcVec::new_in(allocator.clone());
+        let mut data_buff = AcVec::new_in(allocator);
 
         let str_values: Vec<String> = (0..distinct_values)
             .map(|_| generate_random_unicode_string(10))
@@ -1633,10 +1653,13 @@ mod tests {
     }
 
     fn create_col_data_buff_string(row_count: usize, distinct_values: usize) -> ColumnBuffers {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
         let value_size = size_of::<i64>();
-        let mut aux_buff = AcVec::new_in(TEST_ALLOCATOR);
+        let mut aux_buff = AcVec::new_in(allocator.clone());
         aux_buff.extend_with(value_size, 0u8).unwrap();
-        let mut data_buff = AcVec::new_in(TEST_ALLOCATOR);
+        let mut data_buff = AcVec::new_in(allocator);
 
         let str_values: Vec<Vec<u16>> = (0..distinct_values)
             .map(|_| generate_random_unicode_string(10).encode_utf16().collect())

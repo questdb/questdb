@@ -34,8 +34,8 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         let col_len = metadata.schema_descr.columns().len();
         let qdb_meta = extract_qdb_meta(&metadata)?;
         let mut row_group_sizes: AcVec<i32> =
-            AcVec::try_with_capacity_in(metadata.row_groups.len(), allocator)?;
-        let mut columns = AcVec::try_with_capacity_in(col_len, allocator)?;
+            AcVec::try_with_capacity_in(metadata.row_groups.len(), allocator.clone())?;
+        let mut columns = AcVec::try_with_capacity_in(col_len, allocator.clone())?;
 
         for row_group in metadata.row_groups.iter() {
             row_group_sizes.push(row_group.num_rows() as i32)?
@@ -47,7 +47,7 @@ impl<R: Read + Seek> ParquetDecoder<R> {
                 Self::descriptor_to_column_type(&f.descriptor, column_id, qdb_meta.as_ref())
             {
                 let name_str = &f.descriptor.primitive_type.field_info.name;
-                let mut name = AcVec::try_with_capacity_in(name_str.len() * 2, allocator)?;
+                let mut name = AcVec::try_with_capacity_in(name_str.len() * 2, allocator.clone())?;
                 name.extend(name_str.encode_utf16())?;
 
                 columns.push(ColumnMeta {
@@ -183,10 +183,13 @@ mod tests {
     use arrow::datatypes::ToByteSlice;
     use bytes::Bytes;
     use tempfile::NamedTempFile;
-    use crate::allocator::TEST_ALLOCATOR;
+    use crate::allocator::TestAllocatorState;
 
     #[test]
     fn test_decode_column_type_fixed() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
         let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
         let row_count = 10;
         let mut buffers_columns = Vec::new();
@@ -241,7 +244,7 @@ mod tests {
 
         let path = temp_file.path().to_str().unwrap();
         let file = File::open(Path::new(path)).unwrap();
-        let meta = ParquetDecoder::read(TEST_ALLOCATOR, file).unwrap();
+        let meta = ParquetDecoder::read(allocator, file).unwrap();
 
         assert_eq!(meta.columns.len(), column_count);
         assert_eq!(meta.row_count, row_count);

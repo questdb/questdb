@@ -91,10 +91,13 @@ mod tests {
     use parquet::schema::types::Type;
     use std::io::Cursor;
     use std::sync::Arc;
-    use crate::allocator::TEST_ALLOCATOR;
+    use crate::allocator::TestAllocatorState;
 
     #[test]
     fn fn_load_symbol_without_local_is_global_format_meta() -> ParquetResult<()> {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
         let mut qdb_meta = QdbMeta::new();
         qdb_meta.schema.insert(
             0,
@@ -107,8 +110,8 @@ mod tests {
         let buf = gen_test_symbol_parquet(Some(qdb_meta.serialize()?))?;
 
         let reader = Cursor::new(buf);
-        let mut parquet_decoder = ParquetDecoder::read(TEST_ALLOCATOR, reader)?;
-        let mut rgb = RowGroupBuffers::new(TEST_ALLOCATOR);
+        let mut parquet_decoder = ParquetDecoder::read(allocator.clone(), reader)?;
+        let mut rgb = RowGroupBuffers::new(allocator);
         let res = parquet_decoder.decode_row_group(
             &mut rgb,
             &[(0, ColumnTypeTag::Symbol.into_type())],

@@ -23,7 +23,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     raw_fd: i32,
 ) -> *mut ParquetDecoder<NonOwningFile> {
     let reader = NonOwningFile::new(unsafe { File::from_raw_fd_i32(raw_fd) });
-    match ParquetDecoder::read(unsafe { *allocator }, reader) {
+    let allocator = unsafe { &*allocator }.clone();
+    match ParquetDecoder::read(allocator, reader) {
         Ok(decoder) => Box::into_raw(Box::new(decoder)),
         Err(mut err) => {
             err.add_context(format!("could not read parquet file with fd {raw_fd}"));
@@ -217,7 +218,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupBuff
     _class: JClass,
     allocator: *const QdbAllocator,
 ) -> *mut RowGroupBuffers {
-    let allocator = unsafe { *allocator };
+    let allocator = unsafe { &*allocator }.clone();
     Box::into_raw(Box::new(RowGroupBuffers::new(allocator)))
 }
 
@@ -291,7 +292,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStat
     _class: JClass,
     allocator: *const QdbAllocator,
 ) -> *mut RowGroupStatBuffers {
-    let allocator = unsafe { *allocator };
+    let allocator = unsafe { &*allocator }.clone();
     Box::into_raw(Box::new(RowGroupStatBuffers::new(allocator)))
 }
 

@@ -34,6 +34,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     let create = || -> ParquetResult<ParquetUpdater> {
         let compression_options =
             compression_from_i64(compression_codec).context("CompressionCodec")?;
+        let allocator = unsafe { &*allocator }.clone();
 
         let statistics_enabled = statistics_enabled != 0;
 
@@ -56,7 +57,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
         };
 
         ParquetUpdater::new(
-            unsafe { *allocator },
+            allocator,
             unsafe { File::from_raw_fd_i32(raw_fd) },
             file_size,
             sorting_columns,

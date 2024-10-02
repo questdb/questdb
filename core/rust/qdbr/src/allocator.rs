@@ -22,14 +22,18 @@
  *
  ******************************************************************************/
 use std::alloc::{AllocError, Allocator, Global, Layout};
+use std::cell::RefCell;
 use std::fmt::{Display, Formatter};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[cfg(test)]
+use std::sync::Arc;
+
 // We use a thread local to store additional allocation error information.
 // We do this since we can't pass it back via the Allocator trait's return type.
 thread_local! {
-    static ALLOC_ERROR: std::cell::RefCell<Option<AllocFailure>> = const { std::cell::RefCell::new(None) };
+    static ALLOC_ERROR: RefCell<Option<AllocFailure>> = const { RefCell::new(None) };
 }
 
 /// Takes (and clears) the last allocation error that occurred.
@@ -93,6 +97,7 @@ impl Display for AllocFailure {
 
 impl std::error::Error for AllocFailure {}
 
+#[cfg(not(test))]
 #[repr(C, packed)]
 struct MemTracking {
     /// Resident set size memory used. Updated on each allocation, reallocation and deallocation,
@@ -118,7 +123,8 @@ struct MemTracking {
 /// Custom allocator that fails once a memory limit watermark is reached.
 /// It also tracks memory usage for a specific memory tag.
 /// See `Unsafe.java` for the Java side of this.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
+#[cfg(not(test))]
 #[repr(C, packed)]
 pub struct QdbAllocator {
     /// Global counters
@@ -131,9 +137,28 @@ pub struct QdbAllocator {
     memory_tag: i32,
 }
 
+#[cfg(test)]
+struct MemTracking {
+    rss_mem_used: AtomicUsize,
+    rss_mem_limit: AtomicUsize,
+    malloc_count: AtomicUsize,
+    realloc_count: AtomicUsize,
+    free_count: AtomicUsize,
+    _non_rss_mem_used: AtomicUsize,
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+pub struct QdbAllocator {
+    mem_tracking: Arc<MemTracking>,
+    tagged_used: Arc<AtomicUsize>,
+    memory_tag: i32,
+}
+
 const RSS_ORDERING: Ordering = Ordering::SeqCst;
 const COUNTER_ORDERING: Ordering = Ordering::AcqRel;
 
+#[cfg(not(test))]
 impl QdbAllocator {
     fn rss_mem_used(&self) -> &AtomicUsize {
         &*(*self.mem_tracking).rss_mem_used
@@ -158,7 +183,36 @@ impl QdbAllocator {
     fn tagged_used(&self) -> &AtomicUsize {
         &*self.tagged_used
     }
+}
 
+#[cfg(test)]
+impl QdbAllocator {
+    fn rss_mem_used(&self) -> &AtomicUsize {
+        &self.mem_tracking.rss_mem_used
+    }
+
+    fn rss_mem_limit(&self) -> &AtomicUsize {
+        &self.mem_tracking.rss_mem_limit
+    }
+
+    fn malloc_count(&self) -> &AtomicUsize {
+        &self.mem_tracking.malloc_count
+    }
+
+    fn realloc_count(&self) -> &AtomicUsize {
+        &self.mem_tracking.realloc_count
+    }
+
+    fn free_count(&self) -> &AtomicUsize {
+        &self.mem_tracking.free_count
+    }
+
+    fn tagged_used(&self) -> &AtomicUsize {
+        &self.tagged_used
+    }
+}
+
+impl QdbAllocator {
     fn check_alloc_limit(&self, requested_size: usize) -> Result<(), AllocError> {
         let rss_mem_limit = self.rss_mem_limit().load(RSS_ORDERING);
         if rss_mem_limit > 0 {
@@ -281,59 +335,104 @@ unsafe impl Allocator for QdbAllocator {
 
 pub type AcVec<T> = alloc_checked::vec::Vec<T, QdbAllocator>;
 
-#[cfg(test)]
-pub static RSS_MEM_USED: AtomicUsize = AtomicUsize::new(0);
+// #[cfg(test)]
+// pub static RSS_MEM_USED: AtomicUsize = AtomicUsize::new(0);
+//
+// #[cfg(test)]
+// pub static RSS_MEM_LIMIT: AtomicUsize = AtomicUsize::new(0);
+//
+// #[cfg(test)]
+// pub static MALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
+//
+// #[cfg(test)]
+// pub static REALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
+//
+// #[cfg(test)]
+// pub static FREE_COUNT: AtomicUsize = AtomicUsize::new(0);
+//
+// #[cfg(test)]
+// pub static NON_RSS_MEM_USED: AtomicUsize = AtomicUsize::new(0);
+//
+// #[cfg(test)]
+// pub static TAGGED_USED: AtomicUsize = AtomicUsize::new(0);
+//
+// #[cfg(test)]
+// static TEST_MEM_TRACKING: MemTracking = MemTracking {
+//     rss_mem_used: &RSS_MEM_USED,
+//     rss_mem_limit: &RSS_MEM_LIMIT,
+//     malloc_count: &MALLOC_COUNT,
+//     realloc_count: &REALLOC_COUNT,
+//     free_count: &FREE_COUNT,
+//     _non_rss_mem_used: &NON_RSS_MEM_USED,
+// };
+//
+// #[cfg(test)]
+// pub static TEST_ALLOCATOR: QdbAllocator = QdbAllocator {
+//     mem_tracking: &TEST_MEM_TRACKING,
+//     tagged_used: &TAGGED_USED,
+//     memory_tag: 64,
+// };
 
 #[cfg(test)]
-pub static RSS_MEM_LIMIT: AtomicUsize = AtomicUsize::new(0);
-
-#[cfg(test)]
-pub static MALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
-
-#[cfg(test)]
-pub static REALLOC_COUNT: AtomicUsize = AtomicUsize::new(0);
-
-#[cfg(test)]
-pub static FREE_COUNT: AtomicUsize = AtomicUsize::new(0);
-
-#[cfg(test)]
-pub static NON_RSS_MEM_USED: AtomicUsize = AtomicUsize::new(0);
-
-#[cfg(test)]
-pub static TAGGED_USED: AtomicUsize = AtomicUsize::new(0);
-
-#[cfg(test)]
-static TEST_MEM_TRACKING: MemTracking = MemTracking {
-    rss_mem_used: &RSS_MEM_USED,
-    rss_mem_limit: &RSS_MEM_LIMIT,
-    malloc_count: &MALLOC_COUNT,
-    realloc_count: &REALLOC_COUNT,
-    free_count: &FREE_COUNT,
-    _non_rss_mem_used: &NON_RSS_MEM_USED,
-};
-
-#[cfg(test)]
-pub static TEST_ALLOCATOR: QdbAllocator = QdbAllocator {
-    mem_tracking: &TEST_MEM_TRACKING,
-    tagged_used: &TAGGED_USED,
-    memory_tag: 64,
-};
-
-#[cfg(test)]
-pub struct TestAllocatorLimitGuard {}
-
-#[cfg(test)]
-impl TestAllocatorLimitGuard {
-    pub fn new(limit: usize) -> Self {
-        RSS_MEM_LIMIT.store(limit, RSS_ORDERING);
-        Self {}
-    }
+pub struct TestAllocatorState {
+    mem_tracking: Arc<MemTracking>,
+    tagged_used: Arc<AtomicUsize>,
 }
 
 #[cfg(test)]
-impl Drop for TestAllocatorLimitGuard {
-    fn drop(&mut self) {
-        RSS_MEM_LIMIT.store(0, RSS_ORDERING);
+impl TestAllocatorState {
+    pub fn new() -> Self {
+        let mem_tracking = Arc::new(MemTracking {
+            rss_mem_used: AtomicUsize::new(0),
+            rss_mem_limit: AtomicUsize::new(0),
+            malloc_count: AtomicUsize::new(0),
+            realloc_count: AtomicUsize::new(0),
+            free_count: AtomicUsize::new(0),
+            _non_rss_mem_used: AtomicUsize::new(0),
+        });
+
+        let tagged_used = Arc::new(AtomicUsize::new(0));
+
+        Self {
+            mem_tracking,
+            tagged_used,
+        }
+    }
+
+    pub fn allocator(&self) -> QdbAllocator {
+        QdbAllocator {
+            mem_tracking: self.mem_tracking.clone(),
+            tagged_used: self.tagged_used.clone(),
+            memory_tag: 65,
+        }
+    }
+
+    pub fn rss_mem_used(&self) -> usize {
+        self.mem_tracking.rss_mem_used.load(Ordering::SeqCst)
+    }
+
+    pub fn rss_mem_limit(&self) -> usize {
+        self.mem_tracking.rss_mem_limit.load(Ordering::SeqCst)
+    }
+
+    pub fn set_mem_rss_limit(&self, limit: usize) {
+        self.mem_tracking.rss_mem_limit.store(limit, Ordering::SeqCst);
+    }
+
+    pub fn malloc_count(&self) -> usize {
+        self.mem_tracking.malloc_count.load(Ordering::SeqCst)
+    }
+
+    pub fn realloc_count(&self) -> usize {
+        self.mem_tracking.realloc_count.load(Ordering::SeqCst)
+    }
+
+    pub fn free_count(&self) -> usize {
+        self.mem_tracking.free_count.load(Ordering::SeqCst)
+    }
+
+    pub fn tagged_used(&self) -> usize {
+        self.tagged_used.load(Ordering::SeqCst)
     }
 }
 
@@ -341,25 +440,12 @@ impl Drop for TestAllocatorLimitGuard {
 mod tests {
     use std::alloc::Allocator;
     use std::ptr::NonNull;
-    use std::sync::atomic::AtomicUsize;
-    use crate::allocator::{take_last_alloc_error, AllocFailure, MemTracking, QdbAllocator, TestAllocatorLimitGuard, FREE_COUNT, MALLOC_COUNT, REALLOC_COUNT, RSS_MEM_LIMIT, RSS_MEM_USED, TEST_ALLOCATOR};
-
-    #[test]
-    fn test_size_assumptions() {
-        // We rely on these sizes in `Unsafe.java`.
-        assert_eq!(size_of::<&'static AtomicUsize>(), size_of::<*const AtomicUsize>());
-        assert_eq!(size_of::<&'static AtomicUsize>(), 8);
-
-        assert_eq!(size_of::<&'static MemTracking>(), size_of::<*const MemTracking>());
-        assert_eq!(size_of::<&'static MemTracking>(), 8);
-
-        assert_eq!(size_of::<MemTracking>(), 6 * 8);
-        assert_eq!(size_of::<QdbAllocator>(), 8 + 8 + 4);
-    }
+    use crate::allocator::{take_last_alloc_error, AllocFailure, TestAllocatorState};
 
     #[test]
     fn test_alloc_fail() {
-        let allocator = TEST_ALLOCATOR;
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
         let too_large = 1024 * 1024 * 1024 * 1024 * 1024;  // 1024 TB
         let layout = std::alloc::Layout::from_size_align(too_large, 16).unwrap();
         let result = allocator.allocate(layout);
@@ -370,33 +456,32 @@ mod tests {
 
     #[test]
     fn test_alloc_with_limit() {
-        let allocator = TEST_ALLOCATOR;
-        // Limit the memory to 1KiB.
-        let limit_guard = TestAllocatorLimitGuard::new(1024);
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
 
-        assert_eq!(RSS_MEM_USED.load(std::sync::atomic::Ordering::SeqCst), 0);
-        assert_eq!(TEST_ALLOCATOR.tagged_used().load(std::sync::atomic::Ordering::SeqCst), 0);
-        assert_eq!(RSS_MEM_LIMIT.load(std::sync::atomic::Ordering::SeqCst), 1024);
-        MALLOC_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
-        REALLOC_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
-        FREE_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
+        // Limit the memory to 1KiB.
+        tas.set_mem_rss_limit(1024);
+
+        assert_eq!(tas.rss_mem_used(), 0);
+        assert_eq!(tas.tagged_used(), 0);
+        assert_eq!(tas.rss_mem_limit(), 1024);
 
         // Ask for 64 bytes, should be fine.
         {
             let layout = std::alloc::Layout::from_size_align(64, 16).unwrap();
             let allocation = allocator.allocate(layout).unwrap();
-            assert_eq!(MALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 1);
-            assert_eq!(REALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 0);
-            assert_eq!(FREE_COUNT.load(std::sync::atomic::Ordering::SeqCst), 0);
-            assert_eq!(TEST_ALLOCATOR.tagged_used().load(std::sync::atomic::Ordering::SeqCst), 64);
+            assert_eq!(tas.malloc_count(), 1);
+            assert_eq!(tas.realloc_count(), 0);
+            assert_eq!(tas.free_count(), 0);
+            assert_eq!(tas.tagged_used(), 64);
 
             // Free said allocation.
             let allocation = NonNull::new(allocation.as_ptr() as *mut u8).unwrap();
             unsafe { allocator.deallocate(allocation, layout) };
-            assert_eq!(MALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 1);
-            assert_eq!(REALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 0);
-            assert_eq!(FREE_COUNT.load(std::sync::atomic::Ordering::SeqCst), 1);
-            assert_eq!(TEST_ALLOCATOR.tagged_used().load(std::sync::atomic::Ordering::SeqCst), 0);
+            assert_eq!(tas.malloc_count(), 1);
+            assert_eq!(tas.realloc_count(), 0);
+            assert_eq!(tas.free_count(), 1);
+            assert_eq!(tas.tagged_used(), 0);
         }
 
         // Now allocate in excess of the limit, should fail.
@@ -407,47 +492,57 @@ mod tests {
             let last_err = take_last_alloc_error().unwrap();
             assert!(matches!(last_err, AllocFailure::MemoryLimitExceeded {
                 requested_size: 2048,
-                memory_tag: 64,
+                memory_tag: 65,
                 rss_mem_limit: 1024,
                 rss_mem_used: 0,
             }));
-            assert_eq!(MALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 1);
-            assert_eq!(REALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 0);
-            assert_eq!(FREE_COUNT.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert_eq!(tas.malloc_count(), 1);
+            assert_eq!(tas.realloc_count(), 0);
+            assert_eq!(tas.free_count(), 1);
         }
-
-        drop(limit_guard);
-        assert_eq!(RSS_MEM_LIMIT.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     #[test]
     fn test_grow() {
-        MALLOC_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
-        REALLOC_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
-        FREE_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
-        let allocator = TEST_ALLOCATOR;
-        let layout = std::alloc::Layout::from_size_align(64, 16).unwrap();
-        let allocation = allocator.allocate(layout).unwrap();
-        assert_eq!(RSS_MEM_USED.load(std::sync::atomic::Ordering::SeqCst), 64);
-        assert_eq!(TEST_ALLOCATOR.tagged_used().load(std::sync::atomic::Ordering::SeqCst), 64);
-        assert_eq!(MALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(REALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 0);
-        assert_eq!(FREE_COUNT.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
 
-        let allocation = NonNull::new(allocation.as_ptr() as *mut u8).unwrap();
-        let new_layout = std::alloc::Layout::from_size_align(128, 16).unwrap();
-        let new_allocation = unsafe { allocator.grow(allocation, layout, new_layout).unwrap() };
-        assert_eq!(RSS_MEM_USED.load(std::sync::atomic::Ordering::SeqCst), 128);
-        assert_eq!(TEST_ALLOCATOR.tagged_used().load(std::sync::atomic::Ordering::SeqCst), 128);
-        assert_eq!(MALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(REALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(FREE_COUNT.load(std::sync::atomic::Ordering::SeqCst), 0);
-        let new_allocation = NonNull::new(new_allocation.as_ptr() as *mut u8).unwrap();
-        unsafe { allocator.deallocate(new_allocation, new_layout) };
-        assert_eq!(RSS_MEM_USED.load(std::sync::atomic::Ordering::SeqCst), 0);
-        assert_eq!(TEST_ALLOCATOR.tagged_used().load(std::sync::atomic::Ordering::SeqCst), 0);
-        assert_eq!(MALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(REALLOC_COUNT.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(FREE_COUNT.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // Allocate 64 bytes.
+        let layout1 = std::alloc::Layout::from_size_align(64, 16).unwrap();
+        let allocation1 = allocator.allocate(layout1).unwrap();
+        assert_eq!(tas.rss_mem_used(), 64);
+        assert_eq!(tas.tagged_used(), 64);
+        assert_eq!(tas.malloc_count(), 1);
+        assert_eq!(tas.realloc_count(), 0);
+        assert_eq!(tas.free_count(), 0);
+
+        // Grow the allocation to 128 bytes.
+        let allocation1 = NonNull::new(allocation1.as_ptr() as *mut u8).unwrap();
+        let layout2 = std::alloc::Layout::from_size_align(128, 16).unwrap();
+        let allocation2 = unsafe { allocator.grow(allocation1, layout1, layout2).unwrap() };
+        assert_eq!(tas.rss_mem_used(), 128);
+        assert_eq!(tas.tagged_used(), 128);
+        assert_eq!(tas.malloc_count(), 1);
+        assert_eq!(tas.realloc_count(), 1);
+        assert_eq!(tas.free_count(), 0);
+
+        // Shrink the allocation to 96 bytes.
+        let allocation2 = NonNull::new(allocation2.as_ptr() as *mut u8).unwrap();
+        let layout3 = std::alloc::Layout::from_size_align(96, 16).unwrap();
+        let allocation3 = unsafe { allocator.shrink(allocation2, layout2, layout3).unwrap() };
+        assert_eq!(tas.rss_mem_used(), 96);
+        assert_eq!(tas.tagged_used(), 96);
+        assert_eq!(tas.malloc_count(), 1);
+        assert_eq!(tas.realloc_count(), 2);
+        assert_eq!(tas.free_count(), 0);
+
+        // Free
+        let allocation3 = NonNull::new(allocation3.as_ptr() as *mut u8).unwrap();
+        unsafe { allocator.deallocate(allocation3, layout3) };
+        assert_eq!(tas.rss_mem_used(), 0);
+        assert_eq!(tas.tagged_used(), 0);
+        assert_eq!(tas.malloc_count(), 1);
+        assert_eq!(tas.realloc_count(), 2);
+        assert_eq!(tas.free_count(), 1);
     }
 }
