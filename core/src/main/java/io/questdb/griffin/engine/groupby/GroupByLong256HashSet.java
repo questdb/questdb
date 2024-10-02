@@ -45,7 +45,7 @@ import io.questdb.std.Vect;
  */
 public class GroupByLong256HashSet {
     private static final long HEADER_SIZE = 4 * Integer.BYTES;
-    private static final int MIN_INITIAL_CAPACITY = 16;
+    private static final int MIN_INITIAL_CAPACITY = 4;
     private static final long SIZE_LIMIT_OFFSET = 2 * Integer.BYTES;
     private static final long SIZE_OFFSET = Integer.BYTES;
     private final int initialCapacity;
