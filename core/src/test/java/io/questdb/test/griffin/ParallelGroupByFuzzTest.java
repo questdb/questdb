@@ -1301,13 +1301,24 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelNonKeyedGroupByWithCountDistinctSymbolFunction() throws Exception {
+    public void testParallelNonKeyedGroupByWithCountDistinctSymbolFunction1() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
         testParallelGroupByAllTypes(
                 "SELECT count_distinct(asymbol) FROM tab",
                 "count_distinct\n" +
                         "4\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithCountDistinctSymbolFunction2() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT count_distinct(asymbol), first(asymbol) FROM tab",
+                "count_distinct\tfirst\n" +
+                        "4\tCPSW\n"
         );
     }
 

@@ -63,10 +63,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             this.virtualRecordA.of(simpleMapValue);
 
             final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
-            boolean earlyExitSupported = true;
-            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-                earlyExitSupported &= groupByFunctions.getQuick(0).isEarlyExitSupported();
-            }
+            boolean earlyExitSupported = GroupByUtils.isEarlyExitSupported(groupByFunctions);
 
             if (earlyExitSupported) {
                 this.cursor = new EarlyExitGroupByNotKeyedRecordCursor(configuration, groupByFunctions, updater);

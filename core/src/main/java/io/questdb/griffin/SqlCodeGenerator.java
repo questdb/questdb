@@ -3766,7 +3766,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             RecordMetadata metadata = factory.getMetadata();
 
-            final boolean enableParallelGroupBy = configuration.isSqlParallelGroupByEnabled();
+            boolean enableParallelGroupBy = configuration.isSqlParallelGroupByEnabled();
             // Inspect model for possibility of vector aggregate intrinsics.
             if (enableParallelGroupBy && pageFramingSupported && assembleKeysAndFunctionReferences(columns, metadata, hourIndex)) {
                 // Create metadata from everything we've gathered.
@@ -3940,6 +3940,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 Misc.freeObjList(recordFunctions); // groupByFunctions are included in recordFunctions
                 Misc.freeObjList(keyFunctions);
                 throw e;
+            }
+
+            // Check if we have a non-keyed query with early exit aggregate functions (e.g. count_distinct(symbol))
+            // and no filter. In such a case, use single-threaded factories instead of the multithreaded ones.
+            if (
+                    enableParallelGroupBy
+                            && keyTypes.getColumnCount() == 0
+                            && GroupByUtils.isEarlyExitSupported(groupByFunctions)
+                            && factory.getFilter() == null
+            ) {
+                enableParallelGroupBy = false;
             }
 
             if (
