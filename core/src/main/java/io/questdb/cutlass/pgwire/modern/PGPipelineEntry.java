@@ -352,6 +352,7 @@ public class PGPipelineEntry implements QuietCloseable {
             SqlExecutionContext sqlExecutionContext,
             int transactionState,
             SimpleAssociativeCache<TypesAndInsertModern> taiCache,
+            WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool,
             ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
             WriterSource writerSource,
             CharacterStore characterStore,
@@ -370,7 +371,8 @@ public class PGPipelineEntry implements QuietCloseable {
                 case CompiledQuery.EXPLAIN:
                 case CompiledQuery.SELECT:
                 case CompiledQuery.PSEUDO_SELECT:
-                    msgExecuteSelect(sqlExecutionContext, characterStore, utf8String, binarySequenceParamsPool);
+                    msgExecuteSelect(
+                            sqlExecutionContext, characterStore, utf8String, binarySequenceParamsPool, taiPool);
                     break;
                 case CompiledQuery.INSERT:
                     executeInsert(
@@ -1078,7 +1080,8 @@ public class PGPipelineEntry implements QuietCloseable {
             SqlExecutionContext sqlExecutionContext,
             CharacterStore characterStore,
             DirectUtf8String utf8String,
-            ObjectPool<DirectBinarySequence> binarySequenceParamsPool
+            ObjectPool<DirectBinarySequence> binarySequenceParamsPool,
+            WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
     ) throws SqlException, BadProtocolException {
         if (cursor == null) {
             sqlExecutionContext.getCircuitBreaker().resetTimer();
@@ -1090,7 +1093,12 @@ public class PGPipelineEntry implements QuietCloseable {
                         utf8String,
                         binarySequenceParamsPool
                 );
-                cursor = factory.getCursor(sqlExecutionContext);
+                try {
+                    cursor = factory.getCursor(sqlExecutionContext);
+                } catch (TableReferenceOutOfDateException e) {
+                    compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
+                    cursor = factory.getCursor(sqlExecutionContext);
+                }
             } catch (Throwable e) {
                 // un-cache the erroneous SQL
                 tas = Misc.free(tas);
