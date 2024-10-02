@@ -216,23 +216,23 @@ public class InterpolationUtil {
     }
 
     static void storeYDouble(GroupByFunction function, MapValue mapValue, long targetAddress) {
-        Unsafe.getUnsafe().putDouble(targetAddress, function.getDouble(mapValue));
+        Unsafe.putDouble(targetAddress, function.getDouble(mapValue));
     }
 
     static void storeYFloat(GroupByFunction function, MapValue mapValue, long targetAddress) {
-        Unsafe.getUnsafe().putFloat(targetAddress, function.getFloat(mapValue));
+        Unsafe.putFloat(targetAddress, function.getFloat(mapValue));
     }
 
     static void storeYInt(GroupByFunction function, MapValue mapValue, long targetAddress) {
-        Unsafe.getUnsafe().putInt(targetAddress, function.getInt(mapValue));
+        Unsafe.putInt(targetAddress, function.getInt(mapValue));
     }
 
     static void storeYLong(GroupByFunction function, MapValue mapValue, long targetAddress) {
-        Unsafe.getUnsafe().putLong(targetAddress, function.getLong(mapValue));
+        Unsafe.putLong(targetAddress, function.getLong(mapValue));
     }
 
     static void storeYShort(GroupByFunction function, MapValue mapValue, long targetAddress) {
-        Unsafe.getUnsafe().putShort(targetAddress, function.getShort(mapValue));
+        Unsafe.putShort(targetAddress, function.getShort(mapValue));
     }
 
     interface InterpolatorFunction {

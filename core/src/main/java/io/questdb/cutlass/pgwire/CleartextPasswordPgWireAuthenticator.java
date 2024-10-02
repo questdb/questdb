@@ -531,13 +531,13 @@ public class CleartextPasswordPgWireAuthenticator implements SocketAuthenticator
 
         public void putInt(int i) {
             checkCapacity(Integer.BYTES);
-            Unsafe.getUnsafe().putInt(sendBufWritePos, Numbers.bswap(i));
+            Unsafe.putInt(sendBufWritePos, Numbers.bswap(i));
             sendBufWritePos += Integer.BYTES;
         }
 
         public void putLen(long start) {
             int len = (int) (sendBufWritePos - start);
-            Unsafe.getUnsafe().putInt(start, Numbers.bswap(len));
+            Unsafe.putInt(start, Numbers.bswap(len));
         }
 
         @Override

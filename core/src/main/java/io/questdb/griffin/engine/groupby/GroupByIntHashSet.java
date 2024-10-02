@@ -83,7 +83,7 @@ public class GroupByIntHashSet {
         setKeyAt(index, key);
         int size = size();
         int sizeLimit = sizeLimit();
-        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, ++size);
+        Unsafe.putInt(ptr + SIZE_OFFSET, ++size);
         if (size >= sizeLimit) {
             rehash(capacity() << 1, sizeLimit << 1);
         }
@@ -140,9 +140,9 @@ public class GroupByIntHashSet {
         if (ptr == 0) {
             this.ptr = allocator.malloc(HEADER_SIZE + 4L * initialCapacity);
             zero(this.ptr, initialCapacity);
-            Unsafe.getUnsafe().putInt(this.ptr, initialCapacity);
-            Unsafe.getUnsafe().putInt(this.ptr + SIZE_OFFSET, 0);
-            Unsafe.getUnsafe().putInt(this.ptr + SIZE_LIMIT_OFFSET, (int) (initialCapacity * loadFactor));
+            Unsafe.putInt(this.ptr, initialCapacity);
+            Unsafe.putInt(this.ptr + SIZE_OFFSET, 0);
+            Unsafe.putInt(this.ptr + SIZE_LIMIT_OFFSET, (int) (initialCapacity * loadFactor));
             mask = initialCapacity - 1;
         } else {
             this.ptr = ptr;
@@ -195,9 +195,9 @@ public class GroupByIntHashSet {
         long oldPtr = ptr;
         ptr = allocator.malloc(HEADER_SIZE + 4L * newCapacity);
         zero(ptr, newCapacity);
-        Unsafe.getUnsafe().putInt(ptr, newCapacity);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, oldSize);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_LIMIT_OFFSET, newSizeLimit);
+        Unsafe.putInt(ptr, newCapacity);
+        Unsafe.putInt(ptr + SIZE_OFFSET, oldSize);
+        Unsafe.putInt(ptr + SIZE_LIMIT_OFFSET, newSizeLimit);
         mask = newCapacity - 1;
 
         for (long p = oldPtr + HEADER_SIZE, lim = oldPtr + HEADER_SIZE + 4L * oldCapacity; p < lim; p += 4L) {
@@ -212,7 +212,7 @@ public class GroupByIntHashSet {
     }
 
     private void setKeyAt(long index, int key) {
-        Unsafe.getUnsafe().putInt(ptr + HEADER_SIZE + 4L * index, key);
+        Unsafe.putInt(ptr + HEADER_SIZE + 4L * index, key);
     }
 
     private void zero(long ptr, int cap) {
@@ -221,7 +221,7 @@ public class GroupByIntHashSet {
             Vect.memset(ptr + HEADER_SIZE, 4L * cap, 0);
         } else {
             for (long p = ptr + HEADER_SIZE, lim = ptr + HEADER_SIZE + 4L * cap; p < lim; p += 4L) {
-                Unsafe.getUnsafe().putInt(p, noKeyValue);
+                Unsafe.putInt(p, noKeyValue);
             }
         }
     }

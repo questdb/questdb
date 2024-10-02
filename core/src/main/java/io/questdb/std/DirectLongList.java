@@ -56,7 +56,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     public void add(long value) {
         checkCapacity();
         assert pos < limit;
-        Unsafe.getUnsafe().putLong(pos, value);
+        Unsafe.putLong(pos, value);
         pos += Long.BYTES;
     }
 
@@ -137,7 +137,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
 
     public void set(long p, long v) {
         assert p >= 0 && p <= (limit - address) >> 3;
-        Unsafe.getUnsafe().putLong(address + (p << 3), v);
+        Unsafe.putLong(address + (p << 3), v);
     }
 
     // desired capacity in LONGs (not count of bytes)

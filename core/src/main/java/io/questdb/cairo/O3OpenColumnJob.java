@@ -345,7 +345,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // of moving data
                     if (prefixType != O3_BLOCK_NONE) {
                         // Set the column top if it's not split partition case.
-                        Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);
+                        Unsafe.putLong(colTopSinkAddr, srcDataTop);
                         // For split partition, old partition column top will remain the same.
                         // And the new partition will not have any column top since srcDataTop <= prefixHi.
                     }
@@ -1557,7 +1557,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             case OPEN_NEW_PARTITION_FOR_APPEND:
                 // mark the fact that the column is touched in the partition to the column version file
                 // It's fine to overwrite this value if needed inside the job branches.
-                Unsafe.getUnsafe().putLong(colTopSinkAddr, 0L);
+                Unsafe.putLong(colTopSinkAddr, 0L);
                 appendNewPartition(
                         pathToNewPartition,
                         plen,
@@ -1866,7 +1866,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 // Trim column top to partition top.
                 srcDataTop = Math.min(srcDataMax, tableWriter.getColumnTop(oldPartitionTimestamp, columnIndex, srcDataMax));
                 if (srcDataTop == srcDataMax) {
-                    Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataMax);
+                    Unsafe.putLong(colTopSinkAddr, srcDataMax);
                 }
             } catch (Throwable e) {
                 LOG.error().$("append mid partition error 1 [table=").$(tableWriter.getTableToken())
@@ -2356,7 +2356,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     // of moving data
                     if (prefixType != O3_BLOCK_NONE) {
                         // Set column top if it's not split partition.
-                        Unsafe.getUnsafe().putLong(colTopSinkAddr, srcDataTop);
+                        Unsafe.putLong(colTopSinkAddr, srcDataTop);
                         // If it's split partition, do nothing. Old partition will have the old column top
                         // New partition will have 0 column top, since srcDataTop <= prefixHi.
                     }

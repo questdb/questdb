@@ -251,6 +251,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
             return;
         }
         final long capAdjustment = -1 * allocatedCapacity();
+        Unsafe.onExternalFree(impl);
         implDestroy(impl);
         Unsafe.incrFreeCount();
         Unsafe.recordMemAlloc(capAdjustment, memoryTag());
@@ -280,12 +281,13 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         if (impl == 0) {
             throw CairoException.nonCritical().setOutOfMemory(true).put("could not allocate direct byte sink [maxCapacity=").put(initialCapacity).put(']');
         }
+        Unsafe.onExternalMalloc(impl, this.allocatedCapacity());
         Unsafe.recordMemAlloc(this.allocatedCapacity(), memoryTag());
         Unsafe.incrMallocCount();
     }
 
     private void setImplPtr(long ptr) {
-        Unsafe.getUnsafe().putLong(impl + BYTE_SINK_PTR_OFFSET, ptr);
+        Unsafe.putLong(impl + BYTE_SINK_PTR_OFFSET, ptr);
     }
 
     protected int memoryTag() {

@@ -1107,13 +1107,13 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             final long o3SplitPartitionSize,
             boolean partitionMutates
     ) {
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, timestampMin);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, srcDataNewPartitionSize);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, srcDataOldPartitionSize);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, partitionMutates ? 1 : 0);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, o3SplitPartitionSize);
-        Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1); // parquet partition file size
+        Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
+        Unsafe.putLong(partitionUpdateSinkAddr + Long.BYTES, timestampMin);
+        Unsafe.putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, srcDataNewPartitionSize);
+        Unsafe.putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, srcDataOldPartitionSize);
+        Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, partitionMutates ? 1 : 0);
+        Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, o3SplitPartitionSize);
+        Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1); // parquet partition file size
 
         LOG.debug()
                 .$("sending partition update [partitionTimestamp=").$ts(partitionTimestamp)

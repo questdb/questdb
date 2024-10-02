@@ -240,12 +240,12 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean o3QuickSortEnabled;
     private final int parallelIndexThreshold;
     private final boolean parallelIndexingEnabled;
-    private final boolean partitionEncoderParquetStatisticsEnabled;
-    private final int partitionEncoderParquetVersion;
+    private final int partitionEncoderParqeutRowGroupSize;
     private final int partitionEncoderParquetCompressionCodec;
     private final int partitionEncoderParquetCompressionLevel;
-    private final int partitionEncoderParqeutRowGroupSize;
     private final int partitionEncoderParquetDataPageSize;
+    private final boolean partitionEncoderParquetStatisticsEnabled;
+    private final int partitionEncoderParquetVersion;
     private final boolean pgEnabled;
     private final PGWireConfiguration pgWireConfiguration = new PropPGWireConfiguration();
     private final String posthogApiKey;
@@ -745,7 +745,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             final long tableIndexMem = TableUtils.mapRWOrClose(ff, tableIndexFd, Files.PAGE_SIZE, MemoryTag.MMAP_DEFAULT);
             Rnd rnd = new Rnd(cairoConfiguration.getMicrosecondClock().getTicks(), cairoConfiguration.getMillisecondClock().getTicks());
             if (Os.compareAndSwap(tableIndexMem + Long.BYTES, 0, rnd.nextLong()) == 0) {
-                Unsafe.getUnsafe().putLong(tableIndexMem + Long.BYTES * 2, rnd.nextLong());
+                Unsafe.putLong(tableIndexMem + Long.BYTES * 2, rnd.nextLong());
             }
             this.instanceHashLo = Unsafe.getUnsafe().getLong(tableIndexMem + Long.BYTES);
             this.instanceHashHi = Unsafe.getUnsafe().getLong(tableIndexMem + Long.BYTES * 2);
@@ -2509,6 +2509,31 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getPartitionEncoderParquetCompressionCodec() {
+            return partitionEncoderParquetCompressionCodec;
+        }
+
+        @Override
+        public int getPartitionEncoderParquetCompressionLevel() {
+            return partitionEncoderParquetCompressionLevel;
+        }
+
+        @Override
+        public int getPartitionEncoderParquetDataPageSize() {
+            return partitionEncoderParquetDataPageSize;
+        }
+
+        @Override
+        public int getPartitionEncoderParquetRowGroupSize() {
+            return partitionEncoderParqeutRowGroupSize;
+        }
+
+        @Override
+        public int getPartitionEncoderParquetVersion() {
+            return partitionEncoderParquetVersion;
+        }
+
+        @Override
         public long getPartitionO3SplitMinSize() {
             return o3PartitionSplitMinSize;
         }
@@ -3088,6 +3113,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isPartitionEncoderParquetStatisticsEnabled() {
+            return partitionEncoderParquetStatisticsEnabled;
+        }
+
+        @Override
         public boolean isReadOnlyInstance() {
             return isReadOnlyInstance;
         }
@@ -3151,36 +3181,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean useFastAsOfJoin() {
             return useFastAsOfJoin;
-        }
-
-        @Override
-        public int getPartitionEncoderParquetVersion() {
-            return partitionEncoderParquetVersion;
-        }
-
-        @Override
-        public boolean isPartitionEncoderParquetStatisticsEnabled() {
-            return partitionEncoderParquetStatisticsEnabled;
-        }
-
-        @Override
-        public int getPartitionEncoderParquetCompressionCodec() {
-            return partitionEncoderParquetCompressionCodec;
-        }
-
-        @Override
-        public int getPartitionEncoderParquetCompressionLevel() {
-            return partitionEncoderParquetCompressionLevel;
-        }
-
-        @Override
-        public int getPartitionEncoderParquetRowGroupSize() {
-            return partitionEncoderParqeutRowGroupSize;
-        }
-
-        @Override
-        public int getPartitionEncoderParquetDataPageSize() {
-            return partitionEncoderParquetDataPageSize;
         }
     }
 

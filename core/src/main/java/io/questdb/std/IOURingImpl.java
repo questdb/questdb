@@ -138,7 +138,7 @@ public class IOURingImpl implements IOURing {
         }
         cachedSize = tail - head;
         cachedIndex = 0;
-        Unsafe.getUnsafe().putInt(cqKheadAddr, tail);
+        Unsafe.putInt(cqKheadAddr, tail);
         Unsafe.getUnsafe().storeFence();
         return true;
     }
@@ -153,6 +153,21 @@ public class IOURingImpl implements IOURing {
         return facade.submitAndWait(ringAddr, 1);
     }
 
+    private long enqueueSqe(byte op, long fd, long offset, long bufAddr, int len) {
+        final long sqeAddr = nextSqe();
+        if (sqeAddr == 0) {
+            return -1;
+        }
+        Unsafe.getUnsafe().putByte(sqeAddr + SQE_OPCODE_OFFSET, op);
+        Unsafe.putInt(sqeAddr + SQE_FD_OFFSET, toOsFd(fd));
+        Unsafe.putLong(sqeAddr + SQE_OFF_OFFSET, offset);
+        Unsafe.putLong(sqeAddr + SQE_ADDR_OFFSET, bufAddr);
+        Unsafe.putInt(sqeAddr + SQE_LEN_OFFSET, len);
+        final long id = idSeq++;
+        Unsafe.putLong(sqeAddr + SQE_USER_DATA_OFFSET, id);
+        return id;
+    }
+
     /**
      * Returns a pointer to sqe to fill. If there are sqes no available, returns 0.
      */
@@ -162,25 +177,10 @@ public class IOURingImpl implements IOURing {
         final int tail = Unsafe.getUnsafe().getInt(ringAddr + SQ_SQE_TAIL_OFFSET);
         if (tail - head < sqKringEntries) {
             final long addr = sqesAddr + (long) (tail & sqKringMask) * SIZEOF_SQE;
-            Unsafe.getUnsafe().putInt(ringAddr + SQ_SQE_TAIL_OFFSET, tail + 1);
+            Unsafe.putInt(ringAddr + SQ_SQE_TAIL_OFFSET, tail + 1);
             return addr;
         }
         return 0;
-    }
-
-    private long enqueueSqe(byte op, long fd, long offset, long bufAddr, int len) {
-        final long sqeAddr = nextSqe();
-        if (sqeAddr == 0) {
-            return -1;
-        }
-        Unsafe.getUnsafe().putByte(sqeAddr + SQE_OPCODE_OFFSET, op);
-        Unsafe.getUnsafe().putInt(sqeAddr + SQE_FD_OFFSET, toOsFd(fd));
-        Unsafe.getUnsafe().putLong(sqeAddr + SQE_OFF_OFFSET, offset);
-        Unsafe.getUnsafe().putLong(sqeAddr + SQE_ADDR_OFFSET, bufAddr);
-        Unsafe.getUnsafe().putInt(sqeAddr + SQE_LEN_OFFSET, len);
-        final long id = idSeq++;
-        Unsafe.getUnsafe().putLong(sqeAddr + SQE_USER_DATA_OFFSET, id);
-        return id;
     }
 
 }

@@ -120,9 +120,9 @@ public class HyperLogLogSparseRepresentation {
         if (ptr == 0) {
             this.ptr = allocator.malloc(HEADER_SIZE + (INITIAL_CAPACITY << 2));
             zero(this.ptr, INITIAL_CAPACITY);
-            Unsafe.getUnsafe().putInt(this.ptr + CAPACITY_OFFSET, INITIAL_CAPACITY);
-            Unsafe.getUnsafe().putInt(this.ptr + SIZE_OFFSET, 0);
-            Unsafe.getUnsafe().putInt(this.ptr + SIZE_LIMIT_OFFSET, (int) (INITIAL_CAPACITY * LOAD_FACTOR));
+            Unsafe.putInt(this.ptr + CAPACITY_OFFSET, INITIAL_CAPACITY);
+            Unsafe.putInt(this.ptr + SIZE_OFFSET, 0);
+            Unsafe.putInt(this.ptr + SIZE_LIMIT_OFFSET, (int) (INITIAL_CAPACITY * LOAD_FACTOR));
             moduloMask = INITIAL_CAPACITY - 1;
         } else {
             this.ptr = ptr;
@@ -159,7 +159,7 @@ public class HyperLogLogSparseRepresentation {
         setAt(index, entry);
         int size = size();
         int sizeLimit = sizeLimit();
-        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, ++size);
+        Unsafe.putInt(ptr + SIZE_OFFSET, ++size);
         if (size >= sizeLimit) {
             rehash(capacity() << 1, sizeLimit << 1);
         }
@@ -220,9 +220,9 @@ public class HyperLogLogSparseRepresentation {
         ptr = allocator.malloc(HEADER_SIZE + ((long) newCapacity << 2));
         zero(ptr, newCapacity);
         Unsafe.getUnsafe().putByte(ptr, type);
-        Unsafe.getUnsafe().putInt(ptr + CAPACITY_OFFSET, newCapacity);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, 0);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_LIMIT_OFFSET, newSizeLimit);
+        Unsafe.putInt(ptr + CAPACITY_OFFSET, newCapacity);
+        Unsafe.putInt(ptr + SIZE_OFFSET, 0);
+        Unsafe.putInt(ptr + SIZE_LIMIT_OFFSET, newSizeLimit);
         moduloMask = newCapacity - 1;
 
         for (long p = oldPtr + HEADER_SIZE, lim = oldPtr + HEADER_SIZE + ((long) oldCapacity << 2); p < lim; p += 4L) {
@@ -237,7 +237,7 @@ public class HyperLogLogSparseRepresentation {
     }
 
     private void setAt(int index, int entry) {
-        Unsafe.getUnsafe().putInt(ptr + HEADER_SIZE + ((long) index << 2), entry);
+        Unsafe.putInt(ptr + HEADER_SIZE + ((long) index << 2), entry);
     }
 
     private int sizeLimit() {

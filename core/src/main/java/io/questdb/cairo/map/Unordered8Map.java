@@ -165,7 +165,7 @@ public class Unordered8Map implements Map, Reopenable {
             Vect.memset(memStart, sizeBytes, 0);
             memLimit = memStart + sizeBytes;
             keyMemStart = Unsafe.malloc(KEY_SIZE, memoryTag);
-            Unsafe.getUnsafe().putLong(keyMemStart, 0);
+            Unsafe.putLong(keyMemStart, 0);
             zeroMemStart = Unsafe.malloc(entrySize, memoryTag);
             Vect.memset(zeroMemStart, entrySize, 0);
 
@@ -189,7 +189,7 @@ public class Unordered8Map implements Map, Reopenable {
         nResizes = 0;
         hasZero = false;
         Vect.memset(memStart, memLimit - memStart, 0);
-        Unsafe.getUnsafe().putLong(keyMemStart, 0);
+        Unsafe.putLong(keyMemStart, 0);
         Vect.memset(zeroMemStart, entrySize, 0);
     }
 
@@ -351,7 +351,7 @@ public class Unordered8Map implements Map, Reopenable {
     }
 
     private Unordered8MapValue asNew(long startAddress, long key, long hashCode, Unordered8MapValue value) {
-        Unsafe.getUnsafe().putLong(startAddress, key);
+        Unsafe.putLong(startAddress, key);
         if (--free == 0) {
             rehash();
             // Index may have changed after rehash, so we need to find the key.
@@ -551,7 +551,7 @@ public class Unordered8Map implements Map, Reopenable {
 
         @Override
         public void putChar(char value) {
-            Unsafe.getUnsafe().putChar(appendAddress, value);
+            Unsafe.putChar(appendAddress, value);
             appendAddress += 2L;
         }
 
@@ -562,13 +562,13 @@ public class Unordered8Map implements Map, Reopenable {
 
         @Override
         public void putDouble(double value) {
-            Unsafe.getUnsafe().putDouble(appendAddress, value);
+            Unsafe.putDouble(appendAddress, value);
             appendAddress += 8L;
         }
 
         @Override
         public void putFloat(float value) {
-            Unsafe.getUnsafe().putFloat(appendAddress, value);
+            Unsafe.putFloat(appendAddress, value);
             appendAddress += 4L;
         }
 
@@ -579,13 +579,13 @@ public class Unordered8Map implements Map, Reopenable {
 
         @Override
         public void putInt(int value) {
-            Unsafe.getUnsafe().putInt(appendAddress, value);
+            Unsafe.putInt(appendAddress, value);
             appendAddress += 4L;
         }
 
         @Override
         public void putLong(long value) {
-            Unsafe.getUnsafe().putLong(appendAddress, value);
+            Unsafe.putLong(appendAddress, value);
             appendAddress += 8L;
         }
 
@@ -611,7 +611,7 @@ public class Unordered8Map implements Map, Reopenable {
 
         @Override
         public void putShort(short value) {
-            Unsafe.getUnsafe().putShort(appendAddress, value);
+            Unsafe.putShort(appendAddress, value);
             appendAddress += 2L;
         }
 
@@ -677,7 +677,7 @@ public class Unordered8Map implements Map, Reopenable {
 
         void copyFromRawKey(long srcPtr) {
             long srcKey = Unsafe.getUnsafe().getLong(srcPtr);
-            Unsafe.getUnsafe().putLong(appendAddress, srcKey);
+            Unsafe.putLong(appendAddress, srcKey);
             appendAddress += KEY_SIZE;
         }
 

@@ -35,7 +35,7 @@ public class ColumnUtils {
             final long remapOffset = (long) oldKey * Integer.BYTES;
             if (remapOffset >= 0 && remapOffset < remapMemorySize) {
                 final int newKey = Unsafe.getUnsafe().getInt(remapTableMemory + remapOffset);
-                Unsafe.getUnsafe().putInt(columnMemory + offset, newKey);
+                Unsafe.putInt(columnMemory + offset, newKey);
             }
         }
     }

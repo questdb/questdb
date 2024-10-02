@@ -488,7 +488,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public void putChar(long offset, char value) {
         if (roOffsetLo < offset && offset < roOffsetHi - 2) {
-            Unsafe.getUnsafe().putChar(absolutePointer + offset, value);
+            Unsafe.putChar(absolutePointer + offset, value);
         } else {
             putCharBytes(offset, value);
         }
@@ -497,7 +497,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public final void putChar(char value) {
         if (pageHi - appendPointer > 1) {
-            Unsafe.getUnsafe().putChar(appendPointer, value);
+            Unsafe.putChar(appendPointer, value);
             appendPointer += 2;
         } else {
             putCharBytes(value);
@@ -517,7 +517,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public void putDouble(long offset, double value) {
         if (roOffsetLo < offset && offset < roOffsetHi - 8) {
-            Unsafe.getUnsafe().putDouble(absolutePointer + offset, value);
+            Unsafe.putDouble(absolutePointer + offset, value);
         } else {
             putDoubleBytes(offset, value);
         }
@@ -526,7 +526,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public final void putDouble(double value) {
         if (pageHi - appendPointer > 7) {
-            Unsafe.getUnsafe().putDouble(appendPointer, value);
+            Unsafe.putDouble(appendPointer, value);
             appendPointer += 8;
         } else {
             putDoubleBytes(value);
@@ -544,7 +544,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public void putFloat(long offset, float value) {
         if (roOffsetLo < offset && offset < roOffsetHi - 4) {
-            Unsafe.getUnsafe().putFloat(absolutePointer + offset, value);
+            Unsafe.putFloat(absolutePointer + offset, value);
         } else {
             putFloatBytes(offset, value);
         }
@@ -553,7 +553,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public final void putFloat(float value) {
         if (pageHi - appendPointer > 3) {
-            Unsafe.getUnsafe().putFloat(appendPointer, value);
+            Unsafe.putFloat(appendPointer, value);
             appendPointer += 4;
         } else {
             putFloatBytes(value);
@@ -571,7 +571,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public void putInt(long offset, int value) {
         if (roOffsetLo < offset && offset < roOffsetHi - Integer.BYTES) {
-            Unsafe.getUnsafe().putInt(absolutePointer + offset, value);
+            Unsafe.putInt(absolutePointer + offset, value);
         } else {
             putIntBytes(offset, value);
         }
@@ -580,11 +580,11 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public final void putInt(int value) {
         if (pageHi - appendPointer > 3) {
-            Unsafe.getUnsafe().putInt(appendPointer, value);
+            Unsafe.putInt(appendPointer, value);
             appendPointer += 4;
         } else if (pageHi == appendPointer) {
             pageAt(getAppendOffset() + 1);
-            Unsafe.getUnsafe().putInt(appendPointer, value);
+            Unsafe.putInt(appendPointer, value);
             appendPointer += 4;
         } else {
             putIntBytes(value);
@@ -608,7 +608,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public void putLong(long offset, long value) {
         if (roOffsetLo < offset && offset < roOffsetHi - 8) {
-            Unsafe.getUnsafe().putLong(absolutePointer + offset, value);
+            Unsafe.putLong(absolutePointer + offset, value);
         } else {
             putLongBytes(offset, value);
         }
@@ -617,7 +617,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public final void putLong(long value) {
         if (pageHi - appendPointer > 7) {
-            Unsafe.getUnsafe().putLong(appendPointer, value);
+            Unsafe.putLong(appendPointer, value);
             appendPointer += 8;
         } else {
             putLongBytes(value);
@@ -627,8 +627,8 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public final void putLong128(long lo, long hi) {
         if (pageHi - appendPointer > 15) {
-            Unsafe.getUnsafe().putLong(appendPointer, lo);
-            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, hi);
+            Unsafe.putLong(appendPointer, lo);
+            Unsafe.putLong(appendPointer + Long.BYTES, hi);
             appendPointer += 16;
         } else {
             putLong(lo);
@@ -650,10 +650,10 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public void putLong256(long offset, long l0, long l1, long l2, long l3) {
         if (roOffsetLo < offset && offset < roOffsetHi - Long256.BYTES) {
-            Unsafe.getUnsafe().putLong(absolutePointer + offset, l0);
-            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES, l1);
-            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES * 2, l2);
-            Unsafe.getUnsafe().putLong(absolutePointer + offset + Long.BYTES * 3, l3);
+            Unsafe.putLong(absolutePointer + offset, l0);
+            Unsafe.putLong(absolutePointer + offset + Long.BYTES, l1);
+            Unsafe.putLong(absolutePointer + offset + Long.BYTES * 2, l2);
+            Unsafe.putLong(absolutePointer + offset + Long.BYTES * 3, l3);
         } else {
             putLong(offset, l0);
             putLong(offset + Long.BYTES, l1);
@@ -665,10 +665,10 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public final void putLong256(long l0, long l1, long l2, long l3) {
         if (pageHi - appendPointer > Long256.BYTES - 1) {
-            Unsafe.getUnsafe().putLong(appendPointer, l0);
-            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES, l1);
-            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES * 2, l2);
-            Unsafe.getUnsafe().putLong(appendPointer + Long.BYTES * 3, l3);
+            Unsafe.putLong(appendPointer, l0);
+            Unsafe.putLong(appendPointer + Long.BYTES, l1);
+            Unsafe.putLong(appendPointer + Long.BYTES * 2, l2);
+            Unsafe.putLong(appendPointer + Long.BYTES * 3, l3);
             appendPointer += Long256.BYTES;
         } else {
             putLong(l0);
@@ -757,7 +757,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public void putShort(long offset, short value) {
         if (roOffsetLo < offset && offset < roOffsetHi - 2) {
-            Unsafe.getUnsafe().putShort(absolutePointer + offset, value);
+            Unsafe.putShort(absolutePointer + offset, value);
         } else {
             putShortBytes(offset, value);
         }
@@ -766,7 +766,7 @@ public class MemoryPARWImpl implements MemoryARW {
     @Override
     public final void putShort(short value) {
         if (pageHi - appendPointer > 1) {
-            Unsafe.getUnsafe().putShort(appendPointer, value);
+            Unsafe.putShort(appendPointer, value);
             appendPointer += 2;
         } else {
             putShortBytes(value);
@@ -816,7 +816,7 @@ public class MemoryPARWImpl implements MemoryARW {
             if (pageHi - appendPointer < Character.BYTES) {
                 putSplitChar(value);
             } else {
-                Unsafe.getUnsafe().putChar(appendPointer, value);
+                Unsafe.putChar(appendPointer, value);
                 appendPointer += Character.BYTES;
             }
             return getAppendOffset();
@@ -906,7 +906,7 @@ public class MemoryPARWImpl implements MemoryARW {
     private static void copyStrChars(CharSequence value, int pos, int len, long address) {
         for (int i = 0; i < len; i++) {
             char c = value.charAt(i + pos);
-            Unsafe.getUnsafe().putChar(address + 2L * i, c);
+            Unsafe.putChar(address + 2L * i, c);
         }
     }
 
@@ -1284,10 +1284,10 @@ public class MemoryPARWImpl implements MemoryARW {
     private class InPageLong256FromCharSequenceDecoder extends Long256FromCharSequenceDecoder {
         @Override
         public void setAll(long l0, long l1, long l2, long l3) {
-            Unsafe.getUnsafe().putLong(appendPointer, l0);
-            Unsafe.getUnsafe().putLong(appendPointer + 8, l1);
-            Unsafe.getUnsafe().putLong(appendPointer + 16, l2);
-            Unsafe.getUnsafe().putLong(appendPointer + 24, l3);
+            Unsafe.putLong(appendPointer, l0);
+            Unsafe.putLong(appendPointer + 8, l1);
+            Unsafe.putLong(appendPointer + 16, l2);
+            Unsafe.putLong(appendPointer + 24, l3);
         }
 
         private void putLong256(@Nullable CharSequence hexString) {

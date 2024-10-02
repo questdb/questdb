@@ -250,13 +250,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
         } finally {
             final long fileSize = Files.length(path.$());
-            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
-            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
-            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize);
-            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, oldPartitionSize);
-            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, 1); // partitionMutates
-            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
-            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, fileSize); // update parquet partition file size
+            Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
+            Unsafe.putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
+            Unsafe.putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize);
+            Unsafe.putLong(partitionUpdateSinkAddr + 3 * Long.BYTES, oldPartitionSize);
+            Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, 1); // partitionMutates
+            Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
+            Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, fileSize); // update parquet partition file size
 
             tableWriter.o3CountDownDoneLatch();
             tableWriter.o3ClockDownPartitionUpdateCount();
@@ -839,7 +839,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // data in existing partition.
             // When partition is new, the data timestamp is MIN_LONG
 
-            Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
+            Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
             publishOpenColumnTasks(
                     txn,
                     columns,

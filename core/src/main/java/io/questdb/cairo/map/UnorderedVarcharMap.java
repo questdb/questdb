@@ -287,8 +287,8 @@ public class UnorderedVarcharMap implements Map, Reopenable {
                 long arenaPtr = allocator.malloc(srcSize);
                 Vect.memcpy(arenaPtr, srcPtrWithUnstableFlags & PTR_MASK, srcSize);
                 long arenaPtrWithUnstableFlags = arenaPtr | PTR_UNSTABLE_MASK;
-                Unsafe.getUnsafe().putLong(destAddr, srcHashSizeFlags);
-                Unsafe.getUnsafe().putLong(destAddr + 8, arenaPtrWithUnstableFlags);
+                Unsafe.putLong(destAddr, srcHashSizeFlags);
+                Unsafe.putLong(destAddr + 8, arenaPtrWithUnstableFlags);
 
                 // copy value
                 Vect.memcpy(destAddr + KEY_SIZE, srcAddr + KEY_SIZE, entrySize - KEY_SIZE);
@@ -367,16 +367,16 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             long keyHashSizeFlags,
             UnorderedVarcharMapValue value
     ) {
-        Unsafe.getUnsafe().putLong(startAddress, keyHashSizeFlags);
+        Unsafe.putLong(startAddress, keyHashSizeFlags);
         if ((keyPtrWithUnstableFlag & PTR_UNSTABLE_MASK) == 0) {
             // stable pointer
-            Unsafe.getUnsafe().putLong(startAddress + 8L, keyPtrWithUnstableFlag);
+            Unsafe.putLong(startAddress + 8L, keyPtrWithUnstableFlag);
         } else {
             // unstable pointer, copy key to our memory
             long arenaPtr = allocator.malloc(keySize);
             Vect.memcpy(arenaPtr, keyPtrWithUnstableFlag & PTR_MASK, keySize);
             long arenaPtrWithUnstableFlags = arenaPtr | PTR_UNSTABLE_MASK;
-            Unsafe.getUnsafe().putLong(startAddress + 8, arenaPtrWithUnstableFlags);
+            Unsafe.putLong(startAddress + 8, arenaPtrWithUnstableFlags);
         }
         if (--free == 0) {
             rehash();

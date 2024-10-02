@@ -84,7 +84,7 @@ public class GroupByLong128HashSet {
         setKeyAt(index, lo, hi);
         int size = size();
         int sizeLimit = sizeLimit();
-        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, ++size);
+        Unsafe.putInt(ptr + SIZE_OFFSET, ++size);
         if (size >= sizeLimit) {
             rehash(capacity() << 1, sizeLimit << 1);
         }
@@ -144,9 +144,9 @@ public class GroupByLong128HashSet {
         if (ptr == 0) {
             this.ptr = allocator.malloc(HEADER_SIZE + 16L * initialCapacity);
             zero(this.ptr, initialCapacity);
-            Unsafe.getUnsafe().putInt(this.ptr, initialCapacity);
-            Unsafe.getUnsafe().putInt(this.ptr + SIZE_OFFSET, 0);
-            Unsafe.getUnsafe().putInt(this.ptr + SIZE_LIMIT_OFFSET, (int) (initialCapacity * loadFactor));
+            Unsafe.putInt(this.ptr, initialCapacity);
+            Unsafe.putInt(this.ptr + SIZE_OFFSET, 0);
+            Unsafe.putInt(this.ptr + SIZE_LIMIT_OFFSET, (int) (initialCapacity * loadFactor));
             mask = initialCapacity - 1;
         } else {
             this.ptr = ptr;
@@ -201,9 +201,9 @@ public class GroupByLong128HashSet {
         long oldPtr = ptr;
         ptr = allocator.malloc(16L * newCapacity + HEADER_SIZE);
         zero(ptr, newCapacity);
-        Unsafe.getUnsafe().putInt(ptr, newCapacity);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, oldSize);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_LIMIT_OFFSET, newSizeLimit);
+        Unsafe.putInt(ptr, newCapacity);
+        Unsafe.putInt(ptr + SIZE_OFFSET, oldSize);
+        Unsafe.putInt(ptr + SIZE_LIMIT_OFFSET, newSizeLimit);
         mask = newCapacity - 1;
 
         for (long p = oldPtr + HEADER_SIZE, lim = oldPtr + HEADER_SIZE + 16L * oldCapacity; p < lim; p += 16L) {
@@ -220,8 +220,8 @@ public class GroupByLong128HashSet {
 
     private void setKeyAt(long index, long lo, long hi) {
         long p = keyAddrAt(index);
-        Unsafe.getUnsafe().putLong(p, lo);
-        Unsafe.getUnsafe().putLong(p + 8L, hi);
+        Unsafe.putLong(p, lo);
+        Unsafe.putLong(p + 8L, hi);
     }
 
     private void zero(long ptr, int cap) {
@@ -230,8 +230,8 @@ public class GroupByLong128HashSet {
             Vect.memset(ptr + HEADER_SIZE, 16L * cap, 0);
         } else {
             for (long p = ptr + HEADER_SIZE, lim = ptr + HEADER_SIZE + 16L * cap; p < lim; p += 16L) {
-                Unsafe.getUnsafe().putLong(p, noKeyValue);
-                Unsafe.getUnsafe().putLong(p + 8L, noKeyValue);
+                Unsafe.putLong(p, noKeyValue);
+                Unsafe.putLong(p + 8L, noKeyValue);
             }
         }
     }

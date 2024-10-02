@@ -67,17 +67,17 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
      */
     public static void appendPlainValue(long dataMemAddr, @Nullable Utf8Sequence value, boolean eraseAsciiFlag) {
         if (value == null) {
-            Unsafe.getUnsafe().putInt(dataMemAddr, TableUtils.NULL_LEN); // NULL
+            Unsafe.putInt(dataMemAddr, TableUtils.NULL_LEN); // NULL
             return;
         }
         final int hi = value.size();
         value.writeTo(dataMemAddr + Integer.BYTES, 0, hi);
         if (eraseAsciiFlag) {
-            Unsafe.getUnsafe().putInt(dataMemAddr, hi);
+            Unsafe.putInt(dataMemAddr, hi);
         } else {
             final boolean ascii = value.isAscii();
             // ASCII flag is signaled with the highest bit
-            Unsafe.getUnsafe().putInt(dataMemAddr, ascii ? hi | Integer.MIN_VALUE : hi);
+            Unsafe.putInt(dataMemAddr, ascii ? hi | Integer.MIN_VALUE : hi);
         }
     }
 

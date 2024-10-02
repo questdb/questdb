@@ -70,10 +70,10 @@ public final class Os {
             try {
                 long p = argv;
                 for (int i = 0; i < n; i++) {
-                    Unsafe.getUnsafe().putLong(p, paths.getQuick(i).ptr());
+                    Unsafe.putLong(p, paths.getQuick(i).ptr());
                     p += 8;
                 }
-                Unsafe.getUnsafe().putLong(p, 0);
+                Unsafe.putLong(p, 0);
                 return forkExec(argv);
             } finally {
                 Unsafe.free(argv, n + 1, MemoryTag.NATIVE_DEFAULT);

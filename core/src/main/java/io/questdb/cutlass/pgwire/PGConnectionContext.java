@@ -311,15 +311,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     public static void putInt(long address, int value) {
-        Unsafe.getUnsafe().putInt(address, Numbers.bswap(value));
+        Unsafe.putInt(address, Numbers.bswap(value));
     }
 
     public static void putLong(long address, long value) {
-        Unsafe.getUnsafe().putLong(address, Numbers.bswap(value));
+        Unsafe.putLong(address, Numbers.bswap(value));
     }
 
     public static void putShort(long address, short value) {
-        Unsafe.getUnsafe().putShort(address, Numbers.bswap(value));
+        Unsafe.putShort(address, Numbers.bswap(value));
     }
 
     @Override
@@ -3037,7 +3037,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
 
         public void putIntUnsafe(long offset, int value) {
-            Unsafe.getUnsafe().putInt(sendBufferPtr + offset, value);
+            Unsafe.putInt(sendBufferPtr + offset, value);
         }
 
         public void putLen(long start) {
@@ -3050,13 +3050,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         public void putNetworkDouble(double value) {
             checkCapacity(Double.BYTES);
-            Unsafe.getUnsafe().putDouble(sendBufferPtr, Double.longBitsToDouble(Numbers.bswap(Double.doubleToLongBits(value))));
+            Unsafe.putDouble(sendBufferPtr, Double.longBitsToDouble(Numbers.bswap(Double.doubleToLongBits(value))));
             sendBufferPtr += Double.BYTES;
         }
 
         public void putNetworkFloat(float value) {
             checkCapacity(Float.BYTES);
-            Unsafe.getUnsafe().putFloat(sendBufferPtr, Float.intBitsToFloat(Numbers.bswap(Float.floatToIntBits(value))));
+            Unsafe.putFloat(sendBufferPtr, Float.intBitsToFloat(Numbers.bswap(Float.floatToIntBits(value))));
             sendBufferPtr += Float.BYTES;
         }
 

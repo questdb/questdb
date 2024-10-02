@@ -164,7 +164,7 @@ public class Unordered4Map implements Map, Reopenable {
             Vect.memset(memStart, sizeBytes, 0);
             memLimit = memStart + sizeBytes;
             keyMemStart = Unsafe.malloc(KEY_SIZE, memoryTag);
-            Unsafe.getUnsafe().putInt(keyMemStart, 0);
+            Unsafe.putInt(keyMemStart, 0);
             zeroMemStart = Unsafe.malloc(entrySize, memoryTag);
             Vect.memset(zeroMemStart, entrySize, 0);
 
@@ -188,7 +188,7 @@ public class Unordered4Map implements Map, Reopenable {
         nResizes = 0;
         hasZero = false;
         Vect.memset(memStart, memLimit - memStart, 0);
-        Unsafe.getUnsafe().putInt(keyMemStart, 0);
+        Unsafe.putInt(keyMemStart, 0);
         Vect.memset(zeroMemStart, entrySize, 0);
     }
 
@@ -351,7 +351,7 @@ public class Unordered4Map implements Map, Reopenable {
     }
 
     private Unordered4MapValue asNew(long startAddress, int key, long hashCode, Unordered4MapValue value) {
-        Unsafe.getUnsafe().putInt(startAddress, key);
+        Unsafe.putInt(startAddress, key);
         if (--free == 0) {
             rehash();
             // Index may have changed after rehash, so we need to find the key.
@@ -551,7 +551,7 @@ public class Unordered4Map implements Map, Reopenable {
 
         @Override
         public void putChar(char value) {
-            Unsafe.getUnsafe().putChar(appendAddress, value);
+            Unsafe.putChar(appendAddress, value);
             appendAddress += 2L;
         }
 
@@ -567,7 +567,7 @@ public class Unordered4Map implements Map, Reopenable {
 
         @Override
         public void putFloat(float value) {
-            Unsafe.getUnsafe().putFloat(appendAddress, value);
+            Unsafe.putFloat(appendAddress, value);
             appendAddress += 4L;
         }
 
@@ -578,7 +578,7 @@ public class Unordered4Map implements Map, Reopenable {
 
         @Override
         public void putInt(int value) {
-            Unsafe.getUnsafe().putInt(appendAddress, value);
+            Unsafe.putInt(appendAddress, value);
             appendAddress += 4L;
         }
 
@@ -609,7 +609,7 @@ public class Unordered4Map implements Map, Reopenable {
 
         @Override
         public void putShort(short value) {
-            Unsafe.getUnsafe().putShort(appendAddress, value);
+            Unsafe.putShort(appendAddress, value);
             appendAddress += 2L;
         }
 
@@ -678,7 +678,7 @@ public class Unordered4Map implements Map, Reopenable {
 
         void copyFromRawKey(long srcPtr) {
             int srcKey = Unsafe.getUnsafe().getInt(srcPtr);
-            Unsafe.getUnsafe().putInt(appendAddress, srcKey);
+            Unsafe.putInt(appendAddress, srcKey);
             appendAddress += KEY_SIZE;
         }
 

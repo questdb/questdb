@@ -33,6 +33,9 @@ import java.lang.reflect.AccessibleObject;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Map;
+import java.util.concurrent.ConcurrentNavigableMap;
+import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
@@ -48,6 +51,7 @@ public final class Unsafe {
     //#endif
     public static final long LONG_OFFSET;
     public static final long LONG_SCALE;
+    private static final ConcurrentNavigableMap<Long, Long> ALLOCATED = new ConcurrentSkipListMap<>();
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
     private static final AtomicLong FREE_COUNT = new AtomicLong(0);
     private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
@@ -162,6 +166,9 @@ public final class Unsafe {
 
             long rawPtr = ptr - prologSize;
             checkMemoryTag(rawPtr, usefulSize);
+
+            Long oldSize = ALLOCATED.remove(ptr);
+            assert oldSize != null;
             Unsafe.getUnsafe().freeMemory(rawPtr);
 
             long rawSize = prologSize + usefulSize + epilogSize;
@@ -245,8 +252,12 @@ public final class Unsafe {
             long epilogSize = epilogSize(usefulSize);
             long rawSize = usefulSize + prologSize + epilogSize;
             long rawPtr = Unsafe.getUnsafe().allocateMemory(rawSize);
+            Long oldSize = ALLOCATED.put(rawPtr + prologSize, usefulSize);
+            assert oldSize == null;
+
             tagMemoryAllocation(rawPtr, usefulSize);
             recordMemAlloc(rawSize, memoryTag);
+
             MALLOC_COUNT.incrementAndGet();
             return rawPtr + prologSize;
         } catch (OutOfMemoryError oom) {
@@ -261,6 +272,51 @@ public final class Unsafe {
             System.err.println(e.getFlyweightMessage());
             throw e;
         }
+    }
+
+    public static void onExternalFree(long address) {
+        Long remove = ALLOCATED.remove(address);
+        assert remove != null;
+    }
+
+    public static void onExternalMalloc(long address, long size) {
+        Long put = ALLOCATED.put(address, size);
+        assert put == null;
+    }
+
+    public static void putByte(long address, byte value) {
+        assertAllocatedMemory(address, Byte.BYTES);
+        UNSAFE.putByte(address, value);
+    }
+
+    public static void putChar(long address, char value) {
+        assertAllocatedMemory(address, Character.BYTES);
+        UNSAFE.putChar(address, value);
+    }
+
+    public static void putDouble(long address, double value) {
+        assertAllocatedMemory(address, Double.BYTES);
+        UNSAFE.putDouble(address, value);
+    }
+
+    public static void putFloat(long address, float value) {
+        assertAllocatedMemory(address, Float.BYTES);
+        UNSAFE.putFloat(address, value);
+    }
+
+    public static void putInt(long address, int value) {
+        assertAllocatedMemory(address, Integer.BYTES);
+        UNSAFE.putInt(address, value);
+    }
+
+    public static void putLong(long address, long value) {
+        assertAllocatedMemory(address, Long.BYTES);
+        UNSAFE.putLong(address, value);
+    }
+
+    public static void putShort(long address, short value) {
+        assertAllocatedMemory(address, Short.BYTES);
+        UNSAFE.putShort(address, value);
     }
 
     public static long realloc(long usefulOldAddress, long usefulOldSize, long usefulNewSize, int memoryTag) {
@@ -286,14 +342,22 @@ public final class Unsafe {
 
             if (rawOldPtr != 0) {
                 checkMemoryTag(rawOldPtr, usefulOldSize);
+            } else {
+                assert false;
             }
 
             long rawNewPtr = Unsafe.getUnsafe().allocateMemory(rawNewSize);
+            Long oldSize = ALLOCATED.put(rawNewPtr + newPrologSize, usefulNewSize);
+            assert oldSize == null;
+
             tagMemoryAllocation(rawNewPtr, usefulNewSize);
 
             Vect.memcpy(rawNewPtr + newPrologSize, rawOldPtr + oldPrologSize, Math.min(usefulOldSize, usefulNewSize));
 
+            oldSize = ALLOCATED.remove(rawOldPtr + oldPrologSize);
+            assert oldSize != null;
             Unsafe.getUnsafe().freeMemory(rawOldPtr);
+
             recordMemAlloc(rawSizeDiff, memoryTag);
             REALLOC_COUNT.incrementAndGet();
             return rawNewPtr + newPrologSize;
@@ -342,6 +406,14 @@ public final class Unsafe {
         }
         return 16L;
     }
+
+private static void assertAllocatedMemory(long address, int bytes) {
+    assert address > 0;
+    Map.Entry<Long, Long> allocEntry = ALLOCATED.floorEntry(address);
+    assert allocEntry != null;
+    long maxAddress = allocEntry.getKey() + allocEntry.getValue();
+    assert address + bytes <= maxAddress;
+}
 
     private static void checkAllocLimit(long size, int memoryTag) {
         if (size <= 0) {

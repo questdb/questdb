@@ -121,7 +121,7 @@ public class Unordered2Map implements Map, Reopenable {
             Vect.memset(memStart, sizeBytes, 0);
             memLimit = memStart + sizeBytes;
             keyMemStart = Unsafe.malloc(KEY_SIZE, memoryTag);
-            Unsafe.getUnsafe().putShort(keyMemStart, (short) 0);
+            Unsafe.putShort(keyMemStart, (short) 0);
 
             value = new Unordered2MapValue(valueSize, valueOffsets);
             value2 = new Unordered2MapValue(valueSize, valueOffsets);
@@ -141,7 +141,7 @@ public class Unordered2Map implements Map, Reopenable {
         size = 0;
         hasZero = false;
         Vect.memset(memStart, entrySize * TABLE_SIZE, 0);
-        Unsafe.getUnsafe().putShort(keyMemStart, (short) 0);
+        Unsafe.putShort(keyMemStart, (short) 0);
     }
 
     @Override
@@ -309,7 +309,7 @@ public class Unordered2Map implements Map, Reopenable {
                 long startAddress = getStartAddress(key);
                 short k = Unsafe.getUnsafe().getShort(startAddress);
                 size += (k == 0) ? 1 : 0;
-                Unsafe.getUnsafe().putShort(startAddress, key);
+                Unsafe.putShort(startAddress, key);
                 return valueOf(startAddress, k == 0, value);
             }
 
@@ -375,7 +375,7 @@ public class Unordered2Map implements Map, Reopenable {
 
         @Override
         public void putChar(char value) {
-            Unsafe.getUnsafe().putChar(appendAddress, value);
+            Unsafe.putChar(appendAddress, value);
             appendAddress += 2L;
         }
 
@@ -431,7 +431,7 @@ public class Unordered2Map implements Map, Reopenable {
 
         @Override
         public void putShort(short value) {
-            Unsafe.getUnsafe().putShort(appendAddress, value);
+            Unsafe.putShort(appendAddress, value);
             appendAddress += 2L;
         }
 
@@ -473,7 +473,7 @@ public class Unordered2Map implements Map, Reopenable {
 
         void copyFromRawKey(long srcPtr) {
             short srcKey = Unsafe.getUnsafe().getShort(srcPtr);
-            Unsafe.getUnsafe().putShort(appendAddress, srcKey);
+            Unsafe.putShort(appendAddress, srcKey);
             appendAddress += KEY_SIZE;
         }
 

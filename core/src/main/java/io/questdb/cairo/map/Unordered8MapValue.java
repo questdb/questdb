@@ -50,25 +50,25 @@ final class Unordered8MapValue implements MapValue {
     @Override
     public void addDouble(int index, double value) {
         final long p = address0(index);
-        Unsafe.getUnsafe().putDouble(p, Unsafe.getUnsafe().getDouble(p) + value);
+        Unsafe.putDouble(p, Unsafe.getUnsafe().getDouble(p) + value);
     }
 
     @Override
     public void addFloat(int index, float value) {
         final long p = address0(index);
-        Unsafe.getUnsafe().putFloat(p, Unsafe.getUnsafe().getFloat(p) + value);
+        Unsafe.putFloat(p, Unsafe.getUnsafe().getFloat(p) + value);
     }
 
     @Override
     public void addInt(int index, int value) {
         final long p = address0(index);
-        Unsafe.getUnsafe().putInt(p, Unsafe.getUnsafe().getInt(p) + value);
+        Unsafe.putInt(p, Unsafe.getUnsafe().getInt(p) + value);
     }
 
     @Override
     public void addLong(int index, long value) {
         final long p = address0(index);
-        Unsafe.getUnsafe().putLong(p, Unsafe.getUnsafe().getLong(p) + value);
+        Unsafe.putLong(p, Unsafe.getUnsafe().getLong(p) + value);
     }
 
     @Override
@@ -76,16 +76,16 @@ final class Unordered8MapValue implements MapValue {
         Long256 acc = getLong256A(index);
         Long256Util.add(acc, value);
         final long p = address0(index);
-        Unsafe.getUnsafe().putLong(p, acc.getLong0());
-        Unsafe.getUnsafe().putLong(p + 8L, acc.getLong1());
-        Unsafe.getUnsafe().putLong(p + 16L, acc.getLong2());
-        Unsafe.getUnsafe().putLong(p + 24L, acc.getLong3());
+        Unsafe.putLong(p, acc.getLong0());
+        Unsafe.putLong(p + 8L, acc.getLong1());
+        Unsafe.putLong(p + 16L, acc.getLong2());
+        Unsafe.putLong(p + 24L, acc.getLong3());
     }
 
     @Override
     public void addShort(int index, short value) {
         final long p = address0(index);
-        Unsafe.getUnsafe().putShort(p, (short) (Unsafe.getUnsafe().getShort(p) + value));
+        Unsafe.putShort(p, (short) (Unsafe.getUnsafe().getShort(p) + value));
     }
 
     @Override
@@ -198,13 +198,13 @@ final class Unordered8MapValue implements MapValue {
     @Override
     public void maxInt(int index, int value) {
         final long p = address0(index);
-        Unsafe.getUnsafe().putInt(p, Math.max(value, Unsafe.getUnsafe().getInt(p)));
+        Unsafe.putInt(p, Math.max(value, Unsafe.getUnsafe().getInt(p)));
     }
 
     @Override
     public void maxLong(int index, long value) {
         final long p = address0(index);
-        Unsafe.getUnsafe().putLong(p, Math.max(value, Unsafe.getUnsafe().getLong(p)));
+        Unsafe.putLong(p, Math.max(value, Unsafe.getUnsafe().getLong(p)));
     }
 
     @Override
@@ -212,7 +212,7 @@ final class Unordered8MapValue implements MapValue {
         if (value != Numbers.INT_NULL) {
             final long p = address0(index);
             final int current = Unsafe.getUnsafe().getInt(p);
-            Unsafe.getUnsafe().putInt(p, current != Numbers.INT_NULL ? Math.min(value, current) : value);
+            Unsafe.putInt(p, current != Numbers.INT_NULL ? Math.min(value, current) : value);
         }
     }
 
@@ -221,7 +221,7 @@ final class Unordered8MapValue implements MapValue {
         if (value != Numbers.LONG_NULL) {
             final long p = address0(index);
             final long current = Unsafe.getUnsafe().getLong(p);
-            Unsafe.getUnsafe().putLong(p, current != Numbers.LONG_NULL ? Math.min(value, current) : value);
+            Unsafe.putLong(p, current != Numbers.LONG_NULL ? Math.min(value, current) : value);
         }
     }
 
@@ -239,7 +239,7 @@ final class Unordered8MapValue implements MapValue {
     @Override
     public void putChar(int index, char value) {
         final long p = address0(index);
-        Unsafe.getUnsafe().putChar(p, value);
+        Unsafe.putChar(p, value);
     }
 
     @Override
@@ -250,46 +250,46 @@ final class Unordered8MapValue implements MapValue {
     @Override
     public void putDouble(int index, double value) {
         final long p = address0(index);
-        Unsafe.getUnsafe().putDouble(p, value);
+        Unsafe.putDouble(p, value);
     }
 
     @Override
     public void putFloat(int index, float value) {
         final long p = address0(index);
-        Unsafe.getUnsafe().putFloat(p, value);
+        Unsafe.putFloat(p, value);
     }
 
     @Override
     public void putInt(int index, int value) {
         final long p = address0(index);
-        Unsafe.getUnsafe().putInt(p, value);
+        Unsafe.putInt(p, value);
     }
 
     @Override
     public void putLong(int index, long value) {
         final long p = address0(index);
-        Unsafe.getUnsafe().putLong(p, value);
+        Unsafe.putLong(p, value);
     }
 
     @Override
     public void putLong128(int index, long lo, long hi) {
         long address = address0(index);
-        Unsafe.getUnsafe().putLong(address, lo);
-        Unsafe.getUnsafe().putLong(address + 8L, hi);
+        Unsafe.putLong(address, lo);
+        Unsafe.putLong(address + 8L, hi);
     }
 
     @Override
     public void putLong256(int index, Long256 value) {
         final long p = address0(index);
-        Unsafe.getUnsafe().putLong(p, value.getLong0());
-        Unsafe.getUnsafe().putLong(p + 8L, value.getLong1());
-        Unsafe.getUnsafe().putLong(p + 16L, value.getLong2());
-        Unsafe.getUnsafe().putLong(p + 24L, value.getLong3());
+        Unsafe.putLong(p, value.getLong0());
+        Unsafe.putLong(p + 8L, value.getLong1());
+        Unsafe.putLong(p + 16L, value.getLong2());
+        Unsafe.putLong(p + 24L, value.getLong3());
     }
 
     @Override
     public void putShort(int index, short value) {
-        Unsafe.getUnsafe().putShort(address0(index), value);
+        Unsafe.putShort(address0(index), value);
     }
 
     @Override

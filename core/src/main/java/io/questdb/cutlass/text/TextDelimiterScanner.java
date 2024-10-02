@@ -78,7 +78,7 @@ public class TextDelimiterScanner implements Closeable {
     private void bumpCountAt(int line, byte bytePosition, int increment) {
         if (bytePosition > 0) {
             final long pos = matrix + ((long) line * matrixRowSize + bytePosition * Integer.BYTES);
-            Unsafe.getUnsafe().putInt(pos, Unsafe.getUnsafe().getInt(pos) + increment);
+            Unsafe.putInt(pos, Unsafe.getUnsafe().getInt(pos) + increment);
         }
     }
 

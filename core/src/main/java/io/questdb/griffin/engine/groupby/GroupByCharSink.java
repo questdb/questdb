@@ -67,7 +67,7 @@ public class GroupByCharSink implements Utf16Sink, CharSequence, Mutable {
     @Override
     public void clear() {
         if (ptr != 0) {
-            Unsafe.getUnsafe().putInt(ptr + LEN_OFFSET, 0);
+            Unsafe.putInt(ptr + LEN_OFFSET, 0);
         }
     }
 
@@ -98,9 +98,9 @@ public class GroupByCharSink implements Utf16Sink, CharSequence, Mutable {
             int thisLen = length();
             long lo = ptr + HEADER_SIZE + 2L * thisLen;
             for (int i = 0; i < thatLen; i++) {
-                Unsafe.getUnsafe().putChar(lo + 2L * i, cs.charAt(i));
+                Unsafe.putChar(lo + 2L * i, cs.charAt(i));
             }
-            Unsafe.getUnsafe().putInt(ptr + LEN_OFFSET, thisLen + thatLen);
+            Unsafe.putInt(ptr + LEN_OFFSET, thisLen + thatLen);
         }
         return this;
     }
@@ -110,8 +110,8 @@ public class GroupByCharSink implements Utf16Sink, CharSequence, Mutable {
         checkCapacity(1);
         int len = length();
         long lo = ptr + HEADER_SIZE + 2L * len;
-        Unsafe.getUnsafe().putChar(lo, c);
-        Unsafe.getUnsafe().putInt(ptr + LEN_OFFSET, len + 1);
+        Unsafe.putChar(lo, c);
+        Unsafe.putInt(ptr + LEN_OFFSET, len + 1);
         return this;
     }
 
@@ -159,11 +159,11 @@ public class GroupByCharSink implements Utf16Sink, CharSequence, Mutable {
         long newSize = ((long) newCapacity << 1) + HEADER_SIZE;
         if (ptr == 0) {
             ptr = allocator.malloc(newSize);
-            Unsafe.getUnsafe().putInt(ptr, newCapacity);
-            Unsafe.getUnsafe().putInt(ptr + LEN_OFFSET, 0);
+            Unsafe.putInt(ptr, newCapacity);
+            Unsafe.putInt(ptr + LEN_OFFSET, 0);
         } else {
             ptr = allocator.realloc(ptr, ((long) capacity << 1) + HEADER_SIZE, newSize);
-            Unsafe.getUnsafe().putInt(ptr, newCapacity);
+            Unsafe.putInt(ptr, newCapacity);
         }
     }
 }

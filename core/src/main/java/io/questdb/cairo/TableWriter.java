@@ -6374,9 +6374,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     latchCount++;
                     // Set column top memory to -1, no need to initialize partition update memory, it always set by O3 partition tasks
                     Vect.memset(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
-                    Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr, partitionTimestamp);
+                    Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
                     // original partition timestamp
-                    Unsafe.getUnsafe().putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
+                    Unsafe.putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
 
 
                     if (append) {
