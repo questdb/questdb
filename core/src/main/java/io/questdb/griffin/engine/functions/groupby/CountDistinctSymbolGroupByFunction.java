@@ -215,4 +215,9 @@ public class CountDistinctSymbolGroupByFunction extends LongFunction implements 
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public void toTop() {
+        UnaryFunction.super.toTop();
+    }
 }
