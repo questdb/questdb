@@ -147,15 +147,13 @@ public class LineHttpProcessor implements HttpRequestProcessor, HttpMultipartCon
         if (state.isOk()) {
             state.setSendStatus(SendStatus.HEADER);
             context.simpleResponse().sendStatusNoContent(204);
-            Metrics metrics = engine.getMetrics();
-            long totalReceivedHttpBytes = metrics.line().totalIlpHttpBytesGauge().getValue();
-            metrics.line().totalIlpHttpBytesGauge().setValue(totalReceivedHttpBytes + context.getTotalReceived());
         } else {
             state.setSendStatus(SendStatus.HEADER);
             sendErrorHeader(context);
             state.setSendStatus(SendStatus.CONTENT);
             sendErrorContent(context);
         }
+        engine.getMetrics().line().totalIlpHttpBytesGauge().add(context.getTotalReceived());
     }
 
     @Override

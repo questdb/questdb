@@ -432,8 +432,7 @@ public class LineTcpConnectionContext extends IOContext<LineTcpConnectionContext
         final int orig = bufferRemaining;
         if (bufferRemaining > 0 && !peerDisconnected) {
             int bytesRead = socket.recv(recvBufPos, bufferRemaining);
-            long totalReceivedTcpBytes = metrics.line().totalIlpTcpBytesGauge().getValue();
-            metrics.line().totalIlpTcpBytesGauge().setValue(totalReceivedTcpBytes + bytesRead);
+            metrics.line().totalIlpTcpBytesGauge().add(bytesRead);
             if (bytesRead > 0) {
                 recvBufPos += bytesRead;
                 bufferRemaining -= bytesRead;
