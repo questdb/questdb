@@ -123,6 +123,7 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
             return p;
         }
         final long initCapacity = allocatedCapacity();
+        long oldLo = getImplLo();
         p = implBook(impl, required);
         if (p == 0) {
             if (getImplOverflow()) {
@@ -135,6 +136,8 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         if (newCapacity > initCapacity) {
             Unsafe.incrReallocCount();
             Unsafe.recordMemAlloc(newCapacity - initCapacity, memoryTag());
+            Unsafe.onExternalFree(oldLo);
+            Unsafe.onExternalMalloc(getImplLo(), newCapacity);
         }
         return p;
     }
