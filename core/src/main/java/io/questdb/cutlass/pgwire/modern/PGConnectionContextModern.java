@@ -1104,10 +1104,9 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         final long msgLimit = address + msgLen + 1;
         final long msgLo = address + PREFIXED_MESSAGE_HEADER_LEN; // 8 is offset where name value pairs begin
 
-        // Command types in the order they usually come over the wire.
-        // All "cmd" methods are called only from here and
-        // are responsible for handling individual commands. Please do
-        // not create other methods that start with "cmd".
+        // Message types in the order they usually come over the wire. All "msg" methods
+        // are called only from here and are responsible for handling individual messages.
+        // Please do not create other methods that start with "msg".
         switch (type) {
             case 'P': // parse
                 msgParse(address, msgLo, msgLimit);
