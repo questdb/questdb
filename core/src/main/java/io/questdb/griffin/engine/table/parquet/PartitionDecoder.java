@@ -58,7 +58,6 @@ public class PartitionDecoder implements QuietCloseable {
         fd = -1;
     }
 
-    // TODO(puzpuzpuz): track native memory
     public long decodeRowGroup(
             RowGroupBuffers rowGroupBuffers,
             DirectIntList columns, // contains [parquet_column_index, column_type] pairs
@@ -74,6 +73,15 @@ public class PartitionDecoder implements QuietCloseable {
         );
     }
 
+    public long getFd() {
+        return fd;
+    }
+
+    public Metadata getMetadata() {
+        assert ptr != 0;
+        return metadata;
+    }
+
     public void getRowGroupStats(
             RowGroupStatBuffers rowGroupStatBuffers,
             DirectIntList columns,
@@ -87,15 +95,6 @@ public class PartitionDecoder implements QuietCloseable {
                 (int) (columns.size() >>> 1),
                 rowGroupIndex
         );
-    }
-
-    public long getFd() {
-        return fd;
-    }
-
-    public Metadata getMetadata() {
-        assert ptr != 0;
-        return metadata;
     }
 
     public void of(long fd) {
