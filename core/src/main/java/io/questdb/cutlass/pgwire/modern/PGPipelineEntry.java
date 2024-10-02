@@ -948,30 +948,6 @@ public class PGPipelineEntry implements QuietCloseable {
                 .put(']');
     }
 
-    private void msgExecuteDDL(
-            SqlExecutionContext sqlExecutionContext,
-            int transactionState,
-            CharacterStore characterStore,
-            DirectUtf8String utf8String,
-            ObjectPool<DirectBinarySequence> binarySequenceParamsPool,
-            SCSequence tempSequence
-    ) throws SqlException, BadProtocolException {
-        if (transactionState != ERROR_TRANSACTION) {
-            copyParameterValuesToBindVariableService(
-                    sqlExecutionContext,
-                    characterStore,
-                    utf8String,
-                    binarySequenceParamsPool
-            );
-            // execute against writer from the engine, synchronously (null sequence)
-            try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, true)) {
-                // this doesn't actually wait, because the call is synchronous
-                fut.await();
-                sqlAffectedRowCount = fut.getAffectedRowsCount();
-            }
-        }
-    }
-
     private void executeInsert(
             SqlExecutionContext sqlExecutionContext,
             int transactionState,
@@ -1027,32 +1003,6 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
-    private void msgExecuteSelect(
-            SqlExecutionContext sqlExecutionContext,
-            CharacterStore characterStore,
-            DirectUtf8String utf8String,
-            ObjectPool<DirectBinarySequence> binarySequenceParamsPool
-    ) throws SqlException, BadProtocolException {
-        if (cursor == null) {
-            sqlExecutionContext.getCircuitBreaker().resetTimer();
-            sqlExecutionContext.setCacheHit(cacheHit);
-            try {
-                copyParameterValuesToBindVariableService(
-                        sqlExecutionContext,
-                        characterStore,
-                        utf8String,
-                        binarySequenceParamsPool
-                );
-                cursor = factory.getCursor(sqlExecutionContext);
-            } catch (Throwable e) {
-                // un-cache the erroneous SQL
-                tas = Misc.free(tas);
-                factory = null;
-                throw e;
-            }
-        }
-    }
-
     private void freePendingWriters(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters, boolean commit) {
         try {
             for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
@@ -1097,6 +1047,56 @@ public class PGPipelineEntry implements QuietCloseable {
             return lo - l;
         }
         return 0;
+    }
+
+    private void msgExecuteDDL(
+            SqlExecutionContext sqlExecutionContext,
+            int transactionState,
+            CharacterStore characterStore,
+            DirectUtf8String utf8String,
+            ObjectPool<DirectBinarySequence> binarySequenceParamsPool,
+            SCSequence tempSequence
+    ) throws SqlException, BadProtocolException {
+        if (transactionState != ERROR_TRANSACTION) {
+            copyParameterValuesToBindVariableService(
+                    sqlExecutionContext,
+                    characterStore,
+                    utf8String,
+                    binarySequenceParamsPool
+            );
+            // execute against writer from the engine, synchronously (null sequence)
+            try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, true)) {
+                // this doesn't actually wait, because the call is synchronous
+                fut.await();
+                sqlAffectedRowCount = fut.getAffectedRowsCount();
+            }
+        }
+    }
+
+    private void msgExecuteSelect(
+            SqlExecutionContext sqlExecutionContext,
+            CharacterStore characterStore,
+            DirectUtf8String utf8String,
+            ObjectPool<DirectBinarySequence> binarySequenceParamsPool
+    ) throws SqlException, BadProtocolException {
+        if (cursor == null) {
+            sqlExecutionContext.getCircuitBreaker().resetTimer();
+            sqlExecutionContext.setCacheHit(cacheHit);
+            try {
+                copyParameterValuesToBindVariableService(
+                        sqlExecutionContext,
+                        characterStore,
+                        utf8String,
+                        binarySequenceParamsPool
+                );
+                cursor = factory.getCursor(sqlExecutionContext);
+            } catch (Throwable e) {
+                // un-cache the erroneous SQL
+                tas = Misc.free(tas);
+                factory = null;
+                throw e;
+            }
+        }
     }
 
     private void msgParseCopyOutTypeDescriptionTypeOIDs(BindVariableService bindVariableService) {
@@ -1904,7 +1904,7 @@ public class PGPipelineEntry implements QuietCloseable {
                 break;
             case CompiledQuery.UPDATE:
                 // copy contents of the mutable CompiledQuery into our cache
-                System.out.println("CLONING ["+Thread.currentThread().getId() + "] "+cq.getUpdateOperation());
+                System.out.println("CLONING [" + Thread.currentThread().getId() + "] " + cq.getUpdateOperation());
                 compiledQuery.ofUpdate(cq.getUpdateOperation());
                 compiledQuery.withSqlText(cq.getSqlText());
                 sqlTag = TAG_UPDATE;

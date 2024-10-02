@@ -126,6 +126,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private final int sendBufferSize;
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool;
+    private final SCSequence tempSequence = new SCSequence();
     private final DirectUtf8String utf8String = new DirectUtf8String();
     private SocketAuthenticator authenticator;
     private int bufferRemainingOffset = 0;
@@ -150,7 +151,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     private boolean tlsSessionStarting = false;
     private long totalReceived = 0;
     private int transactionState = NO_TRANSACTION;
-    private final SCSequence tempSequence = new SCSequence();
 
     public PGConnectionContextModern(
             CairoEngine engine,
