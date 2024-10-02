@@ -139,7 +139,7 @@ public class PGJobContextTest extends BasePGTest {
     private final Rnd bufferSizeRnd = TestUtils.generateRandom(LOG);
     private final boolean walEnabled;
 
-    public PGJobContextTest(WalMode walMode, LegacyMode legacyMode) {
+    public PGJobContextTest(LegacyMode legacyMode, WalMode walMode) {
         super(legacyMode);
         this.walEnabled = (walMode == WalMode.WITH_WAL);
     }
@@ -160,11 +160,11 @@ public class PGJobContextTest extends BasePGTest {
     @Parameters(name = "{0}, {1}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
-                {WalMode.WITH_WAL, LegacyMode.MODERN},
-                {WalMode.WITH_WAL, LegacyMode.LEGACY},
+                {LegacyMode.MODERN, WalMode.WITH_WAL},
+                {LegacyMode.LEGACY, WalMode.WITH_WAL},
 //                 @Ignore("Some tests randomly block")
-                {WalMode.NO_WAL, LegacyMode.MODERN},
-                {WalMode.NO_WAL, LegacyMode.LEGACY},
+                {LegacyMode.MODERN, WalMode.NO_WAL},
+                {LegacyMode.LEGACY, WalMode.NO_WAL},
         });
     }
 
