@@ -614,12 +614,12 @@ public class BitmapIndexTest extends AbstractCairoTest {
 
             LatestByArguments.releaseMemory(argsAddress);
             // sort and check found keys 0, 2, 4, ....
-            Vect.sortULongAscInPlace(rows.getAddress(), rowCount);
+            Vect.sortULongAscInPlaceChecked(rows.getAddress(), rowCount);
             for (long i = 0; i < rowCount; ++i) {
                 Assert.assertEquals(2 * i, Rows.toLocalRowID(rows.get(i) - 1));
             }
             // sort and check not found keys 1, 3, 5, ...
-            Vect.sortULongAscInPlace(rows.getAddress() + rowCount * Long.BYTES, keyCount - rowCount);
+            Vect.sortULongAscInPlaceChecked(rows.getAddress() + rowCount * Long.BYTES, keyCount - rowCount);
             for (long i = 0; i < keyCount - rowCount; ++i) {
                 Assert.assertEquals(2 * i + 1, rows.get(i));
             }
@@ -1037,7 +1037,7 @@ public class BitmapIndexTest extends AbstractCairoTest {
             long len = ff.length(fd);
             Assert.assertTrue(len > 0);
             long address = TableUtils.mapRW(ff, fd, len, MemoryTag.MMAP_DEFAULT);
-            Vect.memset(address, len, 1);
+            Vect.memsetChecked(address, len, 1);
             ff.close(fd);
             ff.munmap(address, len, MemoryTag.MMAP_DEFAULT);
             path.trimTo(plen);

@@ -95,7 +95,7 @@ public class LineHttpProcessorState implements QuietCloseable, ConnectionAware {
 
     public void clear() {
         ilpTudCache.clear();
-        Vect.memset(buffer, recvBufSize, 0);
+        Vect.memsetChecked(buffer, recvBufSize, 0);
         parser.of(buffer);
         recvBufPos = buffer;
         error.clear();

@@ -118,7 +118,7 @@ public class Unordered2Map implements Map, Reopenable {
 
             final long sizeBytes = entrySize * TABLE_SIZE;
             memStart = Unsafe.malloc(sizeBytes, memoryTag);
-            Vect.memset(memStart, sizeBytes, 0);
+            Vect.memsetChecked(memStart, sizeBytes, 0);
             memLimit = memStart + sizeBytes;
             keyMemStart = Unsafe.malloc(KEY_SIZE, memoryTag);
             Unsafe.putShort(keyMemStart, (short) 0);
@@ -140,7 +140,7 @@ public class Unordered2Map implements Map, Reopenable {
     public void clear() {
         size = 0;
         hasZero = false;
-        Vect.memset(memStart, entrySize * TABLE_SIZE, 0);
+        Vect.memsetChecked(memStart, entrySize * TABLE_SIZE, 0);
         Unsafe.putShort(keyMemStart, (short) 0);
     }
 

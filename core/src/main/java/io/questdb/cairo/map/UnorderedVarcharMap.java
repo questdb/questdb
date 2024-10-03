@@ -156,7 +156,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
             this.entrySize = Bytes.align8b(KEY_SIZE + valueSize);
             final long sizeBytes = entrySize * this.keyCapacity;
             memStart = Unsafe.malloc(sizeBytes, memoryTag);
-            Vect.memset(memStart, sizeBytes, 0);
+            Vect.memsetChecked(memStart, sizeBytes, 0);
             memLimit = memStart + sizeBytes;
             keySink = new DirectByteSink(KEY_SINK_INITIAL_CAPACITY);
 
@@ -195,7 +195,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         free = (int) (keyCapacity * loadFactor);
         mapSize = 0;
         nResizes = 0;
-        Vect.memset(memStart, memLimit - memStart, 0);
+        Vect.memsetChecked(memStart, memLimit - memStart, 0);
         Misc.free(allocator); // free all memory, but allocator remains usable for further allocations
     }
 
@@ -474,7 +474,7 @@ public class UnorderedVarcharMap implements Map, Reopenable {
         final long newSizeBytes = entrySize * newKeyCapacity;
         final long newMemStart = Unsafe.malloc(newSizeBytes, memoryTag);
         final long newMemLimit = newMemStart + newSizeBytes;
-        Vect.memset(newMemStart, newSizeBytes, 0);
+        Vect.memsetChecked(newMemStart, newSizeBytes, 0);
         final int newMask = (int) newKeyCapacity - 1;
 
         for (long addr = memStart; addr < memLimit; addr += entrySize) {

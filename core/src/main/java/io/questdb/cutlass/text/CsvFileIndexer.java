@@ -376,7 +376,7 @@ public class CsvFileIndexer implements Closeable, Mutable {
                 sortBufferLength = maxIndexChunkSize;
             }
 
-            Vect.radixSortLongIndexAscInPlace(srcAddress, srcSize / INDEX_ENTRY_SIZE, sortBufferPtr);
+            Vect.radixSortLongIndexAscInPlaceChecked(srcAddress, srcSize / INDEX_ENTRY_SIZE, sortBufferPtr);
         } finally {
             if (srcAddress != -1) {
                 ff.munmap(srcAddress, srcSize, MemoryTag.MMAP_IMPORT);

@@ -163,7 +163,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     }
 
     public void sortAsUnsigned() {
-        Vect.sortULongAscInPlace(address, size());
+        Vect.sortULongAscInPlaceChecked(address, size());
     }
 
     @Override
@@ -185,7 +185,7 @@ public class DirectLongList implements Mutable, Closeable, Reopenable {
     }
 
     public void zero(long v) {
-        Vect.memset(address, pos - address, (int) v);
+        Vect.memsetChecked(address, pos - address, (int) v);
     }
 
     // desired capacity in bytes (not count of LONG values)

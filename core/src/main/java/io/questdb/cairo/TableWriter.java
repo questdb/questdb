@@ -2101,7 +2101,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         final long tsLagBufferAddr = mapAppendColumnBuffer(timestampColumn, tsLagOffset, tsLagSize, false);
                         try {
-                            Vect.radixSortABLongIndexAsc(
+                            Vect.radixSortABLongIndexAscChecked(
                                     Math.abs(tsLagBufferAddr),
                                     walLagRowCount,
                                     mappedTimestampIndexAddr,
@@ -4104,22 +4104,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 switch (shl) {
                     case 0:
-                        Vect.mergeShuffle8Bit(srcLag, srcMapped, dest, mergeIndex, mergeCount);
+                        Vect.mergeShuffle8BitChecked(srcLag, srcMapped, dest, mergeIndex, mergeCount);
                         break;
                     case 1:
-                        Vect.mergeShuffle16Bit(srcLag, srcMapped, dest, mergeIndex, mergeCount);
+                        Vect.mergeShuffle16BitChecked(srcLag, srcMapped, dest, mergeIndex, mergeCount);
                         break;
                     case 2:
-                        Vect.mergeShuffle32Bit(srcLag, srcMapped, dest, mergeIndex, mergeCount);
+                        Vect.mergeShuffle32BitChecked(srcLag, srcMapped, dest, mergeIndex, mergeCount);
                         break;
                     case 3:
-                        Vect.mergeShuffle64Bit(srcLag, srcMapped, dest, mergeIndex, mergeCount);
+                        Vect.mergeShuffle64BitChecked(srcLag, srcMapped, dest, mergeIndex, mergeCount);
                         break;
                     case 4:
-                        Vect.mergeShuffle128Bit(srcLag, srcMapped, dest, mergeIndex, mergeCount);
+                        Vect.mergeShuffle128BitChecked(srcLag, srcMapped, dest, mergeIndex, mergeCount);
                         break;
                     case 5:
-                        Vect.mergeShuffle256Bit(srcLag, srcMapped, dest, mergeIndex, mergeCount);
+                        Vect.mergeShuffle256BitChecked(srcLag, srcMapped, dest, mergeIndex, mergeCount);
                         break;
                     default:
                         assert false : "col type is unsupported";
@@ -4445,7 +4445,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final long sourceOffset = columnDataRowOffset << 4;
                 o3TimestampMem.jumpTo((copyToLagRowCount + existingLagRows) << 4);
                 final long dstTimestampAddr = o3TimestampMem.getAddress() + (existingLagRows << 4);
-                Vect.shiftTimestampIndex(o3SrcDataMem.addressOf(sourceOffset), copyToLagRowCount, dstTimestampAddr);
+                Vect.shiftTimestampIndexChecked(o3SrcDataMem.addressOf(sourceOffset), copyToLagRowCount, dstTimestampAddr);
             }
         } catch (Throwable ex) {
             handleColumnTaskException(
@@ -5423,9 +5423,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             assert o3TimestampMem.getAppendOffset() == o3RowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
             if (o3RowCount > 600 || !o3QuickSortEnabled) {
                 o3TimestampMemCpy.jumpTo(o3TimestampMem.getAppendOffset());
-                Vect.radixSortLongIndexAscInPlace(sortedTimestampsAddr, o3RowCount, o3TimestampMemCpy.addressOf(0));
+                Vect.radixSortLongIndexAscInPlaceChecked(sortedTimestampsAddr, o3RowCount, o3TimestampMemCpy.addressOf(0));
             } else {
-                Vect.quickSortLongIndexAscInPlace(sortedTimestampsAddr, o3RowCount);
+                Vect.quickSortLongIndexAscInPlaceChecked(sortedTimestampsAddr, o3RowCount);
             }
 
             // we have three frames:
@@ -6373,7 +6373,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // mid-column-count.
                     latchCount++;
                     // Set column top memory to -1, no need to initialize partition update memory, it always set by O3 partition tasks
-                    Vect.memset(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
+                    Vect.memsetChecked(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
                     Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
                     // original partition timestamp
                     Unsafe.putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);

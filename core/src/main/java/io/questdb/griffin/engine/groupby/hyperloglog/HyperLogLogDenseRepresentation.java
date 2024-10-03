@@ -147,7 +147,7 @@ public class HyperLogLogDenseRepresentation {
     public HyperLogLogDenseRepresentation of(long ptr) {
         if (ptr == 0) {
             this.ptr = allocator.malloc(HEADER_SIZE + registerCount);
-            Vect.memset(this.ptr + HEADER_SIZE, registerCount, 0);
+            Vect.memsetChecked(this.ptr + HEADER_SIZE, registerCount, 0);
         } else {
             this.ptr = ptr;
         }

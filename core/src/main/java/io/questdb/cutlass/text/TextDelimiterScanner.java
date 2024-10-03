@@ -95,7 +95,7 @@ public class TextDelimiterScanner implements Closeable {
 
         int lineLen = 0;
 
-        Vect.memset(matrix, matrixSize, 0);
+        Vect.memsetChecked(matrix, matrixSize, 0);
         while (cursor < hi && lineCount < lineCountLimit) {
             byte b = Unsafe.getUnsafe().getByte(cursor++);
 

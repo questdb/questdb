@@ -239,7 +239,7 @@ public class GroupByLong256HashSet {
     private void zero(long ptr, int cap) {
         if (noKeyValue == 0) {
             // Vectorized fast path for zero default value.
-            Vect.memset(ptr + HEADER_SIZE, 32L * cap, 0);
+            Vect.memsetChecked(ptr + HEADER_SIZE, 32L * cap, 0);
         } else {
             for (long p = ptr + HEADER_SIZE, lim = ptr + HEADER_SIZE + 32L * cap; p < lim; p += 32L) {
                 Unsafe.putLong(p, noKeyValue);

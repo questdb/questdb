@@ -161,12 +161,12 @@ public class Unordered4Map implements Map, Reopenable {
             this.entrySize = Bytes.align4b(KEY_SIZE + valueSize);
             final long sizeBytes = entrySize * this.keyCapacity;
             memStart = Unsafe.malloc(sizeBytes, memoryTag);
-            Vect.memset(memStart, sizeBytes, 0);
+            Vect.memsetChecked(memStart, sizeBytes, 0);
             memLimit = memStart + sizeBytes;
             keyMemStart = Unsafe.malloc(KEY_SIZE, memoryTag);
             Unsafe.putInt(keyMemStart, 0);
             zeroMemStart = Unsafe.malloc(entrySize, memoryTag);
-            Vect.memset(zeroMemStart, entrySize, 0);
+            Vect.memsetChecked(zeroMemStart, entrySize, 0);
 
             value = new Unordered4MapValue(valueSize, valueOffsets);
             value2 = new Unordered4MapValue(valueSize, valueOffsets);
@@ -187,9 +187,9 @@ public class Unordered4Map implements Map, Reopenable {
         size = 0;
         nResizes = 0;
         hasZero = false;
-        Vect.memset(memStart, memLimit - memStart, 0);
+        Vect.memsetChecked(memStart, memLimit - memStart, 0);
         Unsafe.putInt(keyMemStart, 0);
-        Vect.memset(zeroMemStart, entrySize, 0);
+        Vect.memsetChecked(zeroMemStart, entrySize, 0);
     }
 
     @Override
@@ -428,7 +428,7 @@ public class Unordered4Map implements Map, Reopenable {
         final long newSizeBytes = entrySize * newKeyCapacity;
         final long newMemStart = Unsafe.malloc(newSizeBytes, memoryTag);
         final long newMemLimit = newMemStart + newSizeBytes;
-        Vect.memset(newMemStart, newSizeBytes, 0);
+        Vect.memsetChecked(newMemStart, newSizeBytes, 0);
         final int newMask = (int) newKeyCapacity - 1;
 
         for (long addr = memStart; addr < memLimit; addr += entrySize) {

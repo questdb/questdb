@@ -218,7 +218,7 @@ public class GroupByLongHashSet {
     private void zero(long ptr, int cap) {
         if (noKeyValue == 0) {
             // Vectorized fast path for zero default value.
-            Vect.memset(ptr + HEADER_SIZE, 8L * cap, 0);
+            Vect.memsetChecked(ptr + HEADER_SIZE, 8L * cap, 0);
         } else {
             for (long p = ptr + HEADER_SIZE, lim = ptr + HEADER_SIZE + 8L * cap; p < lim; p += 8L) {
                 Unsafe.putLong(p, noKeyValue);

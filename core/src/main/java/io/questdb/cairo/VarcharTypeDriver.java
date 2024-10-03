@@ -423,7 +423,7 @@ public class VarcharTypeDriver implements ColumnTypeDriver {
 
     @Override
     public long dedupMergeVarColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr) {
-        return Vect.dedupMergeVarcharColumnSize(mergeIndexAddr, mergeIndexCount, srcDataFixAddr, srcOooFixAddr);
+        return Vect.dedupMergeVarcharColumnSizeChecked(mergeIndexAddr, mergeIndexCount, srcDataFixAddr, srcOooFixAddr);
     }
 
     @Override

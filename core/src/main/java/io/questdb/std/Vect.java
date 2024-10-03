@@ -76,6 +76,11 @@ public final class Vect {
 
     public static native long dedupMergeVarcharColumnSize(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr);
 
+    public static long dedupMergeVarcharColumnSizeChecked(long mergeIndexAddr, long mergeIndexCount, long srcDataFixAddr, long srcOooFixAddr) {
+        Unsafe.assertAllocatedMemory(mergeIndexAddr, mergeIndexCount * 16);
+        return dedupMergeVarcharColumnSize(mergeIndexAddr, mergeIndexCount, srcDataFixAddr, srcOooFixAddr);
+    }
+
     public static native long dedupSortedTimestampIndex(
             long inIndexAddr,
             long count,
@@ -151,6 +156,9 @@ public final class Vect {
     public static native int maxShort(long pLong, long count);
 
     public static void memcpy(long dst, long src, long len) {
+        Unsafe.assertAllocatedMemory(dst, len);
+        Unsafe.assertAllocatedMemory(src, len);
+
         // the split length was determined experimentally
         // using 'MemCopyBenchmark' bench
         if (len < 4096) {
@@ -161,6 +169,8 @@ public final class Vect {
     }
 
     public static boolean memeq(long a, long b, long len) {
+        Unsafe.assertAllocatedMemory(a, len);
+        Unsafe.assertAllocatedMemory(b, len);
         // the split length was determined experimentally
         // using 'MemEqBenchmark' bench
         if (len < 128) {
@@ -172,8 +182,13 @@ public final class Vect {
 
     public static native void memmove(long dst, long src, long len);
 
-    // note: memset only uses single byte of the given int
     public static native void memset(long dst, long len, int value);
+
+    // note: memset only uses single byte of the given int
+    public static void memsetChecked(long dst, long len, int value) {
+        Unsafe.assertAllocatedMemory(dst, len);
+        memset(dst, len, value);
+    }
 
     public static native long mergeDedupTimestampWithLongIndexAsc(
             long pSrc,
@@ -207,15 +222,45 @@ public final class Vect {
 
     public static native void mergeShuffle128Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
+    public static void mergeShuffle128BitChecked(long pSrc1, long pSrc2, long pDest, long pIndex, long count) {
+        Unsafe.assertAllocatedMemory(pDest, count * 16);
+        mergeShuffle128Bit(pSrc1, pSrc2, pDest, pIndex, count);
+    }
+
     public static native void mergeShuffle16Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
+
+    public static void mergeShuffle16BitChecked(long pSrc1, long pSrc2, long pDest, long pIndex, long count) {
+        Unsafe.assertAllocatedMemory(pDest, count * 2);
+        mergeShuffle16Bit(pSrc1, pSrc2, pDest, pIndex, count);
+    }
 
     public static native void mergeShuffle256Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
+    public static void mergeShuffle256BitChecked(long pSrc1, long pSrc2, long pDest, long pIndex, long count) {
+        Unsafe.assertAllocatedMemory(pDest, count * 32);
+        mergeShuffle256Bit(pSrc1, pSrc2, pDest, pIndex, count);
+    }
+
     public static native void mergeShuffle32Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
+
+    public static void mergeShuffle32BitChecked(long pSrc1, long pSrc2, long pDest, long pIndex, long count) {
+        Unsafe.assertAllocatedMemory(pDest, count * 4);
+        mergeShuffle32Bit(pSrc1, pSrc2, pDest, pIndex, count);
+    }
 
     public static native void mergeShuffle64Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
 
+    public static void mergeShuffle64BitChecked(long pSrc1, long pSrc2, long pDest, long pIndex, long count) {
+        Unsafe.assertAllocatedMemory(pDest, count * 8);
+        mergeShuffle64Bit(pSrc1, pSrc2, pDest, pIndex, count);
+    }
+
     public static native void mergeShuffle8Bit(long pSrc1, long pSrc2, long pDest, long pIndex, long count);
+
+    public static void mergeShuffle8BitChecked(long pSrc1, long pSrc2, long pDest, long pIndex, long count) {
+        Unsafe.assertAllocatedMemory(pDest, count);
+        mergeShuffle8Bit(pSrc1, pSrc2, pDest, pIndex, count);
+    }
 
     public static native long mergeTwoLongIndexesAsc(long pTs, long tsIndexLo, long tsCount, long pIndex2, long index2Count, long pIndexDest);
 
@@ -229,6 +274,11 @@ public final class Vect {
 
     public static native void oooCopyIndex(long mergeIndexAddr, long mergeIndexSize, long dstAddr);
 
+    public static void oooCopyIndexChecked(long mergeIndexAddr, long mergeIndexSize, long dstAddr) {
+        Unsafe.assertAllocatedMemory(dstAddr, mergeIndexSize * 8);
+        oooCopyIndex(mergeIndexAddr, mergeIndexSize, dstAddr);
+    }
+
     public static native void oooMergeCopyBinColumn(
             long mergeIndexAddr,
             long mergeIndexSize,
@@ -241,6 +291,31 @@ public final class Vect {
             long dstVarOffset
     );
 
+    public static void oooMergeCopyBinColumnChecked(
+            long mergeIndexAddr,
+            long mergeIndexSize,
+            long srcDataFixAddr,
+            long srcDataVarAddr,
+            long srcOooFixAddr,
+            long srcOooVarAddr,
+            long dstFixAddr,
+            long dstVarAddr,
+            long dstVarOffset
+    ) {
+        Unsafe.assertAllocatedMemory(dstFixAddr, mergeIndexSize * 8);
+        oooMergeCopyBinColumn(
+                mergeIndexAddr,
+                mergeIndexSize,
+                srcDataFixAddr,
+                srcDataVarAddr,
+                srcOooFixAddr,
+                srcOooVarAddr,
+                dstFixAddr,
+                dstVarAddr,
+                dstVarOffset
+        );
+    }
+
     public static native void oooMergeCopyStrColumn(
             long mergeIndexAddr,
             long mergeIndexSize,
@@ -252,6 +327,31 @@ public final class Vect {
             long dstVarAddr,
             long dstVarOffset
     );
+
+    public static void oooMergeCopyStrColumnChecked(
+            long mergeIndexAddr,
+            long mergeIndexSize,
+            long srcDataFixAddr,
+            long srcDataVarAddr,
+            long srcOooFixAddr,
+            long srcOooVarAddr,
+            long dstFixAddr,
+            long dstVarAddr,
+            long dstVarOffset
+    ) {
+        Unsafe.assertAllocatedMemory(dstFixAddr, mergeIndexSize * 8);
+        oooMergeCopyStrColumn(
+                mergeIndexAddr,
+                mergeIndexSize,
+                srcDataFixAddr,
+                srcDataVarAddr,
+                srcOooFixAddr,
+                srcOooVarAddr,
+                dstFixAddr,
+                dstVarAddr,
+                dstVarOffset
+        );
+    }
 
     public static native void oooMergeCopyVarcharColumn(
             long mergeIndexAddr,
@@ -267,10 +367,29 @@ public final class Vect {
 
     public static native void quickSortLongIndexAscInPlace(long pLongData, long count);
 
+    public static void quickSortLongIndexAscInPlaceChecked(long pLongData, long count) {
+        Unsafe.assertAllocatedMemory(pLongData, count * 16);
+        quickSortLongIndexAscInPlace(pLongData, count);
+    }
+
     public static native void radixSortABLongIndexAsc(long pDataA, long countA, long pDataB, long countB, long pDataDest, long pDataCpy);
 
-    // This is not In Place sort, to be renamed later
+    public static void radixSortABLongIndexAscChecked(long pDataA, long countA, long pDataB, long countB, long pDataDest, long pDataCpy) {
+        Unsafe.assertAllocatedMemory(pDataA, countA * 8);
+        Unsafe.assertAllocatedMemory(pDataB, countB * 8);
+        Unsafe.assertAllocatedMemory(pDataDest, countA * 8 + countB * 8);
+        Unsafe.assertAllocatedMemory(pDataCpy, countA * 8 + countB * 8);
+        radixSortABLongIndexAsc(pDataA, countA, pDataB, countB, pDataDest, pDataCpy);
+    }
+
     public static native void radixSortLongIndexAscInPlace(long pLongData, long count, long pCpy);
+
+    // This is not In Place sort, to be renamed later
+    public static void radixSortLongIndexAscInPlaceChecked(long pLongData, long count, long pCpy) {
+        Unsafe.assertAllocatedMemory(pLongData, count * 16);
+        Unsafe.assertAllocatedMemory(pCpy, count * 16);
+        radixSortLongIndexAscInPlace(pLongData, count, pCpy);
+    }
 
     public static native void resetPerformanceCounters();
 
@@ -296,6 +415,12 @@ public final class Vect {
 
     public static native long shiftTimestampIndex(long pSrc, long count, long pDest);
 
+    public static long shiftTimestampIndexChecked(long pSrc, long count, long pDest) {
+        Unsafe.assertAllocatedMemory(pSrc, count * 8);
+        Unsafe.assertAllocatedMemory(pDest, count * 8);
+        return shiftTimestampIndex(pSrc, count, pDest);
+    }
+
     /**
      * Sorts assuming 128-bit integers.
      * Can be used to sort pairs of longs from DirectLongList when both longs are positive
@@ -307,9 +432,24 @@ public final class Vect {
 
     public static native void sort3LongAscInPlace(long address, long count);
 
+    public static void sort3LongAscInPlaceChecked(long address, long count) {
+        Unsafe.assertAllocatedMemory(address, count * 24);
+        sort3LongAscInPlace(address, count);
+    }
+
     public static native void sortLongIndexAscInPlace(long pLongData, long count);
 
+    public static void sortLongIndexAscInPlaceChecked(long pLongData, long count) {
+        Unsafe.assertAllocatedMemory(pLongData, count * 16);
+        sortLongIndexAscInPlace(pLongData, count);
+    }
+
     public static native void sortULongAscInPlace(long pLongData, long count);
+
+    public static void sortULongAscInPlaceChecked(long pLongData, long count) {
+        Unsafe.assertAllocatedMemory(pLongData, count * 8);
+        sortULongAscInPlace(pLongData, count);
+    }
 
     public static native long sortVarColumn(
             long mergedTimestampsAddr,

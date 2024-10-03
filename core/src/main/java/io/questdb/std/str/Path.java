@@ -430,7 +430,7 @@ public class Path implements Utf8Sink, DirectUtf8Sequence, Closeable {
     // allocates given buffer at path tail and sets it to 0
     public void zeroPad(int len) {
         checkExtend(len);
-        Vect.memset(tailPtr, len, 0);
+        Vect.memsetChecked(tailPtr, len, 0);
     }
 
     private void checkClosed() {

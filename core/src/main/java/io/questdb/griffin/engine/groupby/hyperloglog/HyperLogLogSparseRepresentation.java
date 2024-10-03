@@ -262,7 +262,7 @@ public class HyperLogLogSparseRepresentation {
     }
 
     private void zero(long ptr, int cap) {
-        Vect.memset(ptr + HEADER_SIZE, ((long) cap << 2), 0);
+        Vect.memsetChecked(ptr + HEADER_SIZE, ((long) cap << 2), 0);
     }
 
     void copyTo(HyperLogLogSparseRepresentation dst) {

@@ -115,6 +115,24 @@ public final class Unsafe {
         Unsafe.getUnsafe().putOrderedInt(array, INT_OFFSET + ((long) index << INT_SCALE), value);
     }
 
+    public static void assertAllocatedMemory(long address, long bytes) {
+        if (bytes == 0) {
+            return;
+        }
+        assert address > 0;
+        Map.Entry<Long, Long> allocEntry = ALLOCATED.floorEntry(address);
+        assert allocEntry != null;
+        long lo = allocEntry.getKey();
+        long hi = lo + allocEntry.getValue();
+
+        if (address < lo) {
+            throw new RuntimeException("Address is below allocated memory");
+        }
+        if (address + bytes > hi) {
+            throw new RuntimeException("Address is above allocated memory");
+        }
+    }
+
     public static int byteArrayGetInt(byte[] array, int index) {
         assert index > -1 && index < array.length - 3;
         return Unsafe.getUnsafe().getInt(array, BYTE_OFFSET + index);
@@ -127,7 +145,7 @@ public final class Unsafe {
 
     public static long calloc(long size, int memoryTag) {
         long ptr = malloc(size, memoryTag);
-        Vect.memset(ptr, size, 0);
+        Vect.memsetChecked(ptr, size, 0);
         return ptr;
     }
 
@@ -227,11 +245,12 @@ public final class Unsafe {
         MALLOC_COUNT.incrementAndGet();
     }
 
+    //#if jdk.version!=8
+
     public static void incrReallocCount() {
         REALLOC_COUNT.incrementAndGet();
     }
-
-    //#if jdk.version!=8
+    //#endif
 
     /**
      * Equivalent to {@link AccessibleObject#setAccessible(boolean) AccessibleObject.setAccessible(true)}, except that
@@ -242,7 +261,6 @@ public final class Unsafe {
     public static void makeAccessible(AccessibleObject accessibleObject) {
         UNSAFE.putBooleanVolatile(accessibleObject, OVERRIDE, true);
     }
-    //#endif
 
     public static long malloc(long usefulSize, int memoryTag) {
         try {
@@ -406,14 +424,6 @@ public final class Unsafe {
         }
         return 16L;
     }
-
-private static void assertAllocatedMemory(long address, int bytes) {
-    assert address > 0;
-    Map.Entry<Long, Long> allocEntry = ALLOCATED.floorEntry(address);
-    assert allocEntry != null;
-    long maxAddress = allocEntry.getKey() + allocEntry.getValue();
-    assert address + bytes <= maxAddress;
-}
 
     private static void checkAllocLimit(long size, int memoryTag) {
         if (size <= 0) {

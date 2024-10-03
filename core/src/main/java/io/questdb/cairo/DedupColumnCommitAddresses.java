@@ -174,7 +174,7 @@ public class DedupColumnCommitAddresses implements Closeable {
     }
 
     public void clear(long dedupColSinkAddr) {
-        Vect.memset(dedupColSinkAddr, (long) columnCount * RECORD_BYTES, 0);
+        Vect.memsetChecked(dedupColSinkAddr, (long) columnCount * RECORD_BYTES, 0);
     }
 
     public void clear() {

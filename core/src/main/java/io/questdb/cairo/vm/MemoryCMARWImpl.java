@@ -91,7 +91,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                         // Check the physical file length before trying to memset to the mapped memory.
                         sz = Math.min(sz, ff.length(fd));
                         if (appendOffset < sz) {
-                            Vect.memset(pageAddress + appendOffset, sz - appendOffset, 0);
+                            Vect.memsetChecked(pageAddress + appendOffset, sz - appendOffset, 0);
                         }
                     } catch (CairoException e) {
                         LOG.error().$("cannot determine file length to safely truncate [fd=").$(fd)
@@ -276,10 +276,10 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                 long truncatedToSize = Vm.bestEffortTruncate(ff, LOG, fd, 0);
                 if (truncatedToSize != 0) {
                     if (truncatedToSize > 0) {
-                        Vect.memset(pageAddress, truncatedToSize, 0);
+                        Vect.memsetChecked(pageAddress, truncatedToSize, 0);
                         this.size = sz;
                     } else {
-                        Vect.memset(pageAddress, size, 0);
+                        Vect.memsetChecked(pageAddress, size, 0);
                     }
                     this.lim = pageAddress + size;
                 }
@@ -289,7 +289,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             this.size = sz;
             this.lim = pageAddress + sz;
             appendAddress = pageAddress;
-            Vect.memset(pageAddress, sz, 0);
+            Vect.memsetChecked(pageAddress, sz, 0);
 
             // try to truncate the file to remove tail data
             if (ff.truncate(fd, Files.ceilPageSize(size))) {
@@ -300,7 +300,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             // by another process
 
             long mem = TableUtils.mapRW(ff, fd, ff.length(fd), memoryTag);
-            Vect.memset(mem + sz, fileSize - sz, 0);
+            Vect.memsetChecked(mem + sz, fileSize - sz, 0);
             ff.munmap(mem, fileSize, memoryTag);
         }
     }
@@ -308,7 +308,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     @Override
     public void zero() {
         long baseLength = lim - pageAddress;
-        Vect.memset(pageAddress, baseLength, 0);
+        Vect.memsetChecked(pageAddress, baseLength, 0);
     }
 
     private void checkAndExtend(long address) {

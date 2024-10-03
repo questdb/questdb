@@ -1459,10 +1459,10 @@ public final class TableUtils {
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BOOLEAN:
             case ColumnType.BYTE:
-                Vect.memset(addr, count, 0);
+                Vect.memsetChecked(addr, count, 0);
                 break;
             case ColumnType.GEOBYTE:
-                Vect.memset(addr, count, GeoHashes.BYTE_NULL);
+                Vect.memsetChecked(addr, count, GeoHashes.BYTE_NULL);
                 break;
             case ColumnType.CHAR:
             case ColumnType.SHORT:

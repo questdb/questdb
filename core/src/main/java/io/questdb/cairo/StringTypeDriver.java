@@ -184,7 +184,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
             long dstDataAddr,
             long dstDataOffset
     ) {
-        Vect.oooMergeCopyStrColumn(
+        Vect.oooMergeCopyStrColumnChecked(
                 timestampMergeIndexAddr,
                 timestampMergeIndexCount,
                 srcAuxAddr1,
@@ -295,7 +295,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
 
     @Override
     public void setDataVectorEntriesToNull(long dataMemAddr, long rowCount) {
-        Vect.memset(dataMemAddr, rowCount * Integer.BYTES, -1);
+        Vect.memsetChecked(dataMemAddr, rowCount * Integer.BYTES, -1);
     }
 
     @Override
