@@ -253,6 +253,7 @@ public class OrderedMap implements Map, Reopenable {
             free = 0;
             size = 0;
             heapSize = 0;
+            nResizes = 0;
         }
     }
 
@@ -555,30 +556,30 @@ public class OrderedMap implements Map, Reopenable {
     // Returns delta between new and old heapStart addresses.
     private long resize(long entrySize, long appendAddress) {
         assert appendAddress >= heapStart;
-        if (nResizes < maxResizes) {
-            nResizes++;
-            long kCapacity = (heapLimit - heapStart) << 1;
-            long target = appendAddress + entrySize - heapStart;
-            if (kCapacity < target) {
-                kCapacity = Numbers.ceilPow2(target);
-            }
-            if (kCapacity > MAX_HEAP_SIZE) {
-                throw LimitOverflowException.instance().put("limit of ").put(MAX_HEAP_SIZE).put(" memory exceeded in FastMap");
-            }
-            long kAddress = Unsafe.realloc(heapStart, heapSize, kCapacity, heapMemoryTag);
-
-            this.heapSize = kCapacity;
-            long delta = kAddress - heapStart;
-            kPos += delta;
-            assert kPos > 0;
-
-            this.heapStart = kAddress;
-            this.heapLimit = kAddress + kCapacity;
-
-            return delta;
-        } else {
+        if (nResizes == maxResizes) {
             throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in FastMap");
         }
+
+        nResizes++;
+        long kCapacity = (heapLimit - heapStart) << 1;
+        long target = appendAddress + entrySize - heapStart;
+        if (kCapacity < target) {
+            kCapacity = Numbers.ceilPow2(target);
+        }
+        if (kCapacity > MAX_HEAP_SIZE) {
+            throw LimitOverflowException.instance().put("limit of ").put(MAX_HEAP_SIZE).put(" memory exceeded in FastMap");
+        }
+        long kAddress = Unsafe.realloc(heapStart, heapSize, kCapacity, heapMemoryTag);
+
+        this.heapSize = kCapacity;
+        long delta = kAddress - heapStart;
+        kPos += delta;
+        assert kPos > 0;
+
+        this.heapStart = kAddress;
+        this.heapLimit = kAddress + kCapacity;
+
+        return delta;
     }
 
     private OrderedMapValue valueOf(long startAddress, long valueAddress, boolean newValue, OrderedMapValue value) {
