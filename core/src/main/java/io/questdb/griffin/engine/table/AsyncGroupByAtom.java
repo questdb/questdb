@@ -356,7 +356,9 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         medianList.clear();
         for (int i = 0; i < perWorkerMapCount; i++) {
             final Map srcMap = perWorkerFragments.getQuick(i).getMap();
-            medianList.add(srcMap.size());
+            if (srcMap.size() > 0) {
+                medianList.add(srcMap.size());
+            }
         }
         medianList.sort();
         // This is not very precise, but does the job.
@@ -366,7 +368,7 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         if (destMap.getUsedHeapSize() != -1) {
             for (int i = 0; i < perWorkerMapCount; i++) {
                 final Map srcMap = perWorkerFragments.getQuick(i).getMap();
-                maxHeapSize = Math.max(srcMap.getHeapSize(), maxHeapSize);
+                maxHeapSize = Math.max(maxHeapSize, srcMap.getHeapSize());
             }
         }
 
