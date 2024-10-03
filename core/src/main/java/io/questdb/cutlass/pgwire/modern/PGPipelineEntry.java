@@ -43,6 +43,7 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cutlass.pgwire.PGOids.*;
 import static io.questdb.cutlass.pgwire.modern.PGConnectionContextModern.*;
@@ -58,10 +59,10 @@ public class PGPipelineEntry implements QuietCloseable {
     // pg clients (like asyncpg) fail when format sent by server is not the same as requested in bind message
     private final BitSet msgBindSelectFormatCodes = new BitSet();
     // types are sent to us via "parse" message
-    private final IntList msgParseParameterTypeOIDs = new IntList();
-    private final IntList outParameterTypeDescriptionTypeOIDs = new IntList();
+    private final IntList msgParseParameterTypeOIDs;
+    private final IntList outParameterTypeDescriptionTypeOIDs;
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
-    private final IntList pgResultSetColumnTypes = new IntList();
+    private final IntList pgResultSetColumnTypes;
     private final ObjList<CharSequence> portalNames = new ObjList<>();
     private boolean cacheHit = false;    // extended protocol cursor resume callback
     private RecordCursor cursor;
@@ -117,6 +118,22 @@ public class PGPipelineEntry implements QuietCloseable {
     public PGPipelineEntry(CairoEngine engine) {
         this.engine = engine;
         this.compiledQuery = new CompiledQueryImpl(engine);
+        this.msgParseParameterTypeOIDs = new IntList();
+        this.outParameterTypeDescriptionTypeOIDs = new IntList();
+        this.pgResultSetColumnTypes = new IntList();
+    }
+
+    private PGPipelineEntry(
+            CairoEngine engine,
+            CompiledQueryImpl compiledQuery,
+            IntList msgParseParameterTypeOIDs,
+            IntList outParameterTypeDescriptionTypeOIDs,
+            IntList pgResultSetColumnTypes) {
+        this.engine = engine;
+        this.compiledQuery = compiledQuery;
+        this.msgParseParameterTypeOIDs = msgParseParameterTypeOIDs;
+        this.outParameterTypeDescriptionTypeOIDs = outParameterTypeDescriptionTypeOIDs;
+        this.pgResultSetColumnTypes = pgResultSetColumnTypes;
     }
 
     public void bindPortalName(CharSequence portalName) {
@@ -136,10 +153,7 @@ public class PGPipelineEntry implements QuietCloseable {
             cursor = Misc.free(cursor);
             // make sure factory is not released when the pipeline entry is closed
             factory = null;
-            return;
-        }
-
-        if (tai != null) {
+        } else if (tai != null) {
             taiCache.put(Chars.toString(sqlText), tai);
             // make sure we don't close insert operation when the pipeline entry is closed
             insertOp = null;
@@ -196,6 +210,36 @@ public class PGPipelineEntry implements QuietCloseable {
         } catch (Throwable e) {
             throw kaput().put(e);
         }
+    }
+
+    public @NotNull PGPipelineEntry copyIfExecuted() {
+        if (!stateExec) {
+            return this;
+        }
+        PGPipelineEntry newEntry = new PGPipelineEntry(
+                engine,
+                compiledQuery,
+                msgParseParameterTypeOIDs,
+                outParameterTypeDescriptionTypeOIDs,
+                pgResultSetColumnTypes
+        );
+        newEntry.cacheHit = cacheHit;
+        newEntry.empty = empty;
+        newEntry.insertOp = insertOp;
+        newEntry.parentPreparedStatementPipelineEntry = parentPreparedStatementPipelineEntry;
+        newEntry.preparedStatement = preparedStatement;
+        newEntry.preparedStatementName = preparedStatementName;
+        newEntry.sqlTag = sqlTag;
+        newEntry.sqlText = sqlText;
+        newEntry.sqlType = sqlType;
+        newEntry.sqlTextHasSecret = sqlTextHasSecret;
+        newEntry.stateDesc = stateDesc;
+        newEntry.stateParse = stateParse;
+        newEntry.stateParseExecuted = stateParseExecuted;
+        newEntry.stateSync = stateSync;
+        newEntry.tai = tai;
+        newEntry.tas = tas;
+        return newEntry;
     }
 
     public int getErrorMessagePosition() {

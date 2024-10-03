@@ -642,7 +642,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // Past this point the pipeline entry must not be null.
         // If it is - this means back-to-back "bind" messages were received with no prepared statement name.
         if (pipelineCurrentEntry == null) {
-            throw msgKaput().put("spurious bind message");
+            throw msgKaput().put("received a Bind message without a matching Parse");
         }
 
         pipelineCurrentEntry.setStateBind(true);
@@ -653,48 +653,47 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
 
         if (portalName != null) {
             // check if we can create portal, it makes sense only for SELECT SQLs, such that contain Factory
-            if (pipelineCurrentEntry.isFactory()) {
-                LOG.info().$("create portal [name=").$(portalName).I$();
-                int index = namedPortals.keyIndex(portalName);
-                if (index > -1) {
-                    // intern the name of the portal, the name will be cached in a list
-                    portalName = Chars.toString(portalName);
-
-                    // the current pipeline entry could either be named or unnamed
-                    // we only have to clone the named entries, in case they are interleaved in the
-                    // pipelines.
-                    if (pipelineCurrentEntry.isPreparedStatement()) {
-                        // the pipeline is named, and we must not attempt to reuse it
-                        // as the portal, so we are making a new entry
-                        PGPipelineEntry pe = new PGPipelineEntry(engine);
-                        pe.compileNewSQL(
-                                pipelineCurrentEntry.getSqlText(),
-                                engine,
-                                sqlExecutionContext,
-                                taiPool
-                        );
-                        pe.setParentPreparedStatement(pipelineCurrentEntry);
-                        pe.copyStateFrom(pipelineCurrentEntry);
-                        // Keep the reference to the portal name on the prepared statement before we overwrite the
-                        // reference. Keeping list of portal names is required in case the client closes the prepared
-                        // statement. We will also be required to close all the portals.
-                        pipelineCurrentEntry.bindPortalName(portalName);
-                        pipelineCurrentEntry.clearState();
-                        pipelineCurrentEntry = pe;
-                        pipelineCurrentEntry.setStateBind(true);
-                    }
-                    // else:
-                    // portal is being created from "parse" message (i am not 100% the client will be
-                    // doing this; they would have to send "parse" message without statement name and then
-                    // send "bind" message without statement name but with portal). So we can use
-                    // the current entry as the portal
-                    pipelineCurrentEntry.setPortal(true, (String) portalName);
-                    namedPortals.putAt(index, portalName, pipelineCurrentEntry);
-                } else {
-                    throw msgKaput().put("portal already exists [portalName=").put(portalName).put(']');
-                }
-            } else {
+            if (!pipelineCurrentEntry.isFactory()) {
                 throw msgKaput().put("cannot create portal for non-SELECT SQL [portalName=").put(portalName).put(']');
+            }
+            LOG.info().$("create portal [name=").$(portalName).I$();
+            int index = namedPortals.keyIndex(portalName);
+            if (index > -1) {
+                // intern the name of the portal, the name will be cached in a list
+                portalName = Chars.toString(portalName);
+
+                // the current pipeline entry could either be named or unnamed
+                // we only have to clone the named entries, in case they are interleaved in the
+                // pipelines.
+                if (pipelineCurrentEntry.isPreparedStatement()) {
+                    // the pipeline is named, and we must not attempt to reuse it
+                    // as the portal, so we are making a new entry
+                    PGPipelineEntry pe = new PGPipelineEntry(engine);
+                    pe.compileNewSQL(
+                            pipelineCurrentEntry.getSqlText(),
+                            engine,
+                            sqlExecutionContext,
+                            taiPool
+                    );
+                    pe.setParentPreparedStatement(pipelineCurrentEntry);
+                    pe.copyStateFrom(pipelineCurrentEntry);
+                    // Keep the reference to the portal name on the prepared statement before we overwrite the
+                    // reference. Keeping list of portal names is required in case the client closes the prepared
+                    // statement. We will also be required to close all the portals.
+                    pipelineCurrentEntry.bindPortalName(portalName);
+                    pipelineCurrentEntry.clearState();
+                    pipelineCurrentEntry = pe;
+                    pipelineCurrentEntry.setStateBind(true);
+                }
+                // else:
+                // portal is being created from "parse" message (i am not 100% the client will be
+                // doing this; they would have to send "parse" message without statement name and then
+                // send "bind" message without statement name but with portal). So we can use
+                // the current entry as the portal
+                pipelineCurrentEntry.setPortal(true, (String) portalName);
+                namedPortals.putAt(index, portalName, pipelineCurrentEntry);
+            } else {
+                throw msgKaput().put("portal already exists [portalName=").put(portalName).put(']');
             }
         }
 
@@ -1154,15 +1153,16 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         Misc.clear(characterStore);
     }
 
-    private void replaceCurrentPipelineEntry(PGPipelineEntry newEntry) {
-        if (newEntry != pipelineCurrentEntry) {
-            // Alright, the client wants to use the named statement. What if they just
-            // send "parse" message and want to abandon it?
-            freeIfAbandoned(pipelineCurrentEntry);
-            // it is safe to overwrite the pipeline entry,
-            // named entries will be held in the hash map
-            pipelineCurrentEntry = newEntry;
+    private void replaceCurrentPipelineEntry(PGPipelineEntry nextEntry) {
+        if (nextEntry == pipelineCurrentEntry) {
+            return;
         }
+        // Alright, the client wants to use the named statement. What if they just
+        // send "parse" message and want to abandon it?
+        freeIfAbandoned(pipelineCurrentEntry);
+        // it is safe to overwrite the pipeline entry,
+        // named entries will be held in the hash map
+        pipelineCurrentEntry = nextEntry.copyIfExecuted();
     }
 
     private void rollbackAndClosePendingWriters() {
