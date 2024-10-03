@@ -23,7 +23,6 @@
  ******************************************************************************/
 
 #![feature(allocator_api)]
-#![feature(backtrace_frames)]
 extern crate core;
 pub extern crate jni;
 mod allocator;
