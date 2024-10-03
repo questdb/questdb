@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
@@ -37,9 +38,22 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+
+import static io.questdb.std.datetime.microtime.Timestamps.HOUR_MICROS;
 
 public class ReaderReloadTest extends AbstractCairoTest {
 
+
+    @Test
+    public void testReaderReloadDoesNotReopenPartitionsNonWal() throws Exception {
+        testReaderReloadDoesNotReopenPartitions(true);
+    }
+
+    @Test
+    public void testReaderReloadDoesNotReopenPartitionsWal() throws Exception {
+        testReaderReloadDoesNotReopenPartitions(true);
+    }
 
     @Test
     public void testReaderReloadFails() throws Exception {
@@ -79,6 +93,52 @@ public class ReaderReloadTest extends AbstractCairoTest {
             failToOpen.set(false);
             try (TableReader reader2 = engine.getReader(xTableToken)) {
                 Assert.assertNotEquals(reader1, reader2);
+            }
+        });
+    }
+
+    private static void testReaderReloadDoesNotReopenPartitions(boolean isWal) throws Exception {
+        AtomicLong openCount = new AtomicLong();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.endsWithAscii(name, "x.d")) {
+                    openCount.incrementAndGet();
+                }
+                return super.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            compile("create table x as (select x, timestamp_sequence('2022-02-24', 1000000000) ts from long_sequence(1)) timestamp(ts) partition by HOUR" + (isWal ? " WAL" : " BYPASS WAL"));
+
+            TableToken xTableToken = engine.verifyTableName("x");
+            drainWalQueue();
+            try (TableReader reader = engine.getReader(xTableToken)) {
+                reader.openPartition(0);
+                long openCountBeforeReload = openCount.get();
+
+                reader.openPartition(0);
+                Assert.assertEquals("partition should not be reloaded, file open count should stay the same", openCountBeforeReload, openCount.get());
+
+                reader.goPassive();
+
+                reader.goActive();
+                reader.openPartition(0);
+                Assert.assertEquals("partition should not be reloaded, file open count should stay the same", openCountBeforeReload, openCount.get());
+                reader.goPassive();
+
+                for (int i = 1; i < 50; i++) {
+                    // Add PARTITION
+                    insert("insert into x(x, ts) values (1, " + (IntervalUtils.parseFloorPartialTimestamp("2024-02-24") + i * HOUR_MICROS) + "L)");
+                    drainWalQueue();
+
+                    reader.goActive();
+                    openCountBeforeReload = openCount.get();
+                    reader.openPartition(0);
+                    Assert.assertEquals("partition should not be reloaded, file open count should stay the same", openCountBeforeReload, openCount.get());
+                    reader.goPassive();
+                }
             }
         });
     }
