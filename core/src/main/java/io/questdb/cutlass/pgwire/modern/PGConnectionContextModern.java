@@ -1274,7 +1274,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
 
     static void freeIfAbandoned(PGPipelineEntry pe) {
         if (pe != null) {
-            if (!pe.isPreparedStatement() && !pe.isPortal()) {
+            if (pe.isCopy || (!pe.isPreparedStatement() && !pe.isPortal())) {
                 Misc.free(pe);
             } else {
                 pe.clearState();

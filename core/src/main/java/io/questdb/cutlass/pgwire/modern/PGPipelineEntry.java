@@ -50,6 +50,7 @@ import static io.questdb.cutlass.pgwire.modern.PGConnectionContextModern.*;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
 public class PGPipelineEntry implements QuietCloseable {
+    final boolean isCopy;
     private final CompiledQueryImpl compiledQuery;
     private final CairoEngine engine;
     private final StringSink errorMessageSink = new StringSink();
@@ -116,6 +117,7 @@ public class PGPipelineEntry implements QuietCloseable {
     private TypesAndSelectModern tas = null;
 
     public PGPipelineEntry(CairoEngine engine) {
+        this.isCopy = false;
         this.engine = engine;
         this.compiledQuery = new CompiledQueryImpl(engine);
         this.msgParseParameterTypeOIDs = new IntList();
@@ -129,6 +131,7 @@ public class PGPipelineEntry implements QuietCloseable {
             IntList msgParseParameterTypeOIDs,
             IntList outParameterTypeDescriptionTypeOIDs,
             IntList pgResultSetColumnTypes) {
+        this.isCopy = true;
         this.engine = engine;
         this.compiledQuery = compiledQuery;
         this.msgParseParameterTypeOIDs = msgParseParameterTypeOIDs;
@@ -195,8 +198,7 @@ public class PGPipelineEntry implements QuietCloseable {
                 // variables.
                 msgParseDefineBindVariableTypes(sqlExecutionContext.getBindVariableService());
                 CompiledQuery cq = compiler.compile(this.sqlText, sqlExecutionContext);
-                // copy actual bind variable types as supplied by the client + defined by the SQL
-                // compiler
+                // copy actual bind variable types as supplied by the client + defined by the SQL compiler
                 msgParseCopyOutTypeDescriptionTypeOIDs(sqlExecutionContext.getBindVariableService());
                 setupEntryAfterSQLCompilation(sqlExecutionContext, taiPool, cq);
             }
@@ -423,7 +425,8 @@ public class PGPipelineEntry implements QuietCloseable {
                             writerSource,
                             characterStore,
                             utf8String,
-                            binarySequenceParamsPool
+                            binarySequenceParamsPool,
+                            taiPool
                     );
                     break;
                 case CompiledQuery.ALTER:
@@ -924,6 +927,7 @@ public class PGPipelineEntry implements QuietCloseable {
         if (factory != null) {
             final RecordMetadata m = factory.getMetadata();
             final int columnCount = m.getColumnCount();
+            pgResultSetColumnTypes.clear();
             pgResultSetColumnTypes.setPos(2 * columnCount);
             for (int i = 0; i < columnCount; i++) {
                 final int columnType = m.getColumnType(i);
@@ -1071,8 +1075,10 @@ public class PGPipelineEntry implements QuietCloseable {
             WriterSource writerSource,
             CharacterStore characterStore,
             DirectUtf8String utf8String,
-            ObjectPool<DirectBinarySequence> binarySequenceParamsPool
+            ObjectPool<DirectBinarySequence> binarySequenceParamsPool,
+            WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
     ) throws SqlException, BadProtocolException {
+        InsertMethod m;
         switch (transactionState) {
             case IN_TRANSACTION:
                 copyParameterValuesToBindVariableService(
