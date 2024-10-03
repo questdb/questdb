@@ -201,12 +201,6 @@ public class PGPipelineEntry implements QuietCloseable {
                 setupEntryAfterSQLCompilation(sqlExecutionContext, taiPool, cq);
             }
             copyPgResultSetColumnTypes();
-        } catch (SqlException e) {
-            if (e.getMessage().equals("[0] empty query")) {
-                this.empty = true;
-            } else {
-                throw kaput().put((Throwable) e);
-            }
         } catch (Throwable e) {
             throw kaput().put(e);
         }
