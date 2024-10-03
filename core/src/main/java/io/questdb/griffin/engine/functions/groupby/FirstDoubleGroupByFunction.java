@@ -87,8 +87,8 @@ public class FirstDoubleGroupByFunction extends DoubleFunction implements GroupB
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return UnaryFunction.super.isReadThreadSafe();
+    public boolean isThreadSafe() {
+        return UnaryFunction.super.isThreadSafe();
     }
 
     @Override

@@ -49,7 +49,7 @@ class IntBindVariable extends IntFunction implements ScalarFunction, Mutable {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return true;
     }
 

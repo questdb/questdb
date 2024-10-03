@@ -171,7 +171,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(256, configuration.getCairoConfiguration().getDefaultSymbolCapacity());
         Assert.assertEquals(30, configuration.getCairoConfiguration().getFileOperationRetryCount());
         Assert.assertEquals(300000, configuration.getCairoConfiguration().getIdleCheckInterval());
-        Assert.assertEquals(128, configuration.getCairoConfiguration().getInactiveReaderMaxOpenPartitions());
+        Assert.assertEquals(10000, configuration.getCairoConfiguration().getInactiveReaderMaxOpenPartitions());
         Assert.assertEquals(120_000, configuration.getCairoConfiguration().getInactiveReaderTTL());
         Assert.assertEquals(600_000, configuration.getCairoConfiguration().getInactiveWriterTTL());
         Assert.assertEquals(256, configuration.getCairoConfiguration().getIndexValueBlockSize());
@@ -180,8 +180,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(509, configuration.getCairoConfiguration().getDetachedMkDirMode());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getBindVariablePoolSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getQueryRegistryPoolSize());
-        Assert.assertEquals(16, configuration.getCairoConfiguration().getCountDistinctCapacity());
-        Assert.assertEquals(0.7, configuration.getCairoConfiguration().getCountDistinctLoadFactor(), 0.000001);
+        Assert.assertEquals(4, configuration.getCairoConfiguration().getCountDistinctCapacity());
+        Assert.assertEquals(0.8, configuration.getCairoConfiguration().getCountDistinctLoadFactor(), 0.000001);
 
         Assert.assertEquals(100000, configuration.getCairoConfiguration().getParallelIndexThreshold());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getReaderPoolMaxSegments());
