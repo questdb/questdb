@@ -484,7 +484,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int lineUdpBindIPV4Address;
     private int lineUdpDefaultPartitionBy;
     private int lineUdpPort;
-    private boolean logLevelVerbose;
+    private final boolean logLevelVerbose;
     private MimeTypesCache mimeTypesCache;
     private long minIdleMsBeforeWriterRelease;
     private int netTestConnectionBufferSize;
