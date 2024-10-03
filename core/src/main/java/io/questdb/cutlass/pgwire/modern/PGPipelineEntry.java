@@ -166,7 +166,7 @@ public class PGPipelineEntry implements QuietCloseable {
         factory = Misc.free(factory);
         insertOp = Misc.free(insertOp);
         if (parameterValueArenaPtr != 0) {
-            Unsafe.free(parameterValueArenaPtr, parameterValueArenaHi - parameterValueArenaPtr, MemoryTag.NATIVE_PGW_CONN);
+            Unsafe.free(parameterValueArenaPtr, parameterValueArenaHi - parameterValueArenaPtr, MemoryTag.NATIVE_PGW_PIPELINE);
             parameterValueArenaPtr = 0;
         }
     }
@@ -348,11 +348,13 @@ public class PGPipelineEntry implements QuietCloseable {
         if (valueAreaSize > 0) {
             long sz = Numbers.ceilPow2(valueAreaSize);
             if (parameterValueArenaPtr == 0) {
-                parameterValueArenaPtr = Unsafe.malloc(sz, MemoryTag.NATIVE_PGW_CONN);
+                parameterValueArenaPtr = Unsafe.malloc(sz, MemoryTag.NATIVE_PGW_PIPELINE);
                 parameterValueArenaLo = parameterValueArenaPtr;
                 parameterValueArenaHi = parameterValueArenaPtr + sz;
             } else if (parameterValueArenaHi - parameterValueArenaPtr < valueAreaSize) {
-                parameterValueArenaPtr = Unsafe.realloc(parameterValueArenaPtr, parameterValueArenaHi - parameterValueArenaPtr, sz, MemoryTag.NATIVE_PGW_CONN);
+                parameterValueArenaPtr = Unsafe.realloc(
+                        parameterValueArenaPtr, parameterValueArenaHi - parameterValueArenaPtr,
+                        sz, MemoryTag.NATIVE_PGW_PIPELINE);
                 parameterValueArenaLo = parameterValueArenaPtr;
                 parameterValueArenaHi = parameterValueArenaPtr + sz;
             }
