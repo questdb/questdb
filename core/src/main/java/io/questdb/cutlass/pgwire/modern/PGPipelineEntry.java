@@ -419,7 +419,7 @@ public class PGPipelineEntry implements QuietCloseable {
                             sqlExecutionContext, characterStore, utf8String, binarySequenceParamsPool, taiPool);
                     break;
                 case CompiledQuery.INSERT:
-                    executeInsert(
+                    msgExecuteInsert(
                             sqlExecutionContext,
                             transactionState,
                             taiCache,
@@ -995,61 +995,6 @@ public class PGPipelineEntry implements QuietCloseable {
                 .put(']');
     }
 
-    private void executeInsert(
-            SqlExecutionContext sqlExecutionContext,
-            int transactionState,
-            // todo: WriterSource is the interface used exclusively in PG Wire. We should not need to pass
-            //    around heaps of state in very long call stacks
-            SimpleAssociativeCache<TypesAndInsertModern> taiCache,
-            ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
-            WriterSource writerSource,
-            CharacterStore characterStore,
-            DirectUtf8String utf8String,
-            ObjectPool<DirectBinarySequence> binarySequenceParamsPool
-    ) throws SqlException, BadProtocolException {
-        switch (transactionState) {
-            case IN_TRANSACTION:
-                copyParameterValuesToBindVariableService(
-                        sqlExecutionContext,
-                        characterStore,
-                        utf8String,
-                        binarySequenceParamsPool
-                );
-                final InsertMethod m = insertOp.createMethod(sqlExecutionContext, writerSource);
-                try {
-                    sqlAffectedRowCount = m.execute();
-                    TableWriterAPI writer = m.popWriter();
-                    pendingWriters.put(writer.getTableToken(), writer);
-                    if (tai.hasBindVariables()) {
-                        taiCache.put(sqlText, tai);
-                    }
-                } catch (Throwable e) {
-                    Misc.free(m);
-                    throw e;
-                }
-                break;
-            case ERROR_TRANSACTION:
-                // when transaction is in error state, skip execution
-                break;
-            default:
-                // in any other case we will commit in place
-                copyParameterValuesToBindVariableService(
-                        sqlExecutionContext,
-                        characterStore,
-                        utf8String,
-                        binarySequenceParamsPool
-                );
-                try (final InsertMethod m2 = insertOp.createMethod(sqlExecutionContext, writerSource)) {
-                    sqlAffectedRowCount = m2.execute();
-                    m2.commit();
-                }
-                if (tai.hasBindVariables()) {
-                    taiCache.put(sqlText, tai);
-                }
-                break;
-        }
-    }
-
     private void freePendingWriters(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters, boolean commit) {
         try {
             for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
@@ -1117,6 +1062,61 @@ public class PGPipelineEntry implements QuietCloseable {
                 fut.await();
                 sqlAffectedRowCount = fut.getAffectedRowsCount();
             }
+        }
+    }
+
+    private void msgExecuteInsert(
+            SqlExecutionContext sqlExecutionContext,
+            int transactionState,
+            // todo: WriterSource is the interface used exclusively in PG Wire. We should not need to pass
+            //    around heaps of state in very long call stacks
+            SimpleAssociativeCache<TypesAndInsertModern> taiCache,
+            ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters,
+            WriterSource writerSource,
+            CharacterStore characterStore,
+            DirectUtf8String utf8String,
+            ObjectPool<DirectBinarySequence> binarySequenceParamsPool
+    ) throws SqlException, BadProtocolException {
+        switch (transactionState) {
+            case IN_TRANSACTION:
+                copyParameterValuesToBindVariableService(
+                        sqlExecutionContext,
+                        characterStore,
+                        utf8String,
+                        binarySequenceParamsPool
+                );
+                final InsertMethod m = insertOp.createMethod(sqlExecutionContext, writerSource);
+                try {
+                    sqlAffectedRowCount = m.execute();
+                    TableWriterAPI writer = m.popWriter();
+                    pendingWriters.put(writer.getTableToken(), writer);
+                    if (tai.hasBindVariables()) {
+                        taiCache.put(sqlText, tai);
+                    }
+                } catch (Throwable e) {
+                    Misc.free(m);
+                    throw e;
+                }
+                break;
+            case ERROR_TRANSACTION:
+                // when transaction is in error state, skip execution
+                break;
+            default:
+                // in any other case we will commit in place
+                copyParameterValuesToBindVariableService(
+                        sqlExecutionContext,
+                        characterStore,
+                        utf8String,
+                        binarySequenceParamsPool
+                );
+                try (final InsertMethod m2 = insertOp.createMethod(sqlExecutionContext, writerSource)) {
+                    sqlAffectedRowCount = m2.execute();
+                    m2.commit();
+                }
+                if (tai.hasBindVariables()) {
+                    taiCache.put(sqlText, tai);
+                }
+                break;
         }
     }
 
