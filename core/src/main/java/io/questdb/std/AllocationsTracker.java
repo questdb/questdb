@@ -29,9 +29,13 @@ import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 
 public final class AllocationsTracker {
-    private static final ConcurrentNavigableMap<Long, Long> ALLOCATIONS = new ConcurrentSkipListMap<>();
+    private static final ConcurrentNavigableMap<Long, Long> ALLOCATIONS;
+    private static final boolean TRACK_ALLOCATIONS;
 
     public static void assertAllocatedMemory(long address, long size) {
+        if (!TRACK_ALLOCATIONS) {
+            return;
+        }
         if (size == 0) {
             return;
         }
@@ -52,16 +56,32 @@ public final class AllocationsTracker {
     }
 
     public static void onFree(long address) {
+        if (!TRACK_ALLOCATIONS) {
+            return;
+        }
         Long remove = ALLOCATIONS.remove(address);
         assert remove != null;
     }
 
     public static void onMalloc(long address, long size) {
+        if (!TRACK_ALLOCATIONS) {
+            return;
+        }
         if (size == 0) {
             return;
         }
         Long put = ALLOCATIONS.put(address, address + size);
         assert put == null;
+    }
+
+    static {
+        TRACK_ALLOCATIONS = Boolean.getBoolean("questdb.track.allocations") || "true".equals(System.getenv().get("QUESTDB_TRACK_ALLOCATIONS"));
+        if (TRACK_ALLOCATIONS) {
+            System.out.println("Allocations tracking enabled, this will have severe performance impact!");
+            ALLOCATIONS = new ConcurrentSkipListMap<>();
+        } else {
+            ALLOCATIONS = null;
+        }
     }
 
 }
