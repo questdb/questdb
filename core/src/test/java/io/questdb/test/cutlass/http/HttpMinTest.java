@@ -79,6 +79,7 @@ public class HttpMinTest extends AbstractBootstrapTest {
                     Os.sleep(10);
                 }
 
+                int httpMinPort = serverMain.getConfiguration().getHttpMinServerConfiguration().getDispatcherConfiguration().getBindPort();
                 long buff = 0, rssAvailable = 0;
                 try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
 
@@ -96,8 +97,8 @@ public class HttpMinTest extends AbstractBootstrapTest {
                     final Utf8StringSink sink = new Utf8StringSink();
 
                     for (int i = 0; i < 10; i++) {
-                        checkResponse(httpClient, "/metrics", sink, expectedText, serverMain.getHttpServerPort());
-                        checkResponse(httpClient, "/status", sink, "Status: Healthy", serverMain.getHttpServerPort());
+                        checkResponse(httpClient, "/metrics", sink, expectedText, httpMinPort);
+                        checkResponse(httpClient, "/status", sink, "Status: Healthy", httpMinPort);
                     }
                 } finally {
                     Unsafe.free(buff, rssAvailable, MemoryTag.NATIVE_DEFAULT);
