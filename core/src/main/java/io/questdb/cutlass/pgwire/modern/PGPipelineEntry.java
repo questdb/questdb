@@ -1081,7 +1081,12 @@ public class PGPipelineEntry implements QuietCloseable {
                         utf8String,
                         binarySequenceParamsPool
                 );
-                final InsertMethod m = insertOp.createMethod(sqlExecutionContext, writerSource);
+                try {
+                    m = insertOp.createMethod(sqlExecutionContext, writerSource);
+                } catch (TableReferenceOutOfDateException e) {
+                    compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
+                    m = insertOp.createMethod(sqlExecutionContext, writerSource);
+                }
                 try {
                     sqlAffectedRowCount = m.execute();
                     TableWriterAPI writer = m.popWriter();
@@ -1099,13 +1104,27 @@ public class PGPipelineEntry implements QuietCloseable {
                 break;
             default:
                 // in any other case we will commit in place
-                copyParameterValuesToBindVariableService(
-                        sqlExecutionContext,
-                        characterStore,
-                        utf8String,
-                        binarySequenceParamsPool
-                );
-                try (final InsertMethod m2 = insertOp.createMethod(sqlExecutionContext, writerSource)) {
+                try {
+                    copyParameterValuesToBindVariableService(
+                            sqlExecutionContext,
+                            characterStore,
+                            utf8String,
+                            binarySequenceParamsPool
+                    );
+                    m = insertOp.createMethod(sqlExecutionContext, writerSource);
+                } catch (TableReferenceOutOfDateException e) {
+                    tai.close();
+                    taiPool.push(tai);
+                    compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
+                    copyParameterValuesToBindVariableService(
+                            sqlExecutionContext,
+                            characterStore,
+                            utf8String,
+                            binarySequenceParamsPool
+                    );
+                    m = insertOp.createMethod(sqlExecutionContext, writerSource);
+                }
+                try (final InsertMethod m2 = m) {
                     sqlAffectedRowCount = m2.execute();
                     m2.commit();
                 }
