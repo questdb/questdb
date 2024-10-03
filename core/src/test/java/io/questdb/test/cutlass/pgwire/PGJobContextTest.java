@@ -5503,6 +5503,7 @@ nodejs code:
                 connection.prepareStatement("rename table ts to ts2").execute();
                 try {
                     insert.execute();
+                    fail();
                 } catch (PSQLException ex) {
                     TestUtils.assertContains(ex.getMessage(), "table does not exist [table=ts]");
                 }
@@ -5716,83 +5717,75 @@ nodejs code:
     }
 
     @Test
-    @Ignore("multi-use of prepared statement")
     public void testInvalidateWriterBetweenInserts() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        assertMemoryLeak(() -> {
+        Assume.assumeFalse(legacyMode);
+        assertWithPgServer(CONN_AWARE_EXTENDED_BINARY, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("create table test_batch(id long,val int)");
+            }
+            try (PreparedStatement batchInsert = connection.prepareStatement("insert into test_batch(id,val) values(?,?)")) {
+                batchInsert.setLong(1, 0L);
+                batchInsert.setInt(2, 1);
+                batchInsert.addBatch();
+
+                batchInsert.clearParameters();
+                batchInsert.setLong(1, 1L);
+                batchInsert.setInt(2, 2);
+                batchInsert.addBatch();
+
+                batchInsert.clearParameters();
+                batchInsert.setLong(1, 2L);
+                batchInsert.setInt(2, 3);
+                batchInsert.addBatch();
+
+                int[] a = batchInsert.executeBatch();
+                Assert.assertEquals(3, a.length);
+                Assert.assertEquals(1, a[0]);
+                Assert.assertEquals(1, a[1]);
+                Assert.assertEquals(1, a[2]);
+
+
+                ddl("create table spot1 as (select * from test_batch)");
+                drop("drop table test_batch");
+                ddl("rename table spot1 to test_batch");
+                mayDrainWalQueue();
+
+                batchInsert.setLong(1, 0L);
+                batchInsert.setInt(2, 1);
+                batchInsert.addBatch();
+
+                batchInsert.clearParameters();
+                batchInsert.setLong(1, 1L);
+                batchInsert.setInt(2, 2);
+                batchInsert.addBatch();
+
+                batchInsert.clearParameters();
+                batchInsert.setLong(1, 2L);
+                batchInsert.setInt(2, 3);
+                batchInsert.addBatch();
+
+                a = batchInsert.executeBatch();
+                Assert.assertEquals(3, a.length);
+                Assert.assertEquals(1, a[0]);
+                Assert.assertEquals(1, a[1]);
+                Assert.assertEquals(1, a[2]);
+            }
+            mayDrainWalQueue();
+
+            StringSink sink = new StringSink();
+            String expected = "id[BIGINT],val[INTEGER]\n" +
+                    "0,1\n" +
+                    "1,2\n" +
+                    "2,3\n" +
+                    "0,1\n" +
+                    "1,2\n" +
+                    "2,3\n";
             try (
-                    final IPGWireServer server = createPGServer(2);
-                    final WorkerPool workerPool = server.getWorkerPool()
+                    Statement statement = connection.createStatement();
+                    ResultSet rs = statement.executeQuery("select * from test_batch")
             ) {
-                workerPool.start(LOG);
-                try (
-                        final Connection connection = getConnection(server.getPort(), false, true)
-                ) {
-                    try (Statement statement = connection.createStatement()) {
-                        statement.executeUpdate("create table test_batch(id long,val int)");
-                    }
-                    try (PreparedStatement batchInsert = connection.prepareStatement("insert into test_batch(id,val) values(?,?)")) {
-                        batchInsert.setLong(1, 0L);
-                        batchInsert.setInt(2, 1);
-                        batchInsert.addBatch();
-
-                        batchInsert.clearParameters();
-                        batchInsert.setLong(1, 1L);
-                        batchInsert.setInt(2, 2);
-                        batchInsert.addBatch();
-
-                        batchInsert.clearParameters();
-                        batchInsert.setLong(1, 2L);
-                        batchInsert.setInt(2, 3);
-                        batchInsert.addBatch();
-
-                        int[] a = batchInsert.executeBatch();
-                        Assert.assertEquals(3, a.length);
-                        Assert.assertEquals(1, a[0]);
-                        Assert.assertEquals(1, a[1]);
-                        Assert.assertEquals(1, a[2]);
-
-
-                        ddl("create table spot1 as (select * from test_batch)");
-                        drop("drop table test_batch");
-                        ddl("rename table spot1 to test_batch");
-
-                        batchInsert.setLong(1, 0L);
-                        batchInsert.setInt(2, 1);
-                        batchInsert.addBatch();
-
-                        batchInsert.clearParameters();
-                        batchInsert.setLong(1, 1L);
-                        batchInsert.setInt(2, 2);
-                        batchInsert.addBatch();
-
-                        batchInsert.clearParameters();
-                        batchInsert.setLong(1, 2L);
-                        batchInsert.setInt(2, 3);
-                        batchInsert.addBatch();
-
-                        a = batchInsert.executeBatch();
-                        Assert.assertEquals(3, a.length);
-                        Assert.assertEquals(1, a[0]);
-                        Assert.assertEquals(1, a[1]);
-                        Assert.assertEquals(1, a[2]);
-                    }
-
-                    StringSink sink = new StringSink();
-                    String expected = "id[BIGINT],val[INTEGER]\n" +
-                            "0,1\n" +
-                            "1,2\n" +
-                            "2,3\n" +
-                            "0,1\n" +
-                            "1,2\n" +
-                            "2,3\n";
-                    try (
-                            Statement statement = connection.createStatement();
-                            ResultSet rs = statement.executeQuery("select * from test_batch")
-                    ) {
-                        assertResultSet(expected, sink, rs);
-                    }
-                }
+                assertResultSet(expected, sink, rs);
             }
         });
     }
@@ -8780,69 +8773,44 @@ nodejs code:
 
     @Test
     public void testSchemaChangeBetweenUsagesOfPreparedStatement() throws Exception {
-        skipOnWalRun(); // non-partitioned table
         Assume.assumeFalse(legacyMode); // legacy code has a bug
-        // JDBC driver has a bug for some modes: it doesn't take into account the changed schema.
-        // We'll test only those modes that don't exhibit the bug.
-        assertWithPgServer(
-                CONN_AWARE_SIMPLE_TEXT | CONN_AWARE_SIMPLE_BINARY
-                        | CONN_AWARE_EXTENDED_CACHED_TEXT | CONN_AWARE_EXTENDED_CACHED_BINARY,
-                (connection, binary, mode, port) -> {
-                    connection.prepareStatement(
-                            "create table x as (select 2 id, 'foobar' str, timestamp_sequence(1,10000) as ts from long_sequence(1))"
-                    ).execute();
-                    try (PreparedStatement ps = connection.prepareStatement("x")) {
-                        try (ResultSet resultSet = ps.executeQuery()) {
-                            sink.clear();
-                            assertResultSet(
-                                    "id[INTEGER],str[VARCHAR],ts[TIMESTAMP]\n" +
-                                            "2,foobar,1970-01-01 00:00:00.000001\n",
-                                    sink,
-                                    resultSet
-                            );
-                        }
-                        connection.prepareStatement("alter table x drop column str;").execute();
-                        drainWalQueue();
-
-                        // Query the data once again - this time the schema is different,
-                        // so the query should get recompiled.
-                        // The bug is here!
-                        try (ResultSet resultSet = ps.executeQuery()) {
-                            sink.clear();
-                            assertResultSet(
-                                    "id[INTEGER],ts[TIMESTAMP]\n" +
-                                            "2,1970-01-01 00:00:00.000001\n",
-                                    sink,
-                                    resultSet
-                            );
-                        }
-                    }
-                });
-    }
-
-    @Test
-    public void testSchemaChangeInvalidatesCachedQuery() throws Exception {
-        Assume.assumeFalse(legacyMode);
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            ddl("create table x as " +
-                    "(select x a, x b, timestamp_sequence(0, 600000000) ts from long_sequence(3))" +
-                    " timestamp(ts) partition by hour");
-            mayDrainWalQueue();
-            try (PreparedStatement stmt = connection.prepareStatement("x")) {
-                try (ResultSet rs = stmt.executeQuery()) {
+        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+            connection.prepareStatement("create table x as" +
+                    " (select 2 id, 'foobar' str, timestamp_sequence(1,10000) ts from long_sequence(1))" +
+                    " timestamp(ts) partition by hour"
+            ).execute();
+            drainWalQueue();
+            try (PreparedStatement ps = connection.prepareStatement("x where id=?")) {
+                ps.setInt(1, 2);
+                try (ResultSet resultSet = ps.executeQuery()) {
                     sink.clear();
-                    assertResultSet("a[BIGINT],b[BIGINT],ts[TIMESTAMP]\n" +
-                            "1,1,1970-01-01 00:00:00.0\n" +
-                            "2,2,1970-01-01 00:10:00.0\n" +
-                            "3,3,1970-01-01 00:20:00.0\n", sink, rs);
+                    assertResultSet(
+                            "id[INTEGER],str[VARCHAR],ts[TIMESTAMP]\n" +
+                                    "2,foobar,1970-01-01 00:00:00.000001\n",
+                            sink,
+                            resultSet
+                    );
                 }
-                ddl("alter table x drop column b");
-                mayDrainWalQueue();
-                try (ResultSet rs = stmt.executeQuery()) {
-                    sink.clear();
-                    assertTrue(rs.next());
-                    assertTrue(rs.next());
-                    assertTrue(rs.next());
+                connection.prepareStatement("alter table x drop column str;").execute();
+                drainWalQueue();
+
+                // Query the data once again - this time the schema is different,
+                // so the query should get recompiled.
+                // The bug is here!
+                ps.setInt(1, 2);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (mode == Mode.SIMPLE || mode == Mode.EXTENDED_CACHE_EVERYTHING) {
+                        sink.clear();
+                        assertResultSet(
+                                "id[INTEGER],ts[TIMESTAMP]\n" +
+                                        "2,1970-01-01 00:00:00.000001\n",
+                                sink, rs
+                        );
+                        // JDBC driver has a bug in other modes: it doesn't take into account the changed schema.
+                        // We weaken the test for them and assert just the presence of a result.
+                    } else {
+                        assertTrue(rs.next());
+                    }
                 }
             }
         });
