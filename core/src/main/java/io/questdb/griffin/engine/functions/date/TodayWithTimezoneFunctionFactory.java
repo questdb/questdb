@@ -102,7 +102,7 @@ public class TodayWithTimezoneFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return true;
         }
 

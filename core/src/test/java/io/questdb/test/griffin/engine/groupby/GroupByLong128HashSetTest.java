@@ -24,8 +24,8 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
+import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.griffin.engine.groupby.GroupByAllocatorArena;
 import io.questdb.griffin.engine.groupby.GroupByLong128HashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
@@ -52,7 +52,7 @@ public class GroupByLong128HashSetTest extends AbstractCairoTest {
     @Test
     public void testMerge() throws Exception {
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
                 GroupByLong128HashSet setA = new GroupByLong128HashSet(16, 0.5, -1);
                 setA.setAllocator(allocator);
                 setA.of(0);
@@ -90,7 +90,7 @@ public class GroupByLong128HashSetTest extends AbstractCairoTest {
             final long seed0 = rnd.getSeed0();
             final long seed1 = rnd.getSeed1();
             HashSet<Uuid> oracle = new HashSet<>();
-            try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
                 GroupByLong128HashSet set = new GroupByLong128HashSet(64, 0.7, noKeyValue);
                 set.setAllocator(allocator);
                 set.of(0);

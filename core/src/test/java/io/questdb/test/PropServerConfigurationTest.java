@@ -180,8 +180,8 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(509, configuration.getCairoConfiguration().getDetachedMkDirMode());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getBindVariablePoolSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getQueryRegistryPoolSize());
-        Assert.assertEquals(16, configuration.getCairoConfiguration().getCountDistinctCapacity());
-        Assert.assertEquals(0.7, configuration.getCairoConfiguration().getCountDistinctLoadFactor(), 0.000001);
+        Assert.assertEquals(4, configuration.getCairoConfiguration().getCountDistinctCapacity());
+        Assert.assertEquals(0.8, configuration.getCairoConfiguration().getCountDistinctLoadFactor(), 0.000001);
 
         Assert.assertEquals(100000, configuration.getCairoConfiguration().getParallelIndexThreshold());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getReaderPoolMaxSegments());

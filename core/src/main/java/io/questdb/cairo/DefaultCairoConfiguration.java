@@ -194,12 +194,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getCountDistinctCapacity() {
-        return 16;
+        return 4;
     }
 
     @Override
     public double getCountDistinctLoadFactor() {
-        return 0.7;
+        return 0.8;
     }
 
     @Override
@@ -526,6 +526,31 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getParallelIndexThreshold() {
         return 100000;
+    }
+
+    @Override
+    public int getPartitionEncoderParquetCompressionCodec() {
+        return ParquetCompression.COMPRESSION_UNCOMPRESSED;
+    }
+
+    @Override
+    public int getPartitionEncoderParquetCompressionLevel() {
+        return 0;
+    }
+
+    @Override
+    public int getPartitionEncoderParquetDataPageSize() {
+        return 0; // use default (1024*1024) bytes
+    }
+
+    @Override
+    public int getPartitionEncoderParquetRowGroupSize() {
+        return 0; // use default (512*512) rows
+    }
+
+    @Override
+    public int getPartitionEncoderParquetVersion() {
+        return ParquetVersion.PARQUET_VERSION_V1;
     }
 
     @Override
@@ -1110,6 +1135,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isPartitionEncoderParquetStatisticsEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isReadOnlyInstance() {
         return false;
     }
@@ -1167,35 +1197,5 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean useFastAsOfJoin() {
         return true;
-    }
-
-    @Override
-    public int getPartitionEncoderParquetVersion() {
-        return ParquetVersion.PARQUET_VERSION_V1;
-    }
-
-    @Override
-    public boolean isPartitionEncoderParquetStatisticsEnabled() {
-        return true;
-    }
-
-    @Override
-    public int getPartitionEncoderParquetCompressionCodec() {
-        return ParquetCompression.COMPRESSION_UNCOMPRESSED;
-    }
-
-    @Override
-    public int getPartitionEncoderParquetCompressionLevel() {
-        return 0;
-    }
-
-    @Override
-    public int getPartitionEncoderParquetRowGroupSize() {
-        return 0; // use default (512*512) rows
-    }
-
-    @Override
-    public int getPartitionEncoderParquetDataPageSize() {
-        return 0; // use default (1024*1024) bytes
     }
 }

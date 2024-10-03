@@ -57,7 +57,6 @@ import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndIPv4CCFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.RndSymbolListFunctionFactory;
 import io.questdb.griffin.engine.functions.table.HydrateTableMetadataFunctionFactory;
-import io.questdb.griffin.engine.functions.table.ParquetScanFunctionFactory;
 import io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestSumXDoubleGroupByFunctionFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
@@ -7294,7 +7293,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectCountDistinct1() throws Exception {
         assertPlan(
-                "create table tab ( s symbol, ts timestamp);",
+                "create table tab (s symbol, ts timestamp);",
                 "select count_distinct(s) from tab",
                 "GroupBy vectorized: false\n" +
                         "  values: [count_distinct(s)]\n" +
@@ -7307,7 +7306,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectCountDistinct2() throws Exception {
         assertPlan(
-                "create table tab ( s symbol index, ts timestamp);",
+                "create table tab (s symbol index, ts timestamp);",
                 "select count_distinct(s) from tab",
                 "GroupBy vectorized: false\n" +
                         "  values: [count_distinct(s)]\n" +
@@ -7370,6 +7369,34 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "Async Group By workers: 1\n" +
                         "  keys: [s]\n" +
                         "  values: [count_distinct(l)]\n" +
+                        "  filter: null\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n"
+        );
+    }
+
+    @Test
+    public void testSelectCountDistinct7() throws Exception {
+        assertPlan(
+                "create table tab (s symbol, ts timestamp);",
+                "select count_distinct(s) from tab where s = 'foobar'",
+                "Async JIT Group By workers: 1\n" +
+                        "  values: [count_distinct(s)]\n" +
+                        "  filter: s='foobar'\n" +
+                        "    PageFrame\n" +
+                        "        Row forward scan\n" +
+                        "        Frame forward scan on: tab\n"
+        );
+    }
+
+    @Test
+    public void testSelectCountDistinct8() throws Exception {
+        assertPlan(
+                "create table tab (s symbol, ts timestamp);",
+                "select count_distinct(s), first(s) from tab",
+                "Async Group By workers: 1\n" +
+                        "  values: [count_distinct(s),first(s)]\n" +
                         "  filter: null\n" +
                         "    PageFrame\n" +
                         "        Row forward scan\n" +
