@@ -75,10 +75,10 @@ import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
  * Length field is present for var-size keys only. It stores key length in bytes.
  */
 public class OrderedMap implements Map, Reopenable {
-
     static final long VAR_KEY_HEADER_SIZE = 4;
     private static final long MAX_HEAP_SIZE = (Integer.toUnsignedLong(-1) - 1) << 3;
     private static final int MIN_KEY_CAPACITY = 16;
+
     private final OrderedMapCursor cursor;
     private final int heapMemoryTag;
     private final Key key;

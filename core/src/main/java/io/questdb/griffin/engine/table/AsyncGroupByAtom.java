@@ -224,6 +224,20 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
     }
 
+    public void finalizeShardStats() {
+        if (configuration.isGroupByPresizeEnabled()) {
+            // Find max heap size and apply it to all shards.
+            long maxHeapSize = 0;
+            for (int i = 0; i < shardCount; i++) {
+                final MapStats stats = lastShardStats.getQuick(i);
+                maxHeapSize = Math.max(maxHeapSize, stats.maxHeapSize);
+            }
+            for (int i = 0; i < shardCount; i++) {
+                lastShardStats.getQuick(i).maxHeapSize = maxHeapSize;
+            }
+        }
+    }
+
     public ObjList<Function> getBindVarFunctions() {
         return bindVarFunctions;
     }
@@ -403,20 +417,26 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         for (int i = 0; i < perWorkerMapCount; i++) {
             final MapFragment srcFragment = perWorkerFragments.getQuick(i);
             final Map srcMap = srcFragment.getShards().getQuick(shardIndex);
-            medianList.add(srcMap.size());
+            if (srcMap.size() > 0) {
+                medianList.add(srcMap.size());
+            }
         }
         // Include shard from the owner fragment.
         final Map srcOwnerMap = ownerFragment.getShards().getQuick(shardIndex);
-        medianList.add(srcOwnerMap.size());
+        if (srcOwnerMap.size() > 0) {
+            medianList.add(srcOwnerMap.size());
+        }
         medianList.sort();
         // This is not very precise, but does the job.
-        long medianSize = medianList.getQuick(medianList.size() / 2);
+        long medianSize = medianList.size() > 0
+                ? medianList.getQuick(Math.min(medianList.size() - 1, (medianList.size() / 2) + 1))
+                : 0;
         long maxHeapSize = -1;
         if (destMap.getUsedHeapSize() != -1) {
             for (int i = 0; i < perWorkerMapCount; i++) {
                 final MapFragment srcFragment = perWorkerFragments.getQuick(i);
                 final Map srcMap = srcFragment.getShards().getQuick(shardIndex);
-                maxHeapSize = Math.max(srcMap.getHeapSize(), maxHeapSize);
+                maxHeapSize = Math.max(maxHeapSize, srcMap.getHeapSize());
             }
         }
 
