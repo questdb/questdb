@@ -53,6 +53,7 @@ public class PageFrameAddressCache implements Mutable {
     // Sum of all LongList sizes.
     private long cacheSize;
     private int columnCount;
+    private final LongList parquetReadSizes = new LongList();
 
     public PageFrameAddressCache(CairoConfiguration configuration) {
         this.nativeCacheSizeThreshold = configuration.getSqlJitPageAddressCacheThreshold() / Long.BYTES;
@@ -97,6 +98,7 @@ public class PageFrameAddressCache implements Mutable {
         frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
         frameFormats.add(frame.getFormat());
         parquetFds.add(frame.getParquetFd());
+        parquetReadSizes.add(frame.getParquetReadSize());
         parquetRowGroups.add(frame.getParquetRowGroup());
         rowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
     }
@@ -159,6 +161,10 @@ public class PageFrameAddressCache implements Mutable {
 
     public long getParquetFd(int frameIndex) {
         return parquetFds.getQuick(frameIndex);
+    }
+
+    public long getParquetReadSize(int frameIndex) {
+        return parquetReadSizes.getQuick(frameIndex);
     }
 
     public int getParquetRowGroup(int frameIndex) {

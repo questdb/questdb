@@ -85,6 +85,7 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
 
     protected static class FullTablePartitionFrame implements PartitionFrame {
         protected long parquetFd;
+        protected long parquetReadSize;
         protected byte partitionFormat;
         protected int partitionIndex;
         protected int rowGroupIndex;
@@ -94,6 +95,11 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
         @Override
         public long getParquetFd() {
             return parquetFd;
+        }
+
+        @Override
+        public long getParquetReadSize() {
+            return parquetReadSize;
         }
 
         @Override

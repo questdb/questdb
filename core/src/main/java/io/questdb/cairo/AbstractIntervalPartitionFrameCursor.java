@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -284,26 +285,32 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     }
 
     protected static class IntervalPartitionFrame implements PartitionFrame {
-        protected byte format;
-        protected long parquetFd;
         protected int partitionIndex;
-        protected int rowGroupIndex;
         protected long rowHi;
         protected long rowLo = 0;
 
         @Override
         public long getParquetFd() {
-            return parquetFd;
+            // TODO(amunra): Add support for parquet interval intrinsics.
+            throw new UnsupportedOperationException("interval intrinsics not yet implemented for parquet partitions");
+        }
+
+        @Override
+        public long getParquetReadSize() {
+            // TODO(amunra): Add support for parquet interval intrinsics.
+            throw new UnsupportedOperationException("interval intrinsics not yet implemented for parquet partitions");
         }
 
         @Override
         public int getParquetRowGroup() {
-            return rowGroupIndex;
+            // TODO(amunra): Add support for parquet interval intrinsics.
+            throw new UnsupportedOperationException("interval intrinsics not yet implemented for parquet partitions");
         }
 
         @Override
         public byte getPartitionFormat() {
-            return format;
+            // TODO(amunra): Add support for parquet interval intrinsics.
+            return PartitionFormat.NATIVE;
         }
 
         @Override

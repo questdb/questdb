@@ -1109,6 +1109,7 @@ mod tests {
     use std::mem::size_of;
     use std::path::Path;
     use std::ptr::null;
+    use parquet::file::reader::Length;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -1128,7 +1129,8 @@ mod tests {
             expected_buff.data_vec.as_ref(),
         );
 
-        let mut decoder = ParquetDecoder::read(file).unwrap();
+        let file_len = file.len();
+        let mut decoder = ParquetDecoder::read(file, file_len).unwrap();
         assert_eq!(decoder.columns.len(), column_count);
         assert_eq!(decoder.row_count, row_count);
         let row_group_count = decoder.row_group_count as usize;
@@ -1327,7 +1329,8 @@ mod tests {
         let column_count = columns.len();
         let file = write_cols_to_parquet_file(row_group_size, data_page_size, version, columns);
 
-        let mut decoder = ParquetDecoder::read(file).unwrap();
+        let file_len = file.len();
+        let mut decoder = ParquetDecoder::read(file, file_len).unwrap();
         assert_eq!(decoder.columns.len(), column_count);
         assert_eq!(decoder.row_count, row_count);
         let row_group_count = decoder.row_group_count as usize;

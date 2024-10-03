@@ -50,12 +50,14 @@ public class PartitionDecoder implements QuietCloseable {
     private long columnsPtr;
     private long fd; // kept around for logging purposes
     private long ptr;
+    private long readSize;
     private long rowGroupSizesPtr;
 
     @Override
     public void close() {
         destroy();
         fd = -1;
+        readSize = -1;
     }
 
     public long decodeRowGroup(
@@ -90,6 +92,10 @@ public class PartitionDecoder implements QuietCloseable {
         return metadata;
     }
 
+    public long getReadSize() {
+        return readSize;
+    }
+
     public void getRowGroupStats(
             RowGroupStatBuffers rowGroupStatBuffers,
             DirectIntList columns,
@@ -113,11 +119,12 @@ public class PartitionDecoder implements QuietCloseable {
         }
     }
 
-    public void of(long fd) {
+    public void of(long fd, long readSize) {
         destroy();
         try {
             this.fd = fd;
-            ptr = create(Files.toOsFd(fd));
+            this.readSize = readSize;
+            ptr = create(Files.toOsFd(fd), readSize);
             columnsPtr = Unsafe.getUnsafe().getLong(ptr + COLUMNS_PTR_OFFSET);
             rowGroupSizesPtr = Unsafe.getUnsafe().getLong(ptr + ROW_GROUP_SIZES_PTR_OFFSET);
             metadata.init();
@@ -142,7 +149,7 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native long columnsPtrOffset();
 
-    private static native long create(int fd);
+    private static native long create(int fd, long readSize);
 
     private static native long decodeRowGroup(
             long decoderPtr,

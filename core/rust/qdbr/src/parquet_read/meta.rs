@@ -3,12 +3,12 @@ use crate::parquet::error::ParquetResult;
 use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
 use crate::parquet_read::{ColumnMeta, ParquetDecoder};
 use parquet2::metadata::{Descriptor, FileMetaData};
-use parquet2::read::read_metadata;
 use parquet2::schema::types::PrimitiveLogicalType::{Timestamp, Uuid};
 use parquet2::schema::types::{
     IntegerType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType, TimeUnit,
 };
 use std::io::{Read, Seek};
+use parquet2::read::read_metadata_with_size;
 
 /// Extract the questdb-specific metadata from the parquet file metadata.
 /// Error if the JSON is not valid or the version is not supported.
@@ -28,8 +28,8 @@ fn extract_qdb_meta(file_metadata: &FileMetaData) -> ParquetResult<Option<QdbMet
 }
 
 impl<R: Read + Seek> ParquetDecoder<R> {
-    pub fn read(mut reader: R) -> ParquetResult<Self> {
-        let metadata = read_metadata(&mut reader)?;
+    pub fn read(mut reader: R, read_size: u64) -> ParquetResult<Self> {
+        let metadata = read_metadata_with_size(&mut reader, read_size)?;
         let col_len = metadata.schema_descr.columns().len();
         let qdb_meta = extract_qdb_meta(&metadata)?;
         let mut row_group_sizes: Vec<i32> = Vec::with_capacity(metadata.row_groups.len());
@@ -178,6 +178,7 @@ mod tests {
     use crate::parquet_write::schema::{Column, Partition};
     use arrow::datatypes::ToByteSlice;
     use bytes::Bytes;
+    use parquet::file::reader::Length;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -236,7 +237,8 @@ mod tests {
 
         let path = temp_file.path().to_str().unwrap();
         let file = File::open(Path::new(path)).unwrap();
-        let meta = ParquetDecoder::read(file).unwrap();
+        let file_len = file.len();
+        let meta = ParquetDecoder::read(file, file_len).unwrap();
 
         assert_eq!(meta.columns.len(), column_count);
         assert_eq!(meta.row_count, row_count);

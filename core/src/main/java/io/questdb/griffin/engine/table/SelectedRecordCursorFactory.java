@@ -213,6 +213,11 @@ public class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public long getParquetReadSize() {
+            return baseFrame.getParquetReadSize();
+        }
+
+        @Override
         public int getParquetRowGroup() {
             return baseFrame.getParquetRowGroup();
         }

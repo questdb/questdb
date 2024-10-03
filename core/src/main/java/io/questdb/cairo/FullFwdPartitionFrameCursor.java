@@ -59,8 +59,9 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
 
                 if (format == PartitionFormat.PARQUET) {
                     final long fd = reader.getParquetFd(partitionIndex);
+                    final long readSize = reader.getParquetReadSize(partitionIndex);
                     assert fd != -1;
-                    parquetDecoder.of(fd);
+                    parquetDecoder.of(fd, readSize);
                     rowGroupLo = 0;
                     rowGroupIndex = 0;
                     rowGroupCount = parquetDecoder.getMetadata().rowGroupCount();
