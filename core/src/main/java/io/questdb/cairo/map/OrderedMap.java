@@ -848,8 +848,6 @@ public class OrderedMap implements Map, Reopenable {
                 long delta = resize(requiredSize, appendAddress);
                 startAddress += delta;
                 appendAddress += delta;
-                assert startAddress > 0;
-                assert appendAddress > 0;
             }
         }
 
