@@ -214,12 +214,11 @@ public final class Unsafe {
         MALLOC_COUNT.incrementAndGet();
     }
 
-    //#if jdk.version!=8
-
     public static void incrReallocCount() {
         REALLOC_COUNT.incrementAndGet();
     }
-    //#endif
+
+    //#if jdk.version!=8
 
     /**
      * Equivalent to {@link AccessibleObject#setAccessible(boolean) AccessibleObject.setAccessible(true)}, except that
@@ -230,6 +229,7 @@ public final class Unsafe {
     public static void makeAccessible(AccessibleObject accessibleObject) {
         UNSAFE.putBooleanVolatile(accessibleObject, OVERRIDE, true);
     }
+    //#endif
 
     public static long malloc(long size, int memoryTag) {
         try {
@@ -353,6 +353,7 @@ public final class Unsafe {
         }
         return 16L;
     }
+    //#endif
 
     private static void checkAllocLimit(long size, int memoryTag) {
         if (size <= 0) {
@@ -371,7 +372,6 @@ public final class Unsafe {
             }
         }
     }
-    //#endif
 
     //#if jdk.version!=8
     private static boolean getOrdinaryObjectPointersCompressionStatus(boolean is32BitJVM) {
@@ -410,6 +410,7 @@ public final class Unsafe {
         String javaVersion = System.getProperty("java.version");
         return javaVersion.startsWith("11") || javaVersion.startsWith("1.8");
     }
+    //#endif
 
     // most significant bit
     private static int msb(int value) {
