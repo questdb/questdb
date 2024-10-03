@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import io.questdb.log.Log;
+
 import java.util.Map;
 import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
@@ -55,6 +57,26 @@ public final class AllocationsTracker {
         }
     }
 
+    public static void dumpAllocations(Log log) {
+        if (!TRACK_ALLOCATIONS) {
+            return;
+        }
+        long total = 0;
+        int allocCount = 0;
+        for (Map.Entry<Long, Long> entry : ALLOCATIONS.entrySet()) {
+            total += (entry.getValue() - entry.getKey());
+
+            // we want allocation count to be consistent with what we counted
+            // so we increment it here instead of using ALLOCATIONS.size()
+            allocCount++;
+        }
+        if (log != null) {
+            log.info().$("total native allocations [bytes=").$(total).$(", count=").$(allocCount).$(']').$();
+        } else {
+            System.out.println("total native allocations [bytes=" + total + ", count=" + allocCount + ']');
+        }
+    }
+
     public static void onFree(long address) {
         if (!TRACK_ALLOCATIONS) {
             return;
@@ -76,17 +98,6 @@ public final class AllocationsTracker {
         if (oldSize != null) {
             throw new AssertionError("address already allocated [address=" + address + ", size=" + size + ", oldSize=" + oldSize + "]");
         }
-    }
-
-    public static long totalAllocatedBytes() {
-        if (!TRACK_ALLOCATIONS) {
-            return -1;
-        }
-        long total = 0;
-        for (Map.Entry<Long, Long> entry : ALLOCATIONS.entrySet()) {
-            total += (entry.getValue() - entry.getKey());
-        }
-        return total;
     }
 
     static {

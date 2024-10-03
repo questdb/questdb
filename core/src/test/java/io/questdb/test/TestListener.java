@@ -101,10 +101,7 @@ public class TestListener extends RunListener {
             try {
                 while (true) {
                     dumpThreadStacks();
-                    long allocatedBytes = AllocationsTracker.totalAllocatedBytes();
-                    if (allocatedBytes != -1) {
-                        System.out.println("Total allocated bytes: " + allocatedBytes);
-                    }
+                    AllocationsTracker.dumpAllocations(LOG);
                     Os.sleep(10 * 60 * 1000);
                 }
             } catch (Throwable t) {

@@ -449,6 +449,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         engine.metadataCacheClear();
         AbstractTest.tearDownStatic();
         DumpThreadStacksFunctionFactory.dumpThreadStacks();
+        AllocationsTracker.dumpAllocations(LOG);
     }
 
     public static Utf8String utf8(CharSequence value) {
