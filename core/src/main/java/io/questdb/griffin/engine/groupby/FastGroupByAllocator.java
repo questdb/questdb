@@ -39,7 +39,7 @@ import io.questdb.std.bytes.Bytes;
  * grow their state as power of 2.
  * <p>
  * The purpose of this allocator is to amortize the cost of frequent alloc()/free()
- * calls.
+ * calls. This comes at the cost of memory fragmentation.
  */
 public class FastGroupByAllocator implements GroupByAllocator {
     private final boolean aligned;
