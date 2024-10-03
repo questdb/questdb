@@ -46,7 +46,6 @@ public final class Rosti {
             // this is not an exact size of memory allocated for Rosti, but this is useful to
             // track that we free these maps
             long pRosti = alloc(mem, columnCount, Numbers.ceilPow2(capacity) - 1);
-            AllocationsTracker.onMalloc(pRosti, getAllocMemory(pRosti));
             if (pRosti != 0) {
                 Unsafe.recordMemAlloc(getAllocMemory(pRosti), MemoryTag.NATIVE_ROSTI);
             }
@@ -67,7 +66,6 @@ public final class Rosti {
     public static native void enableOOMOnMalloc();
 
     public static void free(long pRosti) {
-        AllocationsTracker.onFree(pRosti);
         long size = getAllocMemory(pRosti);
         free0(pRosti);
         Unsafe.recordMemAlloc(-size, MemoryTag.NATIVE_ROSTI);
@@ -323,10 +321,8 @@ public final class Rosti {
     }
 
     public static boolean reset(long pRosti, int size) {
-        AllocationsTracker.onFree(pRosti);
         long oldSize = Rosti.getAllocMemory(pRosti);
         boolean success = reset0(pRosti, Numbers.ceilPow2(size) - 1);
-        AllocationsTracker.onMalloc(pRosti, getAllocMemory(pRosti));
         updateMemoryUsage(pRosti, oldSize);
         return success;
     }
