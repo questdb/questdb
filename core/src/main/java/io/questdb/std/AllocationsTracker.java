@@ -25,6 +25,7 @@
 package io.questdb.std;
 
 import io.questdb.log.Log;
+import io.questdb.log.LogRecord;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentNavigableMap;
@@ -57,7 +58,7 @@ public final class AllocationsTracker {
         }
     }
 
-    public static void dumpAllocations(Log log) {
+    public static void dumpAllocations(Log log, CharSequence prefix) {
         if (!TRACK_ALLOCATIONS) {
             return;
         }
@@ -71,9 +72,18 @@ public final class AllocationsTracker {
             allocCount++;
         }
         if (log != null) {
-            log.info().$("total native allocations [bytes=").$(total).$(", count=").$(allocCount).$(']').$();
+            LogRecord info = log.info();
+            if (prefix != null) {
+                info.$(prefix).$(" ");
+            }
+            info.$("total native allocations [bytes=").$(total).$(", count=").$(allocCount).$(']').$();
         } else {
-            System.out.println("total native allocations [bytes=" + total + ", count=" + allocCount + ']');
+            StringBuilder sb = new StringBuilder();
+            if (prefix != null) {
+                sb.append(prefix).append(' ');
+            }
+            sb.append("total native allocations [bytes=").append(total).append(", count=").append(allocCount).append(']');
+            System.out.println(sb);
         }
     }
 

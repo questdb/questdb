@@ -57,7 +57,7 @@ public class AbstractTest {
     @AfterClass
     public static void tearDownStatic() {
         TestUtils.removeTestPath(root);
-        AllocationsTracker.dumpAllocations(LOG);
+        AllocationsTracker.dumpAllocations(LOG, "End of test class");
     }
 
     @Before
