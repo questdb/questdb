@@ -27,6 +27,7 @@ package io.questdb.test;
 import io.questdb.Bootstrap;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.AllocationsTracker;
 import io.questdb.test.tools.TestUtils;
 import org.junit.*;
 import org.junit.rules.TemporaryFolder;
@@ -56,6 +57,7 @@ public class AbstractTest {
     @AfterClass
     public static void tearDownStatic() {
         TestUtils.removeTestPath(root);
+        AllocationsTracker.dumpAllocations(LOG);
     }
 
     @Before
