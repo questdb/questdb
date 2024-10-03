@@ -129,7 +129,7 @@ public class CountDistinctVarcharGroupByFunction extends LongFunction implements
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 

@@ -130,7 +130,7 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 

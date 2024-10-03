@@ -124,7 +124,7 @@ public final class MaxVarcharGroupByFunction extends VarcharFunction implements 
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 

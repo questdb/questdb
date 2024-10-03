@@ -110,7 +110,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
 
                     @Override
-                    public boolean isReadThreadSafe() {
+                    public boolean isThreadSafe() {
                         return true;
                     }
 
@@ -132,7 +132,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
 
                     @Override
-                    public boolean isReadThreadSafe() {
+                    public boolean isThreadSafe() {
                         return true;
                     }
                 };
@@ -667,7 +667,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
 
             @Override
-            public boolean isReadThreadSafe() {
+            public boolean isThreadSafe() {
                 return true;
             }
         };
@@ -710,7 +710,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
 
                     @Override
-                    public boolean isReadThreadSafe() {
+                    public boolean isThreadSafe() {
                         return true;
                     }
                 };
@@ -743,7 +743,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
 
                     @Override
-                    public boolean isReadThreadSafe() {
+                    public boolean isThreadSafe() {
                         return true;
                     }
                 };
@@ -776,7 +776,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
 
                     @Override
-                    public boolean isReadThreadSafe() {
+                    public boolean isThreadSafe() {
                         return true;
                     }
                 };
@@ -809,7 +809,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
 
                     @Override
-                    public boolean isReadThreadSafe() {
+                    public boolean isThreadSafe() {
                         return true;
                     }
                 };
@@ -842,7 +842,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
 
                     @Override
-                    public boolean isReadThreadSafe() {
+                    public boolean isThreadSafe() {
                         return true;
                     }
                 };
@@ -875,7 +875,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
 
                     @Override
-                    public boolean isReadThreadSafe() {
+                    public boolean isThreadSafe() {
                         return true;
                     }
                 };
@@ -908,7 +908,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
 
                     @Override
-                    public boolean isReadThreadSafe() {
+                    public boolean isThreadSafe() {
                         return true;
                     }
                 };
@@ -992,7 +992,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
 
                     @Override
-                    public boolean isReadThreadSafe() {
+                    public boolean isThreadSafe() {
                         return true;
                     }
                 };
@@ -1078,7 +1078,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
                     }
 
                     @Override
-                    public boolean isReadThreadSafe() {
+                    public boolean isThreadSafe() {
                         return true;
                     }
                 };

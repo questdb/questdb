@@ -142,6 +142,11 @@ class StringDistinctAggVarcharGroupByFunction extends VarcharFunction implements
     }
 
     @Override
+    public boolean isThreadSafe() {
+        return false;
+    }
+
+    @Override
     public boolean isScalar() {
         return false;
     }

@@ -119,7 +119,7 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 

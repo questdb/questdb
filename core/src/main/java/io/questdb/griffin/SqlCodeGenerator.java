@@ -583,7 +583,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             @Nullable ExpressionNode filterExpr,
             RecordMetadata metadata
     ) throws SqlException {
-        if (filter != null && !filter.isReadThreadSafe()) {
+        if (filter != null && !filter.isThreadSafe()) {
             assert filterExpr != null;
             ObjList<Function> workerFilters = new ObjList<>();
             for (int i = 0; i < workerCount; i++) {
@@ -606,7 +606,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         boolean threadSafe = true;
         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-            if (!groupByFunctions.getQuick(i).isReadThreadSafe()) {
+            if (!groupByFunctions.getQuick(i).isThreadSafe()) {
                 threadSafe = false;
                 break;
             }
@@ -639,7 +639,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         boolean threadSafe = true;
         for (int i = 0, n = keyFunctions.size(); i < n; i++) {
-            if (!keyFunctions.getQuick(i).isReadThreadSafe()) {
+            if (!keyFunctions.getQuick(i).isThreadSafe()) {
                 threadSafe = false;
                 break;
             }

@@ -122,7 +122,7 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 

@@ -72,8 +72,8 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
-    default boolean isReadThreadSafe() {
-        return getLeft().isReadThreadSafe() && getCenter().isReadThreadSafe() && getRight().isReadThreadSafe();
+    default boolean isThreadSafe() {
+        return getLeft().isThreadSafe() && getCenter().isThreadSafe() && getRight().isThreadSafe();
     }
 
     @Override

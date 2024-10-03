@@ -119,7 +119,7 @@ public class CountDistinctIntGroupByFunction extends LongFunction implements Una
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 

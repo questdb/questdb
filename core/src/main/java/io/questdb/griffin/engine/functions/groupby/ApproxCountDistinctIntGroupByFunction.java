@@ -144,7 +144,7 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 

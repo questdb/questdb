@@ -50,7 +50,7 @@ public abstract class AbstractDayIntervalFunction extends IntervalFunction {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return true;
     }
 

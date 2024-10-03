@@ -141,6 +141,11 @@ class StringDistinctAggGroupByFunction extends StrFunction implements UnaryFunct
     }
 
     @Override
+    public boolean isThreadSafe() {
+        return false;
+    }
+
+    @Override
     public boolean isScalar() {
         return false;
     }
