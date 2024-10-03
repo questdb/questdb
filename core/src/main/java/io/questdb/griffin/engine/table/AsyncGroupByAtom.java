@@ -362,7 +362,9 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
         medianList.sort();
         // This is not very precise, but does the job.
-        long medianSize = medianList.getQuick(medianList.size() / 2);
+        long medianSize = medianList.size() > 0
+                ? medianList.getQuick(Math.min(medianList.size() - 1, (medianList.size() / 2) + 1))
+                : 0;
         medianList.clear();
         long maxHeapSize = -1;
         if (destMap.getUsedHeapSize() != -1) {
