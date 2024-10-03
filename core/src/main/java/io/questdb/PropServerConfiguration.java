@@ -816,6 +816,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             boolean httpServerKeepAlive = getBoolean(properties, env, PropertyKey.HTTP_SERVER_KEEP_ALIVE, true);
             boolean httpServerCookiesEnabled = getBoolean(properties, env, PropertyKey.HTTP_SERVER_KEEP_ALIVE, true);
             boolean httpReadOnlySecurityContext = getBoolean(properties, env, PropertyKey.HTTP_SECURITY_READONLY, false);
+
             httpContextConfiguration = new PropHttpContextConfiguration(
                     connectionPoolInitialCapacity,
                     connectionStringPoolCapacity,
@@ -846,6 +847,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             boolean minHttpAllowDeflateBeforeSend = getBoolean(properties, env, PropertyKey.HTTP_MIN_ALLOW_DEFLATE_BEFORE_SEND, false);
             boolean minHttpMinServerKeepAlive = getBoolean(properties, env, PropertyKey.HTTP_MIN_SERVER_KEEP_ALIVE, true);
             boolean minHttpServerCookiesEnabled = getBoolean(properties, env, PropertyKey.HTTP_MIN_SERVER_KEEP_ALIVE, true);
+            int httpMinRequestHeaderBufferSize = getIntSize(properties, env, PropertyKey.HTTP_MIN_REQUEST_HEADER_BUFFER_SIZE, 4096);
+
             httpMinContextConfiguration = new PropHttpContextConfiguration(
                     minHttpConnectionStringPoolCapacity,
                     minHttpconnectionPoolInitialCapacity,
@@ -863,7 +866,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     isReadOnlyInstance,
                     minHttpMultipartHeaderBufferSize,
                     minHttpMultipartIdleSpinCount,
-                    requestHeaderBufferSize
+                    httpMinRequestHeaderBufferSize
             );
 
             int keepAliveTimeout = getInt(properties, env, PropertyKey.HTTP_KEEP_ALIVE_TIMEOUT, 5);
