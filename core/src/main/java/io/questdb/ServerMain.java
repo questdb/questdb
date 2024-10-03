@@ -75,6 +75,7 @@ public class ServerMain implements Closeable {
     private FileWatcher fileWatcher;
     private HttpServer httpServer;
     private boolean initialized;
+    private HttpServer minHttpServer;
     private WorkerPoolManager workerPoolManager;
 
     public ServerMain(String... args) {
@@ -230,6 +231,13 @@ public class ServerMain implements Closeable {
     }
 
     public int getHttpServerPort() {
+        if (minHttpServer != null) {
+            return minHttpServer.getPort();
+        }
+        throw CairoException.nonCritical().put("http server is not running");
+    }
+
+    public int getMinHttpServerPort() {
         if (httpServer != null) {
             return httpServer.getPort();
         }
@@ -392,7 +400,7 @@ public class ServerMain implements Closeable {
         ));
 
         // http min
-        freeOnExit.register(services().createMinHttpServer(
+        freeOnExit.register(minHttpServer = services().createMinHttpServer(
                 config.getHttpMinServerConfiguration(),
                 workerPoolManager,
                 metrics
