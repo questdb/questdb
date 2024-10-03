@@ -58,9 +58,10 @@ public class ReaderReloadFuzzTest extends AbstractFuzzTest {
                 0
         );
 
+        // Basic load to keep the test lite, we just want to fuzz different transaction types, not intensive inserting
         fuzzer.setFuzzCounts(
                 rnd.nextBoolean(),
-                rnd.nextInt(2_000_000),
+                rnd.nextInt(2_000),
                 rnd.nextInt(1000),
                 rnd.nextInt(3),
                 rnd.nextInt(5),

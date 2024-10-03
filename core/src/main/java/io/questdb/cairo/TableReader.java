@@ -101,7 +101,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.ff = configuration.getFilesFacade();
         this.tableToken = tableToken;
         this.messageBus = messageBus;
-        txPartitionVersion = -1;
         try {
             this.path = new Path();
             this.path.of(configuration.getRoot());
@@ -148,6 +147,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 openPartitionInfo.setQuick(baseOffset, partitionTimestamp);
                 openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_SIZE, -1L); // -1L means it is not open
                 openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txFile.getPartitionNameTxn(i));
+                // -2 means it is not open, -1 is reserved as a valid not-found result of columnVersionReader.getMaxPartitionVersion()
                 openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, -2);
             }
             columnTops = new LongList(capacity / 2);
