@@ -136,8 +136,8 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         if (newCapacity > initCapacity) {
             Unsafe.incrReallocCount();
             Unsafe.recordMemAlloc(newCapacity - initCapacity, memoryTag());
-            Unsafe.onExternalFree(oldLo);
-            Unsafe.onExternalMalloc(getImplLo(), newCapacity);
+            AllocationsTracker.onFree(oldLo);
+            AllocationsTracker.onMalloc(getImplLo(), newCapacity);
         }
         return p;
     }
@@ -250,8 +250,8 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
             Unsafe.recordMemAlloc(capacityChange, memoryTag());
         }
         if (lastLo != getImplLo()) {
-            Unsafe.onExternalFree(lastLo);
-            Unsafe.onExternalMalloc(getImplLo(), this.allocatedCapacity());
+            AllocationsTracker.onFree(lastLo);
+            AllocationsTracker.onMalloc(getImplLo(), this.allocatedCapacity());
         }
     }
 
@@ -260,8 +260,8 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
             return;
         }
         final long capAdjustment = -1 * allocatedCapacity();
-        Unsafe.onExternalFree(impl);
-        Unsafe.onExternalFree(getImplLo());
+        AllocationsTracker.onFree(impl);
+        AllocationsTracker.onFree(getImplLo());
         implDestroy(impl);
         Unsafe.incrFreeCount();
         Unsafe.recordMemAlloc(capAdjustment, memoryTag());
@@ -291,8 +291,8 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         if (impl == 0) {
             throw CairoException.nonCritical().setOutOfMemory(true).put("could not allocate direct byte sink [maxCapacity=").put(initialCapacity).put(']');
         }
-        Unsafe.onExternalMalloc(getImplLo(), this.allocatedCapacity());
-        Unsafe.onExternalMalloc(impl, 30);
+        AllocationsTracker.onMalloc(getImplLo(), this.allocatedCapacity());
+        AllocationsTracker.onMalloc(impl, 29);
         Unsafe.recordMemAlloc(this.allocatedCapacity(), memoryTag());
         Unsafe.incrMallocCount();
     }

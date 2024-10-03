@@ -342,7 +342,7 @@ public final class Files {
 
     public static long mmap(long fd, long len, long offset, int flags, int memoryTag) {
         long address = mmap0(toOsFd(fd), len, offset, flags, 0);
-        Unsafe.onExternalMalloc(address, len);
+        AllocationsTracker.onMalloc(address, len);
         if (address != -1) {
             Unsafe.recordMemAlloc(len, memoryTag);
         }
@@ -358,10 +358,10 @@ public final class Files {
                     .put(']');
         }
 
-        Unsafe.onExternalFree(address);
+        AllocationsTracker.onFree(address);
         address = mremap0(toOsFd(fd), address, previousSize, newSize, offset, flags);
         if (address != -1) {
-            Unsafe.onExternalMalloc(address, newSize);
+            AllocationsTracker.onMalloc(address, newSize);
             Unsafe.recordMemAlloc(newSize - previousSize, memoryTag);
         }
         return address;
@@ -371,7 +371,7 @@ public final class Files {
 
     public static void munmap(long address, long len, int memoryTag) {
         if (address != 0) {
-            Unsafe.onExternalFree(address);
+            AllocationsTracker.onFree(address);
             if (munmap0(address, len) != -1) {
                 Unsafe.recordMemAlloc(-len, memoryTag);
             }

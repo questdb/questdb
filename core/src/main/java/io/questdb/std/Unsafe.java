@@ -33,9 +33,6 @@ import java.lang.reflect.AccessibleObject;
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.util.Map;
-import java.util.concurrent.ConcurrentNavigableMap;
-import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
@@ -51,7 +48,6 @@ public final class Unsafe {
     //#endif
     public static final long LONG_OFFSET;
     public static final long LONG_SCALE;
-    private static final ConcurrentNavigableMap<Long, Long> ALLOCATED = new ConcurrentSkipListMap<>();
     private static final LongAdder[] COUNTERS = new LongAdder[MemoryTag.SIZE];
     private static final AtomicLong FREE_COUNT = new AtomicLong(0);
     private static final AtomicLong MALLOC_COUNT = new AtomicLong(0);
@@ -115,24 +111,6 @@ public final class Unsafe {
         Unsafe.getUnsafe().putOrderedInt(array, INT_OFFSET + ((long) index << INT_SCALE), value);
     }
 
-    public static void assertAllocatedMemory(long address, long bytes) {
-        if (bytes == 0) {
-            return;
-        }
-        assert address > 0;
-        Map.Entry<Long, Long> allocEntry = ALLOCATED.floorEntry(address);
-        assert allocEntry != null;
-        long lo = allocEntry.getKey();
-        long hi = lo + allocEntry.getValue();
-
-        if (address < lo) {
-            throw new RuntimeException("Address is below allocated memory");
-        }
-        if (address + bytes > hi) {
-            throw new RuntimeException("Address is above allocated memory");
-        }
-    }
-
     public static int byteArrayGetInt(byte[] array, int index) {
         assert index > -1 && index < array.length - 3;
         return Unsafe.getUnsafe().getInt(array, BYTE_OFFSET + index);
@@ -177,21 +155,12 @@ public final class Unsafe {
         return anonymousClassDefiner.define(hostClass, data);
     }
 
-    public static long free(long ptr, long usefulSize, int memoryTag) {
+    public static long free(long ptr, long size, int memoryTag) {
         if (ptr != 0) {
-            long prologSize = prologSize(usefulSize);
-            long epilogSize = epilogSize(usefulSize);
-
-            long rawPtr = ptr - prologSize;
-            checkMemoryTag(rawPtr, usefulSize);
-
-            Long oldSize = ALLOCATED.remove(ptr);
-            assert oldSize != null;
-            Unsafe.getUnsafe().freeMemory(rawPtr);
-
-            long rawSize = prologSize + usefulSize + epilogSize;
+            AllocationsTracker.onFree(ptr);
+            Unsafe.getUnsafe().freeMemory(ptr);
             FREE_COUNT.incrementAndGet();
-            recordMemAlloc(-rawSize, memoryTag);
+            recordMemAlloc(-size, memoryTag);
         }
         return 0;
     }
@@ -262,28 +231,21 @@ public final class Unsafe {
         UNSAFE.putBooleanVolatile(accessibleObject, OVERRIDE, true);
     }
 
-    public static long malloc(long usefulSize, int memoryTag) {
+    public static long malloc(long size, int memoryTag) {
         try {
             assert memoryTag >= MemoryTag.NATIVE_PATH;
-            checkAllocLimit(usefulSize, memoryTag);
-            long prologSize = prologSize(usefulSize);
-            long epilogSize = epilogSize(usefulSize);
-            long rawSize = usefulSize + prologSize + epilogSize;
-            long rawPtr = Unsafe.getUnsafe().allocateMemory(rawSize);
-            Long oldSize = ALLOCATED.put(rawPtr + prologSize, usefulSize);
-            assert oldSize == null;
-
-            tagMemoryAllocation(rawPtr, usefulSize);
-            recordMemAlloc(rawSize, memoryTag);
-
+            checkAllocLimit(size, memoryTag);
+            long ptr = Unsafe.getUnsafe().allocateMemory(size);
+            AllocationsTracker.onMalloc(ptr, size);
+            recordMemAlloc(size, memoryTag);
             MALLOC_COUNT.incrementAndGet();
-            return rawPtr + prologSize;
+            return ptr;
         } catch (OutOfMemoryError oom) {
             CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.allocateMemory() OutOfMemoryError [RSS_MEM_USED=")
                     .put(RSS_MEM_USED.get())
                     .put(", size=")
-                    .put(usefulSize)
+                    .put(size)
                     .put(", memoryTag=").put(memoryTag)
                     .put("], original message: ")
                     .put(oom.getMessage());
@@ -292,101 +254,68 @@ public final class Unsafe {
         }
     }
 
-    public static void onExternalFree(long address) {
-        Long remove = ALLOCATED.remove(address);
-        assert remove != null;
-    }
-
-    public static void onExternalMalloc(long address, long size) {
-        Long put = ALLOCATED.put(address, size);
-        assert put == null;
-    }
-
     public static void putByte(long address, byte value) {
-        assertAllocatedMemory(address, Byte.BYTES);
+        AllocationsTracker.assertAllocatedMemory(address, Byte.BYTES);
         UNSAFE.putByte(address, value);
     }
 
     public static void putChar(long address, char value) {
-        assertAllocatedMemory(address, Character.BYTES);
+        AllocationsTracker.assertAllocatedMemory(address, Character.BYTES);
         UNSAFE.putChar(address, value);
     }
 
     public static void putDouble(long address, double value) {
-        assertAllocatedMemory(address, Double.BYTES);
+        AllocationsTracker.assertAllocatedMemory(address, Double.BYTES);
         UNSAFE.putDouble(address, value);
     }
 
     public static void putFloat(long address, float value) {
-        assertAllocatedMemory(address, Float.BYTES);
+        AllocationsTracker.assertAllocatedMemory(address, Float.BYTES);
         UNSAFE.putFloat(address, value);
     }
 
     public static void putInt(long address, int value) {
-        assertAllocatedMemory(address, Integer.BYTES);
+        AllocationsTracker.assertAllocatedMemory(address, Integer.BYTES);
         UNSAFE.putInt(address, value);
     }
 
     public static void putLong(long address, long value) {
-        assertAllocatedMemory(address, Long.BYTES);
+        AllocationsTracker.assertAllocatedMemory(address, Long.BYTES);
         UNSAFE.putLong(address, value);
     }
 
     public static void putShort(long address, short value) {
-        assertAllocatedMemory(address, Short.BYTES);
+        AllocationsTracker.assertAllocatedMemory(address, Short.BYTES);
         UNSAFE.putShort(address, value);
     }
 
-    public static long realloc(long usefulOldAddress, long usefulOldSize, long usefulNewSize, int memoryTag) {
+    public static long realloc(long address, long oldSize, long newSize, int memoryTag) {
         try {
-            if (usefulOldAddress == 0) {
-                return malloc(usefulNewSize, memoryTag);
-            }
-            if (usefulNewSize == 0) {
-                return free(usefulOldAddress, usefulOldSize, memoryTag);
-            }
-
             assert memoryTag >= MemoryTag.NATIVE_PATH;
-            long oldPrologSize = prologSize(usefulOldSize);
-            long oldEpilogSize = epilogSize(usefulOldSize);
-            long newPrologSize = prologSize(usefulNewSize);
-            long newEpilogSize = epilogSize(usefulNewSize);
-
-            long rawOldSize = oldPrologSize + usefulOldSize + oldEpilogSize;
-            long rawOldPtr = usefulOldAddress - oldPrologSize;
-
-            long rawNewSize = newPrologSize + usefulNewSize + newEpilogSize;
-            long rawSizeDiff = rawNewSize - rawOldSize;
-
-            if (rawOldPtr != 0) {
-                checkMemoryTag(rawOldPtr, usefulOldSize);
-            } else {
-                assert false;
+            checkAllocLimit(-oldSize + newSize, memoryTag);
+            if (oldSize != 0) {
+                // We need to track free before we call reallocateMemory()
+                // If the reallocation is successful then allocator may use the old address to satisfy a concurrent allocation
+                // request issued by some other thread. If we don't track free before the call, then the other thread may
+                // get the same address which is still tracked as allocated and this violates the tracking logic.
+                AllocationsTracker.onFree(address);
             }
-
-            long rawNewPtr = Unsafe.getUnsafe().allocateMemory(rawNewSize);
-            Long oldSize = ALLOCATED.put(rawNewPtr + newPrologSize, usefulNewSize);
-            assert oldSize == null;
-
-            tagMemoryAllocation(rawNewPtr, usefulNewSize);
-
-            Vect.memcpy(rawNewPtr + newPrologSize, rawOldPtr + oldPrologSize, Math.min(usefulOldSize, usefulNewSize));
-
-            oldSize = ALLOCATED.remove(rawOldPtr + oldPrologSize);
-            assert oldSize != null;
-            Unsafe.getUnsafe().freeMemory(rawOldPtr);
-
-            recordMemAlloc(rawSizeDiff, memoryTag);
+            long ptr = Unsafe.getUnsafe().reallocateMemory(address, newSize);
+            AllocationsTracker.onMalloc(ptr, newSize);
+            recordMemAlloc(-oldSize + newSize, memoryTag);
             REALLOC_COUNT.incrementAndGet();
-            return rawNewPtr + newPrologSize;
+            return ptr;
         } catch (OutOfMemoryError oom) {
+            // reallocation failed - the original memory block is still valid
+            AllocationsTracker.onMalloc(address, oldSize);
+
             CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.reallocateMemory() OutOfMemoryError [RSS_MEM_USED=")
                     .put(RSS_MEM_USED.get())
                     .put(", oldSize=")
-                    .put(usefulOldSize)
+                    .put(oldSize)
                     .put(", newSize=")
-                    .put(usefulNewSize)
+                    .put(newSize)
                     .put(", memoryTag=").put(memoryTag)
                     .put("], original message: ")
                     .put(oom.getMessage());
@@ -442,28 +371,7 @@ public final class Unsafe {
             }
         }
     }
-
-    private static void checkMemoryTag(long rawPtr, long usefulSize) {
-        long prologSize = prologSize(usefulSize);
-        long epilogSize = epilogSize(usefulSize);
-        for (long l = rawPtr, hi = rawPtr + prologSize; l < hi; l++) {
-            if (UNSAFE.getByte(l) != 42) {
-                throw new RuntimeException("Memory tag mismatch");
-            }
-        }
-        for (long l = rawPtr + prologSize + usefulSize, hi = rawPtr + prologSize + usefulSize + epilogSize; l < hi; l++) {
-            if (UNSAFE.getByte(l) != 42) {
-                throw new RuntimeException("Memory tag mismatch");
-            }
-        }
-    }
     //#endif
-
-    private static long epilogSize(long usefulSize) {
-//        return usefulSize;
-        return Math.min(64, usefulSize);
-//        return 8;
-    }
 
     //#if jdk.version!=8
     private static boolean getOrdinaryObjectPointersCompressionStatus(boolean is32BitJVM) {
@@ -502,28 +410,10 @@ public final class Unsafe {
         String javaVersion = System.getProperty("java.version");
         return javaVersion.startsWith("11") || javaVersion.startsWith("1.8");
     }
-    //#endif
 
     // most significant bit
     private static int msb(int value) {
         return 31 - Integer.numberOfLeadingZeros(value);
-    }
-
-    private static long prologSize(long usefulSize) {
-//        return usefulSize;
-//        return Math.min(64, usefulSize);
-        return 16;
-    }
-
-    private static void tagMemoryAllocation(long rawPtr, long usefulSize) {
-        long prologSize = prologSize(usefulSize);
-        long epilogSize = epilogSize(usefulSize);
-        for (long l = rawPtr, hi = rawPtr + prologSize; l < hi; l++) {
-            UNSAFE.putByte(l, (byte) 42);
-        }
-        for (long l = rawPtr + prologSize + usefulSize, hi = rawPtr + prologSize + usefulSize + epilogSize; l < hi; l++) {
-            UNSAFE.putByte(l, (byte) 42);
-        }
     }
 
     interface AnonymousClassDefiner {
