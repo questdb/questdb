@@ -1127,16 +1127,26 @@ public class PGPipelineEntry implements QuietCloseable {
             sqlExecutionContext.getCircuitBreaker().resetTimer();
             sqlExecutionContext.setCacheHit(cacheHit);
             try {
-                copyParameterValuesToBindVariableService(
-                        sqlExecutionContext,
-                        characterStore,
-                        utf8String,
-                        binarySequenceParamsPool
-                );
                 try {
+                    copyParameterValuesToBindVariableService(
+                            sqlExecutionContext,
+                            characterStore,
+                            utf8String,
+                            binarySequenceParamsPool
+                    );
                     cursor = factory.getCursor(sqlExecutionContext);
                 } catch (TableReferenceOutOfDateException e) {
+                    cacheHit = false;
+                    sqlExecutionContext.setCacheHit(false);
+                    factory.close();
+                    pgResultSetColumnTypes.clear();
                     compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
+                    copyParameterValuesToBindVariableService(
+                            sqlExecutionContext,
+                            characterStore,
+                            utf8String,
+                            binarySequenceParamsPool
+                    );
                     cursor = factory.getCursor(sqlExecutionContext);
                 }
             } catch (Throwable e) {
