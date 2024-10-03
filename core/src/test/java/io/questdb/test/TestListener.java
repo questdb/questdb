@@ -27,6 +27,7 @@ package io.questdb.test;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.AllocationsTracker;
 import io.questdb.std.Os;
 import org.junit.runner.Description;
 import org.junit.runner.notification.Failure;
@@ -100,6 +101,10 @@ public class TestListener extends RunListener {
             try {
                 while (true) {
                     dumpThreadStacks();
+                    long allocatedBytes = AllocationsTracker.totalAllocatedBytes();
+                    if (allocatedBytes != -1) {
+                        System.out.println("Total allocated bytes: " + allocatedBytes);
+                    }
                     Os.sleep(10 * 60 * 1000);
                 }
             } catch (Throwable t) {

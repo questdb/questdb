@@ -60,7 +60,9 @@ public final class AllocationsTracker {
             return;
         }
         Long remove = ALLOCATIONS.remove(address);
-        assert remove != null;
+        if (remove == null) {
+            throw new AssertionError("address to free() not found [address=" + address + "]");
+        }
     }
 
     public static void onMalloc(long address, long size) {
@@ -70,8 +72,21 @@ public final class AllocationsTracker {
         if (size == 0) {
             return;
         }
-        Long put = ALLOCATIONS.put(address, address + size);
-        assert put == null;
+        Long oldSize = ALLOCATIONS.put(address, address + size);
+        if (oldSize != null) {
+            throw new AssertionError("address already allocated [address=" + address + ", size=" + size + ", oldSize=" + oldSize + "]");
+        }
+    }
+
+    public static long totalAllocatedBytes() {
+        if (!TRACK_ALLOCATIONS) {
+            return -1;
+        }
+        long total = 0;
+        for (Map.Entry<Long, Long> entry : ALLOCATIONS.entrySet()) {
+            total += (entry.getValue() - entry.getKey());
+        }
+        return total;
     }
 
     static {

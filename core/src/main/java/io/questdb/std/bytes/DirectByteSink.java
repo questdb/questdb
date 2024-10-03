@@ -55,7 +55,6 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
      * Capacity before borrowing out as {@link NativeByteSink}.
      */
     private long lastAllocatedCapacity;
-    private long lastLo;
     private final NativeByteSink byteSink = new NativeByteSink() {
         @Override
         public void close() {
@@ -106,7 +105,11 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
     public @NotNull NativeByteSink borrowDirectByteSink() {
         assert impl != 0;
         lastAllocatedCapacity = allocatedCapacity();
-        lastLo = getImplLo();
+
+        // we are borrowing out the buffer to native code, so we stop tracking it
+        // since the buffer is not in our control anymore, native code might resize it
+        // and the old address might be used for something else
+        AllocationsTracker.onFree(getImplLo());
         return byteSink;
     }
 
@@ -124,8 +127,11 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         }
         final long initCapacity = allocatedCapacity();
         long oldLo = getImplLo();
+        AllocationsTracker.onFree(oldLo);
         p = implBook(impl, required);
         if (p == 0) {
+            // realloc failed, the old address remains valid
+            AllocationsTracker.onMalloc(oldLo, initCapacity);
             if (getImplOverflow()) {
                 throw CairoException.critical(0).put("buffer overflow, buffer capacity is requested to be over 2 GiB");
             } else {
@@ -133,11 +139,10 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
             }
         }
         final long newCapacity = allocatedCapacity();
+        AllocationsTracker.onMalloc(getImplLo(), newCapacity);
         if (newCapacity > initCapacity) {
             Unsafe.incrReallocCount();
             Unsafe.recordMemAlloc(newCapacity - initCapacity, memoryTag());
-            AllocationsTracker.onFree(oldLo);
-            AllocationsTracker.onMalloc(getImplLo(), newCapacity);
         }
         return p;
     }
@@ -243,16 +248,17 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         return getImplHi() - getImplPtr();
     }
 
+    // called after native code has finished using the buffer
+    // should be paired with borrowDirectByteSink
     private void closeByteSink() {
         final long capacityChange = allocatedCapacity() - lastAllocatedCapacity;
         if (capacityChange != 0) {
             Unsafe.incrReallocCount();
             Unsafe.recordMemAlloc(capacityChange, memoryTag());
         }
-        if (lastLo != getImplLo()) {
-            AllocationsTracker.onFree(lastLo);
-            AllocationsTracker.onMalloc(getImplLo(), this.allocatedCapacity());
-        }
+
+        // starting tracking again
+        AllocationsTracker.onMalloc(getImplLo(), this.allocatedCapacity());
     }
 
     private void deflate() {
