@@ -27,8 +27,8 @@ package io.questdb.test.griffin.engine.groupby;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.griffin.engine.groupby.GroupByAllocatorArena;
 import io.questdb.griffin.engine.groupby.StableAwareUtf8StringHolder;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
@@ -49,7 +49,7 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
     @Test
     public void testClearAndSet() throws Exception {
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
                 StableAwareUtf8StringHolder holder = new StableAwareUtf8StringHolder();
                 holder.setAllocator(allocator);
                 holder.clearAndSet(new Utf8String("foobar"));
@@ -65,7 +65,7 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
     public void testClearAndSetDirect() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB);
+                    GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB);
                     DirectUtf8Sink directSink = new DirectUtf8Sink(16)
             ) {
                 directSink.put("barbaz");
@@ -120,7 +120,7 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
     public void testClearAndSetDirect_fuzzed() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB);
+                    GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB);
                     DirectUtf8Sink directSink = new DirectUtf8Sink(16)
             ) {
                 Utf8StringSink sink = new Utf8StringSink();
@@ -161,7 +161,7 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
     public void testPutSplitString() throws Exception {
         assertMemoryLeak(() -> {
             try (
-                    GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB);
+                    GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB);
                     MemoryCARW auxMem = Vm.getCARWInstance(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
                     MemoryCARW dataMem = Vm.getCARWInstance(1024, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)
             ) {
@@ -184,7 +184,7 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
     public void testPutUtf8Sequence() throws Exception {
         final int N = 1000;
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocatorArena(64, Numbers.SIZE_1GB)) {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
                 StableAwareUtf8StringHolder holder = new StableAwareUtf8StringHolder();
                 holder.setAllocator(allocator);
                 Assert.assertEquals(0, holder.size());

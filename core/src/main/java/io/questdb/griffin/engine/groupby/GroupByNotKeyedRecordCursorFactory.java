@@ -162,7 +162,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
                 GroupByFunctionsUpdater groupByFunctionsUpdater
         ) {
             this.groupByFunctionsUpdater = groupByFunctionsUpdater;
-            this.allocator = GroupByAllocatorFactory.createThreadUnsafeAllocator(configuration);
+            this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
             GroupByUtils.setAllocator(groupByFunctions, allocator);
         }
 
