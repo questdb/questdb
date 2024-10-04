@@ -55,7 +55,6 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.test.cutlass.pgwire.BasePGTest.Mode.EXTENDED_FOR_PREPARED;
 import static io.questdb.test.cutlass.pgwire.BasePGTest.Mode.SIMPLE;
-import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
 import static org.junit.Assert.*;
 
 /**
@@ -428,6 +427,15 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     }
 
     @Test
+    public void testCommentOnlyQuery() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("/*comment*/");
+            assertResults(statement, hasResult, Result.ZERO);
+        });
+    }
+
+    @Test
     public void testCommitReturnsZeroResult() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             Statement statement = connection.createStatement();
@@ -453,15 +461,6 @@ public class PGMultiStatementMessageTest extends BasePGTest {
             Statement statement = connection.createStatement();
             boolean hasResult = statement.execute("COMMIT; select 3");
             assertResults(statement, hasResult, Result.ZERO, data(row(3L)));
-        });
-    }
-
-    @Test
-    public void testCommentOnlyQuery() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary, mode, port) -> {
-            Statement statement = connection.createStatement();
-            boolean hasResult = statement.execute("/*comment*/");
-            assertResults(statement, hasResult, Result.ZERO);
         });
     }
 
