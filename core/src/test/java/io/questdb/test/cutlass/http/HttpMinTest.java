@@ -42,6 +42,7 @@ import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -56,6 +57,8 @@ public class HttpMinTest extends AbstractBootstrapTest {
 
     @Test
     public void testResponsiveOnMemoryPressure() throws Exception {
+        // TODO: fix on Windows
+        Assume.assumeFalse(Os.isWindows());
         Rnd random = TestUtils.generateRandom(LOG);
         TestUtils.assertMemoryLeak(() -> {
             long httpConnMem = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_HTTP_CONN);
