@@ -160,7 +160,7 @@ public final class AllocationsTracker {
         Map.Entry<Long, ?> allocEntry = ALLOCATIONS.floorEntry(address);
         assert allocEntry != null;
         long lo = allocEntry.getKey();
-        long hi = allocEntry.getValue() instanceof Allocation ? ((Allocation) allocEntry.getValue()).hi : (long) allocEntry.getValue();
+        long hi = allocEntry.getValue() instanceof Allocation ? ((Allocation) allocEntry.getValue()).hi : (Long) allocEntry.getValue();
 
         if (address < lo) {
             throw new AssertionError("address is below allocated memory [address=" + address + ", size=" + size + ", lo=" + lo + ", hi=" + hi + "]");
