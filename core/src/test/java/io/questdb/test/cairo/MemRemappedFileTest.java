@@ -66,14 +66,20 @@ public class MemRemappedFileTest extends AbstractTest {
     @Test
     public void testExtendableOnePageMemory() {
         LOG.info().$("ExtendableOnePageMemory starting").$();
-        double micros = test(new MemoryCMRImpl());
+        double micros;
+        try (MemoryCMRImpl memoryCMR = new MemoryCMRImpl()) {
+            micros = test(memoryCMR);
+        }
         LOG.info().$("ExtendableOnePageMemory took ").$(micros).$("ms").$();
     }
 
     @Test
     public void testReadOnlyMemory() {
         LOG.info().$("ReadOnlyMemory starting").$();
-        double micros = test(new MemoryCMRImpl());
+        double micros;
+        try (MemoryCMRImpl memoryCMR = new MemoryCMRImpl()) {
+            micros = test(memoryCMR);
+        }
         LOG.info().$("ReadOnlyMemory took ").$(micros).$("ms").$();
     }
 
