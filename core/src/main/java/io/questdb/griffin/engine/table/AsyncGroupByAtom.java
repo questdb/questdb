@@ -349,10 +349,12 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     public int maybeAcquire(int workerId, boolean owner, ExecutionCircuitBreaker circuitBreaker) {
         if (workerId == -1 && owner) {
-            // Owner thread is free to use its own filter, function updaters, allocator, etc. anytime.
+            // Owner thread is free to use its own private filter, function updaters, allocator,
+            // etc. anytime.
             return -1;
         }
-        // All other threads, e.g. worker or work stealing threads, must always acquire a lock.
+        // All other threads, e.g. worker or work stealing threads, must always acquire a lock
+        // to use shared resources.
         return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
     }
 

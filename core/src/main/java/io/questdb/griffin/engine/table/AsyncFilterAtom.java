@@ -109,10 +109,11 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
             return -1;
         }
         if (workerId == -1 && owner) {
-            // Owner thread is free to use its own filter anytime.
+            // Owner thread is free to use its own private filter anytime.
             return -1;
         }
-        // All other threads, e.g. worker or work stealing threads, must always acquire a lock.
+        // All other threads, e.g. worker or work stealing threads, must always acquire a lock
+        // to use shared resources.
         return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
     }
 

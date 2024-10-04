@@ -184,12 +184,12 @@ public class GroupByLongHashSet {
             }
         } while (index != index0);
 
-        throw CairoException.critical(0).put("corrupt hash table");
+        throw CairoException.critical(0).put("corrupt long hash set");
     }
 
     private void rehash(int newCapacity, int newSizeLimit) {
         if (newCapacity < 0) {
-            throw CairoException.nonCritical().put("set capacity overflow");
+            throw CairoException.nonCritical().put("long hash set capacity overflow");
         }
 
         final int oldSize = size();
