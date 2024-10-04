@@ -68,17 +68,6 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
         this.forceDisablePreTouch = forceDisablePreTouch;
     }
 
-    public int acquireFilter(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
-        if (perWorkerLocks == null) {
-            return -1;
-        }
-        if (workerId == -1 && owner) {
-            // Owner thread is free to use the original filter anytime.
-            return -1;
-        }
-        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
-    }
-
     @Override
     public void close() {
         Misc.freeObjList(perWorkerFilters);
@@ -114,6 +103,17 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
             // DataUnavailableException thrown on worker threads when filtering.
             Function.initCursor(perWorkerFilters);
         }
+    }
+
+    public int maybeAcquireFilter(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
+        if (perWorkerLocks == null) {
+            return -1;
+        }
+        if (workerId == -1 && owner) {
+            // Owner thread is free to use the original filter anytime.
+            return -1;
+        }
+        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
     }
 
     /**

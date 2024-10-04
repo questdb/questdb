@@ -164,22 +164,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
     }
 
-    public int acquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
-        if (workerId == -1 && owner) {
-            // Owner thread is free to use the original functions anytime.
-            return -1;
-        }
-        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
-    }
-
-    public int acquire(int workerId, ExecutionCircuitBreaker circuitBreaker) {
-        if (workerId == -1) {
-            // Owner thread is free to use the original functions anytime.
-            return -1;
-        }
-        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
-    }
-
     @Override
     public void clear() {
         sharded = false;
@@ -351,12 +335,24 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
     }
 
-    public boolean isMergeLockRequired() {
-        return perWorkerFunctionUpdaters != null;
-    }
-
     public boolean isSharded() {
         return sharded;
+    }
+
+    public int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
+        if (workerId == -1 && owner) {
+            // Owner thread is free to use the original functions anytime.
+            return -1;
+        }
+        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
+    }
+
+    public int maybeAcquire(int workerId, boolean owner, ExecutionCircuitBreaker circuitBreaker) {
+        if (workerId == -1 && owner) {
+            // Owner thread is free to use the original functions anytime.
+            return -1;
+        }
+        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
     }
 
     public Map mergeOwnerMap() {
