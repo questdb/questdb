@@ -37,9 +37,12 @@ import java.util.concurrent.ConcurrentSkipListMap;
 
 // By default, the bodies of public entry methods are intentionally commented out to prevent accidental use in production.
 // These methods are uncommented at compile time using the Maven profile 'track-allocation'.
-// Example: $ mvn clean install -P track-allocation -pl core
+// Example #1, run all test in Core: $ mvn clean install -P track-allocation -pl core
+// Example #2, run a specific test in Core: mvn test -P track-allocation -pl core -Dtest=io.questdb.test.griffin.engine.window.WindowFunctionUnitTest
+// If you run Maven with this profile locally then Idea may freak out about duplicated files. You can fit it by running `mvn clean`
 
-// How to use it locally?
+
+// How to use it locally from IDE?
 // Because the preprocessor does not work well with IntelliJ IDEA, it is recommended to manually remove the comments
 // that are normally removed by the preprocessor. Be careful not to accidentally commit these changes!
 // You will also need to set an environment variable to enable tracking:
