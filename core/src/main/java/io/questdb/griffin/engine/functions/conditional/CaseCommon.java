@@ -208,6 +208,8 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(INT, DOUBLE), DOUBLE);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(IPv4, IPv4), IPv4);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(IPv4, STRING), IPv4);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(IPv4, VARCHAR), IPv4);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(LONG, BYTE), LONG);
         typeEscalationMap.put(Numbers.encodeLowHighInts(LONG, SHORT), LONG);
@@ -238,12 +240,14 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(STRING, VARCHAR), VARCHAR);
         typeEscalationMap.put(Numbers.encodeLowHighInts(STRING, CHAR), STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(STRING, UUID), UUID);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(STRING, IPv4), IPv4);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(VARCHAR, STRING), VARCHAR);
         typeEscalationMap.put(Numbers.encodeLowHighInts(VARCHAR, VARCHAR), VARCHAR);
         typeEscalationMap.put(Numbers.encodeLowHighInts(VARCHAR, SYMBOL), VARCHAR);
         typeEscalationMap.put(Numbers.encodeLowHighInts(VARCHAR, CHAR), VARCHAR);
         typeEscalationMap.put(Numbers.encodeLowHighInts(VARCHAR, UUID), UUID);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(VARCHAR, IPv4), IPv4);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(SYMBOL, STRING), STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(SYMBOL, VARCHAR), VARCHAR);

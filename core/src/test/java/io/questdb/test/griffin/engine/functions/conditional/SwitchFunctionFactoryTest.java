@@ -408,6 +408,53 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastValueToIPv4_1() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select x, rnd_ipv4('54.23.11.87/8', 2) ip from long_sequence(5))");
+            assertSql(
+                    "x\tip\tk\n" +
+                            "1\t54.206.96.238\t54.206.96.238\n" +
+                            "2\t\t\n" +
+                            "3\t54.98.173.21\t127.0.0.1\n" +
+                            "4\t54.15.250.138\t127.0.0.1\n" +
+                            "5\t\t127.0.0.1\n",
+                    "select \n" +
+                            "    x,\n" +
+                            "    ip,\n" +
+                            "    case x\n" +
+                            "        when 1 then ip\n" +
+                            "        when 2 then null\n" +
+                            "        else '127.0.0.1'\n" +
+                            "    end k\n" +
+                            "from x"
+            );
+        });
+    }
+
+    @Test
+    public void testCastValueToIPv4_2() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select x, rnd_ipv4('54.23.11.87/8', 2) ip from long_sequence(5))");
+            assertSql(
+                    "x\tip\tk\n" +
+                            "1\t54.206.96.238\t192.168.1.1\n" +
+                            "2\t\t\n" +
+                            "3\t54.98.173.21\t54.98.173.21\n" +
+                            "4\t54.15.250.138\t54.15.250.138\n" +
+                            "5\t\t\n",
+                    "select \n" +
+                            "    x,\n" +
+                            "    ip,\n" +
+                            "    case x\n" +
+                            "        when 1 then '192.168.1.1'\n" +
+                            "        else ip\n" +
+                            "    end k\n" +
+                            "from x"
+            );
+        });
+    }
+
+    @Test
     public void testCastValueToLong256() throws Exception {
         ddl(
                 "create table tanc as (" +
