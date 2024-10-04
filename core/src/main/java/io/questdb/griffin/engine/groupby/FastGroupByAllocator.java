@@ -33,8 +33,15 @@ import io.questdb.std.bytes.Bytes;
 
 /**
  * Thread-unsafe allocator implementation.
+ * <p>
+ * free() method is best-effort, i.e. the only way to free all memory is to close
+ * the allocator. This is fine for GROUP BY functions since they start small and
+ * grow their state as power of 2.
+ * <p>
+ * The purpose of this allocator is to amortize the cost of frequent alloc()/free()
+ * calls. This comes at the cost of memory fragmentation.
  */
-public class GroupByAllocatorArena implements GroupByAllocator {
+public class FastGroupByAllocator implements GroupByAllocator {
     private final boolean aligned;
     // Holds <ptr, size> pairs.
     private final LongLongHashMap chunks = new LongLongHashMap();
@@ -44,11 +51,11 @@ public class GroupByAllocatorArena implements GroupByAllocator {
     private long lim;
     private long ptr;
 
-    public GroupByAllocatorArena(long defaultChunkSize, long maxChunkSize) {
+    public FastGroupByAllocator(long defaultChunkSize, long maxChunkSize) {
         this(defaultChunkSize, maxChunkSize, true);
     }
 
-    public GroupByAllocatorArena(long defaultChunkSize, long maxChunkSize, boolean aligned) {
+    public FastGroupByAllocator(long defaultChunkSize, long maxChunkSize, boolean aligned) {
         this.defaultChunkSize = defaultChunkSize;
         this.maxChunkSize = maxChunkSize;
         this.aligned = aligned;

@@ -92,7 +92,8 @@ public final class ColumnType {
     public static final short REGPROCEDURE = REGCLASS + 1;      // = 28;
     public static final short ARRAY_STRING = REGPROCEDURE + 1;  // = 29;
     public static final short PARAMETER = ARRAY_STRING + 1;     // = 30;
-    public static final short NULL = PARAMETER + 1;             // = 31; ALWAYS the last
+    public static final short INTERVAL = PARAMETER + 1;         // = 31
+    public static final short NULL = INTERVAL + 1;              // = 32; ALWAYS the last
     private static final short[] TYPE_SIZE = new short[NULL + 1];
     private static final short[] TYPE_SIZE_POW2 = new short[TYPE_SIZE.length];
     // slightly bigger than needed to make it a power of 2
@@ -177,6 +178,10 @@ public final class ColumnType {
         return columnType == CHAR;
     }
 
+    public static boolean isComparable(int columnType) {
+        return columnType != BINARY && columnType != INTERVAL;
+    }
+
     public static boolean isCursor(int columnType) {
         return columnType == CURSOR;
     }
@@ -222,6 +227,10 @@ public final class ColumnType {
 
     public static boolean isInt(int columnType) {
         return columnType == ColumnType.INT;
+    }
+
+    public static boolean isInterval(int columnType) {
+        return columnType == INTERVAL;
     }
 
     public static boolean isNull(int columnType) {
@@ -448,7 +457,8 @@ public final class ColumnType {
                 /* 28 unused    */, {}
                 /* 29 unused    */, {}
                 /* 30 unused    */, {}
-                /* 31 NULL      */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
+                /* 31 INTERVAL  */, {INTERVAL, STRING}
+                /* 32 NULL      */, {VARCHAR, STRING, DOUBLE, FLOAT, LONG, INT}
         };
         for (short fromTag = UNDEFINED; fromTag < NULL; fromTag++) {
             for (short toTag = BOOLEAN; toTag <= NULL; toTag++) {
@@ -499,6 +509,7 @@ public final class ColumnType {
         typeNameMap.put(REGPROCEDURE, "regprocedure");
         typeNameMap.put(ARRAY_STRING, "text[]");
         typeNameMap.put(IPv4, "IPv4");
+        typeNameMap.put(INTERVAL, "INTERVAL");
 
         nameTypeMap.put("boolean", BOOLEAN);
         nameTypeMap.put("byte", BYTE);
@@ -529,6 +540,7 @@ public final class ColumnType {
         nameTypeMap.put("regprocedure", REGPROCEDURE);
         nameTypeMap.put("text[]", ARRAY_STRING);
         nameTypeMap.put("IPv4", IPv4);
+        nameTypeMap.put("interval", INTERVAL);
 
         StringSink sink = new StringSink();
         for (int b = 1; b <= GEOLONG_MAX_BITS; b++) {
@@ -572,6 +584,7 @@ public final class ColumnType {
         TYPE_SIZE_POW2[NULL] = -1;
         TYPE_SIZE_POW2[LONG128] = 4;
         TYPE_SIZE_POW2[UUID] = 4;
+        TYPE_SIZE_POW2[INTERVAL] = 4;
 
         TYPE_SIZE[UNDEFINED] = -1;
         TYPE_SIZE[BOOLEAN] = Byte.BYTES;
@@ -601,5 +614,6 @@ public final class ColumnType {
         TYPE_SIZE[UUID] = 2 * Long.BYTES;
         TYPE_SIZE[NULL] = 0;
         TYPE_SIZE[LONG128] = 2 * Long.BYTES;
+        TYPE_SIZE[INTERVAL] = 2 * Long.BYTES;
     }
 }

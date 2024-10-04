@@ -765,10 +765,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void appendDoubleColumn(Record record, int columnIndex) {
-        final double doubleValue = record.getDouble(columnIndex);
-        if (doubleValue == doubleValue) {
+        final double value = record.getDouble(columnIndex);
+        if (!Double.isNaN(value)) {
             final long a = responseUtf8Sink.skip();
-            responseUtf8Sink.put(doubleValue);
+            responseUtf8Sink.put(value);
             responseUtf8Sink.putLenEx(a);
         } else {
             responseUtf8Sink.setNullValue();
@@ -777,7 +777,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void appendDoubleColumnBin(Record record, int columnIndex) {
         final double value = record.getDouble(columnIndex);
-        if (value == value) {
+        if (!Double.isNaN(value)) {
             responseUtf8Sink.putNetworkInt(Double.BYTES);
             responseUtf8Sink.putNetworkDouble(value);
         } else {
@@ -786,10 +786,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     private void appendFloatColumn(Record record, int columnIndex) {
-        final float floatValue = record.getFloat(columnIndex);
-        if (floatValue == floatValue) {
+        final float value = record.getFloat(columnIndex);
+        if (!Float.isNaN(value)) {
             final long a = responseUtf8Sink.skip();
-            responseUtf8Sink.put(floatValue);
+            responseUtf8Sink.put(value);
             responseUtf8Sink.putLenEx(a);
         } else {
             responseUtf8Sink.setNullValue();
@@ -798,7 +798,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void appendFloatColumnBin(Record record, int columnIndex) {
         final float value = record.getFloat(columnIndex);
-        if (value == value) {
+        if (!Float.isNaN(value)) {
             responseUtf8Sink.putNetworkInt(Float.BYTES);
             responseUtf8Sink.putNetworkFloat(value);
         } else {
@@ -837,6 +837,17 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             responseUtf8Sink.bump(8);
         } else {
             responseUtf8Sink.setNullValue();
+        }
+    }
+
+    private void appendInterval(Record record, int columnIndex) {
+        final Interval interval = record.getInterval(columnIndex);
+        if (Interval.NULL.equals(interval)) {
+            responseUtf8Sink.setNullValue();
+        } else {
+            final long a = responseUtf8Sink.skip();
+            interval.toSink(responseUtf8Sink);
+            responseUtf8Sink.putLenEx(a);
         }
     }
 
@@ -984,6 +995,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     break;
                 case ColumnType.UUID:
                     appendUuidColumn(record, i);
+                    break;
+                case ColumnType.INTERVAL:
+                case BINARY_TYPE_INTERVAL:
+                    // While Postgres has native INTERVAL type,
+                    // for now we output intervals as strings.
+                    appendInterval(record, i);
                     break;
                 default:
                     assert false;
@@ -2063,6 +2080,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void processBind(long lo, long msgLimit) throws BadProtocolException, SqlException {
         sqlExecutionContext.getCircuitBreaker().resetTimer();
+        sqlExecutionContext.initNow();
 
         short parameterFormatCount;
         short parameterValueCount;
@@ -2217,6 +2235,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         queryContainsSecret = false;
 
         switch (cq.getType()) {
+            case CompiledQuery.EMPTY:
+                isEmptyQuery = true;
+                break;
             case CompiledQuery.CREATE_TABLE_AS_SELECT:
                 queryTag = TAG_CTAS;
                 rowCount = cq.getAffectedRowsCount();
@@ -2307,6 +2328,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void processDescribe(long lo, long msgLimit) throws SqlException, BadProtocolException {
         sqlExecutionContext.getCircuitBreaker().resetTimer();
+        sqlExecutionContext.initNow();
 
         boolean isPortal = Unsafe.getUnsafe().getByte(lo) == 'P';
         long hi = getStringLength(lo + 1, msgLimit, "bad prepared statement name length");
@@ -2345,6 +2367,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void processExec(long lo, long msgLimit) throws Exception {
         sqlExecutionContext.getCircuitBreaker().resetTimer();
+        sqlExecutionContext.initNow();
 
         final long hi = getStringLength(lo, msgLimit, "bad portal name length");
         final CharSequence portalName = getPortalName(lo, hi);
@@ -2379,6 +2402,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void processParse(long address, long lo, long msgLimit) throws BadProtocolException, SqlException {
         sqlExecutionContext.getCircuitBreaker().resetTimer();
+        sqlExecutionContext.initNow();
         sqlExecutionContext.setCacheHit(false);
         sqlExecutionContext.containsSecret(false);
 
@@ -2660,6 +2684,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private void sendCursor0(Record record, int columnCount, PGResumeProcessor commandCompleteResumeProcessor) throws Exception {
         if (!circuitBreaker.isTimerSet()) {
             circuitBreaker.resetTimer();
+            sqlExecutionContext.initNow();
         }
 
         try {
@@ -2733,6 +2758,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
             if (!circuitBreaker.isTimerSet()) {
                 circuitBreaker.resetTimer();
+                sqlExecutionContext.initNow();
             }
 
             for (int retries = 0; recompileStale; retries++) {
@@ -2973,6 +2999,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             PGConnectionContext.this.typesAndUpdate = null;
             PGConnectionContext.this.typesAndSelect = null;
             circuitBreaker.resetTimer();
+            sqlExecutionContext.initNow();
         }
     }
 

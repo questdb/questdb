@@ -53,9 +53,9 @@ import static io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFa
 import static io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory.applyFilter;
 
 public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
-
     private static final PageFrameReducer AGGREGATE = AsyncGroupByRecordCursorFactory::aggregate;
     private static final PageFrameReducer FILTER_AND_AGGREGATE = AsyncGroupByRecordCursorFactory::filterAndAggregate;
+
     private final RecordCursorFactory base;
     private final SCSequence collectSubSeq = new SCSequence();
     private final AsyncGroupByRecordCursor cursor;

@@ -1,0 +1,172 @@
+variables:
+  table_name: "sensor_data"
+
+tests:
+  - name: Insert and Select Test
+    description: Test inserting and selecting data.
+    prepare:
+      - action: execute
+        query: "CREATE TABLE ${table_name} (id INT, temperature DOUBLE, timestamp timestamp);"
+    steps:
+      - loop:
+          range:
+            start: 1
+            end: 10
+          as: id
+          steps:
+            - action: execute
+              query: "INSERT INTO ${table_name} (id, temperature, timestamp) VALUES ($[1], $[2], $[3]);"
+              parameters:
+                - value: "${id}"
+                  type: "INT4"
+                - value: "${id}.5"
+                  type: "FLOAT8"
+                - value: "2023-10-01T10:00:00.000000Z"
+                  type: "TIMESTAMP"
+              expect:
+                result:
+                  - [ 1 ]
+      - action: query
+        query: "SELECT 1, COUNT(*) FROM ${table_name};"
+        expect:
+          result:
+            - [ 1, 10 ]
+      - action: execute
+        description: Insert a row with a unique timestamp so we can query it later
+        query: "INSERT INTO ${table_name} (id, temperature, timestamp) VALUES ($[1], $[2], $[3]);"
+        parameters:
+          - value: "11"
+            type: "INT4"
+          - value: "11.5"
+            type: "FLOAT8"
+          - value: "2024-10-01T10:00:00.000000Z"
+            type: "TIMESTAMP"
+        expect:
+          result:
+            - [ 1 ]
+      - action: query
+        description: Query the row we inserted with a unique timestamp
+        query: "SELECT * FROM ${table_name} WHERE timestamp = $[1];"
+        parameters:
+          - value: "2024-10-01T10:00:00.000000Z"
+            type: "TIMESTAMP"
+        # let's use the exact match here since it only returns one row
+        expect:
+          result:
+            - [ 11, 11.5, "2024-10-01T10:00:00.000000Z" ]
+      - action: query
+        query: "SELECT id, temperature, timestamp FROM ${table_name};"
+        expect:
+          result_contains:
+            - [ 1, 1.5, "2023-10-01T10:00:00.000000Z" ]
+            - [ 2, 2.5, "2023-10-01T10:00:00.000000Z" ]
+            - [ 3, 3.5, "2023-10-01T10:00:00.000000Z" ]
+            - [ 4, 4.5, "2023-10-01T10:00:00.000000Z" ]
+            - [ 5, 5.5, "2023-10-01T10:00:00.000000Z" ]
+      - action: query
+        query: "TRUNCATE TABLE ${table_name};"
+      - action: query
+        query: "SELECT COUNT(*) FROM ${table_name};"
+        expect:
+          result:
+            - [ 0 ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS ${table_name};"
+  - name: Smoke Test
+    description: Testing another test-case inside the same file
+    iterations: 2
+    steps:
+      - action: query
+        query: "SELECT x FROM long_sequence(5)"
+        expect:
+          result:
+            - [ 1 ]
+            - [ 2 ]
+            - [ 3 ]
+            - [ 4 ]
+            - [ 5 ]
+  - name: Parquet test
+    description: This test uses the built-in Parquet demo data
+    steps:
+      - action: query
+        query: "SELECT * FROM read_parquet('trades.parquet') WHERE side = $[1];"
+        parameters:
+          - value: "buy"
+            type: "VARCHAR"
+        expect:
+          result_contains:
+            - [ 'BTC-USD', 'buy', 66991.56, 0.00014933, '2024-07-26T07:52:48.243272Z' ]
+  - name: Large Result Set test
+    description: Fetches a large result set
+    iterations: 2
+    prepare:
+      - action: execute
+        query: "CREATE TABLE ${table_name} as (SELECT x, x::varchar FROM long_sequence(1000000));"
+    steps:
+      - action: query
+        query: "SELECT 0, * FROM ${table_name};"
+        expect:
+          result_contains:
+            - [ 0, 1, "1" ]
+            - [ 0, 1000000, "1000000" ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS ${table_name};"
+  - name: Alter table test
+    description: Test altering a table
+    iterations: 10
+    prepare:
+      - action: execute
+        query: "CREATE TABLE ${table_name} (id INT, temperature DOUBLE, timestamp timestamp);"
+    steps:
+      - loop:
+          range:
+            start: 1
+            end: 1000
+          as: id
+          steps:
+            - action: execute
+              query: "INSERT INTO ${table_name} (id, temperature, timestamp) VALUES ($[1], $[2], $[3]);"
+              parameters:
+                - value: "${id}"
+                  type: "INT4"
+                - value: "${id}.5"
+                  type: "FLOAT8"
+                - value: "2023-10-01T10:00:00.${id}Z"
+                  type: "TIMESTAMP"
+              expect:
+                result:
+                  - [ 1 ]
+      - action: execute
+        query: "ALTER TABLE ${table_name} ADD COLUMN ts2 timestamp;"
+        expect:
+          result:
+      - action: execute
+        query: "UPDATE ${table_name} SET ts2 = timestamp;"
+        expect:
+          result:
+            - [ 1000 ]
+      - action: query
+        query: "SELECT * FROM ${table_name} WHERE ts2 = $[1];"
+        parameters:
+          - value: "2023-10-01T10:00:00.999000Z"
+            type: "TIMESTAMP"
+        expect:
+          result:
+            - [ 999, 999.5, '2023-10-01T10:00:00.999000Z', '2023-10-01T10:00:00.999000Z' ]
+      - action: execute
+        query: "ALTER TABLE ${table_name} DROP COLUMN timestamp;"
+    #        # The action bellow is currently failing with: cached query plan cannot be used because table schema has changed
+    #        # The action should be re-enabled once the issue is fixed
+    #      - action: query
+    #        query: "SELECT * FROM ${table_name} WHERE ts2 = $[1];"
+    #        parameters:
+    #          - value: "2023-10-01T10:00:00.999000Z"
+    #            type: "TIMESTAMP"
+    #        expect:
+    #          result:
+    #            - [ 999, 999.5, '2023-10-01T10:00:00.999000Z' ]
+    teardown:
+      - action: execute
+        query: "DROP TABLE IF EXISTS ${table_name};"

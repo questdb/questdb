@@ -32,10 +32,6 @@ import io.questdb.std.str.Utf8Sequence;
 public class VarcharTypeConstant extends VarcharFunction implements TypeConstant {
     public static final VarcharTypeConstant INSTANCE = new VarcharTypeConstant();
 
-    private VarcharTypeConstant() {
-        super();
-    }
-
     @Override
     public Utf8Sequence getVarcharA(Record rec) {
         return null;

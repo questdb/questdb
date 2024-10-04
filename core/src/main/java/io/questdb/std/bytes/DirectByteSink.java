@@ -232,6 +232,15 @@ public class DirectByteSink implements DirectByteSequence, BorrowableAsNativeByt
         }
     }
 
+    public void resetCapacity() {
+        if (allocatedCapacity() > initialCapacity) {
+            deflate();
+            inflate();
+        } else {
+            clear();
+        }
+    }
+
     public void setAscii(boolean ascii) {
         Unsafe.putByte(impl + BYTE_SINK_ASCII_OFFSET, (byte) (ascii ? 1 : 0));
     }
