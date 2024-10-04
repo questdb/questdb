@@ -3161,67 +3161,71 @@ public class SqlOptimiser implements Mutable {
             @NotNull SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        final RecordCursorFactory tableFactory;
-        TableToken tableToken;
-        if (model.getSelectModelType() == QueryModel.SELECT_MODEL_SHOW) {
-            switch (model.getShowKind()) {
-                case QueryModel.SHOW_TABLES:
-                    tableFactory = new AllTablesFunctionFactory.AllTablesCursorFactory();
-                    break;
-                case QueryModel.SHOW_COLUMNS:
-                    tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
-                    if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
-                        throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
-                    }
-                    tableFactory = new ShowColumnsRecordCursorFactory(tableToken, model.getTableNameExpr().position);
-                    break;
-                case QueryModel.SHOW_PARTITIONS:
-                    tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
-                    if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
-                        throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
-                    }
-                    tableFactory = new ShowPartitionsRecordCursorFactory(tableToken);
-                    break;
-                case QueryModel.SHOW_TRANSACTION:
-                case QueryModel.SHOW_TRANSACTION_ISOLATION_LEVEL:
-                    tableFactory = new ShowTransactionIsolationLevelCursorFactory();
-                    break;
-                case QueryModel.SHOW_MAX_IDENTIFIER_LENGTH:
-                    tableFactory = new ShowMaxIdentifierLengthCursorFactory();
-                    break;
-                case QueryModel.SHOW_STANDARD_CONFORMING_STRINGS:
-                    tableFactory = new ShowStandardConformingStringsCursorFactory();
-                    break;
-                case QueryModel.SHOW_SEARCH_PATH:
-                    tableFactory = new ShowSearchPathCursorFactory();
-                    break;
-                case QueryModel.SHOW_DATE_STYLE:
-                    tableFactory = new ShowDateStyleCursorFactory();
-                    break;
-                case QueryModel.SHOW_TIME_ZONE:
-                    tableFactory = new ShowTimeZoneFactory();
-                    break;
-                case QueryModel.SHOW_PARAMETERS:
-                    tableFactory = new ShowParametersCursorFactory();
-                    break;
-                case QueryModel.SHOW_SERVER_VERSION:
-                    tableFactory = new ShowServerVersionCursorFactory();
-                    break;
-                case QueryModel.SHOW_SERVER_VERSION_NUM:
-                    tableFactory = new ShowServerVersionNumCursorFactory();
-                    break;
-                default:
-                    tableFactory = sqlParserCallback.generateShowSqlFactory(model);
-                    break;
+        RecordCursorFactory tableFactory = null;
+        try {
+            TableToken tableToken;
+            if (model.getSelectModelType() == QueryModel.SELECT_MODEL_SHOW) {
+                switch (model.getShowKind()) {
+                    case QueryModel.SHOW_TABLES:
+                        tableFactory = new AllTablesFunctionFactory.AllTablesCursorFactory();
+                        break;
+                    case QueryModel.SHOW_COLUMNS:
+                        tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
+                        if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
+                            throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
+                        }
+                        tableFactory = new ShowColumnsRecordCursorFactory(tableToken, model.getTableNameExpr().position);
+                        break;
+                    case QueryModel.SHOW_PARTITIONS:
+                        tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
+                        if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
+                            throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
+                        }
+                        tableFactory = new ShowPartitionsRecordCursorFactory(tableToken);
+                        break;
+                    case QueryModel.SHOW_TRANSACTION:
+                    case QueryModel.SHOW_TRANSACTION_ISOLATION_LEVEL:
+                        tableFactory = new ShowTransactionIsolationLevelCursorFactory();
+                        break;
+                    case QueryModel.SHOW_MAX_IDENTIFIER_LENGTH:
+                        tableFactory = new ShowMaxIdentifierLengthCursorFactory();
+                        break;
+                    case QueryModel.SHOW_STANDARD_CONFORMING_STRINGS:
+                        tableFactory = new ShowStandardConformingStringsCursorFactory();
+                        break;
+                    case QueryModel.SHOW_SEARCH_PATH:
+                        tableFactory = new ShowSearchPathCursorFactory();
+                        break;
+                    case QueryModel.SHOW_DATE_STYLE:
+                        tableFactory = new ShowDateStyleCursorFactory();
+                        break;
+                    case QueryModel.SHOW_TIME_ZONE:
+                        tableFactory = new ShowTimeZoneFactory();
+                        break;
+                    case QueryModel.SHOW_PARAMETERS:
+                        tableFactory = new ShowParametersCursorFactory();
+                        break;
+                    case QueryModel.SHOW_SERVER_VERSION:
+                        tableFactory = new ShowServerVersionCursorFactory();
+                        break;
+                    case QueryModel.SHOW_SERVER_VERSION_NUM:
+                        tableFactory = new ShowServerVersionNumCursorFactory();
+                        break;
+                    default:
+                        tableFactory = sqlParserCallback.generateShowSqlFactory(model);
+                        break;
+                }
+                model.setTableNameFunction(tableFactory);
+            } else {
+                assert model.getTableNameFunction() == null;
+                tableFactory = TableUtils.createCursorFunction(functionParser, model, executionContext).getRecordCursorFactory();
+                model.setTableNameFunction(tableFactory);
+                tableFactoriesInFlight.add(tableFactory);
             }
-            model.setTableNameFunction(tableFactory);
-        } else {
-            assert model.getTableNameFunction() == null;
-            tableFactory = TableUtils.createCursorFunction(functionParser, model, executionContext).getRecordCursorFactory();
-            model.setTableNameFunction(tableFactory);
-            tableFactoriesInFlight.add(tableFactory);
+            copyColumnsFromMetadata(model, tableFactory.getMetadata());
+        } finally {
+            Misc.free(tableFactory);
         }
-        copyColumnsFromMetadata(model, tableFactory.getMetadata());
     }
 
     private void processEmittedJoinClauses(QueryModel model) {
