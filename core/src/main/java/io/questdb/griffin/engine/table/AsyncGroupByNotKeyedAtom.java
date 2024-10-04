@@ -121,14 +121,6 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
         }
     }
 
-    public int acquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
-        if (workerId == -1 && owner) {
-            // Owner thread is free to use the original filter anytime.
-            return -1;
-        }
-        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
-    }
-
     @Override
     public void clear() {
         ownerFunctionUpdater.updateEmpty(ownerMapValue);
@@ -253,6 +245,16 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
             // DataUnavailableException thrown on worker threads when filtering.
             Function.initCursor(perWorkerFilters);
         }
+    }
+
+    public int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
+        if (workerId == -1 && owner) {
+            // Owner thread is free to use its own private filter, function updaters, etc. anytime.
+            return -1;
+        }
+        // All other threads, e.g. worker or work stealing threads, must always acquire a lock
+        // to use shared resources.
+        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
     }
 
     public void release(int slotId) {
