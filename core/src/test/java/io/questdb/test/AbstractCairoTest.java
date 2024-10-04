@@ -33,7 +33,6 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.*;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.ExplainPlanFactory;
-import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.model.ExplainModel;
@@ -448,7 +447,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         configurationFactory = null;
         engine.metadataCacheClear();
         AbstractTest.tearDownStatic();
-        DumpThreadStacksFunctionFactory.dumpThreadStacks();
     }
 
     public static Utf8String utf8(CharSequence value) {

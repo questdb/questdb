@@ -90,7 +90,7 @@ public final class AllocationsTracker {
         }
     }
 
-    public static void dumpNewAllocationsStacktraces() {
+    public static void dumpNewAllocationsStacktraces(Log log) {
         if (!TRACK_ALLOCATIONS) {
             return;
         }
@@ -100,7 +100,7 @@ public final class AllocationsTracker {
                 Allocation a = (Allocation) v;
                 if (!a.dumped) {
                     a.dumped = true;
-                    a.stackTrace.printStackTrace();
+                    log.error().$("unfreed memory [address=").$(entry.getKey()).$(", size=").$(a.hi - entry.getKey()).$(']').$(a.stackTrace).$();
                 }
             }
         }
