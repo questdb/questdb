@@ -40,6 +40,38 @@ public final class AllocationsTracker {
         if (!TRACK_ALLOCATIONS) {
             return;
         }
+        assertAllocatedMemory0(address, size);
+    }
+
+    public static void dumpAllocations(Log log, CharSequence prefix) {
+        if (!TRACK_ALLOCATIONS) {
+            return;
+        }
+        dumpAllocations0(log, prefix);
+    }
+
+    public static void dumpNewAllocationsStacktraces(Log log) {
+        if (!TRACK_ALLOCATIONS) {
+            return;
+        }
+        dumpNewAllocationsStacktraces0(log);
+    }
+
+    public static void onFree(long address) {
+        if (!TRACK_ALLOCATIONS) {
+            return;
+        }
+        onFree0(address);
+    }
+
+    public static void onMalloc(long address, long size) {
+        if (!TRACK_ALLOCATIONS) {
+            return;
+        }
+        onMalloc0(address, size);
+    }
+
+    private static void assertAllocatedMemory0(long address, long size) {
         if (size == 0) {
             return;
         }
@@ -59,10 +91,7 @@ public final class AllocationsTracker {
         }
     }
 
-    public static void dumpAllocations(Log log, CharSequence prefix) {
-        if (!TRACK_ALLOCATIONS) {
-            return;
-        }
+    private static void dumpAllocations0(Log log, CharSequence prefix) {
         long total = 0;
         int allocCount = 0;
         for (Map.Entry<Long, ?> entry : ALLOCATIONS.entrySet()) {
@@ -90,10 +119,7 @@ public final class AllocationsTracker {
         }
     }
 
-    public static void dumpNewAllocationsStacktraces(Log log) {
-        if (!TRACK_ALLOCATIONS) {
-            return;
-        }
+    private static void dumpNewAllocationsStacktraces0(Log log) {
         for (Map.Entry<Long, ?> entry : ALLOCATIONS.entrySet()) {
             Object v = entry.getValue();
             if (v instanceof Allocation) {
@@ -111,20 +137,14 @@ public final class AllocationsTracker {
         }
     }
 
-    public static void onFree(long address) {
-        if (!TRACK_ALLOCATIONS) {
-            return;
-        }
+    private static void onFree0(long address) {
         Object remove = ALLOCATIONS.remove(address);
         if (remove == null) {
             throw new AssertionError("address to free() not found [address=" + address + "]");
         }
     }
 
-    public static void onMalloc(long address, long size) {
-        if (!TRACK_ALLOCATIONS) {
-            return;
-        }
+    private static void onMalloc0(long address, long size) {
         if (size == 0) {
             return;
         }
