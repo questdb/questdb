@@ -172,6 +172,7 @@ public class GroupByLongHashSet {
     }
 
     private long probe(long key, long index) {
+        final long index0 = index;
         do {
             index = (index + 1) & mask;
             long k = keyAt(index);
@@ -181,7 +182,9 @@ public class GroupByLongHashSet {
             if (key == k) {
                 return -index - 1;
             }
-        } while (true);
+        } while (index != index0);
+
+        throw CairoException.critical(0).put("corrupt hash table");
     }
 
     private void rehash(int newCapacity, int newSizeLimit) {

@@ -249,9 +249,10 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
 
     public int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
         if (workerId == -1 && owner) {
-            // Owner thread is free to use the original filter anytime.
+            // Owner thread is free to use its own filter, function updaters, etc. anytime.
             return -1;
         }
+        // All other threads, e.g. worker or work stealing threads, must always acquire a lock.
         return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
     }
 

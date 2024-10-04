@@ -41,7 +41,6 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.LongAdder;
 
 public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
-
     public static final LongAdder PRE_TOUCH_BLACK_HOLE = new LongAdder();
     private final IntList columnTypes;
     private final Function filter;
@@ -110,9 +109,10 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
             return -1;
         }
         if (workerId == -1 && owner) {
-            // Owner thread is free to use the original filter anytime.
+            // Owner thread is free to use its own filter anytime.
             return -1;
         }
+        // All other threads, e.g. worker or work stealing threads, must always acquire a lock.
         return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
     }
 
