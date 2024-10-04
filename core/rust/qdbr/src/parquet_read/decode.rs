@@ -1102,6 +1102,7 @@ mod tests {
     use crate::parquet_write::varchar::{append_varchar, append_varchar_null};
     use arrow::datatypes::ToByteSlice;
     use bytes::Bytes;
+    use parquet::file::reader::Length;
     use parquet2::write::Version;
     use rand::Rng;
     use std::fs::File;
@@ -1109,7 +1110,6 @@ mod tests {
     use std::mem::size_of;
     use std::path::Path;
     use std::ptr::null;
-    use parquet::file::reader::Length;
     use tempfile::NamedTempFile;
 
     #[test]
