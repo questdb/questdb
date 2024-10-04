@@ -32,8 +32,9 @@ import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 
 public final class AllocationsTracker {
-    private static final ConcurrentNavigableMap<Long, Long> ALLOCATIONS;
+    private static final ConcurrentNavigableMap<Long, Object> ALLOCATIONS;
     private static final boolean TRACK_ALLOCATIONS;
+    public static boolean COLLECT_STACKTRACES = false;
 
     public static void assertAllocatedMemory(long address, long size) {
         if (!TRACK_ALLOCATIONS) {
@@ -45,10 +46,10 @@ public final class AllocationsTracker {
         if (address == 0) {
             throw new AssertionError("address is zero [size=" + size + "]");
         }
-        Map.Entry<Long, Long> allocEntry = ALLOCATIONS.floorEntry(address);
+        Map.Entry<Long, ?> allocEntry = ALLOCATIONS.floorEntry(address);
         assert allocEntry != null;
         long lo = allocEntry.getKey();
-        long hi = allocEntry.getValue();
+        long hi = allocEntry.getValue() instanceof Allocation ? ((Allocation) allocEntry.getValue()).hi : (long) allocEntry.getValue();
 
         if (address < lo) {
             throw new AssertionError("address is below allocated memory [address=" + address + ", size=" + size + ", lo=" + lo + ", hi=" + hi + "]");
@@ -64,8 +65,10 @@ public final class AllocationsTracker {
         }
         long total = 0;
         int allocCount = 0;
-        for (Map.Entry<Long, Long> entry : ALLOCATIONS.entrySet()) {
-            total += (entry.getValue() - entry.getKey());
+        for (Map.Entry<Long, ?> entry : ALLOCATIONS.entrySet()) {
+            Object v = entry.getValue();
+            long hi = v instanceof Allocation ? ((Allocation) v).hi : (long) v;
+            total += (hi - entry.getKey());
 
             // we want allocation count to be consistent with what we counted
             // so we increment it here instead of using ALLOCATIONS.size()
@@ -87,11 +90,27 @@ public final class AllocationsTracker {
         }
     }
 
+    public static void dumpNewAllocationsStacktraces() {
+        if (!TRACK_ALLOCATIONS) {
+            return;
+        }
+        for (Map.Entry<Long, ?> entry : ALLOCATIONS.entrySet()) {
+            Object v = entry.getValue();
+            if (v instanceof Allocation) {
+                Allocation a = (Allocation) v;
+                if (!a.dumped) {
+                    a.dumped = true;
+                    a.stackTrace.printStackTrace();
+                }
+            }
+        }
+    }
+
     public static void onFree(long address) {
         if (!TRACK_ALLOCATIONS) {
             return;
         }
-        Long remove = ALLOCATIONS.remove(address);
+        Object remove = ALLOCATIONS.remove(address);
         if (remove == null) {
             throw new AssertionError("address to free() not found [address=" + address + "]");
         }
@@ -104,19 +123,55 @@ public final class AllocationsTracker {
         if (size == 0) {
             return;
         }
-        Long oldSize = ALLOCATIONS.put(address, address + size);
-        if (oldSize != null) {
-            throw new AssertionError("address already allocated [address=" + address + ", size=" + size + ", oldSize=" + oldSize + "]");
+        Object v;
+        if (COLLECT_STACKTRACES) {
+            v = ALLOCATIONS.put(address, new Allocation(address + size, new Exception("size: " + size + ", thread: " + Thread.currentThread().getName() + ", threadId: " + Thread.currentThread().getId())));
+        } else {
+            v = ALLOCATIONS.put(address, address + size);
+        }
+        if (v != null) {
+            long hi = v instanceof Allocation ? ((Allocation) v).hi : (long) v;
+            long oldSize = hi - address;
+            String msg = "address already allocated [address=" + address + ", size=" + size + ", oldSize=" + oldSize + "]";
+            if (v instanceof Allocation) {
+                throw new AssertionError(msg, ((Allocation) v).stackTrace);
+            } else {
+                throw new AssertionError(msg);
+            }
+        }
+    }
+
+    private static class Allocation {
+        final long hi;
+        final Exception stackTrace;
+        boolean dumped = false;
+
+        private Allocation(long hi, Exception stackTrace) {
+            this.hi = hi;
+            this.stackTrace = stackTrace;
         }
     }
 
     static {
-        TRACK_ALLOCATIONS = Boolean.getBoolean("questdb.track.allocations") || "true".equals(System.getenv().get("QUESTDB_TRACK_ALLOCATIONS"));
-        if (TRACK_ALLOCATIONS) {
-            System.out.println("Allocations tracking enabled, this will have severe performance impact!");
-            ALLOCATIONS = new ConcurrentSkipListMap<>();
-        } else {
+        String prop = System.getProperty("questdb.track.allocations");
+        if (prop == null) {
+            prop = System.getenv("QUESTDB_TRACK_ALLOCATIONS");
+        }
+        if (prop == null) {
+            TRACK_ALLOCATIONS = false;
             ALLOCATIONS = null;
+        } else {
+            if ("true".equals(prop)) {
+                TRACK_ALLOCATIONS = true;
+                ALLOCATIONS = new ConcurrentSkipListMap<>();
+            } else if ("full".equals(prop)) {
+                TRACK_ALLOCATIONS = true;
+                ALLOCATIONS = new ConcurrentSkipListMap<>();
+                COLLECT_STACKTRACES = true;
+            } else {
+                TRACK_ALLOCATIONS = false;
+                ALLOCATIONS = null;
+            }
         }
     }
 
