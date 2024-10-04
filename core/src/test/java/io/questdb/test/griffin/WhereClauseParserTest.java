@@ -41,10 +41,7 @@ import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.tools.TestUtils;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.*;
 
 public class WhereClauseParserTest extends AbstractCairoTest {
 
@@ -173,6 +170,7 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Override
+    @After
     public void tearDown() {
         super.tearDown(false);
     }

@@ -492,6 +492,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 }
             }
         }
+        Path.clearThreadLocals();
     }
 
     private static void assertCalculateSize(RecordCursorFactory factory) throws SqlException {
