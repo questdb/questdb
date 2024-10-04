@@ -69,14 +69,17 @@ public class SwitchFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(0), "bind variable is not supported here, please use column instead");
         }
 
-        final Function elseBranch;
+        Function elseBranch;
+        final int elseBranchPosition;
         int returnType = -1;
         if (n % 2 == 0) {
             elseBranch = args.getLast();
+            elseBranchPosition = argPositions.getLast();
             returnType = elseBranch.getType();
             n--;
         } else {
             elseBranch = null;
+            elseBranchPosition = -1;
         }
 
         for (int i = 1; i < n; i += 2) {
@@ -109,6 +112,17 @@ public class SwitchFunctionFactory implements FunctionFactory {
                             configuration,
                             sqlExecutionContext
                     )
+            );
+        }
+
+        // don't forget to cast the else branch function
+        if (elseBranch != null) {
+            elseBranch = CaseCommon.getCastFunction(
+                    elseBranch,
+                    elseBranchPosition,
+                    returnType,
+                    configuration,
+                    sqlExecutionContext
             );
         }
 
