@@ -534,7 +534,7 @@ public class SqlUtil {
             try {
                 return Numbers.parseIPv4(value);
             } catch (NumericException exception) {
-                throw ImplicitCastException.instance().put("invalid ipv4 format: ").put(value);
+                throw ImplicitCastException.instance().put("invalid IPv4 format: ").put(value);
             }
         }
         return Numbers.IPv4_NULL;
@@ -545,7 +545,7 @@ public class SqlUtil {
             try {
                 return Numbers.parseIPv4(value);
             } catch (NumericException exception) {
-                throw ImplicitCastException.instance().put("invalid ipv4 format: ").put(value);
+                throw ImplicitCastException.instance().put("invalid IPv4 format: ").put(value);
             }
         }
         return Numbers.IPv4_NULL;
