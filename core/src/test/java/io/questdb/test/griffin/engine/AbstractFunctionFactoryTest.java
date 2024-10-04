@@ -502,59 +502,86 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
 
         public void andAssert(boolean expected) {
-            Assert.assertEquals(expected, function1.getBool(record));
-            Assert.assertEquals(expected, function2.getBool(record));
-            cleanup();
+            try {
+                Assert.assertEquals(expected, function1.getBool(record));
+                Assert.assertEquals(expected, function2.getBool(record));
+            } finally {
+                cleanup();
+            }
         }
 
         public void andAssert(CharSequence expected) {
-            if (ColumnType.tagOf(function1.getType()) == ColumnType.STRING) {
-                assertString(function1, expected);
-                assertString(function2, expected);
+            try {
+                if (ColumnType.tagOf(function1.getType()) == ColumnType.STRING) {
+                    assertString(function1, expected);
+                    assertString(function2, expected);
+                }
+            } finally {
+                cleanup();
             }
-            cleanup();
         }
 
         public void andAssert(short expected) {
-            Assert.assertEquals(expected, function1.getShort(record));
-            Assert.assertEquals(expected, function2.getShort(record));
-            cleanup();
+            try {
+                Assert.assertEquals(expected, function1.getShort(record));
+                Assert.assertEquals(expected, function2.getShort(record));
+            } finally {
+                cleanup();
+            }
         }
 
         public void andAssert(int expected) {
-            Assert.assertEquals(expected, function1.getInt(record));
-            Assert.assertEquals(expected, function2.getInt(record));
-            cleanup();
+            try {
+                Assert.assertEquals(expected, function1.getInt(record));
+                Assert.assertEquals(expected, function2.getInt(record));
+            } finally {
+                cleanup();
+            }
         }
 
         public void andAssert(long expected) {
-            Assert.assertEquals(expected, function1.getLong(record));
-            Assert.assertEquals(expected, function2.getLong(record));
-            cleanup();
+            try {
+                Assert.assertEquals(expected, function1.getLong(record));
+                Assert.assertEquals(expected, function2.getLong(record));
+            } finally {
+                cleanup();
+            }
         }
 
         public void andAssert(float expected, float delta) {
-            Assert.assertEquals(expected, function1.getFloat(record), delta);
-            Assert.assertEquals(expected, function2.getFloat(record), delta);
-            cleanup();
+            try {
+                Assert.assertEquals(expected, function1.getFloat(record), delta);
+                Assert.assertEquals(expected, function2.getFloat(record), delta);
+            } finally {
+                cleanup();
+            }
         }
 
         public void andAssert(double expected, double delta) {
-            Assert.assertEquals(expected, function1.getDouble(record), delta);
-            Assert.assertEquals(expected, function2.getDouble(record), delta);
-            cleanup();
+            try {
+                Assert.assertEquals(expected, function1.getDouble(record), delta);
+                Assert.assertEquals(expected, function2.getDouble(record), delta);
+            } finally {
+                cleanup();
+            }
         }
 
         public void andAssertDate(long expected) {
-            Assert.assertEquals(expected, function1.getDate(record));
-            Assert.assertEquals(expected, function2.getDate(record));
-            cleanup();
+            try {
+                Assert.assertEquals(expected, function1.getDate(record));
+                Assert.assertEquals(expected, function2.getDate(record));
+            } finally {
+                cleanup();
+            }
         }
 
         public void andAssertLong256(Long256 expected) {
-            Assert.assertEquals(expected, function1.getLong256A(record));
-            Assert.assertEquals(expected, function2.getLong256A(record));
-            cleanup();
+            try {
+                Assert.assertEquals(expected, function1.getLong256A(record));
+                Assert.assertEquals(expected, function2.getLong256A(record));
+            } finally {
+                cleanup();
+            }
         }
 
         public void andAssertOnlyColumnValues(boolean expected) {
@@ -562,18 +589,24 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
 
         public void andAssertTimestamp(long expected) {
-            Assert.assertEquals(expected, function1.getTimestamp(record));
-            Assert.assertEquals(expected, function2.getTimestamp(record));
-            cleanup();
+            try {
+                Assert.assertEquals(expected, function1.getTimestamp(record));
+                Assert.assertEquals(expected, function2.getTimestamp(record));
+            } finally {
+                cleanup();
+            }
         }
 
         public void andAssertUtf8(CharSequence expectedString) {
-            Utf8Sequence expected = utf8(expectedString);
-            if (ColumnType.tagOf(function1.getType()) == ColumnType.VARCHAR) {
-                assertUtf8(function1, expected);
-                assertUtf8(function2, expected);
+            try {
+                Utf8Sequence expected = utf8(expectedString);
+                if (ColumnType.tagOf(function1.getType()) == ColumnType.VARCHAR) {
+                    assertUtf8(function1, expected);
+                    assertUtf8(function2, expected);
+                }
+            } finally {
+                cleanup();
             }
-            cleanup();
         }
 
         public Invocation andInit(SqlExecutionContext context) throws SqlException {
