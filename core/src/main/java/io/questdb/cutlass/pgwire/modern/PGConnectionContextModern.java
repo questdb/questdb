@@ -1008,6 +1008,10 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
             CharSequence activeSqlText = characterStore.toImmutable();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.compileBatch(activeSqlText, sqlExecutionContext, batchCallback);
+                if (pipelineCurrentEntry == null) {
+                    pipelineCurrentEntry = new PGPipelineEntry(engine);
+                    pipelineCurrentEntry.ofEmpty(activeSqlText);
+                }
             } catch (Throwable ex) {
                 if (transactionState == IN_TRANSACTION) {
                     transactionState = ERROR_TRANSACTION;

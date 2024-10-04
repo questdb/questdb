@@ -117,8 +117,8 @@ public class PGPipelineEntry implements QuietCloseable {
     private TypesAndSelectModern tas = null;
 
     public PGPipelineEntry(CairoEngine engine) {
-        this.isCopy = false;
         this.engine = engine;
+        this.isCopy = false;
         this.compiledQuery = new CompiledQueryImpl(engine);
         this.msgParseParameterTypeOIDs = new IntList();
         this.outParameterTypeDescriptionTypeOIDs = new IntList();
@@ -637,6 +637,11 @@ public class PGPipelineEntry implements QuietCloseable {
         // after the pipeline entry is synchronized we should prepare it for the next
         // execution iteration, in case the entry is a prepared statement or a portal
         clearState();
+    }
+
+    public void ofEmpty(CharSequence utf16SqlText) {
+        this.sqlText = utf16SqlText;
+        this.empty = true;
     }
 
     public void ofInsert(CharSequence utf16SqlText, TypesAndInsertModern tai) {
