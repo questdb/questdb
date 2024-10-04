@@ -60,6 +60,44 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertAllPartitionsToParquetAndBack() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = testName.getMethodName();
+            createTableStr(
+                    tableName,
+                    "insert into " + tableName + " values(1, 'abc', '2024-06-10T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(2, 'edf', '2024-06-11T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(3, 'abc', '2024-06-12T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(4, 'edf', '2024-06-12T00:00:01.000000Z')",
+                    "insert into " + tableName + " values(5, 'abc', '2024-06-15T00:00:00.000000Z')",
+                    "insert into " + tableName + " values(6, 'edf', '2024-06-12T00:00:02.000000Z')"
+            );
+
+            ddl("alter table " + tableName + " convert partition to parquet where timestamp > 0");
+
+            assertPartitionExists(tableName, "2024-06-10.8");
+            assertPartitionExists(tableName, "2024-06-11.7");
+            assertPartitionExists(tableName, "2024-06-12.6");
+            assertPartitionExists(tableName, "2024-06-15.9");
+
+            ddl("alter table " + tableName + " convert partition to native where timestamp > 0");
+            assertPartitionDoesNotExist(tableName, "2024-06-10.12");
+            assertPartitionDoesNotExist(tableName, "2024-06-11.11");
+            assertPartitionDoesNotExist(tableName, "2024-06-12.10");
+            assertPartitionDoesNotExist(tableName, "2024-06-15.13");
+            assertSql("id\tstr\ttimestamp\n" +
+                            "1\tabc\t2024-06-10T00:00:00.000000Z\n" +
+                            "2\tedf\t2024-06-11T00:00:00.000000Z\n" +
+                            "3\tabc\t2024-06-12T00:00:00.000000Z\n" +
+                            "4\tedf\t2024-06-12T00:00:01.000000Z\n" +
+                            "6\tedf\t2024-06-12T00:00:02.000000Z\n" +
+                            "5\tabc\t2024-06-15T00:00:00.000000Z\n",
+                    "select * from " + tableName
+            );
+        });
+    }
+
+    @Test
     public void testConvertLastPartition() throws Exception {
         final long rows = 10;
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
@@ -340,6 +378,14 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
     private void createTable(String tableName, String... inserts) throws Exception {
         TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("id", ColumnType.INT).timestamp();
+        AbstractCairoTest.create(model);
+        for (int i = 0, n = inserts.length; i < n; i++) {
+            insert(inserts[i]);
+        }
+    }
+
+    private void createTableStr(String tableName, String... inserts) throws Exception {
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY).col("id", ColumnType.INT).col("str", ColumnType.STRING).timestamp();
         AbstractCairoTest.create(model);
         for (int i = 0, n = inserts.length; i < n; i++) {
             insert(inserts[i]);

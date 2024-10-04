@@ -36,7 +36,7 @@ public interface FilesFacade {
 
     boolean allowMixedIO(CharSequence root);
 
-    long append(long fd, long buf, int len);
+    long append(long fd, long buf, long len);
 
     boolean close(long fd);
 

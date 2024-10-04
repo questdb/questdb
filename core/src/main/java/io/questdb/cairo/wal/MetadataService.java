@@ -100,7 +100,9 @@ public interface MetadataService {
             SecurityContext securityContext
     );
 
-    boolean convertPartitionToParquet(long partitionTimestamp);
+    boolean convertPartitionNativeToParquet(long partitionTimestamp);
+
+    boolean convertPartitionParquetToNative(long partitionTimestamp);
 
     AttachDetachStatus detachPartition(long partitionTimestamp);
 

@@ -59,7 +59,12 @@ public class SequencerMetadataService implements MetadataServiceStub {
     }
 
     @Override
-    public boolean convertPartitionToParquet(long partitionTimestamp) {
+    public boolean convertPartitionNativeToParquet(long partitionTimestamp) {
+        return false;
+    }
+
+    @Override
+    public boolean convertPartitionParquetToNative(long partitionTimestamp) {
         return false;
     }
 
