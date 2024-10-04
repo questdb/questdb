@@ -100,7 +100,12 @@ public final class AllocationsTracker {
                 Allocation a = (Allocation) v;
                 if (!a.dumped) {
                     a.dumped = true;
-                    log.error().$("unfreed memory [address=").$(entry.getKey()).$(", size=").$(a.hi - entry.getKey()).$(']').$(a.stackTrace).$();
+                    if (log != null) {
+                        log.error().$("unfreed memory [address=").$(entry.getKey()).$(", size=").$(a.hi - entry.getKey()).$(']').$(a.stackTrace).$();
+                    } else {
+                        System.out.println("unfreed memory [address=" + entry.getKey() + ", size=" + (a.hi - entry.getKey()) + "]");
+                        a.stackTrace.printStackTrace();
+                    }
                 }
             }
         }

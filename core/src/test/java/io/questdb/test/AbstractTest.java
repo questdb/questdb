@@ -72,6 +72,7 @@ public class AbstractTest {
     @After
     public void tearDown() throws Exception {
         LOG.info().$("Finished test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
+        Path.clearThreadLocals();
         TestUtils.removeTestPath(root);
     }
 
