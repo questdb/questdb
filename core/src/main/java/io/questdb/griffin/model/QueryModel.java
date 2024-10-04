@@ -659,6 +659,22 @@ public class QueryModel implements Mutable, ExecutionModel, AliasTranslator, Sin
         return null;
     }
 
+    // public for testing
+    public void freeTableNameFunctions() {
+        QueryModel queryModel = this;
+        do {
+            final ObjList<QueryModel> joinModels = queryModel.getJoinModels();
+            if (joinModels.size() > 1) {
+                for (int i = 1, n = joinModels.size(); i < n; i++) {
+                    joinModels.getQuick(i).freeTableNameFunctions();
+                }
+            }
+
+            Misc.free(queryModel.getTableNameFunction());
+            queryModel.setTableNameFunction(null);
+        } while ((queryModel = queryModel.getNestedModel()) != null);
+    }
+
     public ExpressionNode getAlias() {
         return alias;
     }

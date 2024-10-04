@@ -144,11 +144,18 @@ public class AbstractSqlParserTest extends AbstractCairoTest {
                     sink.clear();
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
                         ExecutionModel model = compiler.testCompileModel(query, sqlExecutionContext);
-                        Assert.assertEquals(model.getModelType(), modelType);
-                        ((Sinkable) model).toSink(sink);
-                        TestUtils.assertEquals(expected, sink);
-                        if (model instanceof QueryModel && model.getModelType() == ExecutionModel.QUERY) {
-                            validateTopDownColumns((QueryModel) model);
+                        try {
+                            Assert.assertEquals(model.getModelType(), modelType);
+                            ((Sinkable) model).toSink(sink);
+                            TestUtils.assertEquals(expected, sink);
+                            if (model instanceof QueryModel && model.getModelType() == ExecutionModel.QUERY) {
+                                validateTopDownColumns((QueryModel) model);
+                            }
+                        } finally {
+                            QueryModel queryModel = model.getQueryModel();
+                            if (queryModel != null) {
+                                queryModel.freeTableNameFunctions();
+                            }
                         }
                     }
                 },

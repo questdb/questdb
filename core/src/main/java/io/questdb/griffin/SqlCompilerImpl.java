@@ -1733,7 +1733,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } catch (Throwable e) {
             if (executionModel != null) {
-                freeTableNameFunctions(executionModel.getQueryModel());
+                QueryModel queryModel = executionModel.getQueryModel();
+                if (queryModel != null) {
+                    queryModel.freeTableNameFunctions();
+                }
             }
             // unregister query on error
             queryRegistry.unregister(sqlId, executionContext);
@@ -2269,24 +2272,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         return affectedPartitions;
-    }
-
-    private void freeTableNameFunctions(QueryModel queryModel) {
-        if (queryModel == null) {
-            return;
-        }
-
-        do {
-            final ObjList<QueryModel> joinModels = queryModel.getJoinModels();
-            if (joinModels.size() > 1) {
-                for (int i = 1, n = joinModels.size(); i < n; i++) {
-                    freeTableNameFunctions(joinModels.getQuick(i));
-                }
-            }
-
-            Misc.free(queryModel.getTableNameFunction());
-            queryModel.setTableNameFunction(null);
-        } while ((queryModel = queryModel.getNestedModel()) != null);
     }
 
     private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
