@@ -275,7 +275,7 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return false;
         }
 
@@ -379,7 +379,7 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return false;
         }
 

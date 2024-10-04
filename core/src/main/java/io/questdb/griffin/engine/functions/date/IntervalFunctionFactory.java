@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntervalFunction;
+import io.questdb.griffin.engine.functions.constants.IntervalConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
@@ -55,9 +56,20 @@ public class IntervalFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) {
+    ) throws SqlException {
         final Function loFunc = args.getQuick(0);
         final Function hiFunc = args.getQuick(1);
+        if (loFunc.isConstant() && hiFunc.isConstant()) {
+            long lo = loFunc.getTimestamp(null);
+            long hi = hiFunc.getTimestamp(null);
+            if (lo == Numbers.LONG_NULL || hi == Numbers.LONG_NULL) {
+                return IntervalConstant.NULL;
+            }
+            if (lo > hi) {
+                throw SqlException.position(position).put("invalid interval boundaries");
+            }
+            return IntervalConstant.newInstance(lo, hi);
+        }
         if ((loFunc.isConstant() || loFunc.isRuntimeConstant())
                 || (hiFunc.isConstant() || hiFunc.isRuntimeConstant())) {
             return new RuntimeConstFunc(position, loFunc, hiFunc);
@@ -139,15 +151,25 @@ public class IntervalFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             BinaryFunction.super.init(symbolTableSource, executionContext);
-            long l = loFunc.getTimestamp(null);
-            long r = hiFunc.getTimestamp(null);
-            if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL) {
+            long lo = loFunc.getTimestamp(null);
+            long hi = hiFunc.getTimestamp(null);
+            if (lo == Numbers.LONG_NULL || hi == Numbers.LONG_NULL) {
                 interval.of(Interval.NULL.getLo(), Interval.NULL.getHi());
             }
-            if (l > r) {
+            if (lo > hi) {
                 throw SqlException.position(position).put("invalid interval boundaries");
             }
-            interval.of(l, r);
+            interval.of(lo, hi);
+        }
+
+        @Override
+        public boolean isConstant() {
+            return false;
+        }
+
+        @Override
+        public boolean isRuntimeConstant() {
+            return true;
         }
     }
 }

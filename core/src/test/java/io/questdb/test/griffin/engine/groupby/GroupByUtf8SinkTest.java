@@ -24,8 +24,8 @@
 
 package io.questdb.test.griffin.engine.groupby;
 
+import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.griffin.engine.groupby.GroupByAllocatorImpl;
 import io.questdb.griffin.engine.groupby.GroupByUtf8Sink;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
@@ -37,10 +37,11 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class GroupByUtf8SinkTest extends AbstractCairoTest {
+
     @Test
     public void testClear() throws Exception {
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocatorImpl(64, Numbers.SIZE_1MB)) {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1MB)) {
                 GroupByUtf8Sink sink = new GroupByUtf8Sink();
                 sink.setAllocator(allocator);
                 sink.put("foobar");
@@ -59,7 +60,7 @@ public class GroupByUtf8SinkTest extends AbstractCairoTest {
     public void testPutCharSequence() throws Exception {
         final int N = 1000;
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocatorImpl(64, Numbers.SIZE_1MB)) {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1MB)) {
                 GroupByUtf8Sink sink = new GroupByUtf8Sink();
                 sink.setAllocator(allocator);
                 int len = 0;
@@ -79,7 +80,7 @@ public class GroupByUtf8SinkTest extends AbstractCairoTest {
     public void testPutUtf8Sequence() throws Exception {
         final int N = 1000;
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocatorImpl(64, Numbers.SIZE_1MB)) {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1MB)) {
                 GroupByUtf8Sink sink = new GroupByUtf8Sink();
                 sink.setAllocator(allocator);
                 Rnd rnd = new Rnd();
@@ -102,7 +103,7 @@ public class GroupByUtf8SinkTest extends AbstractCairoTest {
     public void testPutUtf8SequenceAscii() throws Exception {
         final int N = 1000;
         assertMemoryLeak(() -> {
-            try (GroupByAllocator allocator = new GroupByAllocatorImpl(64, Numbers.SIZE_1MB)) {
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1MB)) {
                 GroupByUtf8Sink sink = new GroupByUtf8Sink();
                 sink.setAllocator(allocator);
                 Rnd rnd = new Rnd();

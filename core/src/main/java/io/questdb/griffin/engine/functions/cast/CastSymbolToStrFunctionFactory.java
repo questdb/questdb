@@ -65,8 +65,8 @@ public class CastSymbolToStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
-            return arg.isReadThreadSafe();
+        public boolean isThreadSafe() {
+            return arg.isThreadSafe();
         }
     }
 }

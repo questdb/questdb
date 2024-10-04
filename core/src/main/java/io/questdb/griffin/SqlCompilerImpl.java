@@ -1578,7 +1578,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         final CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok == null) {
-            throw SqlException.$(0, "empty query");
+            compiledQuery.ofEmpty();
+            return;
         }
 
         final KeywordBasedExecutor executor = keywordBasedExecutors.get(tok);

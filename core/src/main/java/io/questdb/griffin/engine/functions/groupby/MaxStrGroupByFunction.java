@@ -123,7 +123,7 @@ public class MaxStrGroupByFunction extends StrFunction implements GroupByFunctio
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 

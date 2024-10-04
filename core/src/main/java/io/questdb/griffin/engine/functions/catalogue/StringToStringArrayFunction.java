@@ -186,7 +186,7 @@ public class StringToStringArrayFunction extends StrArrayFunction {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return true;
     }
 

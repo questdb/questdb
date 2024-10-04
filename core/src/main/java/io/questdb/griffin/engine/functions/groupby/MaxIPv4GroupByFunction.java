@@ -95,8 +95,8 @@ public class MaxIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return UnaryFunction.super.isReadThreadSafe();
+    public boolean isThreadSafe() {
+        return UnaryFunction.super.isThreadSafe();
     }
 
     @Override
