@@ -241,6 +241,31 @@
                             </environmentVariables>
                         </configuration>
                     </plugin>
+                    <plugin>
+                        <groupId>com.igormaznitsa</groupId>
+                        <artifactId>jcp</artifactId>
+                        <version>7.0.4</version>
+                        <executions>
+                            <!-- make preprocessing of sources -->
+                            <execution>
+                                <id>preprocess-sources</id>
+                                <goals>
+                                    <goal>preprocess</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <vars>
+                                <jdk.version>${jdk.version}</jdk.version>
+                                <track.alloc>true</track.alloc>
+                            </vars>
+                            <excludeExtensions>
+                                <ext>MD</ext>
+                                <ext>md</ext>
+                                <ext>xml</ext>
+                            </excludeExtensions>
+                        </configuration>
+                    </plugin>
                 </plugins>
             </build>
         </profile>
@@ -673,6 +698,8 @@
                         <configuration>
                             <vars>
                                 <jdk.version>${jdk.version}</jdk.version>
+                                <!-- we do not track allocations in Java 8, no reason for that -->
+                                <track.alloc>false</track.alloc>
                             </vars>
                             <excludeExtensions>
                                 <ext>MD</ext>

@@ -24,6 +24,7 @@
 
 package io.questdb.std;
 
+// @formatter:off
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
 
@@ -31,44 +32,119 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 
+// This utility method tracks memory allocations and deallocations.
+// It is used to detect memory leaks in native memory and to ensure that accessed memory is within the allocated range.
+
+// By default, the bodies of public entry methods are intentionally commented out to prevent accidental use in production.
+// These methods are uncommented at compile time using the Maven profile 'track-allocation'.
+// Example: $ mvn clean install -P track-allocation -pl core
+
+// How to use it locally?
+// Because the preprocessor does not work well with IntelliJ IDEA, it is recommended to manually remove the comments
+// that are normally removed by the preprocessor. Be careful not to accidentally commit these changes!
+// You will also need to set an environment variable to enable tracking:
+// export QUESTDB_TRACK_ALLOCATIONS=full - to track allocations and deallocations with stack traces
+// export QUESTDB_TRACK_ALLOCATIONS=true - to track allocations and deallocations without stack traces
+// Intellij IDEA can be configured to run the application with these environment variables set.
+
 public final class AllocationsTracker {
     private static final ConcurrentNavigableMap<Long, Object> ALLOCATIONS;
     private static final boolean TRACK_ALLOCATIONS;
-    public static boolean COLLECT_STACKTRACES = false;
+    private static boolean COLLECT_STACKTRACES = false;
 
+    /**
+     * Asserts that memory at given address is allocated and has at least a given size.
+     *
+     * @param address memory address
+     * @param size   size of the memory block
+     */
     public static void assertAllocatedMemory(long address, long size) {
+        //#if track.alloc!=true
+        /*
+        //#endif
         if (!TRACK_ALLOCATIONS) {
             return;
         }
         assertAllocatedMemory0(address, size);
+        //#if track.alloc!=true
+        */
+        //#endif
     }
 
+    /**
+     * Prints total allocated memory and number of allocations to log. Log message can be optionally prefixed.
+     *
+     * @param log   log to print to, can be null to print to stdout
+     * @param prefix optional prefix
+     */
     public static void dumpAllocations(Log log, CharSequence prefix) {
+        //#if track.alloc!=true
+        /*
+        //#endif
         if (!TRACK_ALLOCATIONS) {
             return;
         }
         dumpAllocations0(log, prefix);
+        //#if track.alloc!=true
+        */
+        //#endif
     }
 
+    /**
+     * Prints stack traces of all new allocations since last call to this method that have not been freed yet.
+     *
+     * @param log log to print to, can be null to print to stdout
+     */
     public static void dumpNewAllocationsStacktraces(Log log) {
+        //#if track.alloc!=true
+        /*
+        //#endif
         if (!TRACK_ALLOCATIONS) {
             return;
         }
         dumpNewAllocationsStacktraces0(log);
+        //#if track.alloc!=true
+        */
+        //#endif
     }
 
+    /**
+     * Notifies tracker that memory at given address is freed.
+     *
+     * @param address memory address
+     * @throws AssertionError if address is not found in the tracker - this likely indicates a double free
+     */
     public static void onFree(long address) {
+        //#if track.alloc!=true
+        /*
+        //#endif
         if (!TRACK_ALLOCATIONS) {
             return;
         }
         onFree0(address);
+        //#if track.alloc!=true
+        */
+        //#endif
     }
 
+    /**
+     * Notifies tracker that memory at given address is allocated.
+     *
+     * @param address memory address
+     * @param size   size of the memory block
+     * @throws AssertionError if address is already allocated - this indicates a bug in tracking logic
+     */
     public static void onMalloc(long address, long size) {
+        //#if track.alloc!=true
+        /*
+        //#endif
         if (!TRACK_ALLOCATIONS) {
             return;
         }
         onMalloc0(address, size);
+        //#if track.alloc!=true
+        */
+        //#endif
     }
 
     private static void assertAllocatedMemory0(long address, long size) {
