@@ -32,6 +32,7 @@ import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractTest;
@@ -49,11 +50,12 @@ public class MemRemappedFileTest extends AbstractTest {
     private static final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
     private static final long MAPPING_PAGE_SIZE = ff.getPageSize();
     private static int nFile = 0;
+    private static Path path;
     private static CharSequence root;
-    private final Path path = new Path(1_000_000);
 
     @AfterClass
     public static void afterClass() {
+        Misc.free(path);
         LOG.info().$("Finished").$();
     }
 
@@ -61,6 +63,7 @@ public class MemRemappedFileTest extends AbstractTest {
     public static void beforeClass() throws IOException {
         LOG.info().$("Starting").$();
         root = temp.newFolder("root").getAbsolutePath();
+        path = new Path(1_000_000);
     }
 
     @Test

@@ -37,7 +37,7 @@ import org.junit.*;
  */
 public class CheckpointWindowsTest extends AbstractCairoTest {
 
-    private static Path path = new Path();
+    private static Path path;
     private int rootLen;
 
     @BeforeClass
