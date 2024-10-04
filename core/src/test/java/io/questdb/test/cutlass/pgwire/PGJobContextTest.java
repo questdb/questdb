@@ -7772,7 +7772,8 @@ nodejs code:
             }
 
             try (PreparedStatement statement = connection.prepareStatement("INSERT INTO xts VALUES(now())")) {
-                for (currentMicros = 0; currentMicros < 200 * Timestamps.HOUR_MICROS; currentMicros += Timestamps.HOUR_MICROS) {
+                for (long micros = 0; micros < 200 * Timestamps.HOUR_MICROS; micros += Timestamps.HOUR_MICROS) {
+                    setCurrentMicros(micros);
                     statement.execute();
                 }
             }
@@ -7795,7 +7796,8 @@ nodejs code:
             }
 
             try (PreparedStatement statement = connection.prepareStatement("INSERT INTO xts VALUES(systimestamp())")) {
-                for (currentMicros = 0; currentMicros < 200 * Timestamps.HOUR_MICROS; currentMicros += Timestamps.HOUR_MICROS) {
+                for (long micros = 0; micros < 200 * Timestamps.HOUR_MICROS; micros += Timestamps.HOUR_MICROS) {
+                    setCurrentMicros(micros);
                     statement.execute();
                 }
             }
@@ -10773,7 +10775,7 @@ create table tab as (
     @Test
     public void testUpdateWithNowAndSystimestamp() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            currentMicros = 123678000L;
+            setCurrentMicros(123678000);
             final PreparedStatement statement = connection.prepareStatement("create table x (a timestamp, b double, ts timestamp) timestamp(ts)");
             statement.execute();
 

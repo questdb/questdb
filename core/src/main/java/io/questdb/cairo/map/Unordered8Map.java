@@ -584,6 +584,11 @@ public class Unordered8Map implements Map, Reopenable {
         }
 
         @Override
+        public void putInterval(Interval interval) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public void putLong(long value) {
             Unsafe.getUnsafe().putLong(appendAddress, value);
             appendAddress += 8L;

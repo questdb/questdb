@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -151,7 +152,8 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testBoolNull() throws Exception {
-        testUnionAllWithNull("a\tc\n" +
+        testUnionAllWithNull(
+                "a\tc\n" +
                         "false\tfalse\n" +
                         "true\tfalse\n" +
                         "true\tfalse\n" +
@@ -1507,6 +1509,78 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInterval1() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "i\ttypeOf\n" +
+                        "('1970-01-01T00:00:00.100Z', '1970-01-01T00:00:00.200Z')\tINTERVAL\n" +
+                        "('1970-01-01T00:00:00.300Z', '1970-01-01T00:00:00.400Z')\tINTERVAL\n" +
+                        "\tINTERVAL\n",
+                "select i, typeOf(i) from ((select interval(100000,200000) i) union all (select interval(300000,400000) i) union all (select null::interval i))"
+        ));
+    }
+
+    @Test
+    public void testInterval2() throws Exception {
+        setCurrentMicros(7 * Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
+        assertMemoryLeak(() -> assertSql(
+                "a\tb\n" +
+                        "('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\t('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\n",
+                "select * from (\n" +
+                        "  select today() a, yesterday() b\n" +
+                        "  union all\n" +
+                        "  select yesterday(), yesterday()\n" +
+                        "  union all\n" +
+                        "  select today() a, null b\n" +
+                        ")\n" +
+                        "where b = a"
+        ));
+    }
+
+    @Test
+    public void testInterval3() throws Exception {
+        setCurrentMicros(7 * Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
+        assertMemoryLeak(() -> assertSql(
+                "a\ta1\n" +
+                        "('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')\t('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')\n" +
+                        "('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\t('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\n" +
+                        "('1970-01-09T00:00:00.000Z', '1970-01-09T23:59:59.999Z')\t('1970-01-09T00:00:00.000Z', '1970-01-09T23:59:59.999Z')\n",
+                "select * from (\n" +
+                        "  select today() a\n" +
+                        "  union \n" +
+                        "  select yesterday()\n" +
+                        "  union \n" +
+                        "  select tomorrow()\n" +
+                        ") a\n" +
+                        "join (\n" +
+                        "  select today() a\n" +
+                        "  union \n" +
+                        "  select yesterday()\n" +
+                        "  union \n" +
+                        "  select tomorrow()\n" +
+                        ") b\n" +
+                        "on a.a = b.a"
+        ));
+    }
+
+    @Test
+    public void testInterval4() throws Exception {
+        setCurrentMicros(7 * Timestamps.DAY_MICROS + Timestamps.HOUR_MICROS); // 1970-01-07T01:00:00.000Z
+        assertMemoryLeak(() -> assertSql(
+                "a\tb\n" +
+                        "('1970-01-08T00:00:00.000Z', '1970-01-08T23:59:59.999Z')\t('1970-01-07T00:00:00.000Z', '1970-01-07T23:59:59.999Z')\n" +
+                        "foobar\t\n",
+                "select * from (\n" +
+                        "  select today() a, yesterday() b\n" +
+                        "  union all\n" +
+                        "  select yesterday(), yesterday()\n" +
+                        "  union all\n" +
+                        "  select 'foobar' a, null b\n" +
+                        ")\n" +
+                        "where b != a"
+        ));
+    }
+
+    @Test
     public void testLong256Long256() throws Exception {
         testUnionAll(
                 "a\tn\ttypeOf\n" +
@@ -2310,7 +2384,6 @@ public class UnionAllCastTest extends AbstractCairoTest {
         ddl("create table x as (select " + function + " a from long_sequence(5))");
         engine.releaseAllWriters();
 
-
         assertQuery(
                 expected,
                 "(select a, null c from x) union all (select null b, c from y)",
@@ -2339,7 +2412,8 @@ public class UnionAllCastTest extends AbstractCairoTest {
     private void assertFailure(String ddlX, String ddlY, int pos) throws Exception {
         compile(ddlY);
         engine.releaseAllWriters();
-        assertException("x union all y",
+        assertException(
+                "x union all y",
                 ddlX,
                 pos,
                 "unsupported cast"

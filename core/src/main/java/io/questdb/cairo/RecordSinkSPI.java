@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.str.Utf8Sequence;
@@ -50,6 +51,10 @@ public interface RecordSinkSPI {
     void putIPv4(int value);
 
     void putInt(int value);
+
+    // Used in RecordSinkFactory
+    @SuppressWarnings("unused")
+    void putInterval(Interval interval);
 
     void putLong(long value);
 
