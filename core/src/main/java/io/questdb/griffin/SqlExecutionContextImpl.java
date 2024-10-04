@@ -131,7 +131,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
                 rowsHiKindPos,
                 exclusionKind,
                 exclusionKindPos,
-                timestampIndex);
+                timestampIndex
+        );
     }
 
     @Override
@@ -225,7 +226,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public void initNow() {
-        now = clock.getTicks();
+        this.now = clock.getTicks();
     }
 
     public boolean isCacheHit() {

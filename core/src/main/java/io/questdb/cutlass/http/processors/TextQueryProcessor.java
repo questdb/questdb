@@ -119,6 +119,7 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                     context.getFd(),
                     circuitBreaker.of(context.getFd())
             );
+            sqlExecutionContext.initNow();
             if (state.recordCursorFactory == null) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     final CompiledQuery cc = compiler.compile(state.query, sqlExecutionContext);
@@ -259,6 +260,13 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
         final int ip = rec.getIPv4(col);
         if (ip != Numbers.IPv4_NULL) {
             Numbers.intToIPv4Sink(response, ip);
+        }
+    }
+
+    private static void putInterval(HttpChunkedResponse response, Record rec, int col) {
+        final Interval interval = rec.getInterval(col);
+        if (!Interval.NULL.equals(interval)) {
+            response.putQuote().put(interval).putQuote();
         }
     }
 
@@ -635,6 +643,9 @@ public class TextQueryProcessor implements HttpRequestProcessor, Closeable {
                 throw new UnsupportedOperationException();
             case ColumnType.IPv4:
                 putIPv4Value(response, rec, col);
+                break;
+            case ColumnType.INTERVAL:
+                putInterval(response, rec, col);
                 break;
             default:
                 assert false;

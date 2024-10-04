@@ -1893,7 +1893,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         // 2022-03-29 10:00:00.0
         // 2022-03-30 10:00:00.0
         // 2022-03-31 10:00:00.0
-        currentMicros = 1649186452792000L; // '2022-04-05T19:20:52.792Z'
+        setCurrentMicros(1649186452792000L); // '2022-04-05T19:20:52.792Z'
         assertQuery("min\tmax\n" +
                 "\t\n", "SELECT min(ts), max(ts)\n" +
                 "FROM tab\n" +
@@ -7752,7 +7752,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
 
     @Test
     public void testUnionCastTypeSymmetry() {
-        for (int typeA = 0; typeA <= ColumnType.VARCHAR; typeA++) {
+        for (int typeA = 0; typeA <= ColumnType.INTERVAL; typeA++) {
             for (int typeB = 0; typeB <= typeA; typeB++) {
                 Assert.assertEquals(
                         "typeA: " + typeA + ", typeB: " + typeB,

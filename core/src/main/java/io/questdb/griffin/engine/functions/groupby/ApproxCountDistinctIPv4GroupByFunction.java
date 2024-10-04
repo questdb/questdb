@@ -144,7 +144,7 @@ public class ApproxCountDistinctIPv4GroupByFunction extends LongFunction impleme
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 

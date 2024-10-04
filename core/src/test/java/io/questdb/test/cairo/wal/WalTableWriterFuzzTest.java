@@ -57,7 +57,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Before
     public void setUp() {
         super.setUp();
-        currentMicros = 0L;
+        setCurrentMicros(0);
     }
 
     @Test
@@ -701,7 +701,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
     @Test
     public void testUpdateViaWal_Random() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        currentMicros = rnd.nextLong();
+        setCurrentMicros(rnd.nextLong());
         sqlExecutionContext.getRandom().reset(currentMicros * 1000, currentMicros);
 
         assertMemoryLeak(() -> {
@@ -852,7 +852,7 @@ public class WalTableWriterFuzzTest extends AbstractMultiNodeTest {
             // This supposed to republish the transactions
             long currentRepublishCounter = engine.getUnpublishedWalTxnCount();
             for (int i = 0; i < 10; i++) {
-                currentMicros += 200000;
+                setCurrentMicros(currentMicros + 200000);
                 Assert.assertFalse(checkWalTransactionsJob.runSerially());
                 // Check that only 1 attempt is made to publish notification and then the job backs off
                 Assert.assertEquals(currentRepublishCounter + i + 1, engine.getUnpublishedWalTxnCount());

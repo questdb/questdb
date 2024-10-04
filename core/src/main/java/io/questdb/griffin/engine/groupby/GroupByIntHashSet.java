@@ -33,7 +33,7 @@ import io.questdb.std.Vect;
 /**
  * Specialized flyweight hash set used in {@link io.questdb.griffin.engine.functions.GroupByFunction}s.
  * <p>
- * Uses provided {@link GroupByAllocatorImpl} to allocate the underlying buffer. Grows the buffer when needed.
+ * Uses provided {@link GroupByAllocator} to allocate the underlying buffer. Grows the buffer when needed.
  * <p>
  * Buffer layout is the following:
  * <pre>
@@ -45,7 +45,7 @@ import io.questdb.std.Vect;
  */
 public class GroupByIntHashSet {
     private static final long HEADER_SIZE = 3 * Integer.BYTES;
-    private static final int MIN_INITIAL_CAPACITY = 16;
+    private static final int MIN_INITIAL_CAPACITY = 4;
     private static final long SIZE_LIMIT_OFFSET = 2 * Integer.BYTES;
     private static final long SIZE_OFFSET = Integer.BYTES;
     private final int initialCapacity;
