@@ -1,0 +1,20 @@
+name: Allocation Tracking Fuzzing
+
+on:
+  schedule:
+    - cron: "1 */1 * * *"
+
+jobs:
+  build:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 'refs/heads/jh_markbook_fuzzing'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'maven'
+      - name: Build distribution
+        run: mvn -B clean install -P track-allocation -pl core
