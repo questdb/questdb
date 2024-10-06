@@ -50,6 +50,11 @@ abstract class AbstractAlterTableAttachPartitionTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         super.setUp();
+
+        // hack - as some tests call setUp() multiple time
+        path = Misc.free(path);
+        other = Misc.free(other);
+
         other = new Path();
         path = new Path();
     }

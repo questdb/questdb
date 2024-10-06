@@ -585,7 +585,11 @@ public abstract class AbstractFunctionFactoryTest extends BaseFunctionFactoryTes
         }
 
         public void andAssertOnlyColumnValues(boolean expected) {
-            Assert.assertEquals(expected, function2.getBool(record));
+            try {
+                Assert.assertEquals(expected, function2.getBool(record));
+            } finally {
+                cleanup();
+            }
         }
 
         public void andAssertTimestamp(long expected) {
