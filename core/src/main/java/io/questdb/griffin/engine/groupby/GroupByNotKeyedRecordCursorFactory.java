@@ -33,10 +33,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -47,7 +45,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
     private final VirtualRecord virtualRecordA;
 
     public GroupByNotKeyedRecordCursorFactory(
-            @Transient @NotNull BytecodeAssembler asm,
+            @NotNull GroupByFunctionsUpdaterFactory functionsUpdaterFactory,
             CairoConfiguration configuration,
             RecordCursorFactory base,
             RecordMetadata groupByMetadata,
@@ -62,7 +60,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             this.virtualRecordA = new VirtualRecordNoRowid(groupByFunctions);
             this.virtualRecordA.of(simpleMapValue);
 
-            final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
+            final GroupByFunctionsUpdater updater = functionsUpdaterFactory.getInstance(groupByFunctions);
             boolean earlyExitSupported = GroupByUtils.isEarlyExitSupported(groupByFunctions);
 
             if (earlyExitSupported) {

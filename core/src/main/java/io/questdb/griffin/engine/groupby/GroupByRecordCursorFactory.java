@@ -53,6 +53,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     public GroupByRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
+            @NotNull GroupByFunctionsUpdaterFactory functionsUpdaterFactory,
             CairoConfiguration configuration,
             RecordCursorFactory base,
             @Transient @NotNull ListColumnFilter listColumnFilter,
@@ -71,7 +72,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.recordFunctions = recordFunctions;
             // sink will be storing record columns to map key
             this.mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter, keyFunctions, null);
-            final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
+            final GroupByFunctionsUpdater updater = functionsUpdaterFactory.getInstance(groupByFunctions);
             this.cursor = new GroupByRecordCursor(configuration, recordFunctions, groupByFunctions, updater, keyTypes, valueTypes);
         } catch (Throwable e) {
             close();

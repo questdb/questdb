@@ -33,7 +33,10 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.std.*;
+import io.questdb.std.IntList;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSampleByNotKeyedRecordCursorFactory {
@@ -41,7 +44,7 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
     private final SampleByFillValueNotKeyedRecordCursor cursor;
 
     public SampleByFillValueNotKeyedRecordCursorFactory(
-            @Transient @NotNull BytecodeAssembler asm,
+            @NotNull GroupByFunctionsUpdaterFactory functionsUpdaterFactory,
             CairoConfiguration configuration,
             RecordCursorFactory base,
             @NotNull TimestampSampler timestampSampler,
@@ -72,7 +75,7 @@ public class SampleByFillValueNotKeyedRecordCursorFactory extends AbstractSample
             );
             final SimpleMapValue simpleMapValue = new SimpleMapValue(valueCount);
             final SimpleMapValuePeeker peeker = new SimpleMapValuePeeker(simpleMapValue, new SimpleMapValue(valueCount));
-            final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
+            final GroupByFunctionsUpdater updater = functionsUpdaterFactory.getInstance(groupByFunctions);
             cursor = new SampleByFillValueNotKeyedRecordCursor(
                     configuration,
                     groupByFunctions,

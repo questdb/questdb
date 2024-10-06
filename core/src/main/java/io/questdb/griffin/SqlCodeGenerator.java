@@ -138,6 +138,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final FunctionParser functionParser;
     private final IntList groupByFunctionPositions = new IntList();
+    private final GroupByFunctionsUpdaterFactory groupByFunctionsUpdaterFactory;
     private final ObjObjHashMap<IntList, ObjList<WindowFunction>> groupedWindow = new ObjObjHashMap<>();
     private final IntHashSet intHashSet = new IntHashSet();
     private final ObjectPool<IntList> intListPool = new ObjectPool<>(IntList::new, 4);
@@ -183,6 +184,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             this.configuration = configuration;
             this.functionParser = functionParser;
             this.recordComparatorCompiler = new RecordComparatorCompiler(asm);
+            this.groupByFunctionsUpdaterFactory = new GroupByFunctionsUpdaterFactory(asm);
             this.enableJitDebug = configuration.isSqlJitDebugEnabled();
             this.jitIRMem = Vm.getCARWInstance(
                     configuration.getSqlJitIRMemoryPageSize(),
@@ -3189,7 +3191,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "prev")) {
                 if (keyTypes.getColumnCount() == 0) {
                     return new SampleByFillPrevNotKeyedRecordCursorFactory(
-                            asm,
+                            groupByFunctionsUpdaterFactory,
                             configuration,
                             factory,
                             timestampSampler,
@@ -3213,6 +3215,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 return new SampleByFillPrevRecordCursorFactory(
                         asm,
+                        groupByFunctionsUpdaterFactory,
                         configuration,
                         factory,
                         timestampSampler,
@@ -3238,7 +3241,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (keyTypes.getColumnCount() == 0) {
                     // this sample by is not keyed
                     return new SampleByFillNoneNotKeyedRecordCursorFactory(
-                            asm,
+                            groupByFunctionsUpdaterFactory,
                             configuration,
                             factory,
                             timestampSampler,
@@ -3262,6 +3265,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 return new SampleByFillNoneRecordCursorFactory(
                         asm,
+                        groupByFunctionsUpdaterFactory,
                         configuration,
                         factory,
                         groupByMetadata,
@@ -3286,7 +3290,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (fillCount == 1 && isNullKeyword(sampleByFill.getQuick(0).token)) {
                 if (keyTypes.getColumnCount() == 0) {
                     return new SampleByFillNullNotKeyedRecordCursorFactory(
-                            asm,
+                            groupByFunctionsUpdaterFactory,
                             configuration,
                             factory,
                             timestampSampler,
@@ -3311,6 +3315,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                 return new SampleByFillNullRecordCursorFactory(
                         asm,
+                        groupByFunctionsUpdaterFactory,
                         configuration,
                         factory,
                         timestampSampler,
@@ -3337,7 +3342,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (keyTypes.getColumnCount() == 0) {
                 return new SampleByFillValueNotKeyedRecordCursorFactory(
-                        asm,
+                        groupByFunctionsUpdaterFactory,
                         configuration,
                         factory,
                         timestampSampler,
@@ -3363,6 +3368,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             return new SampleByFillValueRecordCursorFactory(
                     asm,
+                    groupByFunctionsUpdaterFactory,
                     configuration,
                     factory,
                     timestampSampler,
@@ -3990,7 +3996,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         assert recordFunctions.size() == groupByFunctions.size();
 
                         return new AsyncGroupByNotKeyedRecordCursorFactory(
-                                asm,
+                                groupByFunctionsUpdaterFactory,
                                 configuration,
                                 executionContext.getMessageBus(),
                                 factory,
@@ -4026,6 +4032,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             model,
                             new AsyncGroupByRecordCursorFactory(
                                     asm,
+                                    groupByFunctionsUpdaterFactory,
                                     configuration,
                                     executionContext.getMessageBus(),
                                     factory,
@@ -4072,7 +4079,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (keyTypes.getColumnCount() == 0) {
                 assert recordFunctions.size() == groupByFunctions.size();
                 return new GroupByNotKeyedRecordCursorFactory(
-                        asm,
+                        groupByFunctionsUpdaterFactory,
                         configuration,
                         factory,
                         groupByMetadata,
@@ -4088,6 +4095,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     model,
                     new io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory(
                             asm,
+                            groupByFunctionsUpdaterFactory,
                             configuration,
                             factory,
                             listColumnFilterA,

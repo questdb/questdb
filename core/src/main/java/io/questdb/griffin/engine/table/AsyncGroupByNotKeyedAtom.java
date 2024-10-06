@@ -38,10 +38,8 @@ import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.*;
 import io.questdb.jit.CompiledFilter;
-import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -66,7 +64,7 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
     private final ObjList<SimpleMapValue> perWorkerMapValues;
 
     public AsyncGroupByNotKeyedAtom(
-            @Transient @NotNull BytecodeAssembler asm,
+            @NotNull GroupByFunctionsUpdaterFactory functionsUpdaterFactory,
             @NotNull CairoConfiguration configuration,
             @NotNull ObjList<GroupByFunction> ownerGroupByFunctions,
             @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
@@ -91,11 +89,11 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
             this.ownerGroupByFunctions = ownerGroupByFunctions;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
 
-            ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, ownerGroupByFunctions);
+            ownerFunctionUpdater = functionsUpdaterFactory.getInstance(ownerGroupByFunctions);
             if (perWorkerGroupByFunctions != null) {
                 perWorkerFunctionUpdaters = new ObjList<>(slotCount);
                 for (int i = 0; i < slotCount; i++) {
-                    perWorkerFunctionUpdaters.extendAndSet(i, GroupByFunctionsUpdaterFactory.getInstance(asm, perWorkerGroupByFunctions.getQuick(i)));
+                    perWorkerFunctionUpdaters.extendAndSet(i, functionsUpdaterFactory.getInstance(perWorkerGroupByFunctions.getQuick(i)));
                 }
             } else {
                 perWorkerFunctionUpdaters = null;

@@ -48,6 +48,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
 
     public SampleByFillValueRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
+            @NotNull GroupByFunctionsUpdaterFactory functionsUpdaterFactory,
             CairoConfiguration configuration,
             RecordCursorFactory base,
             @NotNull TimestampSampler timestampSampler,
@@ -88,7 +89,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                     fillValues,
                     false
             );
-            final GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
+            final GroupByFunctionsUpdater updater = functionsUpdaterFactory.getInstance(groupByFunctions);
             cursor = new SampleByFillValueRecordCursor(
                     configuration,
                     map,

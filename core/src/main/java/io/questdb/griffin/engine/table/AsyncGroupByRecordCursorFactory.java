@@ -40,6 +40,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
@@ -66,6 +67,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
     public AsyncGroupByRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
+            @NotNull GroupByFunctionsUpdaterFactory functionsUpdaterFactory,
             @NotNull CairoConfiguration configuration,
             @NotNull MessageBus messageBus,
             @NotNull RecordCursorFactory base,
@@ -93,6 +95,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             this.recordFunctions = recordFunctions;
             AsyncGroupByAtom atom = new AsyncGroupByAtom(
                     asm,
+                    functionsUpdaterFactory,
                     configuration,
                     base.getMetadata(),
                     keyTypes,
