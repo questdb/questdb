@@ -49,7 +49,6 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
-
     private static final PageFrameReducer AGGREGATE = AsyncGroupByNotKeyedRecordCursorFactory::aggregate;
     private static final PageFrameReducer FILTER_AND_AGGREGATE = AsyncGroupByNotKeyedRecordCursorFactory::filterAndAggregate;
 
@@ -95,11 +94,27 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                     workerCount
             );
             if (filter != null) {
-                this.frameSequence = new PageFrameSequence<>(configuration, messageBus, atom, FILTER_AND_AGGREGATE, reduceTaskFactory, workerCount, PageFrameReduceTask.TYPE_GROUP_BY_NOT_KEYED);
+                this.frameSequence = new PageFrameSequence<>(
+                        configuration,
+                        messageBus,
+                        atom,
+                        FILTER_AND_AGGREGATE,
+                        reduceTaskFactory,
+                        workerCount,
+                        PageFrameReduceTask.TYPE_GROUP_BY_NOT_KEYED
+                );
             } else {
-                this.frameSequence = new PageFrameSequence<>(configuration, messageBus, atom, AGGREGATE, reduceTaskFactory, workerCount, PageFrameReduceTask.TYPE_GROUP_BY_NOT_KEYED);
+                this.frameSequence = new PageFrameSequence<>(
+                        configuration,
+                        messageBus,
+                        atom,
+                        AGGREGATE,
+                        reduceTaskFactory,
+                        workerCount,
+                        PageFrameReduceTask.TYPE_GROUP_BY_NOT_KEYED
+                );
             }
-            this.cursor = new AsyncGroupByNotKeyedRecordCursor(configuration, groupByFunctions);
+            this.cursor = new AsyncGroupByNotKeyedRecordCursor(groupByFunctions);
             this.workerCount = workerCount;
         } catch (Throwable e) {
             close();
@@ -172,7 +187,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         record.init(frameMemory);
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
-        final int slotId = atom.acquire(workerId, owner, circuitBreaker);
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final SimpleMapValue value = atom.getMapValue(slotId);
         try {
@@ -232,7 +247,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         assert frameRowCount > 0;
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == frameSequence;
-        final int slotId = atom.acquire(workerId, owner, circuitBreaker);
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final SimpleMapValue value = atom.getMapValue(slotId);
         final CompiledFilter compiledFilter = atom.getCompiledFilter();

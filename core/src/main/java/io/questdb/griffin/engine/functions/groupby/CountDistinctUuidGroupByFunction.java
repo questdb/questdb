@@ -45,9 +45,8 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
 
     public CountDistinctUuidGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
-        // We use zero as the default value to speed up zeroing on rehash.
-        setA = new GroupByLong128HashSet(setInitialCapacity, setLoadFactor, 0);
-        setB = new GroupByLong128HashSet(setInitialCapacity, setLoadFactor, 0);
+        setA = new GroupByLong128HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
+        setB = new GroupByLong128HashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
     }
 
     @Override
@@ -61,12 +60,7 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
         long lo = arg.getLong128Lo(record);
         long hi = arg.getLong128Hi(record);
         if (!Uuid.isNull(lo, hi)) {
-            mapValue.putLong(valueIndex, 1L);
-            // Remap zero since it's used as the no entry key.
-            if (lo == 0 && hi == 0) {
-                lo = Numbers.LONG_NULL;
-                hi = Numbers.LONG_NULL;
-            }
+            mapValue.putLong(valueIndex, 1);
             setA.of(0).add(lo, hi);
             mapValue.putLong(valueIndex + 1, setA.ptr());
         } else {
@@ -81,11 +75,6 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
         long hi = arg.getLong128Hi(record);
         if (!Uuid.isNull(lo, hi)) {
             long ptr = mapValue.getLong(valueIndex + 1);
-            // Remap zero since it's used as the no entry key.
-            if (lo == 0 && hi == 0) {
-                lo = Numbers.LONG_NULL;
-                hi = Numbers.LONG_NULL;
-            }
             final long index = setA.of(ptr).keyIndex(lo, hi);
             if (index >= 0) {
                 setA.addAt(index, lo, hi);
@@ -133,7 +122,7 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 
@@ -176,7 +165,7 @@ public final class CountDistinctUuidGroupByFunction extends LongFunction impleme
 
     @Override
     public void setEmpty(MapValue mapValue) {
-        mapValue.putLong(valueIndex, 0L);
+        mapValue.putLong(valueIndex, 0);
         mapValue.putLong(valueIndex + 1, 0);
     }
 

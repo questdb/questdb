@@ -40,13 +40,11 @@ import static io.questdb.griffin.SqlOptimiser.aliasAppearsInFuncArgs;
 import static org.junit.Assert.assertEquals;
 
 public class SqlOptimiserTest extends AbstractSqlParserTest {
-
-    final String orderByAdviceDdl = "CREATE TABLE t (\n" +
+    private static final String orderByAdviceDdl = "CREATE TABLE t (\n" +
             "  s SYMBOL index,\n" +
             "  ts TIMESTAMP\n" +
             ") timestamp(ts) PARTITION BY DAY;";
-
-    final String orderByAdviceDml =
+    private static final String orderByAdviceDml =
             "INSERT INTO t (s, ts) VALUES" +
                     " ('a', '2023-09-01T00:00:00.000Z')," +
                     " ('a', '2023-09-01T00:10:00.000Z')," +

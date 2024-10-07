@@ -66,7 +66,7 @@ public class GeoLongColumn extends GeoLongFunction {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return true;
     }
 

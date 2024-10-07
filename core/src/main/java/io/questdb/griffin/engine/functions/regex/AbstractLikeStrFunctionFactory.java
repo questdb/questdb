@@ -235,7 +235,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return false;
         }
 
@@ -425,7 +425,7 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return false;
         }
 

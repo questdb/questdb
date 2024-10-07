@@ -381,6 +381,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getLogLevelVerbose() {
+        return getDelegate().getLogLevelVerbose();
+    }
+
+    @Override
     public boolean getLogSqlQueryProgressExe() {
         return getDelegate().getLogSqlQueryProgressExe();
     }

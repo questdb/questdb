@@ -24,9 +24,17 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.std.Interval;
+import org.jetbrains.annotations.NotNull;
+
 public interface ScalarFunction extends Function {
     @Override
     default int getArrayLength() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    default @NotNull Interval getInterval(Record rec) {
         throw new UnsupportedOperationException();
     }
 
