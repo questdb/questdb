@@ -776,6 +776,18 @@ public class SqlUtil {
         }
     }
 
+    public static short toPersistedType(CharSequence tok, int tokPosition) throws SqlException {
+        final short type = ColumnType.tagOf(tok);
+        if (type == -1) {
+            throw SqlException.$(tokPosition, "unsupported column type: ").put(tok);
+        }
+        if (ColumnType.isPersisted(type)) {
+            return type;
+        }
+        throw SqlException.$(tokPosition, "non-persisted type: ").put(tok);
+
+    }
+
     private static long implicitCastStrVarcharAsDate0(CharSequence value, int columnType) {
         assert columnType == ColumnType.VARCHAR || columnType == ColumnType.STRING;
         try {

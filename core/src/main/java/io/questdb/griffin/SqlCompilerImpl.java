@@ -404,10 +404,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CharSequence tok;
         tok = expectToken(lexer, "column type");
 
-        int type = ColumnType.tagOf(tok);
-        if (type == -1) {
-            throw SqlException.$(lexer.lastTokenPosition(), "invalid type");
-        }
+        int type = SqlUtil.toPersistedType(tok, lexer.lastTokenPosition());
 
         if (type == ColumnType.GEOHASH) {
             tok = SqlUtil.fetchNext(lexer);
