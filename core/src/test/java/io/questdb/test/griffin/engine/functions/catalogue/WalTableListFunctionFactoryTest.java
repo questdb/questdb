@@ -117,6 +117,17 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotInitialized() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("B", true);
+            createTable("C", true);
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                    "B\tfalse\t0\t0\t0\t\t\t0\n" +
+                    "C\tfalse\t0\t0\t0\t\t\t0\n", "wal_tables()");
+        });
+    }
+
+    @Test
     public void testWalTablesQueryCache() throws Exception {
         assertMemoryLeak(() -> {
             createTable("A", false);
@@ -138,17 +149,6 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
-
-    @Test
-    public void testNotInitialized() throws Exception {
-        assertMemoryLeak(() -> {
-            createTable("B", true);
-            createTable("C", true);
-            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                    "B\tfalse\t0\t0\t0\t\t\t0\n" +
-                    "C\tfalse\t0\t0\t0\t\t\t0\n", "wal_tables()");
-        });
-    }
     @Test
     public void testWalTablesSelectAll() throws Exception {
         FilesFacade filesFacade = new TestFilesFacadeImpl() {
@@ -221,7 +221,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
     private void assertMemoryPressureLevel(CharSequence tableName, int expectedMemoryPressureLevel) throws SqlException {
         assertQuery("memoryPressure\n" +
-                        +expectedMemoryPressureLevel + "\n",
+                        expectedMemoryPressureLevel + "\n",
                 "select memoryPressure from wal_tables() where name = '" + tableName + "'", false, false);
     }
 
