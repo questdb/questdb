@@ -182,6 +182,7 @@ public class GroupByLong256HashSet {
     }
 
     private long probe(long k0, long k1, long k2, long k3, long index) {
+        final long index0 = index;
         do {
             index = (index + 1) & mask;
             long p = keyAddrAt(index);
@@ -195,12 +196,14 @@ public class GroupByLong256HashSet {
             if (k0Key == k0 && k1Key == k1 && k2Key == k2 && k3Key == k3) {
                 return -index - 1;
             }
-        } while (true);
+        } while (index != index0);
+
+        throw CairoException.critical(0).put("corrupt long256 hash set");
     }
 
     private void rehash(int newCapacity, int newSizeLimit) {
         if (newCapacity < 0) {
-            throw CairoException.nonCritical().put("set capacity overflow");
+            throw CairoException.nonCritical().put("long256 hash set capacity overflow");
         }
 
         final int oldSize = size();
