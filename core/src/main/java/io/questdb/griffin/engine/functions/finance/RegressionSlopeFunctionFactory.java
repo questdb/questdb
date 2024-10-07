@@ -76,7 +76,8 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
             mapValue.putDouble(valueIndex, 0);
             mapValue.putDouble(valueIndex + 1, 0);
             mapValue.putDouble(valueIndex + 2, 0);
-            mapValue.putLong(valueIndex + 3, 0);
+            mapValue.putDouble(valueIndex + 3, 0);
+            mapValue.putLong(valueIndex + 4, 0);
 
             if (Numbers.isFinite(x) && Numbers.isFinite(y)) {
                 aggregate(mapValue, x, y);
