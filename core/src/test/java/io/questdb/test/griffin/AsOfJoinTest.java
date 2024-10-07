@@ -365,6 +365,51 @@ public class AsOfJoinTest extends AbstractCairoTest {
         });
     }
 
+
+    @Test
+    public void testAsofNegLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE t1 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            insert("INSERT INTO t1 values ('2022-10-05T08:15:00.000000Z', 0, 'a');");
+            insert("INSERT INTO t1 values ('2022-10-05T08:17:00.000000Z', 1, 'b');");
+            insert("INSERT INTO t1 values ('2022-10-05T08:21:00.000000Z', 3, 'c');");
+            insert("INSERT INTO t1 values ('2022-10-05T08:21:00.000000Z', 4, 'd');");
+            insert("INSERT INTO t1 values ('2022-10-10T01:01:00.000000Z', 5, 'e');");
+
+            ddl("CREATE TABLE t2 (ts TIMESTAMP, i INT, s SYMBOL) timestamp(ts) partition by day bypass wal");
+            insert("INSERT INTO t2 values ('2022-10-05T08:18:00.000000Z', 10, 'aa');");
+            insert("INSERT INTO t2 values ('2022-10-05T08:19:00.000000Z', 20, 'bb');");
+            insert("INSERT INTO t2 values ('2023-10-05T09:00:00.000000Z', 30, 'cc');");
+            insert("INSERT INTO t2 values ('2023-10-06T01:00:00.000000Z', 40, 'dd');");
+
+            String query = "SELECT * FROM t1 ASOF JOIN t2 LIMIT -3";
+            String expected;
+
+            StringSink ss = new StringSink();
+            printSql("EXPLAIN " + query, ss);
+
+            expected =
+                    "QUERY PLAN\n" +
+                            "SelectedRecord\n" +
+                            "    AsOf Join Fast Scan\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame limit scan lo: 3 on: t1\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: t2\n";
+
+            Assert.assertEquals(expected, ss.toString());
+
+            expected = "ts\ti\ts\tts1\ti1\ts1\n" +
+                    "2022-10-05T08:21:00.000000Z\t3\tc\t2022-10-05T08:19:00.000000Z\t20\tbb\n" +
+                    "2022-10-05T08:21:00.000000Z\t4\td\t2022-10-05T08:19:00.000000Z\t20\tbb\n" +
+                    "2022-10-10T01:01:00.000000Z\t5\te\t2022-10-05T08:19:00.000000Z\t20\tbb\n";
+            printSqlResult(expected, query, "ts", false, true);
+        });
+    }
+
+
     @Test
     public void testInterleaved2() throws Exception {
         assertMemoryLeak(() -> {

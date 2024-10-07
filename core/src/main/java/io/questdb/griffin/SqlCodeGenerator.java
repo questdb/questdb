@@ -550,6 +550,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
+    // This function returns < 0 if a simple offset can be pushed down to the FwdPartitionFrameCursor
+    // if 0 is returned, then it cannot be used
+    private long getNegativeLoLimitOnly(QueryModel model, SqlExecutionContext context) throws SqlException {
+        Function loFunc = getLimitLoFunctionOnly(model, context);
+        if (loFunc == null) {
+            return 0;
+        }
+        try {
+            loFunc.init(null, context);
+            long ret = loFunc.getLong(null);
+            if (ret > 0) {
+                ret = 0;
+            }
+            return ret;
+        } catch (SqlException ex) {
+            // couldn't evaluate function at this point
+            LOG.debug().$("Failed to determine low limit: " + ex.getMessage()).$();
+            return 0;
+        }
+    }
+
     private boolean checkIfSetCastIsRequired(RecordMetadata metadataA, RecordMetadata metadataB, boolean symbolDisallowed) {
         int columnCount = metadataA.getColumnCount();
         assert columnCount == metadataB.getColumnCount();
@@ -5416,7 +5437,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 cursorFactory = new FullBwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
                 rowCursorFactory = new BwdPageFrameRowCursorFactory();
             } else {
-                cursorFactory = new FullFwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
+                long negLimit;
+                if (model.getOrderByAdvice().size() == 0 && (negLimit = getNegativeLoLimitOnly(model, executionContext)) < 0) {
+                    cursorFactory = new LimitPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta, negLimit);
+                } else {
+                    cursorFactory = new FullFwdPartitionFrameCursorFactory(tableToken, model.getMetadataVersion(), dfcFactoryMeta);
+                }
                 rowCursorFactory = new PageFrameFwdRowCursorFactory();
             }
 

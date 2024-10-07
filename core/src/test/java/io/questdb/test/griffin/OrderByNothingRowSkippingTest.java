@@ -66,7 +66,7 @@ public class OrderByNothingRowSkippingTest extends AbstractCairoTest {
     public void testSelectLastN() throws Exception {
         prepare_unordered_noTs_table();
 
-        assertQuery("l\n8\n2\n5\n", "select l from tab limit -3");
+        assertQuery("l\n8\n2\n5\n", "select l from tab limit -3", true);
     }
 
     @Test
