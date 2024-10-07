@@ -439,7 +439,7 @@ public final class ColumnType {
                 /* 9  FLOAT     */, {FLOAT, DOUBLE}
                 /* 10 DOUBLE    */, {DOUBLE}
                 /* 11 STRING    */, {STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
-                /* 12 SYMBOL    */, {SYMBOL, STRING, VARCHAR, TIMESTAMP}
+                /* 12 SYMBOL    */, {SYMBOL, STRING, VARCHAR, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
                 /* 13 LONG256   */, {LONG256}
                 /* 14 GEOBYTE   */, {GEOBYTE, GEOSHORT, GEOINT, GEOLONG, GEOHASH}
                 /* 15 GEOSHORT  */, {GEOSHORT, GEOINT, GEOLONG, GEOHASH}
@@ -453,7 +453,7 @@ public final class ColumnType {
                 /* 23 unused    */, {}
                 /* 24 LONG128   */, {LONG128}
                 /* 25 IPv4      */, {IPv4}
-                /* 26 VARCHAR   */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP}
+                /* 26 VARCHAR   */, {VARCHAR, STRING, CHAR, DOUBLE, LONG, INT, FLOAT, SHORT, BYTE, TIMESTAMP, DATE}
                 /* 27 unused    */, {}
                 /* 28 unused    */, {}
                 /* 29 unused    */, {}

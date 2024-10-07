@@ -230,6 +230,10 @@ public final class Net {
         return getTcpNoDelay(toOsFd(fd));
     }
 
+    public static void init() {
+        // no-op
+    }
+
     /**
      * This method reads 1 byte (or none if the socket is non-blocking and there is no data).
      * If there is no error (EOF ?) then it returns false

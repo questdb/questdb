@@ -7469,6 +7469,28 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         );
     }
 
+    // https://github.com/questdb/questdb/issues/4981
+    @Test
+    public void testStringyTypeIntComparison() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("CREATE TABLE t1(c0 INT, c1 SYMBOL, c2 STRING, c3 VARCHAR);");
+            insert("INSERT INTO t1(c0) VALUES (1);");
+
+            assertSql(
+                    "c0\tc1\n",
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c1 >= t1.c0);"
+            );
+            assertSql(
+                    "c0\tc1\n",
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c2 >= t1.c0);"
+            );
+            assertSql(
+                    "c0\tc1\n",
+                    "SELECT t1.c0, t1.c1 FROM t1 WHERE (t1.c3 >= t1.c0);"
+            );
+        });
+    }
+
     @Test
     public void testStrippingRowId() throws Exception {
         assertMemoryLeak(() -> {
