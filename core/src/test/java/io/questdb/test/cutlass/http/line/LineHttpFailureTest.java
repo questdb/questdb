@@ -244,7 +244,7 @@ public class LineHttpFailureTest extends AbstractBootstrapTest {
             final FilesFacade filesFacade = new TestFilesFacadeImpl() {
 
                 @Override
-                public long append(long fd, long buf, int len) {
+                public long append(long fd, long buf, long len) {
                     if (fd == this.fd && counter.decrementAndGet() == 0) {
                         ping.await();
                         httpClientRef.get().disconnect();

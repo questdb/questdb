@@ -170,6 +170,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         private RecordCursor baseCursor;
         private Record baseRecord;
         private int bucketIndex;
+        private int finalBucketIndex;
         private long fromTimestamp;
         private boolean gapFilling;
         private long maxTimestamp;
@@ -222,6 +223,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
                 // otherwise, we need to use bitset to fill
                 if (!gapFilling) {
                     gapFilling = true;
+                    finalBucketIndex = timestampSampler.bucketIndex(maxTimestamp);
 
                     // we need to get up to date, since the sampler started at unix epoch, not min timestamp
                     if (rangeBound == RANGE_UPPER_BOUND || rangeBound == RANGE_UNBOUNDED) {
@@ -263,6 +265,7 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
             gapFilling = false;
             baseRecord = null;
             bucketIndex = 0;
+            finalBucketIndex = -1;
         }
 
         private Function getFillFunction(int col) {
@@ -333,10 +336,11 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private boolean notAtEndOfBitset() {
+            assert finalBucketIndex != -1;
             if (rangeBound == RANGE_LOWER_BOUND || rangeBound == RANGE_UNBOUNDED || nextBucketTimestamp == maxTimestamp) {
-                return bucketIndex < timestampSampler.bucketIndex(maxTimestamp);
+                return bucketIndex < finalBucketIndex;
             } else {
-                return bucketIndex <= timestampSampler.bucketIndex(maxTimestamp);
+                return bucketIndex <= finalBucketIndex;
             }
         }
 
@@ -365,7 +369,8 @@ public class FillRangeRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private boolean recordWasPresent() {
-            return presentRecords.get(bucketIndex) && bucketIndex <= timestampSampler.bucketIndex(maxTimestamp);
+            assert finalBucketIndex != -1;
+            return presentRecords.get(bucketIndex) && bucketIndex <= finalBucketIndex;
         }
 
         private class FillRangeRecord implements Record {

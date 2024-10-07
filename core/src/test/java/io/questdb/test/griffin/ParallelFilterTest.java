@@ -495,7 +495,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private void testAsyncOffloadNegativeLimitTimeout() throws Exception {
         assertMemoryLeak(() -> {
             SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
-            currentMicros = 0;
+            setCurrentMicros(0);
             NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
                     new DefaultSqlExecutionCircuitBreakerConfiguration() {
                         @Override
@@ -557,7 +557,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
     private void testAsyncOffloadTimeout() throws Exception {
         assertMemoryLeak(() -> {
             SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
-            currentMicros = 0;
+            setCurrentMicros(0);
             NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
                     new DefaultSqlExecutionCircuitBreakerConfiguration() {
                         @Override

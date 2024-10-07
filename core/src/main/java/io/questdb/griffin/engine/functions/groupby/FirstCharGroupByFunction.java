@@ -87,8 +87,8 @@ public class FirstCharGroupByFunction extends CharFunction implements GroupByFun
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return UnaryFunction.super.isReadThreadSafe();
+    public boolean isThreadSafe() {
+        return UnaryFunction.super.isThreadSafe();
     }
 
     @Override

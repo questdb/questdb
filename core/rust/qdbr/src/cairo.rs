@@ -40,6 +40,12 @@ impl DefaultReturn for usize {
     }
 }
 
+impl DefaultReturn for u32 {
+    fn default_return() -> Self {
+        0
+    }
+}
+
 impl<T> DefaultReturn for *mut T {
     fn default_return() -> Self {
         std::ptr::null_mut()

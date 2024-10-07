@@ -147,7 +147,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 try {
                     // prevent more allocs
                     Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
-                    partitionDecoder.decodeRowGroup(rowGroupBuffers, columns, 0);
+                    partitionDecoder.decodeRowGroup(rowGroupBuffers, columns, 0, 0, 1);
                     Assert.fail("Expected CairoException for out of memory");
                 } catch (CairoException e) {
                     final String msg = e.getMessage();
@@ -162,7 +162,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 Assert.assertTrue(exceptionThrown);
 
                 final long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                partitionDecoder.decodeRowGroup(rowGroupBuffers, columns, 0);
+                partitionDecoder.decodeRowGroup(rowGroupBuffers, columns, 0, 0, 1);
                 final long memAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
 
                 // Allocation happened in Rust code, associated to the `RowGroupBuffers` object.

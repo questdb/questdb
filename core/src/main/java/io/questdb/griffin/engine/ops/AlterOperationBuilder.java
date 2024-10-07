@@ -44,16 +44,7 @@ public class AlterOperationBuilder {
         this.op = new AlterOperation(extraInfo, extraStrInfo);
     }
 
-    public void addColumnToList(
-            CharSequence columnName,
-            int columnNamePosition,
-            int type,
-            int symbolCapacity,
-            boolean cache,
-            boolean indexed,
-            int indexValueBlockCapacity,
-            boolean dedupKey
-    ) {
+    public void addColumnToList(CharSequence columnName, int columnNamePosition, int type, int symbolCapacity, boolean cache, boolean indexed, int indexValueBlockCapacity, boolean dedupKey) {
         assert columnName != null && columnName.length() > 0;
         extraStrInfo.add(columnName);
         extraInfo.add(type);
@@ -95,15 +86,7 @@ public class AlterOperationBuilder {
         return this;
     }
 
-    public void ofAddColumn(
-            CharSequence columnName,
-            int columnNamePosition,
-            int type,
-            int symbolCapacity,
-            boolean cache,
-            boolean indexed,
-            int indexValueBlockCapacity
-    ) {
+    public void ofAddColumn(CharSequence columnName, int columnNamePosition, int type, int symbolCapacity, boolean cache, boolean indexed, int indexValueBlockCapacity) {
         assert columnName != null && columnName.length() > 0;
         extraStrInfo.add(columnName);
         extraInfo.add(type);
@@ -114,13 +97,7 @@ public class AlterOperationBuilder {
         extraInfo.add(columnNamePosition);
     }
 
-    public void ofAddIndex(
-            int tableNamePosition,
-            TableToken tableToken,
-            int tableId,
-            CharSequence columnName,
-            int indexValueBlockSize
-    ) {
+    public void ofAddIndex(int tableNamePosition, TableToken tableToken, int tableId, CharSequence columnName, int indexValueBlockSize) {
         this.command = ADD_INDEX;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
@@ -153,8 +130,8 @@ public class AlterOperationBuilder {
         return this;
     }
 
-    public AlterOperationBuilder ofConvertPartition(int tableNamePosition, TableToken tableToken, int tableId) {
-        this.command = CONVERT_PARTITION;
+    public AlterOperationBuilder ofConvertPartition(int tableNamePosition, TableToken tableToken, int tableId, boolean toParquet) {
+        this.command = toParquet ? CONVERT_PARTITION_TO_PARQUET : CONVERT_PARTITION_TO_NATIVE;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableId;

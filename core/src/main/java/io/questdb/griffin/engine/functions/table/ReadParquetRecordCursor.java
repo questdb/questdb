@@ -137,10 +137,6 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         return dataPtr + dataOffset;
     }
 
-    private boolean symbolToVarcharRemappingDetected(int metadataType, int decoderType) {
-        return metadataType == ColumnType.VARCHAR && decoderType == ColumnType.SYMBOL;
-    }
-
     private boolean metadataHasChanged(RecordMetadata metadata, PartitionDecoder decoder) {
         if (metadata.getColumnCount() != decoder.getMetadata().columnCount()) {
             return true;
@@ -169,7 +165,8 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         dataPtrs.clear();
         auxPtrs.clear();
         if (++rowGroupIndex < decoder.getMetadata().rowGroupCount()) {
-            rowGroupRowCount = decoder.decodeRowGroup(rowGroupBuffers, columns, rowGroupIndex);
+            final int rowGroupSize = decoder.getMetadata().rowGroupSize(rowGroupIndex);
+            rowGroupRowCount = decoder.decodeRowGroup(rowGroupBuffers, columns, rowGroupIndex, 0, rowGroupSize);
 
             for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
                 dataPtrs.add(rowGroupBuffers.getChunkDataPtr(columnIndex));
@@ -179,6 +176,10 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             return true;
         }
         return false;
+    }
+
+    private boolean symbolToVarcharRemappingDetected(int metadataType, int decoderType) {
+        return metadataType == ColumnType.VARCHAR && decoderType == ColumnType.SYMBOL;
     }
 
     private class ParquetRecord implements Record {

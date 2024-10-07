@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -107,6 +108,11 @@ class SelectedRecord implements Record {
     @Override
     public int getInt(int col) {
         return base.getInt(getColumnIndex(col));
+    }
+
+    @Override
+    public Interval getInterval(int col) {
+        return base.getInterval(getColumnIndex(col));
     }
 
     @Override

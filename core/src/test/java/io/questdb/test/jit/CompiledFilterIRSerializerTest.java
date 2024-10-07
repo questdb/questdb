@@ -52,7 +52,6 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.jit.CompiledFilterIRSerializer.*;
 
 public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
-
     private static final String KNOWN_SYMBOL_1 = "ABC";
     private static final String KNOWN_SYMBOL_2 = "DEF";
     private static final String UNKNOWN_SYMBOL = "XYZ";
@@ -273,6 +272,22 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             serialize(colName + " > " + constStr);
             assertIR("different results for " + colName, "(" + constType + " " + constValue + ")(" + colType + " " + colName + ")(>)(ret)");
         }
+    }
+
+    @Test
+    public void testDateLiteral() throws Exception {
+        serialize("adate = '2023-02-11T11:12:22'");
+        assertIR("(i64 1676113942000L)(i64 adate)(=)(ret)");
+        serialize("adate >= '2023-02-11T11:12:22'");
+        assertIR("(i64 1676113942000L)(i64 adate)(>=)(ret)");
+        serialize("adate <= '2023-02-11T11'");
+        assertIR("(i64 1676113200000L)(i64 adate)(<=)(ret)");
+        serialize("adate > '2023-02-11'");
+        assertIR("(i64 1676073600000L)(i64 adate)(>)(ret)");
+        serialize("adate < '2023-02'");
+        assertIR("(i64 1675209600000L)(i64 adate)(<)(ret)");
+        serialize("adate != '2023'");
+        assertIR("(i64 1672531200000L)(i64 adate)(<>)(ret)");
     }
 
     @Test(expected = SqlException.class)
@@ -826,6 +841,16 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test(expected = SqlException.class)
+    public void testUnsupportedStringIntComparison() throws Exception {
+        serialize("astring >= anint");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedSymbolIntComparison() throws Exception {
+        serialize("asymbol >= anint");
+    }
+
+    @Test(expected = SqlException.class)
     public void testUnsupportedTrueConstantInNumericContext() throws Exception {
         serialize("along = true");
     }
@@ -853,6 +878,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test(expected = SqlException.class)
     public void testUnsupportedVarcharInequality() throws Exception {
         serialize("avarchar <> avarchar2");
+    }
+
+    @Test(expected = SqlException.class)
+    public void testUnsupportedVarcharIntComparison() throws Exception {
+        serialize("avarchar >= anint");
     }
 
     @Test
@@ -938,7 +968,6 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     private static class TestIRSerializer {
-
         private final MemoryCARW irMem;
         private final RecordMetadata metadata;
         private long offset;

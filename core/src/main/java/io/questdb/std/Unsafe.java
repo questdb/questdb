@@ -211,6 +211,14 @@ public final class Unsafe {
         return UNSAFE.getLongVolatile(null, REALLOC_COUNT_ADDR);
     }
 
+    public static long getRssMemLimit() {
+        return UNSAFE.getLongVolatile(null, RSS_MEM_LIMIT_ADDR);
+    }
+
+    public static void setRssMemLimit(long limit) {
+        UNSAFE.putLongVolatile(null, RSS_MEM_LIMIT_ADDR, limit);
+    }
+
     public static long getRssMemUsed() {
         return UNSAFE.getLongVolatile(null, RSS_MEM_USED_ADDR);
     }
@@ -301,14 +309,6 @@ public final class Unsafe {
             final long mem = UNSAFE.getAndAddLong(null, NON_RSS_MEM_USED_ADDR, size) + size;
             assert mem >= 0;
         }
-    }
-
-    private static long getRssMemLimit() {
-        return UNSAFE.getLongVolatile(null, RSS_MEM_LIMIT_ADDR);
-    }
-
-    public static void setRssMemLimit(long limit) {
-        UNSAFE.putLongVolatile(null, RSS_MEM_LIMIT_ADDR, limit);
     }
 
     private static long createNativeAllocator(long nativeMemCountersArray, int memoryTag) {

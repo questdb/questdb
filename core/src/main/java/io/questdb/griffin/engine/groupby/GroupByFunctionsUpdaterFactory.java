@@ -25,12 +25,16 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.ObjList;
+import io.questdb.std.ex.BytecodeException;
 import org.jetbrains.annotations.NotNull;
 
 public class GroupByFunctionsUpdaterFactory {
     private static final int FIELD_POOL_OFFSET = 3;
+    private static final Log LOG = LogFactory.getLog(GroupByFunctionsUpdaterFactory.class);
 
     private GroupByFunctionsUpdaterFactory() {
     }
@@ -57,6 +61,35 @@ public class GroupByFunctionsUpdaterFactory {
             BytecodeAssembler asm,
             @NotNull ObjList<GroupByFunction> groupByFunctions
     ) {
+        final Class<GroupByFunctionsUpdater> clazz = getInstanceClass(asm, groupByFunctions.size());
+        return getInstance(clazz, groupByFunctions);
+    }
+
+    /**
+     * Creates an instance of a record sink class previously generated via the
+     * {@link #getInstanceClass(BytecodeAssembler, int)} method.
+     */
+    public static GroupByFunctionsUpdater getInstance(
+            Class<GroupByFunctionsUpdater> clazz,
+            @NotNull ObjList<GroupByFunction> groupByFunctions
+    ) {
+        try {
+            final GroupByFunctionsUpdater updater = clazz.getDeclaredConstructor().newInstance();
+            updater.setFunctions(groupByFunctions);
+            return updater;
+        } catch (Exception e) {
+            LOG.critical().$("could not create an instance of GroupByFunctionsUpdater, cause: ").$(e).$();
+            throw BytecodeException.INSTANCE;
+        }
+    }
+
+    /**
+     * Same as the {@link #getInstance(BytecodeAssembler, ObjList)} method, but returns the generated class instead
+     * of its instance. An instance can be later created via the {@link #getInstance(Class, ObjList)} method.
+     * <p>
+     * Used when creating per-worker updaters for parallel GROUP BY.
+     */
+    public static Class<GroupByFunctionsUpdater> getInstanceClass(BytecodeAssembler asm, int functionCount) {
         asm.init(GroupByFunctionsUpdater.class);
         asm.setupPool();
         final int thisClassIndex = asm.poolClass(asm.poolUtf8("io/questdb/griffin/engine/groupby/GroupByFunctionsUpdaterAsm"));
@@ -64,13 +97,11 @@ public class GroupByFunctionsUpdaterFactory {
         int interfaceClassIndex = asm.poolClass(GroupByFunctionsUpdater.class);
 
         final int superIndex = asm.poolMethod(superclassIndex, "<init>", "()V");
-
         final int typeIndex = asm.poolUtf8("Lio/questdb/griffin/engine/functions/GroupByFunction;");
-        final int functionSize = groupByFunctions.size();
 
         int firstFieldNameIndex = 0;
         int firstFieldIndex = 0;
-        for (int i = 0; i < functionSize; i++) {
+        for (int i = 0; i < functionCount; i++) {
             // if you change pool calls then you will likely need to change the FIELD_POOL_OFFSET constant
             int fieldNameIndex = asm.poolUtf8().putAscii("f").put(i).$();
             int nameAndType = asm.poolNameAndType(fieldNameIndex, typeIndex);
@@ -104,26 +135,23 @@ public class GroupByFunctionsUpdaterFactory {
         asm.defineClass(thisClassIndex, superclassIndex);
         asm.interfaceCount(1);
         asm.putShort(interfaceClassIndex);
-        asm.fieldCount(functionSize);
-        for (int i = 0; i < functionSize; i++) {
+        asm.fieldCount(functionCount);
+        for (int i = 0; i < functionCount; i++) {
             asm.defineField(firstFieldNameIndex + (i * FIELD_POOL_OFFSET), typeIndex);
         }
         asm.methodCount(6);
         asm.defineDefaultConstructor(superIndex);
 
-        generateUpdateNew(asm, functionSize, firstFieldIndex, computeFirstIndex, updateNewIndex, updateNewSigIndex);
-        generateUpdateExisting(asm, functionSize, firstFieldIndex, computeNextIndex, updateExistingIndex, updateExistingSigIndex);
-        generateUpdateEmpty(asm, functionSize, firstFieldIndex, setEmptyIndex, updateEmptyIndex, updateEmptySigIndex);
-        generateSetFunctions(asm, functionSize, firstFieldIndex, setFunctionsIndex, setFunctionsSigIndex, getIndex);
-        generateMerge(asm, functionSize, firstFieldIndex, mergeFunctionIndex, mergeIndex, mergeSigIndex);
+        generateUpdateNew(asm, functionCount, firstFieldIndex, computeFirstIndex, updateNewIndex, updateNewSigIndex);
+        generateUpdateExisting(asm, functionCount, firstFieldIndex, computeNextIndex, updateExistingIndex, updateExistingSigIndex);
+        generateUpdateEmpty(asm, functionCount, firstFieldIndex, setEmptyIndex, updateEmptyIndex, updateEmptySigIndex);
+        generateSetFunctions(asm, functionCount, firstFieldIndex, setFunctionsIndex, setFunctionsSigIndex, getIndex);
+        generateMerge(asm, functionCount, firstFieldIndex, mergeFunctionIndex, mergeIndex, mergeSigIndex);
 
         // class attribute count
         asm.putShort(0);
 
-        GroupByFunctionsUpdater updater = asm.newInstance();
-
-        updater.setFunctions(groupByFunctions);
-        return updater;
+        return asm.loadClass();
     }
 
     private static void generateMerge(

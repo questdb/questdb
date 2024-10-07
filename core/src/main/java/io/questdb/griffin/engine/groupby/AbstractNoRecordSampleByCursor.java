@@ -81,7 +81,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         this.recordFunctions = recordFunctions;
         this.groupByFunctions = groupByFunctions;
         this.groupByFunctionsUpdater = groupByFunctionsUpdater;
-        this.allocator = GroupByAllocatorFactory.createThreadUnsafeAllocator(configuration);
+        this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
         GroupByUtils.setAllocator(groupByFunctions, allocator);
     }
 

@@ -102,8 +102,8 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return UnaryFunction.super.isReadThreadSafe();
+    public boolean isThreadSafe() {
+        return UnaryFunction.super.isThreadSafe();
     }
 
     @Override

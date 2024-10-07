@@ -139,7 +139,6 @@ public class CairoEngine implements Closeable, WriterSource {
             this.rootExecutionContext = new SqlExecutionContextImpl(this, 1)
                     .with(AllowAllSecurityContext.INSTANCE);
 
-
             tableIdGenerator.open();
             checkpointRecover();
 

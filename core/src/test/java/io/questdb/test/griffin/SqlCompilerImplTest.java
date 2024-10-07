@@ -1933,6 +1933,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testComentOnlyQuery() throws Exception {
+        assertSql("\n", "/* comment */");
+    }
+
+    @Test
     public void testCompareStringAndChar() throws Exception {
         assertMemoryLeak(() -> {
             // constant
@@ -3536,11 +3541,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testEmptyQuery() throws Exception {
-        assertException(
-                "                        ",
-                0,
-                "empty query"
-        );
+        assertSql("\n", "                        ");
     }
 
     @Test

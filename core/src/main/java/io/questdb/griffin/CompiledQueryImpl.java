@@ -30,6 +30,7 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.DoneOperationFuture;
 import io.questdb.griffin.engine.ops.OperationDispatcher;
@@ -79,7 +80,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
 
     @Override
     public void clear() {
-        this.type = 0;
+        this.type = NONE;
         this.recordCursorFactory = null;
         this.tableToken = null;
         this.affectedRowsCount = -1;
@@ -225,6 +226,10 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
 
     public void ofDrop() {
         of(DROP);
+    }
+
+    public void ofEmpty() {
+        of(EMPTY, new EmptyTableRecordCursorFactory(EmptyRecordMetadata.INSTANCE), null);
     }
 
     public void ofExplain(RecordCursorFactory recordCursorFactory) {

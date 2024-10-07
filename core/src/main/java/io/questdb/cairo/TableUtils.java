@@ -665,7 +665,8 @@ public final class TableUtils {
             case ColumnType.TIMESTAMP:
             case ColumnType.LONG128:
             case ColumnType.UUID:
-                // Long128 and UUID are null when all 2 longs are NaNs
+            case ColumnType.INTERVAL:
+                // Long128, UUID, and INTERVAL are null when all 2 longs are NaNs
                 // Long256 is null when all 4 longs are NaNs
                 return Numbers.LONG_NULL;
             case ColumnType.GEOBYTE:
@@ -1135,6 +1136,15 @@ public final class TableUtils {
 
     public static void oldPartitionName(Path path, long txn) {
         path.put("-x-").put(txn);
+    }
+
+    public static long openAppend(FilesFacade ff, LPSZ path, Log log) {
+        final long fd = ff.openAppend(path);
+        if (fd > -1) {
+            log.debug().$("open [file=").$(path).$(", fd=").$(fd).I$();
+            return fd;
+        }
+        throw CairoException.critical(ff.errno()).put("could not open append [file=").put(path).put(']');
     }
 
     public static long openFileRWOrFail(FilesFacade ff, LPSZ path, long opts) {

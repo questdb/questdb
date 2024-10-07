@@ -150,9 +150,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
                 }
                 if (col == N_SYMBOL_CAPACITY_COL) {
                     if (ColumnType.isSymbol(cairoColumn.getType())) {
-                        int symbolCapacity = cairoColumn.getSymbolCapacity();
-                        assert symbolCapacity != 0;
-                        return symbolCapacity;
+                        return cairoColumn.getSymbolCapacity();
                     } else {
                         return 0;
                     }

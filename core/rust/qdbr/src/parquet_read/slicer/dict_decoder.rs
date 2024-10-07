@@ -14,7 +14,7 @@ pub struct VarDictDecoder<'a> {
     pub avg_key_len: f32,
 }
 
-impl<'a> DictDecoder for VarDictDecoder<'a> {
+impl DictDecoder for VarDictDecoder<'_> {
     #[inline]
     fn get_dict_value(&self, index: u32) -> &[u8] {
         self.dict_values[index as usize]
@@ -82,7 +82,7 @@ pub struct FixedDictDecoder<'a, const N: usize> {
     dict_page: &'a [u8],
 }
 
-impl<'a, const N: usize> DictDecoder for FixedDictDecoder<'a, N> {
+impl<const N: usize> DictDecoder for FixedDictDecoder<'_, N> {
     #[inline]
     fn get_dict_value(&self, index: u32) -> &[u8] {
         self.dict_page[index as usize * N..(index as usize + 1) * N].as_ref()
