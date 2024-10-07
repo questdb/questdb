@@ -3469,7 +3469,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isHealthCheck() {
+        public boolean preAllocateBuffers() {
             return true;
         }
 
@@ -3587,7 +3587,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public boolean isHealthCheck() {
+        public boolean preAllocateBuffers() {
             return false;
         }
 

@@ -114,11 +114,12 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             this.ownerGroupByFunctions = ownerGroupByFunctions;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
 
-            ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, ownerGroupByFunctions);
+            final Class<GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
+            ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);
             if (perWorkerGroupByFunctions != null) {
                 perWorkerFunctionUpdaters = new ObjList<>(slotCount);
                 for (int i = 0; i < slotCount; i++) {
-                    perWorkerFunctionUpdaters.extendAndSet(i, GroupByFunctionsUpdaterFactory.getInstance(asm, perWorkerGroupByFunctions.getQuick(i)));
+                    perWorkerFunctionUpdaters.extendAndSet(i, GroupByFunctionsUpdaterFactory.getInstance(updaterClass, perWorkerGroupByFunctions.getQuick(i)));
                 }
             } else {
                 perWorkerFunctionUpdaters = null;
@@ -142,12 +143,12 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             destShards = new ObjList<>(shardCount);
             destShards.setPos(shardCount);
 
-            ownerMapSink = RecordSinkFactory.getInstance(asm, columnTypes, listColumnFilter, ownerKeyFunctions, null);
+            final Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(asm, columnTypes, listColumnFilter, ownerKeyFunctions, null);
+            ownerMapSink = RecordSinkFactory.getInstance(sinkClass, ownerKeyFunctions);
             if (perWorkerKeyFunctions != null) {
                 perWorkerMapSinks = new ObjList<>(slotCount);
                 for (int i = 0; i < slotCount; i++) {
-                    RecordSink sink = RecordSinkFactory.getInstance(asm, columnTypes, listColumnFilter, perWorkerKeyFunctions.getQuick(i), null);
-                    perWorkerMapSinks.extendAndSet(i, sink);
+                    perWorkerMapSinks.extendAndSet(i, RecordSinkFactory.getInstance(sinkClass, perWorkerKeyFunctions.getQuick(i)));
                 }
             } else {
                 perWorkerMapSinks = null;
@@ -162,22 +163,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             close();
             throw e;
         }
-    }
-
-    public int acquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
-        if (workerId == -1 && owner) {
-            // Owner thread is free to use the original functions anytime.
-            return -1;
-        }
-        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
-    }
-
-    public int acquire(int workerId, ExecutionCircuitBreaker circuitBreaker) {
-        if (workerId == -1) {
-            // Owner thread is free to use the original functions anytime.
-            return -1;
-        }
-        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
     }
 
     @Override
@@ -351,12 +336,27 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         }
     }
 
-    public boolean isMergeLockRequired() {
-        return perWorkerFunctionUpdaters != null;
-    }
-
     public boolean isSharded() {
         return sharded;
+    }
+
+    public int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
+        if (workerId == -1 && owner) {
+            // Owner thread is free to use the original functions anytime.
+            return -1;
+        }
+        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
+    }
+
+    public int maybeAcquire(int workerId, boolean owner, ExecutionCircuitBreaker circuitBreaker) {
+        if (workerId == -1 && owner) {
+            // Owner thread is free to use its own private filter, function updaters, allocator,
+            // etc. anytime.
+            return -1;
+        }
+        // All other threads, e.g. worker or work stealing threads, must always acquire a lock
+        // to use shared resources.
+        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
     }
 
     public Map mergeOwnerMap() {

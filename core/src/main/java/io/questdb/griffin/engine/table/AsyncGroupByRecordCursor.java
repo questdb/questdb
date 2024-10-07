@@ -298,7 +298,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     long cursor = subSeq.next();
                     if (cursor > -1) {
                         GroupByMergeShardTask task = queue.get(cursor);
-                        GroupByMergeShardJob.run(-1, task, subSeq, cursor);
+                        GroupByMergeShardJob.run(-1, task, subSeq, cursor, atom);
                         reclaimed++;
                     }
                 }

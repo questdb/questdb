@@ -206,7 +206,7 @@ public class DefaultHttpServerConfiguration implements HttpServerConfiguration {
     }
 
     @Override
-    public boolean isHealthCheck() {
+    public boolean preAllocateBuffers() {
         return false;
     }
 

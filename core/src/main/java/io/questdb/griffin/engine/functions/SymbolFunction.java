@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.*;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Long256;
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -44,7 +45,6 @@ import org.jetbrains.annotations.Nullable;
  * getInt() are not cached.*
  */
 public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
-
     private final Utf8StringSink utf8SinkA = new Utf8StringSink();
     private final Utf8StringSink utf8SinkB = new Utf8StringSink();
 
@@ -176,11 +176,14 @@ public abstract class SymbolFunction implements ScalarFunction, SymbolTable {
     @Override
     public final long getTimestamp(Record rec) {
         final CharSequence value = getSymbol(rec);
-        try {
-            return IntervalUtils.parseFloorPartialTimestamp(value);
-        } catch (NumericException e) {
-            throw CairoException.nonCritical().position(0).put("invalid timestamp: [").put(value).put(']');
+        if (value != null) {
+            try {
+                return IntervalUtils.parseFloorPartialTimestamp(value);
+            } catch (NumericException e) {
+                throw CairoException.nonCritical().put("invalid timestamp: [").put(value).put(']');
+            }
         }
+        return Numbers.LONG_NULL;
     }
 
     @Override

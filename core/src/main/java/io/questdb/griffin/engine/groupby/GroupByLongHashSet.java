@@ -172,6 +172,7 @@ public class GroupByLongHashSet {
     }
 
     private long probe(long key, long index) {
+        final long index0 = index;
         do {
             index = (index + 1) & mask;
             long k = keyAt(index);
@@ -181,12 +182,14 @@ public class GroupByLongHashSet {
             if (key == k) {
                 return -index - 1;
             }
-        } while (true);
+        } while (index != index0);
+
+        throw CairoException.critical(0).put("corrupt long hash set");
     }
 
     private void rehash(int newCapacity, int newSizeLimit) {
         if (newCapacity < 0) {
-            throw CairoException.nonCritical().put("set capacity overflow");
+            throw CairoException.nonCritical().put("long hash set capacity overflow");
         }
 
         final int oldSize = size();
