@@ -98,10 +98,6 @@ public class Vm {
         return new MemoryCMRImpl(ff, name, size, memoryTag);
     }
 
-    public static MemoryCMR getCMRDetachedInstance(FilesFacade ff, LPSZ name, long size, int memoryTag) {
-        return new MemoryCMRDetachedImpl(ff, name, size, memoryTag);
-    }
-
     public static MemoryMA getMAInstance(int commitMode) {
         return new MemoryPMARImpl(commitMode);
     }

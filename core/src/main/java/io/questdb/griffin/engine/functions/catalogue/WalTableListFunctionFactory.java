@@ -241,12 +241,11 @@ public class WalTableListFunctionFactory implements FunctionFactory {
 
                 private boolean switchTo(final TableToken tableToken) {
                     try {
-                        tableName = tableToken.getTableName();
-                        final int rootLen = rootPath.size();
-                        rootPath.concat(tableToken).concat(SEQ_DIR);
                         long txnFd = -1;
+                        int rootLen = -1;
                         SeqTxnTracker seqTxnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
                         memoryPressureLevel = seqTxnTracker.getMemoryPressureLevel();
+                        tableName = tableToken.getTableName();
 
                         if (seqTxnTracker.isInitialised()) {
                             suspendedFlag = seqTxnTracker.isSuspended();
@@ -274,6 +273,9 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             // meaning the table is not suspended
                             suspendedFlag = false;
 
+                            rootLen = rootPath.size();
+                            rootPath.concat(tableToken).concat(SEQ_DIR);
+
                             txnFd = TableUtils.openRO(ff, rootPath, TXNLOG_FILE_NAME, LOG);
                             sequencerTxn = ff.readNonNegativeLong(txnFd, TableTransactionLogFile.MAX_TXN_OFFSET_64);
                             rootPath.trimTo(rootLen).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
@@ -288,14 +290,15 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
                             writerLagTxnCount = txReader.getLagTxnCount();
                             SeqTxnTracker txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-                            memoryPressureLevel = txnTracker.getMemoryPressureLevel();
                             return true;
                         } finally {
                             if (txnFd > -1) {
                                 ff.close(txnFd);
                                 txReader.close();
                             }
-                            rootPath.trimTo(rootLen);
+                            if (rootLen > -1) {
+                                rootPath.trimTo(rootLen);
+                            }
                         }
                     } catch (CairoException ex) {
                         if (ex.errnoReadPathDoesNotExist()) {

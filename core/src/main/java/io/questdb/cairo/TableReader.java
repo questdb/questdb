@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.vm.MemoryCMRDetachedImpl;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
@@ -508,19 +509,20 @@ public class TableReader implements Closeable, SymbolTableSource {
         return Numbers.msb(Numbers.ceilPow2(columnCount) * 2);
     }
 
-    private static void growColumn(MemoryR mem1, MemoryR mem2, int columnType, long rowCount) {
+    private static boolean growColumn(MemoryCMRDetachedImpl mem1, MemoryCMRDetachedImpl mem2, int columnType, long rowCount) {
         if (rowCount > 0) {
             if (ColumnType.isVarSize(columnType)) {
                 assert mem2 != null;
                 ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
-                mem2.extend(columnTypeDriver.getAuxVectorSize(rowCount));
-                if (mem1 != null) {
-                    mem1.extend(columnTypeDriver.getDataVectorSizeAt(mem2.addressOf(0), rowCount - 1));
+                if (!mem2.tryExtend(columnTypeDriver.getAuxVectorSize(rowCount))) {
+                    return false;
                 }
+                return mem1.tryExtend(columnTypeDriver.getDataVectorSizeAt(mem2.addressOf(0), rowCount - 1));
             } else {
-                mem1.extend(rowCount << ColumnType.pow2SizeOf(columnType));
+                return mem1.tryExtend(rowCount << ColumnType.pow2SizeOf(columnType));
             }
         }
+        return true;
     }
 
     private boolean acquireTxn() {
@@ -836,20 +838,23 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     @NotNull
-    private MemoryCMR openOrCreateMemory(
+    private MemoryCMRDetachedImpl openOrCreateMemory(
             Path path,
             ObjList<MemoryCMR> columns,
             int primaryIndex,
             @Nullable MemoryCMR mem,
-            long columnSize
+            long columnSize,
+            boolean keepFdOpen
     ) {
+        MemoryCMRDetachedImpl memory;
         if (mem != null && mem != NullMemoryCMR.INSTANCE) {
-            mem.of(ff, path.$(), columnSize, columnSize, MemoryTag.MMAP_TABLE_READER);
+            memory = (MemoryCMRDetachedImpl) mem;
+            memory.of(ff, path.$(), columnSize, columnSize, MemoryTag.MMAP_TABLE_READER, 0, -1, keepFdOpen);
         } else {
-            mem = Vm.getCMRDetachedInstance(ff, path.$(), columnSize, MemoryTag.MMAP_TABLE_READER);
-            columns.setQuick(primaryIndex, mem);
+            memory = new MemoryCMRDetachedImpl(ff, path.$(), columnSize, MemoryTag.MMAP_TABLE_READER, keepFdOpen);
+            columns.setQuick(primaryIndex, memory);
         }
-        return mem;
+        return memory;
     }
 
     private long openPartition0(int partitionIndex) {
@@ -1086,19 +1091,20 @@ public class TableReader implements Closeable, SymbolTableSource {
                 final int columnType = metadata.getColumnType(columnIndex);
 
                 final MemoryCMR dataMem = columns.getQuick(primaryIndex);
+                boolean lastPartition = partitionIndex == partitionCount - 1;
                 if (ColumnType.isVarSize(columnType)) {
                     final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
                     long auxSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
                     TableUtils.iFile(path.trimTo(plen), name, columnTxn);
                     MemoryCMR auxMem = columns.getQuick(secondaryIndex);
-                    auxMem = openOrCreateMemory(path, columns, secondaryIndex, auxMem, auxSize);
+                    auxMem = openOrCreateMemory(path, columns, secondaryIndex, auxMem, auxSize, lastPartition);
                     long dataSize = columnTypeDriver.getDataVectorSizeAt(auxMem.addressOf(0), columnRowCount - 1);
                     if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
                         LOG.critical().$("Invalid var len column size [column=").$(name).$(", size=").$(dataSize).$(", path=").$(path).I$();
                         throw CairoException.critical(0).put("Invalid column size [column=").put(path).put(", size=").put(dataSize).put(']');
                     }
                     TableUtils.dFile(path.trimTo(plen), name, columnTxn);
-                    openOrCreateMemory(path, columns, primaryIndex, dataMem, dataSize);
+                    openOrCreateMemory(path, columns, primaryIndex, dataMem, dataSize, lastPartition);
                 } else {
                     TableUtils.dFile(path.trimTo(plen), name, columnTxn);
                     openOrCreateMemory(
@@ -1106,7 +1112,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                             columns,
                             primaryIndex,
                             dataMem,
-                            columnRowCount << ColumnType.pow2SizeOf(columnType)
+                            columnRowCount << ColumnType.pow2SizeOf(columnType),
+                            lastPartition
                     );
                     Misc.free(columns.getAndSetQuick(secondaryIndex, null));
                 }
@@ -1157,17 +1164,40 @@ public class TableReader implements Closeable, SymbolTableSource {
             int columnBase = getColumnBase(partitionIndex);
             for (int i = 0; i < columnCount; i++) {
                 final int index = getPrimaryColumnIndex(columnBase, i);
-                final MemoryMR mem1 = columns.getQuick(index);
-                reloadColumnAt(
-                        partitionIndex,
-                        path,
-                        columns,
-                        columnTops,
-                        bitmapIndexes,
-                        columnBase,
-                        i,
-                        rowCount
-                );
+                final MemoryCMR mem1 = columns.getQuick(index);
+                if (mem1 == null || mem1 == NullMemoryCMR.INSTANCE || !mem1.isOpen()) {
+                    reloadColumnAt(
+                            partitionIndex,
+                            path,
+                            columns,
+                            columnTops,
+                            bitmapIndexes,
+                            columnBase,
+                            i,
+                            rowCount
+                    );
+                } else {
+                    // Last partitions columns can grow, we keep FDs open.
+                    // Other partitions FDs are closed, they need full file re-opening.
+                    boolean lastPartition = partitionIndex == partitionCount - 1;
+                    if (!lastPartition || !growColumn(
+                            (MemoryCMRDetachedImpl) mem1,
+                            (MemoryCMRDetachedImpl) columns.getQuick(index + 1),
+                            metadata.getColumnType(i),
+                            rowCount - getColumnTop(columnBase, i)
+                    )) {
+                        reloadColumnAt(
+                                partitionIndex,
+                                path,
+                                columns,
+                                columnTops,
+                                bitmapIndexes,
+                                columnBase,
+                                i,
+                                rowCount
+                        );
+                    }
+                }
 
                 // reload symbol map
                 SymbolMapReader reader = symbolMapReaders.getQuick(i);

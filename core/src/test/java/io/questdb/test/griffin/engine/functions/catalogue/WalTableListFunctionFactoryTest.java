@@ -138,6 +138,17 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
+
+    @Test
+    public void testNotInitialized() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable("B", true);
+            createTable("C", true);
+            assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
+                    "B\tfalse\t0\t0\t0\t\t\t0\n" +
+                    "C\tfalse\t0\t0\t0\t\t\t0\n", "wal_tables()");
+        });
+    }
     @Test
     public void testWalTablesSelectAll() throws Exception {
         FilesFacade filesFacade = new TestFilesFacadeImpl() {

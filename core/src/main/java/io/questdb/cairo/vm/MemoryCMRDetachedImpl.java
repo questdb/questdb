@@ -34,13 +34,19 @@ import io.questdb.std.str.LPSZ;
 public class MemoryCMRDetachedImpl extends MemoryCMRImpl {
     private static final Log LOG = LogFactory.getLog(MemoryCMRDetachedImpl.class);
 
-    public MemoryCMRDetachedImpl(FilesFacade ff, LPSZ name, long size, int memoryTag) {
-        super(ff, name, size, memoryTag);
+    public MemoryCMRDetachedImpl(FilesFacade ff, LPSZ name, long size, int memoryTag, boolean keepFdOpen) {
+        super();
+        of(ff, name, 0, size, memoryTag, 0, -1, keepFdOpen);
     }
 
     @Override
     public void extend(long newSize) {
         throw new IllegalStateException("not supported");
+    }
+
+    @Override
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
+        of(ff, name, extendSegmentSize, size, memoryTag, opts, madviseOpts, false);
     }
 
     @Override
@@ -53,13 +59,19 @@ public class MemoryCMRDetachedImpl extends MemoryCMRImpl {
         return pageAddress != 0;
     }
 
-
-    @Override
-    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
+    public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts, boolean keepFdOpen) {
         super.of(ff, name, extendSegmentSize, size, memoryTag, opts, madviseOpts);
-        if (ff != null && ff.close(fd)) {
+        if (!keepFdOpen && ff != null && ff.close(fd)) {
             LOG.debug().$("closing [fd=").$(fd).I$();
             fd = -1;
         }
+    }
+
+    public boolean tryExtend(long newSize) {
+        if (fd != -1) {
+            super.extend(newSize);
+            return true;
+        }
+        return false;
     }
 }
