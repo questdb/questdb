@@ -125,7 +125,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.multipartContentParser = new HttpMultipartContentParser(multipartContentHeaderParser);
         this.responseSink = new HttpResponseSink(contextConfiguration);
         this.recvBufferSize = contextConfiguration.getRecvBufferSize();
-        this.preAllocateBuffers = configuration.isHealthCheck();
+        this.preAllocateBuffers = configuration.preAllocateBuffers();
         if (preAllocateBuffers) {
             recvBuffer = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_HTTP_CONN);
             this.responseSink.open();

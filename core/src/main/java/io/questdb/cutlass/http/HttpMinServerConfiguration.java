@@ -42,5 +42,5 @@ public interface HttpMinServerConfiguration extends WorkerPoolConfiguration {
 
     boolean isPessimisticHealthCheckEnabled();
 
-    boolean isHealthCheck();
+    boolean preAllocateBuffers();
 }
