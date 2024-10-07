@@ -39,7 +39,7 @@ public final class TimestampSamplerFactory {
      * @param cs       input string
      * @param position position in SQL text to report error against
      * @return index of the first character after the interval token
-     * @throws SqlException
+     * @throws SqlException when input string is not a valid interval token
      */
     public static int findIntervalEndIndex(CharSequence cs, int position) throws SqlException {
         int k = -1;
