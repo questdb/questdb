@@ -51,6 +51,7 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
     // 1 not suspended
     private volatile int suspendedState = 0;
     private long walBackoffUntil = -1;
+    private volatile long writerAppliedTxn;
     private volatile long writerTxn = -1;
 
     public String getErrorMessage() {
@@ -59,6 +60,12 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
 
     public ErrorTag getErrorTag() {
         return errorTag;
+    }
+
+    public long getLagTxnCount() {
+        long writerTxn = this.writerTxn;
+        long writerAppliedTxn = this.writerAppliedTxn;
+        return Math.max(0, writerAppliedTxn - writerTxn);
     }
 
     public int getMaxO3MergeParallelism() {
@@ -131,11 +138,16 @@ public class SeqTxnTracker implements O3JobParallelismRegulator {
         return suspendedState < 0;
     }
 
-    public boolean notifyCommitReadable(long newWriterTxn) {
+    public boolean notifyCommitReadable(long newWriterTxn, long lastWriterAppliedTxn) {
         // This is only called under TableWriter lock
         // with no threads race
+        long existingWriterTxn = writerTxn;
+        long existingLastWriterAppliedTxn = writerAppliedTxn;
         writerTxn = newWriterTxn;
-        if (newWriterTxn > -1) {
+        writerAppliedTxn = lastWriterAppliedTxn;
+
+        // No transaction progress == no suspend status change
+        if (newWriterTxn > existingWriterTxn || lastWriterAppliedTxn > existingLastWriterAppliedTxn) {
             suspendedState = 1;
         }
         return newWriterTxn < seqTxn;

@@ -252,6 +252,7 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             suspendedFlag = seqTxnTracker.isSuspended();
                             sequencerTxn = seqTxnTracker.getSeqTxn();
                             writerTxn = seqTxnTracker.getWriterTxn();
+                            writerLagTxnCount = seqTxnTracker.getLagTxnCount();
                             if (suspendedFlag) {
                                 // only read error details from seqTxnTracker if the table is suspended
                                 // when the table is not suspended, it is not guaranteed that error details are immediately cleared

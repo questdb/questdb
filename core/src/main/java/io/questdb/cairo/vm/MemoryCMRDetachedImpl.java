@@ -49,6 +49,12 @@ public class MemoryCMRDetachedImpl extends MemoryCMRImpl {
     }
 
     @Override
+    public boolean isOpen() {
+        return pageAddress != 0;
+    }
+
+
+    @Override
     public void of(FilesFacade ff, LPSZ name, long extendSegmentSize, long size, int memoryTag, long opts, int madviseOpts) {
         super.of(ff, name, extendSegmentSize, size, memoryTag, opts, madviseOpts);
         if (ff != null && ff.close(fd)) {

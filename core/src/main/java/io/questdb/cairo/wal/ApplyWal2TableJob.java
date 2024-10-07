@@ -385,7 +385,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             .I$();
                 }
             } catch (Throwable th) {
-                engine.getTableSequencerAPI().notifyCommitReadable(tableToken, writer.getTxn());
+                // There is an exception the table will be marked as suspended.
+                // Update the last applied transactions before it happens.
+                engine.getTableSequencerAPI().notifyCommitReadable(tableToken, writer.getTxn(), writer.getAppliedSeqTxn());
                 throw th;
             } finally {
                 Misc.free(structuralChangeCursor);
@@ -570,7 +572,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
                 // else: table is dropped and fully cleaned, this is late notification.
             } else {
-                long lastWriterTxn;
+                long lastWriterTxn, lastWriterAppliedTxn;
                 txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
                 try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON)) {
                     assert writer.getMetadata().getTableId() == tableToken.getTableId();
@@ -581,6 +583,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus, txnTracker);
                     txnTracker.hadEnoughMemory(tableToken.getTableName(), rnd);
                     lastWriterTxn = writer.getSeqTxn();
+                    lastWriterAppliedTxn = writer.getAppliedSeqTxn();
                 } catch (EntryUnavailableException tableBusy) {
                     //noinspection StringEquality
                     if (tableBusy.getReason() != NO_LOCK_REASON
@@ -597,7 +600,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     return;
                 }
 
-                if (engine.getTableSequencerAPI().notifyCommitReadable(tableToken, lastWriterTxn)) {
+                if (engine.getTableSequencerAPI().notifyCommitReadable(tableToken, lastWriterTxn, lastWriterAppliedTxn)) {
                     engine.notifyWalTxnCommitted(tableToken);
                 }
             }

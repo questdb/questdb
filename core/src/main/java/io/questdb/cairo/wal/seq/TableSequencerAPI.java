@@ -284,8 +284,8 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public boolean notifyCommitReadable(final TableToken tableToken, long writerTxn) {
-        return getSeqTxnTracker(tableToken).notifyCommitReadable(writerTxn);
+    public boolean notifyCommitReadable(final TableToken tableToken, long writerTxn, long lastWriterAppliedTxn) {
+        return getSeqTxnTracker(tableToken).notifyCommitReadable(writerTxn, lastWriterAppliedTxn);
     }
 
     public boolean notifyOnCheck(TableToken tableToken, long seqTxn) {
