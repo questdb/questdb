@@ -24,13 +24,20 @@
 
 package io.questdb.griffin.engine.functions.finance;
 
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.AbstractCovarGroupByFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
@@ -51,19 +58,80 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
     }
 
 
-    private static class RegressionSlopeFunction extends AbstractCovarGroupByFunction {
+    private static class RegressionSlopeFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
+        protected final Function xFunction;
+        protected final Function yFunction;
+        protected int valueIndex;
 
         public RegressionSlopeFunction(@NotNull Function arg0, @NotNull Function arg1) {
-            super(arg0, arg1);
+            this.xFunction = arg0;
+            this.yFunction = arg1;
 
+        }
+
+        @Override
+        public void computeFirst(MapValue mapValue, Record record, long rowId) {
+            final double x = xFunction.getDouble(record);
+            final double y = yFunction.getDouble(record);
+            mapValue.putDouble(valueIndex, 0);
+            mapValue.putDouble(valueIndex + 1, 0);
+            mapValue.putDouble(valueIndex + 2, 0);
+            mapValue.putLong(valueIndex + 3, 0);
+
+            if (Numbers.isFinite(x) && Numbers.isFinite(y)) {
+                aggregate(mapValue, x, y);
+            }
+        }
+
+        @Override
+        public void computeNext(MapValue mapValue, Record record, long rowId) {
+            final double x = xFunction.getDouble(record);
+            final double y = yFunction.getDouble(record);
+            if (Numbers.isFinite(x) && Numbers.isFinite(y)) {
+                aggregate(mapValue, x, y);
+            }
+        }
+
+        @Override
+        public int getValueIndex() {
+            return valueIndex;
+        }
+
+        @Override
+        public void initValueIndex(int valueIndex) {
+            this.valueIndex = valueIndex;
+        }
+
+        @Override
+        public void initValueTypes(ArrayColumnTypes columnTypes) {
+            this.valueIndex = columnTypes.getColumnCount();
+            columnTypes.add(ColumnType.DOUBLE);
+            columnTypes.add(ColumnType.DOUBLE);
+            columnTypes.add(ColumnType.DOUBLE);
+            columnTypes.add(ColumnType.DOUBLE);
+            columnTypes.add(ColumnType.LONG);
+        }
+
+        @Override
+        public void setNull(MapValue mapValue) {
+            mapValue.putDouble(valueIndex, Double.NaN);
+            mapValue.putDouble(valueIndex + 1, Double.NaN);
+            mapValue.putDouble(valueIndex + 2, Double.NaN);
+            mapValue.putDouble(valueIndex + 3, Double.NaN);
+            mapValue.putLong(valueIndex + 4, 0);
+        }
+
+        @Override
+        public boolean supportsParallelism() {
+            return false;
         }
 
 
         @Override
         public double getDouble(Record rec) {
-            long count = rec.getLong(valueIndex + 3);
-            double covXY = rec.getDouble(valueIndex + 2) / count;
-            double varX = rec.getDouble(valueIndex + 4) / count;
+            long count = rec.getLong(valueIndex + 4);
+            double covXY = rec.getDouble(valueIndex + 3) / count;
+            double varX = rec.getDouble(valueIndex + 2) / count;
 
             if (varX == 0) {
                 return Double.NaN;
@@ -73,8 +141,44 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function getLeft() {
+            return xFunction;
+        }
+
+        @Override
+        public Function getRight() {
+            return yFunction;
+        }
+
+        @Override
+        public boolean isConstant() {
+            return false;
+        }
+
+        @Override
         public String getName() {
             return "regr_slope";
         }
+
+        protected void aggregate(MapValue mapValue, double x, double y) {
+            double meanX = mapValue.getDouble(valueIndex);
+            double meanY = mapValue.getDouble(valueIndex + 1);
+            double sumX = mapValue.getDouble(valueIndex + 2);
+            double sumXY = mapValue.getDouble(valueIndex + 3);
+            long count = mapValue.getLong(valueIndex + 4) + 1;
+
+            double oldMeanX = meanX;
+            meanX += (x - meanX) / count;
+            meanY += (y - meanY) / count;
+            sumX += (x - oldMeanX) * (x - meanX);
+            sumXY += (x - oldMeanX) * (y - meanY);
+
+            mapValue.putDouble(valueIndex, meanX);
+            mapValue.putDouble(valueIndex + 1, meanY);
+            mapValue.putDouble(valueIndex + 2, sumX);
+            mapValue.putDouble(valueIndex + 3, sumXY);
+            mapValue.addLong(valueIndex + 4, 1L);
+        }
     }
+
 }
