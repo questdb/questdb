@@ -91,11 +91,12 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
             this.ownerGroupByFunctions = ownerGroupByFunctions;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
 
-            ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, ownerGroupByFunctions);
+            final Class<GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
+            ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);
             if (perWorkerGroupByFunctions != null) {
                 perWorkerFunctionUpdaters = new ObjList<>(slotCount);
                 for (int i = 0; i < slotCount; i++) {
-                    perWorkerFunctionUpdaters.extendAndSet(i, GroupByFunctionsUpdaterFactory.getInstance(asm, perWorkerGroupByFunctions.getQuick(i)));
+                    perWorkerFunctionUpdaters.extendAndSet(i, GroupByFunctionsUpdaterFactory.getInstance(updaterClass, perWorkerGroupByFunctions.getQuick(i)));
                 }
             } else {
                 perWorkerFunctionUpdaters = null;
@@ -119,14 +120,6 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
             close();
             throw e;
         }
-    }
-
-    public int acquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
-        if (workerId == -1 && owner) {
-            // Owner thread is free to use the original filter anytime.
-            return -1;
-        }
-        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
     }
 
     @Override
@@ -253,6 +246,16 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
             // DataUnavailableException thrown on worker threads when filtering.
             Function.initCursor(perWorkerFilters);
         }
+    }
+
+    public int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
+        if (workerId == -1 && owner) {
+            // Owner thread is free to use its own private filter, function updaters, etc. anytime.
+            return -1;
+        }
+        // All other threads, e.g. worker or work stealing threads, must always acquire a lock
+        // to use shared resources.
+        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
     }
 
     public void release(int slotId) {

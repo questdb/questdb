@@ -142,7 +142,7 @@ public class VectTest {
                 for (int i = 0; i < nMax; i++) {
                     final long size = i * testCase.sizeBytes;
                     final long ptr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
-                    Vect.memsetChecked(ptr, size, 0);
+                    Vect.memset(ptr, size, 0);
                     try {
                         testCase.run(ptr, i);
                     } finally {
@@ -942,7 +942,7 @@ public class VectTest {
                     auxMemDest.extend(2 * rowCount * 8L + 8L);
                     dataMemDest.extend(dataMemA.getAppendOffset() + dataMemB.getAppendOffset());
 
-                    Vect.oooMergeCopyStrColumnChecked(index.getAddress(), 2 * rowCount,
+                    Vect.oooMergeCopyStrColumn(index.getAddress(), 2 * rowCount,
                             auxMemA.addressOf(0), dataMemA.addressOf(0),
                             auxMemB.addressOf(0), dataMemB.addressOf(0),
                             auxMemDest.addressOf(0), dataMemDest.addressOf(0),
@@ -1317,7 +1317,7 @@ public class VectTest {
             try {
                 seedMem2Longs(1, indexAddr);
                 long expected = Unsafe.getUnsafe().getLong(indexAddr);
-                Vect.sortLongIndexAscInPlaceChecked(indexAddr, 1);
+                Vect.sortLongIndexAscInPlace(indexAddr, 1);
                 Assert.assertEquals(expected, Unsafe.getUnsafe().getLong(indexAddr));
             } finally {
                 Unsafe.free(indexAddr, 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -1417,7 +1417,7 @@ public class VectTest {
     private long seedAndSort(int count) {
         final long indexAddr = Unsafe.malloc(count * 2L * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         seedMem2Longs(count, indexAddr);
-        Vect.sortLongIndexAscInPlaceChecked(indexAddr, count);
+        Vect.sortLongIndexAscInPlace(indexAddr, count);
         return indexAddr;
     }
 
@@ -1450,7 +1450,7 @@ public class VectTest {
         final long indexAddr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
             seedMem2Longs(count, indexAddr);
-            Vect.quickSortLongIndexAscInPlaceChecked(indexAddr, count);
+            Vect.quickSortLongIndexAscInPlace(indexAddr, count);
             assertIndexAsc(count, indexAddr);
         } finally {
             Unsafe.free(indexAddr, size, MemoryTag.NATIVE_DEFAULT);
@@ -1462,7 +1462,7 @@ public class VectTest {
         final long indexAddr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
         try {
             seedMem2Longs(count, indexAddr);
-            Vect.sortLongIndexAscInPlaceChecked(indexAddr, count);
+            Vect.sortLongIndexAscInPlace(indexAddr, count);
             assertIndexAsc(count, indexAddr);
         } finally {
             Unsafe.free(indexAddr, size, MemoryTag.NATIVE_DEFAULT);
@@ -1487,7 +1487,7 @@ public class VectTest {
             Vect.memcpy(aAddrCopy, aAddr, sizeA);
             Vect.memcpy(bAddrCopy, bAddr, sizeB);
 
-            Vect.radixSortABLongIndexAscChecked(aAddr, aCount, bAddr, bCount, aAddr, cpyAddr);
+            Vect.radixSortABLongIndexAsc(aAddr, aCount, bAddr, bCount, aAddr, cpyAddr);
             assertIndexAsc(aCount + bCount, aAddr, aAddrCopy, bAddrCopy);
         } finally {
             Unsafe.free(aAddr, resultSize, MemoryTag.NATIVE_DEFAULT);
