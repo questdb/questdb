@@ -60,7 +60,7 @@ public class DirectUtf16Sink implements MutableUtf16Sink, DirectCharSequence, Cl
 
     @Override
     public void close() {
-        Unsafe.free(ptr, capacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
+        ptr = Unsafe.free(ptr, capacity, MemoryTag.NATIVE_DIRECT_CHAR_SINK);
     }
 
     @TestOnly

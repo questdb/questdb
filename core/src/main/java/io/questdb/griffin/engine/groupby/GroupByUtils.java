@@ -45,6 +45,15 @@ import java.util.ArrayDeque;
 
 public class GroupByUtils {
 
+    public static boolean isEarlyExitSupported(ObjList<GroupByFunction> functions) {
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (!functions.getQuick(i).isEarlyExitSupported()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static boolean isParallelismSupported(ObjList<GroupByFunction> functions) {
         for (int i = 0, n = functions.size(); i < n; i++) {
             if (!functions.getQuick(i).supportsParallelism()) {

@@ -105,8 +105,8 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
     }
 
     @Override
-    public boolean isReadThreadSafe() {
-        return UnaryFunction.super.isReadThreadSafe();
+    public boolean isThreadSafe() {
+        return UnaryFunction.super.isThreadSafe();
     }
 
     @Override

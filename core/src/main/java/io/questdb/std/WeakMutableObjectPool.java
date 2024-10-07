@@ -34,7 +34,12 @@ public class WeakMutableObjectPool<T extends Mutable> extends WeakObjectPoolBase
     public WeakMutableObjectPool(@NotNull ObjectFactory<T> factory, int initSize) {
         super(initSize);
         this.factory = factory;
-        fill();
+        try {
+            fill();
+        } catch (Throwable e) {
+            close();
+            throw e;
+        }
     }
 
     @Override
