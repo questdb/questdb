@@ -580,7 +580,16 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.partition.encoder.parquet.row.group.size\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE\t0\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.data.page.size\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE\t0\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.encoder.parquet.compression.codec\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC\t0\tdefault\tfalse\tfalse\n" +
-                                    "cairo.partition.encoder.parquet.compression.level\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL\t0\tdefault\tfalse\tfalse\n"
+                                    "cairo.partition.encoder.parquet.compression.level\tQDB_CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL\t0\tdefault\tfalse\tfalse\n" +
+                                    "http.min.receive.buffer.size\tQDB_HTTP_MIN_RECEIVE_BUFFER_SIZE\t1024\tdefault\tfalse\tfalse\n" +
+                                    "http.min.request.header.buffer.size\tQDB_HTTP_MIN_REQUEST_HEADER_BUFFER_SIZE\t4096\tdefault\tfalse\tfalse\n" +
+                                    "http.min.allow.deflate.before.send\tQDB_HTTP_MIN_ALLOW_DEFLATE_BEFORE_SEND\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "http.min.multipart.header.buffer.size\tQDB_HTTP_MIN_MULTIPART_HEADER_BUFFER_SIZE\t512\tdefault\tfalse\tfalse\n" +
+                                    "http.min.send.buffer.size\tQDB_HTTP_MIN_SEND_BUFFER_SIZE\t4096\tdefault\tfalse\tfalse\n" +
+                                    "http.min.server.keep.alive\tQDB_HTTP_MIN_SERVER_KEEP_ALIVE\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "http.min.connection.string.pool.capacity\tQDB_HTTP_MIN_CONNECTION_STRING_POOL_CAPACITY\t2\tdefault\tfalse\tfalse\n" +
+                                    "http.min.connection.pool.initial.capacity\tQDB_HTTP_MIN_CONNECTION_POOL_INITIAL_CAPACITY\t2\tdefault\tfalse\tfalse\n" +
+                                    "http.min.multipart.idle.spin.count\tQDB_HTTP_MIN_MULTIPART_IDLE_SPIN_COUNT\t0\tdefault\tfalse\tfalse\n"
                             )
                                     .split("\n");
 
