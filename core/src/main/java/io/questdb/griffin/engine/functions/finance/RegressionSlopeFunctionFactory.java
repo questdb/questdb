@@ -131,6 +131,11 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             long count = rec.getLong(valueIndex + 4);
+
+            if (count == 0) {
+                return Double.NaN;
+            }
+
             double covXY = rec.getDouble(valueIndex + 3) / count;
             double varX = rec.getDouble(valueIndex + 2) / count;
 
