@@ -311,7 +311,8 @@ public final class Unsafe {
         }
     }
 
-    private static long createNativeAllocator(long nativeMemCountersArray, int memoryTag) {
+    /** Allocate a new native allocator object and return its pointer */
+    private static long constructNativeAllocator(long nativeMemCountersArray, int memoryTag) {
         // See `allocator.rs` for the definition of `QdbAllocator`.
         // We construct here via `Unsafe` to avoid having initialization order issues with `Os.java`.
         final long allocSize = 8 + 8 + 4;  // two longs, one int
@@ -554,7 +555,7 @@ public final class Unsafe {
             ptr += 8;
         }
         for (int memoryTag = NATIVE_DEFAULT; memoryTag < MemoryTag.SIZE; ++memoryTag) {
-            NATIVE_ALLOCATORS[memoryTag - NATIVE_DEFAULT] = createNativeAllocator(
+            NATIVE_ALLOCATORS[memoryTag - NATIVE_DEFAULT] = constructNativeAllocator(
                     nativeMemCountersArray, memoryTag);
         }
     }
