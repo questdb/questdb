@@ -4168,6 +4168,24 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntervalToStr() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "cast\n" +
+                        "('1991-11-08T09:53:57.643Z', '1995-12-22T06:21:36.636Z')\n" +
+                        "('1987-02-10T05:53:36.329Z', '1992-01-23T11:30:00.830Z')\n" +
+                        "('1976-02-09T03:40:32.587Z', '1979-08-18T11:00:20.247Z')\n" +
+                        "('2028-07-16T17:59:01.082Z', '2029-03-05T12:49:29.174Z')\n" +
+                        "('2014-08-18T15:50:20.864Z', '2016-02-17T19:58:31.466Z')\n" +
+                        "('1998-08-22T09:31:10.281Z', '2003-08-09T14:59:20.394Z')\n" +
+                        "('2031-04-13T21:30:51.977Z', '2033-04-24T06:22:27.339Z')\n" +
+                        "('1998-08-25T13:53:59.100Z', '2000-06-21T03:19:31.403Z')\n" +
+                        "('2031-02-04T05:18:53.600Z', '2033-08-21T03:18:57.217Z')\n" +
+                        "('1975-05-26T13:57:40.478Z', '1977-07-09T21:00:52.129Z')\n",
+                "select cast(rnd_interval() as string) from long_sequence(10)"
+        ));
+    }
+
+    @Test
     public void testLong256ToBoolean() throws Exception {
         assertQuery(
                 "a\n",

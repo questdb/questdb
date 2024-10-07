@@ -29,6 +29,7 @@ import io.questdb.std.*;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.Utf16Sink;
+import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MICROS;
 
@@ -1129,7 +1130,8 @@ public final class Timestamps {
         long l = parseOffset(timezone, lo, hi);
         if (l == Long.MIN_VALUE) {
             return utc + locale.getZoneRules(
-                    Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)), RESOLUTION_MICROS
+                    Numbers.decodeLowInt(locale.matchZone(timezone, lo, hi)),
+                    RESOLUTION_MICROS
             ).getOffset(utc);
         }
         offset = Numbers.decodeLowInt(l) * MINUTE_MICROS;
@@ -1164,9 +1166,15 @@ public final class Timestamps {
             // getOffset really needs UTC date, not local
             offset = zoneRules.getOffset(timestampWithTimezone - offset);
             return timestampWithTimezone - offset;
-
         }
         offset = Numbers.decodeLowInt(l) * MINUTE_MICROS;
+        return timestampWithTimezone - offset;
+    }
+
+    public static long toUTC(long timestampWithTimezone, TimeZoneRules zoneRules) {
+        long offset = zoneRules.getOffset(timestampWithTimezone);
+        // getOffset really needs UTC date, not local
+        offset = zoneRules.getOffset(timestampWithTimezone - offset);
         return timestampWithTimezone - offset;
     }
 

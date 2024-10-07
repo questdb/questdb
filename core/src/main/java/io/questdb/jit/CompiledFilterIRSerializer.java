@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.*;
+import io.questdb.std.datetime.microtime.Timestamps;
 
 import java.util.ArrayDeque;
 import java.util.Arrays;
@@ -96,7 +97,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
     private final PostOrderTreeTraversalAlgo inPredicateTraverseAlgo = new PostOrderTreeTraversalAlgo();
     private final PredicateContext predicateContext = new PredicateContext();
-    private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private ObjList<Function> bindVarFunctions;
     private final LongObjHashMap.LongObjConsumer<ExpressionNode> backfillNodeConsumer = this::backfillNode;
     private SqlExecutionContext executionContext;
@@ -334,6 +334,22 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return true;
         }
         return Chars.equals(token, "/");
+    }
+
+    // Stands for PredicateType.NUMERIC
+    private static boolean isNumeric(int columnTypeTag) {
+        switch (columnTypeTag) {
+            case ColumnType.BYTE:
+            case ColumnType.SHORT:
+            case ColumnType.INT:
+            case ColumnType.LONG:
+            case ColumnType.FLOAT:
+            case ColumnType.DOUBLE:
+            case ColumnType.LONG128:
+                return true;
+            default:
+                return false;
+        }
     }
 
     private static boolean isTopLevelOperation(ExpressionNode node) {
@@ -682,6 +698,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     throw SqlException.invalidDate(token, position);
                 }
                 return;
+            } else if (predicateContext.type == PredicateType.DATE) {
+                try {
+                    long date = IntervalUtils.parseFloorPartialTimestamp(token, 1, len - 1) / Timestamps.MILLI_MICROS;
+                    putOperand(offset, IMM, I8_TYPE, date);
+                } catch (NumericException e) {
+                    throw SqlException.invalidDate(token, position);
+                }
+                return;
             } else if (len == 3) {
                 if (predicateContext.type != PredicateType.CHAR) {
                     throw SqlException.position(position).put("char constant in non-char expression: ").put(token);
@@ -813,9 +837,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final ExpressionNode lhs = predicateContext.inOperationNode.lhs;
 
         int orCount = -1;
-        for (int i = 0; i < intervals.size() / 2; i += 1) {
-            long lo = IntervalUtils.getEncodedPeriodLo(intervals, i * 2);
-            long hi = IntervalUtils.getEncodedPeriodHi(intervals, i * 2);
+        for (int i = 0, n = intervals.size(); i < n; i += 2) {
+            long lo = IntervalUtils.getEncodedPeriodLo(intervals, i);
+            long hi = IntervalUtils.getEncodedPeriodHi(intervals, i);
             putOperand(IMM, I8_TYPE, lo);
             inPredicateTraverseAlgo.traverse(lhs, this);
             putOperator(GE);
@@ -1074,7 +1098,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     }
 
     private enum PredicateType {
-        NUMERIC, CHAR, SYMBOL, BOOLEAN, GEO_HASH, UUID, IPv4, TIMESTAMP
+        NUMERIC, CHAR, SYMBOL, BOOLEAN, GEO_HASH, UUID, IPv4, TIMESTAMP, DATE
     }
 
     private static class SqlWrapperException extends RuntimeException {
@@ -1090,7 +1114,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * Helper class for accumulating column and bind variable types information.
      */
     private static class TypesObserver implements Mutable {
-
         private static final int BINARY_HEADER_INDEX = 8;
         private static final int F4_INDEX = 3;
         private static final int F8_INDEX = 5;
@@ -1238,7 +1261,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * </pre>
      */
     private class PredicateContext implements Mutable {
-
         final TypesObserver globalTypesObserver = new TypesObserver();
         final TypesObserver localTypesObserver = new TypesObserver();
         private final LongList inIntervals = new LongList();
@@ -1334,7 +1356,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             final int columnType = metadata.getColumnType(columnIndex);
             final int columnTypeTag = ColumnType.tagOf(columnType);
             if (columnTypeTag == ColumnType.SYMBOL) {
-                symbolTable = (StaticSymbolTable) pageFrameCursor.getSymbolTable(columnIndex);
+                symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
                 symbolColumnIndex = columnIndex;
             }
 
@@ -1423,8 +1445,17 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     }
                     type = PredicateType.TIMESTAMP;
                     break;
+                case ColumnType.DATE:
+                    if (type != null && type != PredicateType.DATE) {
+                        throw SqlException.position(position)
+                                .put("non-date column in date expression: ")
+                                .put(ColumnType.nameOf(columnTypeTag));
+                    }
+                    type = PredicateType.DATE;
+                    break;
                 default:
-                    if (type != null && type != PredicateType.NUMERIC) {
+                    if ((type != null && type != PredicateType.NUMERIC)
+                            || (!isNumeric(columnTypeTag) && type == PredicateType.NUMERIC)) {
                         throw SqlException.position(position)
                                 .put("non-numeric column in numeric expression: ")
                                 .put(ColumnType.nameOf(columnTypeTag));

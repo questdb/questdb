@@ -29,7 +29,7 @@ import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.RecordCursor;
 
 public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCursor {
-    protected long rowGroupHi; // used for Parquet frames generation
+    protected long rowHi; // used for Parquet frames generation
 
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
@@ -64,7 +64,7 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
                     parquetDecoder.of(fd, readSize);
                     rowGroupCount = parquetDecoder.getMetadata().rowGroupCount();
                     rowGroupIndex = rowGroupCount - 1;
-                    rowGroupHi = hi;
+                    rowHi = hi;
                     return prepareParquetFrame();
                 }
 
@@ -91,7 +91,7 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
         partitionIndex = partitionHi - 1;
         rowGroupIndex = -1;
         rowGroupCount = 0;
-        rowGroupHi = 0;
+        rowHi = 0;
     }
 
     private FullTablePartitionFrame prepareParquetFrame() {
@@ -99,9 +99,10 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
         frame.partitionFormat = PartitionFormat.PARQUET;
         frame.parquetFd = parquetDecoder.getFd();
         frame.parquetReadSize = parquetDecoder.getReadSize();
-        frame.rowHi = rowGroupHi;
-        frame.rowLo = rowGroupHi - parquetDecoder.getMetadata().rowGroupSize(rowGroupIndex);
-        rowGroupHi = frame.rowLo;
+        frame.rowGroupLo = 0;
+        frame.rowHi = rowHi;
+        frame.rowLo = rowHi - parquetDecoder.getMetadata().rowGroupSize(rowGroupIndex);
+        rowHi = frame.rowLo;
         if (--rowGroupIndex == -1) {
             // Proceed to the next partition on the next call.
             partitionIndex--;

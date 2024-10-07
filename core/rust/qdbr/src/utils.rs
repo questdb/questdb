@@ -9,6 +9,12 @@ impl DefaultReturn for () {
     fn default_return() -> Self {}
 }
 
+impl DefaultReturn for u32 {
+    fn default_return() -> Self {
+        0
+    }
+}
+
 impl DefaultReturn for usize {
     fn default_return() -> Self {
         0

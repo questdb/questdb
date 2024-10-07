@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import org.jetbrains.annotations.Nullable;
 
 public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCursor {
-    protected long rowGroupLo; // used for Parquet frames generation
+    protected long rowLo; // used for Parquet frames generation
 
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
@@ -62,7 +62,7 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
                     final long readSize = reader.getParquetReadSize(partitionIndex);
                     assert fd != -1;
                     parquetDecoder.of(fd, readSize);
-                    rowGroupLo = 0;
+                    rowLo = 0;
                     rowGroupIndex = 0;
                     rowGroupCount = parquetDecoder.getMetadata().rowGroupCount();
                     return prepareParquetFrame();
@@ -75,6 +75,7 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
                 frame.rowLo = 0;
                 frame.rowHi = hi;
                 frame.rowGroupIndex = -1;
+                frame.rowGroupLo = -1;
                 partitionIndex++;
                 return frame;
             }
@@ -92,16 +93,17 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
         partitionIndex = 0;
         rowGroupIndex = 0;
         rowGroupCount = 0;
-        rowGroupLo = 0;
+        rowLo = 0;
     }
 
     private FullTablePartitionFrame prepareParquetFrame() {
         frame.partitionIndex = partitionIndex;
         frame.partitionFormat = PartitionFormat.PARQUET;
         frame.parquetFd = parquetDecoder.getFd();
-        frame.rowLo = rowGroupLo;
-        frame.rowHi = rowGroupLo + parquetDecoder.getMetadata().rowGroupSize(rowGroupIndex);
-        rowGroupLo = frame.rowHi;
+        frame.rowGroupLo = 0;
+        frame.rowLo = rowLo;
+        frame.rowHi = rowLo + parquetDecoder.getMetadata().rowGroupSize(rowGroupIndex);
+        rowLo = frame.rowHi;
         if (++rowGroupIndex == rowGroupCount) {
             // Proceed to the next partition on the next call.
             partitionIndex++;

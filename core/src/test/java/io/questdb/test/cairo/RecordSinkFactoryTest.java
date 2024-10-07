@@ -141,6 +141,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         columnTypes.add(ColumnType.GEOLONG);
         columnTypes.add(ColumnType.LONG128);
         columnTypes.add(ColumnType.UUID);
+        columnTypes.add(ColumnType.INTERVAL);
         return columnTypes;
     }
 
@@ -169,6 +170,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         keyFunctions.add(new TestFunction(ColumnType.GEOLONG));
         keyFunctions.add(new TestFunction(ColumnType.LONG128));
         keyFunctions.add(new TestFunction(ColumnType.UUID));
+        keyFunctions.add(new TestFunction(ColumnType.INTERVAL));
         return keyFunctions;
     }
 
@@ -390,6 +392,13 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
             Assert.assertEquals(ColumnType.INT, type);
             callCount++;
             return 1;
+        }
+
+        @Override
+        public @NotNull Interval getInterval(Record rec) {
+            Assert.assertEquals(ColumnType.INTERVAL, type);
+            callCount++;
+            return Interval.NULL;
         }
 
         @Override
@@ -625,6 +634,13 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public Interval getInterval(int col) {
+            recordedIndexes.add(col);
+            recordedTypes.add(ColumnType.INTERVAL);
+            return Interval.NULL;
+        }
+
+        @Override
         public long getLong(int col) {
             recordedIndexes.add(col);
             recordedTypes.add(ColumnType.LONG);
@@ -736,6 +752,11 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         @Override
         public void putInt(int value) {
             recordedTypes.add(ColumnType.INT);
+        }
+
+        @Override
+        public void putInterval(Interval interval) {
+            recordedTypes.add(ColumnType.INTERVAL);
         }
 
         @Override

@@ -31,7 +31,6 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Arrays;
 
 public class Utf8SequenceHashSet extends AbstractUtf8SequenceHashSet implements Sinkable {
-
     private static final int MIN_INITIAL_CAPACITY = 16;
     private final ObjList<Utf8Sequence> list;
     private boolean hasNull = false;
@@ -104,8 +103,8 @@ public class Utf8SequenceHashSet extends AbstractUtf8SequenceHashSet implements 
 
     @Override
     public final void clear() {
-        free = capacity;
         Arrays.fill(keys, null);
+        free = capacity;
         list.clear();
         hasNull = false;
     }

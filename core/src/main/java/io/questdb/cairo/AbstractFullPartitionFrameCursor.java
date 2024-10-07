@@ -89,8 +89,10 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
         protected byte partitionFormat;
         protected int partitionIndex;
         protected int rowGroupIndex;
+        // we don't need rowGroupLo as it can be calculated as rowGroupLo+(rowHi-rowLo)
+        protected int rowGroupLo;
         protected long rowHi;
-        protected long rowLo = 0;
+        protected long rowLo;
 
         @Override
         public long getParquetFd() {
@@ -105,6 +107,11 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
         @Override
         public int getParquetRowGroup() {
             return rowGroupIndex;
+        }
+
+        @Override
+        public int getParquetRowGroupLo() {
+            return rowGroupLo;
         }
 
         @Override

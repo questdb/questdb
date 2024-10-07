@@ -40,7 +40,7 @@ import org.jetbrains.annotations.TestOnly;
 public abstract class AbstractIntervalPartitionFrameCursor implements PartitionFrameCursor {
     public static final int SCAN_DOWN = 1;
     public static final int SCAN_UP = -1;
-    protected final RuntimeIntrinsicIntervalModel intervalsModel;
+    protected final RuntimeIntrinsicIntervalModel intervalModel;
     protected final IntervalPartitionFrame partitionFrame = new IntervalPartitionFrame();
     protected final int timestampIndex;
     protected LongList intervals;
@@ -60,9 +60,9 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     private int initialPartitionHi;
     private int initialPartitionLo;
 
-    public AbstractIntervalPartitionFrameCursor(RuntimeIntrinsicIntervalModel intervals, int timestampIndex) {
+    public AbstractIntervalPartitionFrameCursor(RuntimeIntrinsicIntervalModel intervalModel, int timestampIndex) {
         assert timestampIndex > -1;
-        this.intervalsModel = intervals;
+        this.intervalModel = intervalModel;
         this.timestampIndex = timestampIndex;
     }
 
@@ -94,8 +94,8 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         return reader.newSymbolTable(columnIndex);
     }
 
-    public AbstractIntervalPartitionFrameCursor of(TableReader reader, SqlExecutionContext sqlContext) throws SqlException {
-        this.intervals = intervalsModel.calculateIntervals(sqlContext);
+    public AbstractIntervalPartitionFrameCursor of(TableReader reader, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        this.intervals = intervalModel.calculateIntervals(sqlExecutionContext);
         calculateRanges(reader, intervals);
         this.reader = reader;
         return this;
@@ -287,7 +287,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     protected static class IntervalPartitionFrame implements PartitionFrame {
         protected int partitionIndex;
         protected long rowHi;
-        protected long rowLo = 0;
+        protected long rowLo;
 
         @Override
         public long getParquetFd() {
@@ -303,6 +303,12 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
 
         @Override
         public int getParquetRowGroup() {
+            // TODO(amunra): Add support for parquet interval intrinsics.
+            throw new UnsupportedOperationException("interval intrinsics not yet implemented for parquet partitions");
+        }
+
+        @Override
+        public int getParquetRowGroupLo() {
             // TODO(amunra): Add support for parquet interval intrinsics.
             throw new UnsupportedOperationException("interval intrinsics not yet implemented for parquet partitions");
         }

@@ -100,14 +100,14 @@ public class SqlUtilTest {
             SqlUtil.implicitCastStrAsIPv4("77823.23232.23232.33");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("invalid ipv4 format: 77823.23232.23232.33", e.getFlyweightMessage());
+            TestUtils.assertEquals("invalid IPv4 format: 77823.23232.23232.33", e.getFlyweightMessage());
         }
 
         try {
             SqlUtil.implicitCastStrAsIPv4("hello");
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("invalid ipv4 format: hello", e.getFlyweightMessage());
+            TestUtils.assertEquals("invalid IPv4 format: hello", e.getFlyweightMessage());
         }
     }
 
@@ -149,14 +149,14 @@ public class SqlUtilTest {
             SqlUtil.implicitCastStrAsIPv4(new Utf8String("77823.23232.23232.33"));
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("invalid ipv4 format: 77823.23232.23232.33", e.getFlyweightMessage());
+            TestUtils.assertEquals("invalid IPv4 format: 77823.23232.23232.33", e.getFlyweightMessage());
         }
 
         try {
             SqlUtil.implicitCastStrAsIPv4(new Utf8String("hello"));
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertEquals("invalid ipv4 format: hello", e.getFlyweightMessage());
+            TestUtils.assertEquals("invalid IPv4 format: hello", e.getFlyweightMessage());
         }
     }
 

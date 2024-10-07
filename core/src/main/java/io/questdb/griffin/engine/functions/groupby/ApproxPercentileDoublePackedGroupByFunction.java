@@ -151,7 +151,7 @@ public class ApproxPercentileDoublePackedGroupByFunction extends DoubleFunction 
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 

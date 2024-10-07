@@ -47,6 +47,8 @@ public class PageFrameAddressCache implements Mutable {
     private final ObjList<LongList> pageAddresses = new ObjList<>();
     private final ObjList<LongList> pageSizes = new ObjList<>();
     private final LongList parquetFds = new LongList();
+    private final IntList parquetRowGroupHis = new IntList();
+    private final IntList parquetRowGroupLos = new IntList();
     private final IntList parquetRowGroups = new IntList();
     // Makes it possible to determine real row id, not the one relative to the page.
     private final LongList rowIdOffsets = new LongList();
@@ -100,6 +102,8 @@ public class PageFrameAddressCache implements Mutable {
         parquetFds.add(frame.getParquetFd());
         parquetReadSizes.add(frame.getParquetReadSize());
         parquetRowGroups.add(frame.getParquetRowGroup());
+        parquetRowGroupLos.add(frame.getParquetRowGroupLo());
+        parquetRowGroupHis.add(frame.getParquetRowGroupHi());
         rowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
     }
 
@@ -109,6 +113,8 @@ public class PageFrameAddressCache implements Mutable {
         frameFormats.clear();
         parquetFds.clear();
         parquetRowGroups.clear();
+        parquetRowGroupLos.clear();
+        parquetRowGroupHis.clear();
         pageAddresses.clear();
         auxPageAddresses.clear();
         pageSizes.clear();
@@ -169,6 +175,14 @@ public class PageFrameAddressCache implements Mutable {
 
     public int getParquetRowGroup(int frameIndex) {
         return parquetRowGroups.getQuick(frameIndex);
+    }
+
+    public int getParquetRowGroupHi(int frameIndex) {
+        return parquetRowGroupHis.getQuick(frameIndex);
+    }
+
+    public int getParquetRowGroupLo(int frameIndex) {
+        return parquetRowGroupLos.getQuick(frameIndex);
     }
 
     public long getRowIdOffset(int frameIndex) {
