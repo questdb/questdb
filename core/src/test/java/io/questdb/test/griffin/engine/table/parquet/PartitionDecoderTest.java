@@ -142,8 +142,6 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 columns.add(0);
                 columns.add(ColumnType.LONG);
 
-                boolean exceptionThrown = false;
-
                 try {
                     // prevent more allocs
                     Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
@@ -154,12 +152,10 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                     Assert.assertTrue(e.isOutOfMemory());
                     TestUtils.assertContains(msg, "could not decode row group 0 with fd ");
                     TestUtils.assertContains(msg, "memory limit exceeded when allocating");
-                    exceptionThrown = true;
                 } finally {
                     // Reset to allow allocs again
                     Unsafe.setRssMemLimit(0);
                 }
-                Assert.assertTrue(exceptionThrown);
 
                 final long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 partitionDecoder.decodeRowGroup(rowGroupBuffers, columns, 0, 0, 1);

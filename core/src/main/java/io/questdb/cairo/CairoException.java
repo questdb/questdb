@@ -333,14 +333,12 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
             int errno,  // pass `NON_CRITICAL` (-1) to create a non-critical exception
             boolean outOfMemory,
             CharSequence message,
-            CharSequence nativeBacktrace  // Can be `null`
+            @Nullable CharSequence nativeBacktrace
     ) {
         CairoException ex = instance(errno)
                 .setOutOfMemory(outOfMemory)
                 .put(message);
-        if (nativeBacktrace != null) {
-            ex.nativeBacktrace.put(nativeBacktrace);
-        }
+        ex.nativeBacktrace.put(nativeBacktrace);
         return ex;
     }
 

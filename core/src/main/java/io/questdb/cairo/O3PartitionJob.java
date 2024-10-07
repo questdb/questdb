@@ -90,7 +90,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
              PartitionDescriptor partitionDescriptor = new OwnedMemoryPartitionDescriptor()) {
 
             parquetFileFd = TableUtils.openRO(ff, path.$(), LOG);
-            partitionDecoder.of(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER, parquetFileFd);
+            partitionDecoder.of(parquetFileFd, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
 
             final int rowGroupCount = partitionDecoder.getMetadata().rowGroupCount();
             final int timestampIndex = tableWriterMetadata.getTimestampIndex();

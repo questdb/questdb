@@ -102,10 +102,10 @@ public class PartitionDecoder implements QuietCloseable {
     }
 
     public void of(long fd) {
-        of(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, fd);
+        of(fd, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
     }
 
-    public void of(int memoryTag, long fd) {
+    public void of(long fd, int memoryTag) {
         destroy();
         this.fd = fd;
         final long allocator = Unsafe.getNativeAllocator(memoryTag);
