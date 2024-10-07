@@ -41,7 +41,13 @@ public class CastShortToStrFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         Function shortFunc = args.getQuick(0);
         if (shortFunc.isConstant()) {
             return new StrConstant(String.valueOf(shortFunc.getShort(null)));

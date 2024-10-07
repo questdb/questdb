@@ -44,7 +44,6 @@ public final class MaxVarcharGroupByFunction extends VarcharFunction implements 
     private final GroupByUtf8Sink sinkB = new GroupByUtf8Sink();
     private int valueIndex;
 
-
     public MaxVarcharGroupByFunction(Function arg) {
         this.arg = arg;
     }
@@ -56,7 +55,7 @@ public final class MaxVarcharGroupByFunction extends VarcharFunction implements 
     }
 
     @Override
-    public void computeFirst(MapValue mapValue, Record record, long rowid) {
+    public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final Utf8Sequence val = arg.getVarcharA(record);
         if (val == null) {
             mapValue.putLong(valueIndex, 0);
@@ -68,7 +67,7 @@ public final class MaxVarcharGroupByFunction extends VarcharFunction implements 
 
 
     @Override
-    public void computeNext(MapValue mapValue, Record record, long rowid) {
+    public void computeNext(MapValue mapValue, Record record, long rowId) {
         final Utf8Sequence val = arg.getVarcharA(record);
         if (val != null) {
             final long ptr = mapValue.getLong(valueIndex);
@@ -125,7 +124,7 @@ public final class MaxVarcharGroupByFunction extends VarcharFunction implements 
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 

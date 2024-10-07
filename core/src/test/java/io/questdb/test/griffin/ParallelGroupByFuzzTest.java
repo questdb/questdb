@@ -1301,6 +1301,28 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNonKeyedGroupByWithCountDistinctSymbolFunction1() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT count_distinct(asymbol) FROM tab",
+                "count_distinct\n" +
+                        "4\n"
+        );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithCountDistinctSymbolFunction2() throws Exception {
+        // This query doesn't use filter, so we don't care about JIT.
+        Assume.assumeTrue(enableJitCompiler);
+        testParallelGroupByAllTypes(
+                "SELECT count_distinct(asymbol), first(asymbol) FROM tab",
+                "count_distinct\tfirst\n" +
+                        "4\tCPSW\n"
+        );
+    }
+
+    @Test
     public void testParallelNonKeyedGroupByWithCountDistinctTimestampFunction() throws Exception {
         // This query doesn't use filter, so we don't care about JIT.
         Assume.assumeTrue(enableJitCompiler);
@@ -1754,6 +1776,19 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         "k2\t800\t800\n" +
                         "k3\t800\t800\n" +
                         "k4\t800\t800\n"
+        );
+    }
+
+    @Test
+    public void testParallelSingleKeyGroupByWithApproxCountDistinctSymbolFunction() throws Exception {
+        testParallelGroupByAllTypes(
+                "SELECT key, count_distinct(asymbol) FROM tab ORDER BY key",
+                "key\tcount_distinct\n" +
+                        "k0\t4\n" +
+                        "k1\t4\n" +
+                        "k2\t4\n" +
+                        "k3\t4\n" +
+                        "k4\t4\n"
         );
     }
 
@@ -2789,7 +2824,7 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         Assume.assumeTrue(enableParallelGroupBy);
         assertMemoryLeak(() -> {
             SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
-            currentMicros = 0;
+            setCurrentMicros(0);
             NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
                     new DefaultSqlExecutionCircuitBreakerConfiguration() {
                         @Override

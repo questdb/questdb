@@ -81,24 +81,24 @@ public interface QuaternaryFunction extends Function {
     }
 
     @Override
-    default boolean isReadThreadSafe() {
-        return getFunc0().isReadThreadSafe()
-                && getFunc1().isReadThreadSafe()
-                && getFunc2().isReadThreadSafe()
-                && getFunc3().isReadThreadSafe();
+    default boolean isThreadSafe() {
+        return getFunc0().isThreadSafe()
+                && getFunc1().isThreadSafe()
+                && getFunc2().isThreadSafe()
+                && getFunc3().isThreadSafe();
     }
 
     @Override
     default boolean isRuntimeConstant() {
-        boolean arc = getFunc0().isRuntimeConstant();
-        boolean brc = getFunc1().isRuntimeConstant();
-        boolean crc = getFunc2().isRuntimeConstant();
-        boolean drc = getFunc3().isRuntimeConstant();
+        final boolean arc = getFunc0().isRuntimeConstant();
+        final boolean brc = getFunc1().isRuntimeConstant();
+        final boolean crc = getFunc2().isRuntimeConstant();
+        final boolean drc = getFunc3().isRuntimeConstant();
 
-        boolean ac = getFunc0().isConstant();
-        boolean bc = getFunc1().isConstant();
-        boolean cc = getFunc2().isConstant();
-        boolean dc = getFunc3().isConstant();
+        final boolean ac = getFunc0().isConstant();
+        final boolean bc = getFunc1().isConstant();
+        final boolean cc = getFunc2().isConstant();
+        final boolean dc = getFunc3().isConstant();
 
         return (ac || arc) && (bc || brc) && (cc || crc) && (dc || drc) && (arc || brc || crc || drc);
     }

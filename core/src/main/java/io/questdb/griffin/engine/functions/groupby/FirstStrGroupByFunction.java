@@ -119,7 +119,7 @@ public class FirstStrGroupByFunction extends StrFunction implements GroupByFunct
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 

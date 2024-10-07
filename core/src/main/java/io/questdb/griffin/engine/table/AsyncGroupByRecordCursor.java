@@ -39,8 +39,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
-import io.questdb.griffin.engine.groupby.GroupByAllocator;
-import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.log.Log;
@@ -58,7 +56,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 class AsyncGroupByRecordCursor implements RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncGroupByRecordCursor.class);
-    private final GroupByAllocator allocator;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final AtomicBooleanCircuitBreaker mergeCircuitBreaker; // used to signal cancellation to merge shard workers
     private final SOUnboundedCountDownLatch mergeDoneLatch = new SOUnboundedCountDownLatch(); // used for merge shard workers
@@ -81,9 +78,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             ObjList<Function> recordFunctions,
             MessageBus messageBus
     ) {
-        this.allocator = GroupByAllocatorFactory.createThreadSafeAllocator(configuration);
         this.groupByFunctions = groupByFunctions;
-        GroupByUtils.setAllocator(groupByFunctions, allocator);
         this.recordFunctions = recordFunctions;
         this.messageBus = messageBus;
         recordA = new VirtualRecord(recordFunctions);
@@ -104,7 +99,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
     public void close() {
         if (isOpen) {
             isOpen = false;
-            Misc.free(allocator);
             Misc.clearObjList(groupByFunctions);
             mapCursor = Misc.free(mapCursor);
 
@@ -304,7 +298,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     long cursor = subSeq.next();
                     if (cursor > -1) {
                         GroupByMergeShardTask task = queue.get(cursor);
-                        GroupByMergeShardJob.run(-1, task, subSeq, cursor);
+                        GroupByMergeShardJob.run(-1, task, subSeq, cursor, atom);
                         reclaimed++;
                     }
                 }
@@ -315,6 +309,8 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         if (mergeCircuitBreaker.checkIfTripped()) {
             throwTimeoutException();
         }
+
+        atom.finalizeShardStats();
 
         LOG.debug().$("merge shards done [total=").$(total)
                 .$(", ownCount=").$(ownCount)
@@ -334,7 +330,6 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
     void of(PageFrameSequence<AsyncGroupByAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         final AsyncGroupByAtom atom = frameSequence.getAtom();
-        atom.setAllocator(allocator);
         if (!isOpen) {
             isOpen = true;
             atom.reopen();
