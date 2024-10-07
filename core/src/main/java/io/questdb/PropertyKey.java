@@ -490,7 +490,17 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_CODEC("cairo.partition.encoder.parquet.compression.codec"),
     CAIRO_PARTITION_ENCODER_PARQUET_COMPRESSION_LEVEL("cairo.partition.encoder.parquet.compression.level"),
     CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE("cairo.partition.encoder.parquet.row.group.size"),
-    CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE("cairo.partition.encoder.parquet.data.page.size");
+    CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE("cairo.partition.encoder.parquet.data.page.size"),
+    HTTP_MIN_SEND_BUFFER_SIZE("http.min.send.buffer.size"),
+    HTTP_MIN_RECEIVE_BUFFER_SIZE("http.min.receive.buffer.size"),
+    HTTP_MIN_CONNECTION_STRING_POOL_CAPACITY("http.min.connection.string.pool.capacity"),
+    HTTP_MIN_CONNECTION_POOL_INITIAL_CAPACITY("http.min.connection.pool.initial.capacity"),
+    HTTP_MIN_MULTIPART_HEADER_BUFFER_SIZE("http.min.multipart.header.buffer.size"),
+    HTTP_MIN_MULTIPART_IDLE_SPIN_COUNT("http.min.multipart.idle.spin.count"),
+    HTTP_MIN_ALLOW_DEFLATE_BEFORE_SEND("http.min.allow.deflate.before.send"),
+    HTTP_MIN_SERVER_KEEP_ALIVE("http.min.server.keep.alive"),
+    HTTP_MIN_REQUEST_HEADER_BUFFER_SIZE("http.min.request.header.buffer.size"),
+    ;
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;
