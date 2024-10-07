@@ -170,10 +170,10 @@ public class InformationSchemaTablesFunctionFactory implements FunctionFactory {
                         return tableToken.getTableName();
                     }
                     if (col == COLUMN_CATALOG) {
-                        return "qdb";
+                        return Constants.DB_NAME;
                     }
                     if (col == COLUMN_SCHEMA) {
-                        return "public";
+                        return Constants.PUBLIC_SCHEMA;
                     }
                     if (col == COLUMN_TYPE) {
                         return "BASE TABLE";

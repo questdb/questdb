@@ -36,16 +36,16 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
             ddl("create table B(col0 long, col1 string, col2 float)");
             ddl("create table C(col0 double, col1 char, col2 byte)");
             assertQuery(
-                    "table_name\tordinal_position\tcolumn_name\tdata_type\n" +
-                            "C\t0\tcol0\tDOUBLE\n" +
-                            "C\t1\tcol1\tCHAR\n" +
-                            "C\t2\tcol2\tBYTE\n" +
-                            "B\t0\tcol0\tLONG\n" +
-                            "B\t1\tcol1\tSTRING\n" +
-                            "B\t2\tcol2\tFLOAT\n" +
-                            "A\t0\tcol0\tINT\n" +
-                            "A\t1\tcol1\tSYMBOL\n" +
-                            "A\t2\tcol2\tDOUBLE\n",
+                    "table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type\n" +
+                            "qdb\tpublic\tC\tcol0\t0\t\tyes\tDOUBLE\n" +
+                            "qdb\tpublic\tC\tcol1\t1\t\tyes\tCHAR\n" +
+                            "qdb\tpublic\tC\tcol2\t2\t\tyes\tBYTE\n" +
+                            "qdb\tpublic\tB\tcol0\t0\t\tyes\tLONG\n" +
+                            "qdb\tpublic\tB\tcol1\t1\t\tyes\tSTRING\n" +
+                            "qdb\tpublic\tB\tcol2\t2\t\tyes\tFLOAT\n" +
+                            "qdb\tpublic\tA\tcol0\t0\t\tyes\tINT\n" +
+                            "qdb\tpublic\tA\tcol1\t1\t\tyes\tSYMBOL\n" +
+                            "qdb\tpublic\tA\tcol2\t2\t\tyes\tDOUBLE\n",
                     "SELECT * FROM information_schema.columns()",
                     null,
                     null,

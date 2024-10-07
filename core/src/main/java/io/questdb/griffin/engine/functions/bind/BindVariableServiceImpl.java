@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.functions.UndefinedFunction;
 import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -105,6 +106,7 @@ public class BindVariableServiceImpl implements BindVariableService {
         switch (ColumnType.tagOf(type)) {
             // unable to define undefined type
             case ColumnType.UNDEFINED:
+                setUndefined(index);
                 return type;
             case ColumnType.BOOLEAN:
                 setBoolean(index);
@@ -171,6 +173,15 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
+    public boolean isDefined(int index) {
+        Function f = getFunction(index);
+        if (f != null) {
+            return f.getType() == ColumnType.UNDEFINED;
+        }
+        throw new IllegalStateException("variable index is out of range: " + index);
+    }
+
+    @Override
     public Function getFunction(CharSequence name) {
         assert name != null;
         assert Chars.startsWith(name, ':');
@@ -184,6 +195,20 @@ public class BindVariableServiceImpl implements BindVariableService {
             return indexedVariables.getQuick(index);
         }
         return null;
+    }
+
+    private void setUndefined(int index) {
+        indexedVariables.extendPos(index + 1);
+        // variable exists
+        Function function = indexedVariables.getQuick(index);
+        if (function != null) {
+            if (function.getType() != ColumnType.UNDEFINED) {
+                Misc.free(function);
+                indexedVariables.extendAndSet(index, UndefinedFunction.INSTANCE);
+            }
+        } else {
+            indexedVariables.extendAndSet(index, UndefinedFunction.INSTANCE);
+        }
     }
 
     @Override
@@ -720,7 +745,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     @Override
-    public void setVarchar(int index, Utf8Sequence value) throws SqlException {
+    public void setVarchar(int index, @Transient Utf8Sequence value) throws SqlException {
         indexedVariables.extendPos(index + 1);
         // variable exists
         Function function = indexedVariables.getQuick(index);
@@ -1201,7 +1226,12 @@ public class BindVariableServiceImpl implements BindVariableService {
         }
     }
 
-    private static void setVarchar0(Function function, Utf8Sequence value, int index, @Nullable CharSequence name) throws SqlException {
+    private static void setVarchar0(
+            Function function,
+            @Transient Utf8Sequence value,
+            int index,
+            @Nullable CharSequence name
+    ) throws SqlException {
         final int functionType = ColumnType.tagOf(function.getType());
         switch (functionType) {
             case ColumnType.BOOLEAN:

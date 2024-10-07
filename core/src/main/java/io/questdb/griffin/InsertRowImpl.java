@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
@@ -76,14 +77,18 @@ public final class InsertRowImpl {
     }
 
     private TableWriter.Row getRowWithStringTimestamp(TableWriterAPI tableWriter) {
-        return tableWriter.newRow(
-                SqlUtil.parseFloorPartialTimestamp(
-                        timestampFunction.getStrA(null),
-                        tupleIndex,
-                        timestampFunction.getType(),
-                        ColumnType.TIMESTAMP
-                )
-        );
+        CharSequence timestampValue = timestampFunction.getStrA(null);
+        if (timestampValue != null) {
+            return tableWriter.newRow(
+                    SqlUtil.parseFloorPartialTimestamp(
+                            timestampFunction.getStrA(null),
+                            tupleIndex,
+                            timestampFunction.getType(),
+                            ColumnType.TIMESTAMP
+                    )
+            );
+        }
+        throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
     }
 
     private TableWriter.Row getRowWithTimestamp(TableWriterAPI tableWriter) {

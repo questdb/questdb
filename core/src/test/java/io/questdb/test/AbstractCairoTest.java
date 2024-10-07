@@ -26,6 +26,7 @@ package io.questdb.test;
 
 import io.questdb.*;
 import io.questdb.cairo.*;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.cairo.vm.Vm;
@@ -1345,6 +1346,19 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static TableWriter getWriter(CharSequence tableName) {
         return TestUtils.getWriter(engine, tableName);
+    }
+
+    protected PoolListener createWriterReleaseListener(CharSequence tableName, SOCountDownLatch latch) {
+        return (factoryType, thread, tableToken, event, segment, position) -> {
+            if (
+                    factoryType == PoolListener.SRC_WRITER
+                            && event == PoolListener.EV_RETURN
+                            && tableToken != null
+                            && Chars.equalsIgnoreCase(tableToken.getTableName(), tableName)
+            ) {
+                latch.countDown();
+            }
+        };
     }
 
     protected static TableWriter getWriter(CairoEngine engine, CharSequence tableName) {

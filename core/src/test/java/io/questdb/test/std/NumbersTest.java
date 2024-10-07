@@ -35,6 +35,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.Random;
 
 public class NumbersTest {
@@ -1388,6 +1390,31 @@ public class NumbersTest {
     @Test(expected = NumericException.class)
     public void testParseWrongNan() throws Exception {
         Numbers.parseDouble("NaN1");
+    }
+
+    @Test
+    public void testReverseBits() {
+        // this is a simple method to convert BigEndian to readable LittleEndian and vice versa.
+        // The test will check if it does the same as the Java library
+
+        int bufSize = 4096;
+        int count = bufSize / Integer.BYTES;
+        ByteBuffer buf = ByteBuffer.allocate(bufSize);
+        buf.order(ByteOrder.LITTLE_ENDIAN);
+        Rnd rnd = TestUtils.generateRandom(null);
+        IntList values = new IntList(count);
+        for (int i = 0; i < count; i++) {
+            int val = rnd.nextInt();
+            buf.putInt(val);
+            values.add(val);
+        }
+        buf.rewind();
+        buf.order(ByteOrder.BIG_ENDIAN);
+
+        for (int i = 0; i < count; i++) {
+            int val = values.get(i);
+            Assert.assertEquals(buf.getInt(), Numbers.reverseBits(val));
+        }
     }
 
     @Test

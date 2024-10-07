@@ -461,7 +461,7 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
         }
     }
 
-    public class FloatingSequence extends AbstractCharSequence implements Mutable {
+    public class FloatingSequence extends AbstractCharSequence implements Mutable, BufferWindowCharSequence {
         int hi;
         int lo;
 
@@ -502,6 +502,13 @@ public class GenericLexer implements ImmutableIterator<CharSequence> {
             that.hi = lo + end;
             assert that.lo <= that.hi;
             return that;
+        }
+
+        @Override
+        public void shiftLo(int positiveOffset) {
+            assert positiveOffset > -1;
+            this.lo += positiveOffset;
+            assert lo < hi;
         }
     }
 
