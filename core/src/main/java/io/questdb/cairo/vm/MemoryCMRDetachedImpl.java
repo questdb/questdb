@@ -29,12 +29,23 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 
-
+// This is read-only contiguous mapped memory that does not leave file descriptor open.
+// It is intended to be used in TableReader exclusively to reduce file descriptor usage.
 public class MemoryCMRDetachedImpl extends MemoryCMRImpl {
     private static final Log LOG = LogFactory.getLog(MemoryCMRDetachedImpl.class);
 
     public MemoryCMRDetachedImpl(FilesFacade ff, LPSZ name, long size, int memoryTag) {
         super(ff, name, size, memoryTag);
+    }
+
+    @Override
+    public void extend(long newSize) {
+        throw new IllegalStateException("not supported");
+    }
+
+    @Override
+    public long getFd() {
+        throw new IllegalStateException("not supported");
     }
 
     @Override
