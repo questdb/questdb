@@ -64,11 +64,11 @@ public class TimestampSamplerFactoryTest {
 
     @Test
     public void testFindIntervalEndIndex() throws SqlException {
-        assertFindIntervalEndIndexFailure(42, "missing interval", null, 42);
-        assertFindIntervalEndIndexFailure(44, "expected interval qualifier", "45", 42);
+        assertFindIntervalEndIndexFailure(1, "missing interval", null, 1);
+        assertFindIntervalEndIndexFailure(1_002, "expected interval qualifier", "45", 1000);
         assertFindIntervalEndIndexFailure(42, "expected interval qualifier", "", 42);
-        assertFindIntervalEndIndexFailure(43, "expected single letter qualifier", "1bar", 42);
-        assertFindIntervalEndIndexFailure(42, "negative interval is not allowed", "-", 42);
+        assertFindIntervalEndIndexFailure(50, "expected single letter qualifier", "1bar", 49);
+        assertFindIntervalEndIndexFailure(100, "negative interval is not allowed", "-", 100);
 
         Assert.assertEquals(0, TimestampSamplerFactory.findIntervalEndIndex("m", 11));
     }
