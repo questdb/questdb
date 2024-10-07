@@ -211,6 +211,14 @@ public final class Unsafe {
         return REALLOC_COUNT.get();
     }
 
+    public static long getRssMemAvailable() {
+        return  RSS_MEM_LIMIT - RSS_MEM_USED.get();
+    }
+
+    public static long getRssMemLimit() {
+        return RSS_MEM_LIMIT;
+    }
+
     public static long getRssMemUsed() {
         return UNSAFE.getLongVolatile(null, RSS_MEM_USED_ADDR);
     }
@@ -227,10 +235,10 @@ public final class Unsafe {
         UNSAFE.getAndAddLong(null, MALLOC_COUNT_ADDR, 1);
     }
 
+
     public static void incrReallocCount() {
         REALLOC_COUNT.incrementAndGet();
     }
-
     //#if jdk.version!=8
 
     /**
