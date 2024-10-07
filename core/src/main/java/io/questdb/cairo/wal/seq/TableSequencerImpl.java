@@ -282,11 +282,6 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     @Override
-    public boolean isSuspended() {
-        return metadata.isSuspended();
-    }
-
-    @Override
     public long lastTxn() {
         return tableTransactionLog.lastTxn();
     }

@@ -384,6 +384,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             .$("rows/s, physicalWrittenRowsMultiplier=").$(Math.round(100.0 * physicalRowsAdded / rowsAdded) / 100.0)
                             .I$();
                 }
+            } catch (Throwable th) {
+                engine.getTableSequencerAPI().notifyCommitReadable(tableToken, writer.getTxn());
+                throw th;
             } finally {
                 Misc.free(structuralChangeCursor);
             }

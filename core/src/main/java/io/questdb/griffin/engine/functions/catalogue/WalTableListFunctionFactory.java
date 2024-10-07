@@ -244,46 +244,58 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         tableName = tableToken.getTableName();
                         final int rootLen = rootPath.size();
                         rootPath.concat(tableToken).concat(SEQ_DIR);
-                        long metaFd = -1;
                         long txnFd = -1;
+                        SeqTxnTracker seqTxnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+                        memoryPressureLevel = seqTxnTracker.getMemoryPressureLevel();
+
+                        if (seqTxnTracker.isInitialised()) {
+                            suspendedFlag = seqTxnTracker.isSuspended();
+                            sequencerTxn = seqTxnTracker.getSeqTxn();
+                            writerTxn = seqTxnTracker.getWriterTxn();
+                            if (suspendedFlag) {
+                                // only read error details from seqTxnTracker if the table is suspended
+                                // when the table is not suspended, it is not guaranteed that error details are immediately cleared
+                                errorTag = seqTxnTracker.getErrorTag().text();
+                                errorMessage = seqTxnTracker.getErrorMessage();
+                            } else {
+                                errorTag = "";
+                                errorMessage = "";
+                            }
+                            return true;
+                        }
+
                         try {
-                            metaFd = TableUtils.openRO(ff, rootPath, META_FILE_NAME, LOG);
+                            // We used to have suspended flag saved in the sequencer metadata file
+                            // but we no longer need it since we ignore suspended flag on the restart
+                            // and try to apply transactions once any way.
+
+                            // Not initialized means there will be an attempt to apply
+                            // meaning the table is not suspended
+                            suspendedFlag = false;
+
                             txnFd = TableUtils.openRO(ff, rootPath, TXNLOG_FILE_NAME, LOG);
-                            suspendedFlag = ff.readNonNegativeByte(metaFd, SEQ_META_SUSPENDED) > 0;
                             sequencerTxn = ff.readNonNegativeLong(txnFd, TableTransactionLogFile.MAX_TXN_OFFSET_64);
+                            rootPath.trimTo(rootLen).concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
+                            if (!ff.exists(rootPath.$())) {
+                                return false;
+                            }
+
+                            txReader.ofRO(rootPath.$(), PartitionBy.NONE);
+                            final CairoEngine engine = sqlExecutionContext.getCairoEngine();
+                            final MillisecondClock millisecondClock = engine.getConfiguration().getMillisecondClock();
+                            final long spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
+                            TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
+                            writerLagTxnCount = txReader.getLagTxnCount();
+                            SeqTxnTracker txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+                            memoryPressureLevel = txnTracker.getMemoryPressureLevel();
+                            return true;
                         } finally {
+                            if (txnFd > -1) {
+                                ff.close(txnFd);
+                                txReader.close();
+                            }
                             rootPath.trimTo(rootLen);
-                            ff.close(metaFd);
-                            ff.close(txnFd);
                         }
-
-                        if (suspendedFlag) {
-                            // only read error details from seqTxnTracker if the table is suspended
-                            // when the table is not suspended, it is not guaranteed that error details are immediately cleared
-                            final SeqTxnTracker seqTxnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-                            errorTag = seqTxnTracker.getErrorTag().text();
-                            errorMessage = seqTxnTracker.getErrorMessage();
-                        } else {
-                            errorTag = "";
-                            errorMessage = "";
-                        }
-
-                        rootPath.concat(tableToken).concat(TableUtils.TXN_FILE_NAME).$();
-                        if (!ff.exists(rootPath.$())) {
-                            return false;
-                        }
-                        txReader.ofRO(rootPath.$(), PartitionBy.NONE);
-                        rootPath.trimTo(rootLen);
-
-                        final CairoEngine engine = sqlExecutionContext.getCairoEngine();
-                        final MillisecondClock millisecondClock = engine.getConfiguration().getMillisecondClock();
-                        final long spinLockTimeout = engine.getConfiguration().getSpinLockTimeout();
-                        TableUtils.safeReadTxn(txReader, millisecondClock, spinLockTimeout);
-                        writerTxn = txReader.getSeqTxn();
-                        writerLagTxnCount = txReader.getLagTxnCount();
-                        SeqTxnTracker txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-                        memoryPressureLevel = txnTracker.getMemoryPressureLevel();
-                        return true;
                     } catch (CairoException ex) {
                         if (ex.errnoReadPathDoesNotExist()) {
                             return false;

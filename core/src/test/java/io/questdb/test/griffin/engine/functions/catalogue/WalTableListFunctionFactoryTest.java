@@ -234,7 +234,10 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
             insert("insert into A values (1, 'A', '2022-12-05T01', 'A')");
             insert("insert into B values (2, 'A', '2022-12-05T01', 'B')");
+
+            drainWalQueue();
             compile(suspendSql);
+
             insert("insert into B values (3, 'C', '2022-12-05T02', 'D')");
 
             drainWalQueue();
@@ -242,7 +245,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("B")));
 
             assertSql("name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                    "B\ttrue\t2\t0\t2\t" + expectedErrorTag.text() + "\t" + expectedErrorMessage + "\t0\n", "wal_tables()");
+                    "B\ttrue\t1\t0\t2\t" + expectedErrorTag.text() + "\t" + expectedErrorMessage + "\t0\n", "wal_tables()");
 
             compile("alter table B resume wal");
 
