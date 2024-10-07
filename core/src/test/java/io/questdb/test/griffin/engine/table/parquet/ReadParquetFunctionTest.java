@@ -42,6 +42,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 public class ReadParquetFunctionTest extends AbstractCairoTest {
+
     @Before
     public void setUp() {
         super.setUp();

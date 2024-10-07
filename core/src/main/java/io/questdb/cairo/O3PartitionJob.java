@@ -27,7 +27,6 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -46,7 +45,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.cairo.O3OpenColumnJob.*;
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.TableWriter.*;
-import static io.questdb.std.Files.PAGE_SIZE;
 
 public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
@@ -1224,23 +1222,23 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             TableRecordMetadata tableWriterMetadata,
             long srcOooBatchRowSize
     ) {
-
         columnsIdsAndTypes.clear();
         columnsIdsAndTypes.add(timestampIndex);
         columnsIdsAndTypes.add(timestampColumnType);
 
-        final long rowGroupRowCount = decoder.decodeRowGroup(rowGroupBuffers, columnsIdsAndTypes, rowGroupIndex);
+        final int rowGroupSize = decoder.getMetadata().rowGroupSize(rowGroupIndex);
+        decoder.decodeRowGroup(rowGroupBuffers, columnsIdsAndTypes, rowGroupIndex, 0, rowGroupSize);
         final long timestampDataPtr = rowGroupBuffers.getChunkDataPtr(0);
 
         long mergeBatchRowCount = mergeRangeHi - mergeRangeLo + 1;
-        long mergeRowCount = mergeBatchRowCount + rowGroupRowCount;
+        long mergeRowCount = mergeBatchRowCount + rowGroupSize;
 
         final long timestampMergeIndexSize = mergeRowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
         final long timestampMergeIndexAddr = createMergeIndex(
                 timestampDataPtr,
                 sortedTimestampsAddr,
                 0,
-                rowGroupRowCount - 1,
+                rowGroupSize - 1,
                 mergeRangeLo,
                 mergeRangeHi,
                 timestampMergeIndexSize
@@ -1267,11 +1265,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final long columnDataPtr;
                 final long columnAuxPtr;
                 if (notTheTimestamp) {
-
                     columnsIdsAndTypes.clear();
                     columnsIdsAndTypes.add(i);
                     columnsIdsAndTypes.add(columnType);
-                    decoder.decodeRowGroup(rowGroupBuffers, columnsIdsAndTypes, rowGroupIndex);
+                    decoder.decodeRowGroup(rowGroupBuffers, columnsIdsAndTypes, rowGroupIndex, 0, rowGroupSize);
 
                     columnDataPtr = rowGroupBuffers.getChunkDataPtr(0);
                     columnAuxPtr = rowGroupBuffers.getChunkAuxPtr(0);
@@ -1286,10 +1283,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final long srcOooFixAddr = oooMem2.addressOf(0);
                     final long srcOooVarAddr = oooMem1.addressOf(0);
 
-                    long dstFixSize = ctd.auxRowsToBytes(srcOooBatchRowSize) + ctd.getAuxVectorSize(rowGroupRowCount);
+                    long dstFixSize = ctd.auxRowsToBytes(srcOooBatchRowSize) + ctd.getAuxVectorSize(rowGroupSize);
 
                     long dstVarSize = ctd.getDataVectorSize(srcOooFixAddr, mergeRangeLo, mergeRangeHi)
-                            + ctd.getDataVectorSizeAt(columnAuxPtr, rowGroupRowCount - 1);
+                            + ctd.getDataVectorSizeAt(columnAuxPtr, rowGroupSize - 1);
 
                     final long dstFixMemAddr = Unsafe.malloc(dstFixSize, MemoryTag.NATIVE_O3);
                     final long dstVarMemAddr = Unsafe.malloc(dstVarSize, MemoryTag.NATIVE_O3);

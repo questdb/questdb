@@ -108,6 +108,16 @@ public interface PageFrame {
     int getParquetRowGroup();
 
     /**
+     * Returns high row index within the row group, exclusive.
+     */
+    int getParquetRowGroupHi();
+
+    /**
+     * Returns low row index within the row group, inclusive.
+     */
+    int getParquetRowGroupLo();
+
+    /**
      * Return high row index within the frame's partition, exclusive.
      */
     long getPartitionHi();

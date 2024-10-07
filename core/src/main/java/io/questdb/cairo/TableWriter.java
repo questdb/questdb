@@ -1387,7 +1387,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             final int rowGroupCount = partitionDecoder.getMetadata().rowGroupCount();
             for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
-                parquetRowCount += partitionDecoder.decodeRowGroup(rowGroupBuffers, columns, rowGroupIndex);
+                final int rowGroupSize = partitionDecoder.getMetadata().rowGroupSize(rowGroupIndex);
+                parquetRowCount += partitionDecoder.decodeRowGroup(rowGroupBuffers, columns, rowGroupIndex, 0, rowGroupSize);
                 for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
                     final int columnType = metadata.getColumnType(columnIndex);
 

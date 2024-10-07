@@ -58,10 +58,12 @@ public class PartitionDecoder implements QuietCloseable {
         fd = -1;
     }
 
-    public long decodeRowGroup(
+    public int decodeRowGroup(
             RowGroupBuffers rowGroupBuffers,
             DirectIntList columns, // contains [parquet_column_index, column_type] pairs
-            int rowGroupIndex
+            int rowGroupIndex,
+            int rowLo, // low row index within the row group, inclusive
+            int rowHi // high row index within the row group, exclusive
     ) {
         assert ptr != 0;
         try {
@@ -70,7 +72,9 @@ public class PartitionDecoder implements QuietCloseable {
                     rowGroupBuffers.ptr(),
                     columns.getAddress(),
                     (int) (columns.size() >>> 1),
-                    rowGroupIndex
+                    rowGroupIndex,
+                    rowLo,
+                    rowHi
             );
         } catch (Throwable th) {
             LOG.error().$("could not decode [fd=").$(fd)
@@ -144,16 +148,17 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native long create(int fd);
 
-    private static native long decodeRowGroup(
+    private static native int decodeRowGroup(
             long decoderPtr,
             long rowGroupBuffersPtr,
             long columnsPtr,
             int columnCount,
-            int rowGroup
+            int rowGroup,
+            int rowLo,
+            int rowHi
     );
 
     private static native void destroy(long impl);
-
 
     private static native long getRowGroupStats(
             long decoderPtr,

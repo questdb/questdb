@@ -60,7 +60,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     columns: *const (ParquetColumnIndex, ColumnType),
     column_count: u32,
     row_group_index: u32,
-) -> usize {
+    _row_group_lo: u32,
+    _row_group_hi: u32,
+) -> u32 {
     assert!(!decoder.is_null(), "decoder pointer is null");
     assert!(
         !row_group_bufs.is_null(),
@@ -77,7 +79,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
         .and_then(|()| decoder.decode_row_group(row_group_bufs, columns, row_group_index));
 
     match res {
-        Ok(row_count) => row_count,
+        Ok(row_count) => row_count as u32,
         Err(err) => utils::throw_java_ex(&mut env, "decodeRowGroup", &err),
     }
 }

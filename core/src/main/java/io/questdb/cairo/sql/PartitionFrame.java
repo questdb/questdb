@@ -52,6 +52,12 @@ public interface PartitionFrame {
     int getParquetRowGroup();
 
     /**
+     * @return first row index of the row group within Parquet partition;
+     * shouldn't be called for native partitions
+     */
+    int getParquetRowGroupLo();
+
+    /**
      * @return format of the frame's partition; set to {@link PartitionFormat#NATIVE} or {@link PartitionFormat#PARQUET}
      */
     byte getPartitionFormat();

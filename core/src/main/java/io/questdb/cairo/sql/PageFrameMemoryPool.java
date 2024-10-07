@@ -123,7 +123,10 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
             openParquet(frameIndex);
             final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
             final ParquetBuffers parquetBuffers = nextFreeBuffers(frameIndex, usageBit);
-            parquetBuffers.decode(parquetDecoder, parquetColumns, addressCache.getParquetRowGroup(frameIndex));
+            final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
+            final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
+            final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
+            parquetBuffers.decode(parquetDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi);
 
             record.init(
                     frameIndex,
@@ -160,7 +163,10 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
         } else if (format == PartitionFormat.PARQUET) {
             openParquet(frameIndex);
             final ParquetBuffers parquetBuffers = nextFreeBuffers(frameIndex, FRAME_MEMORY_MASK);
-            parquetBuffers.decode(parquetDecoder, parquetColumns, addressCache.getParquetRowGroup(frameIndex));
+            final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
+            final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
+            final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
+            parquetBuffers.decode(parquetDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi);
 
             frameMemory.pageAddresses = parquetBuffers.pageAddresses;
             frameMemory.auxPageAddresses = parquetBuffers.auxPageAddresses;
@@ -280,8 +286,8 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
             frameIndex = -1;
         }
 
-        public void decode(PartitionDecoder parquetDecoder, DirectIntList parquetColumns, int rowGroup) {
-            parquetDecoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroup);
+        public void decode(PartitionDecoder parquetDecoder, DirectIntList parquetColumns, int rowGroup, int rowLo, int rowHi) {
+            parquetDecoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroup, rowLo, rowHi);
             clearAddresses();
             for (int i = 0, n = parquetDecoder.getMetadata().columnCount(); i < n; i++) {
                 pageAddresses.add(rowGroupBuffers.getChunkDataPtr(i));
