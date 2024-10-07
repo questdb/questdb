@@ -36,7 +36,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
-public class RndUUIDCFunctionFactory implements FunctionFactory {
+public class RndUuidCCFunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
         return "rnd_uuid4(i)";

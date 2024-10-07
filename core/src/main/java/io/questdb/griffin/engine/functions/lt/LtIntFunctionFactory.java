@@ -70,8 +70,8 @@ public class LtIntFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return Numbers.lessThan(
-                    this.left.getInt(rec),
-                    this.right.getInt(rec),
+                    left.getInt(rec),
+                    right.getInt(rec),
                     negated
             );
         }

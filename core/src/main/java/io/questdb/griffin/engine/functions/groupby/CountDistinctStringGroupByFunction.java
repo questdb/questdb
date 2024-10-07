@@ -140,7 +140,7 @@ public class CountDistinctStringGroupByFunction extends LongFunction implements 
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 

@@ -267,7 +267,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testServerMainParallelShardedGroupByLoadTest() throws Exception {
+    public void testServerMainParallelShardedGroupByLoadTest1() throws Exception {
         testServerMainParallelQueryLoadTest(
                 "CREATE TABLE tab as (" +
                         "  select (x * 864000000)::timestamp ts, ('k' || (x % 101))::symbol key, x:: double price, x::long quantity from long_sequence(10000)" +
@@ -296,6 +296,37 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         "1,k14,6599.64534842185\n" +
                         "1,k15,6600.325238210883\n" +
                         "1,k16,6601.005256016568\n"
+        );
+    }
+
+    @Test
+    public void testServerMainParallelShardedGroupByLoadTest2() throws Exception {
+        testServerMainParallelQueryLoadTest(
+                "CREATE TABLE tab as (" +
+                        "  select (x * 864000000)::timestamp ts, ('k' || (x % 101))::symbol key, x::long x from long_sequence(10000)" +
+                        ") timestamp (ts) PARTITION BY DAY",
+                "SELECT key, count_distinct(x) FROM tab ORDER BY key LIMIT 10",
+                "QUERY PLAN[VARCHAR]\n" +
+                        "Sort light lo: 10\n" +
+                        "  keys: [key]\n" +
+                        "    Async Group By workers: 4\n" +
+                        "      keys: [key]\n" +
+                        "      values: [count_distinct(x)]\n" +
+                        "      filter: null\n" +
+                        "        PageFrame\n" +
+                        "            Row forward scan\n" +
+                        "            Frame forward scan on: tab\n",
+                "key[VARCHAR],count_distinct[BIGINT]\n" +
+                        "k0,99\n" +
+                        "k1,100\n" +
+                        "k10,99\n" +
+                        "k100,99\n" +
+                        "k11,99\n" +
+                        "k12,99\n" +
+                        "k13,99\n" +
+                        "k14,99\n" +
+                        "k15,99\n" +
+                        "k16,99\n"
         );
     }
 

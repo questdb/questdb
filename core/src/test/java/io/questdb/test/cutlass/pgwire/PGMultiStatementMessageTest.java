@@ -50,6 +50,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.cairo.sql.SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK;
 import static org.junit.Assert.*;
 
 /**
@@ -315,6 +316,15 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                     pstmt.close();
                 }
             }
+        });
+    }
+
+    @Test
+    public void testCommentOnlyQuery() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, TIMEOUT_FAIL_ON_FIRST_CHECK, (connection, binary, mode, port) -> {
+            Statement statement = connection.createStatement();
+            boolean hasResult = statement.execute("/*comment*/");
+            assertResults(statement, hasResult, Result.ZERO);
         });
     }
 
@@ -1660,9 +1670,9 @@ public class PGMultiStatementMessageTest extends BasePGTest {
     // TODOs:
     //test when no earlier transaction nor begin/commit/rollback then block is wrapped in implicit transaction and committed at the end
     //test when there's rollback/commit in middle and rest is wrapped in transaction
-    //test when there's error in the middle then implicit transaction is rolled back 
+    //test when there's error in the middle then implicit transaction is rolled back
 
-    //test when there's earlier transaction then block is not committed at the end 
+    //test when there's earlier transaction then block is not committed at the end
     //test if there's begin in the middle then this piece of block is not committed
     //test if there's earlier transaction with commit or rollback then later begin includes lines wrapped in implicit transactions
 

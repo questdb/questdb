@@ -53,7 +53,7 @@ public class DoubleColumn extends DoubleFunction implements ScalarFunction {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return true;
     }
 

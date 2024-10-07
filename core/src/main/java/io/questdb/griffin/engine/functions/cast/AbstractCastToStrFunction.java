@@ -42,7 +42,7 @@ public abstract class AbstractCastToStrFunction extends StrFunction implements U
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 

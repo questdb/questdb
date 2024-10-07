@@ -194,12 +194,12 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getCountDistinctCapacity() {
-        return 16;
+        return 4;
     }
 
     @Override
     public double getCountDistinctLoadFactor() {
-        return 0.7;
+        return 0.8;
     }
 
     @Override
@@ -390,6 +390,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public @NotNull CharSequence getLegacyCheckpointRoot() {
         return legacyCheckpointRoot;
+    }
+
+    @Override
+    public boolean getLogLevelVerbose() {
+        return false;
     }
 
     @Override

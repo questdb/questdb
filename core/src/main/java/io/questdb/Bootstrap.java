@@ -31,6 +31,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.jit.JitUtil;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogLevel;
 import io.questdb.log.LogRecord;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.network.Net;
@@ -149,7 +150,6 @@ public class Bootstrap {
         }
 
         verifyFileLimits();
-
         try {
             if (bootstrapConfiguration.useSite()) {
                 // site
@@ -190,6 +190,7 @@ public class Bootstrap {
             } else {
                 config = configuration;
             }
+            LogLevel.init(config.getCairoConfiguration());
             reportValidateConfig();
             reportCrashFiles(config.getCairoConfiguration(), log);
         } catch (BootstrapException e) {

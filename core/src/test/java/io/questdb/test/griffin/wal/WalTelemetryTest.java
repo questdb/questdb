@@ -44,7 +44,7 @@ public class WalTelemetryTest extends AbstractCairoTest {
     @Test
     public void testTelemetryWal() throws Exception {
         assertMemoryLeak(() -> {
-            currentMicros = 1000L;
+            setCurrentMicros(1000);
             try (TelemetryJob telemetryJob = new TelemetryJob(engine)) {
                 String tableName = testName.getMethodName();
                 compile("create table " + tableName + " as (" +
@@ -55,14 +55,14 @@ public class WalTelemetryTest extends AbstractCairoTest {
                         " from long_sequence(5)" +
                         ") timestamp(ts) partition by DAY WAL");
 
-                currentMicros = 2000L;
+                setCurrentMicros(2000);
                 insert("insert into " + tableName +
                         " values (101, 'dfd', '2022-02-24T01', 'asd')");
 
-                currentMicros = 3000L;
+                setCurrentMicros(3000);
                 drainWalQueue();
 
-                currentMicros = 4000L;
+                setCurrentMicros(4000);
                 assertSql("x\tsym\tts\tsym2\n" +
                         "1\tAB\t2022-02-24T00:00:00.000000Z\tEF\n" +
                         "2\tBC\t2022-02-24T00:00:01.000000Z\tFG\n" +

@@ -41,7 +41,6 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.LongAdder;
 
 public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
-
     public static final LongAdder PRE_TOUCH_BLACK_HOLE = new LongAdder();
     private final IntList columnTypes;
     private final Function filter;
@@ -66,17 +65,6 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
         }
         this.columnTypes = columnTypes;
         this.forceDisablePreTouch = forceDisablePreTouch;
-    }
-
-    public int acquireFilter(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
-        if (perWorkerLocks == null) {
-            return -1;
-        }
-        if (workerId == -1 && owner) {
-            // Owner thread is free to use the original filter anytime.
-            return -1;
-        }
-        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
     }
 
     @Override
@@ -114,6 +102,19 @@ public class AsyncFilterAtom implements StatefulAtom, Closeable, Plannable {
             // DataUnavailableException thrown on worker threads when filtering.
             Function.initCursor(perWorkerFilters);
         }
+    }
+
+    public int maybeAcquireFilter(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
+        if (perWorkerLocks == null) {
+            return -1;
+        }
+        if (workerId == -1 && owner) {
+            // Owner thread is free to use its own private filter anytime.
+            return -1;
+        }
+        // All other threads, e.g. worker or work stealing threads, must always acquire a lock
+        // to use shared resources.
+        return perWorkerLocks.acquireSlot(workerId, circuitBreaker);
     }
 
     /**

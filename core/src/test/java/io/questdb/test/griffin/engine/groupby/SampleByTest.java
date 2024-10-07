@@ -35,15 +35,13 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.groupby.MicroTimestampSampler;
 import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -57,7 +55,7 @@ import org.junit.Test;
 
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
-import java.util.Date;
+import java.util.TimeZone;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -2802,6 +2800,29 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntervalAllVirtual() throws Exception {
+        setCurrentMicros(IntervalUtils.parseFloorPartialTimestamp("2023-01-01T11:22:33.000000Z"));
+        assertMemoryLeak(() -> assertSql(
+                "first\tcount\tts\n" +
+                        "('2023-01-01T06:00:00.000Z', '2023-01-02T05:59:59.999Z')\t60\t2022-02-24T00:00:00.000000Z\n" +
+                        "('2023-01-01T06:00:00.000Z', '2023-01-02T05:59:59.999Z')\t60\t2022-02-24T01:00:00.000000Z\n" +
+                        "('2023-01-01T06:00:00.000Z', '2023-01-02T05:59:59.999Z')\t60\t2022-02-24T02:00:00.000000Z\n" +
+                        "('2023-01-01T06:00:00.000Z', '2023-01-02T05:59:59.999Z')\t60\t2022-02-24T03:00:00.000000Z\n" +
+                        "('2023-01-01T06:00:00.000Z', '2023-01-02T05:59:59.999Z')\t60\t2022-02-24T04:00:00.000000Z\n" +
+                        "('2023-01-01T06:00:00.000Z', '2023-01-02T05:59:59.999Z')\t60\t2022-02-24T05:00:00.000000Z\n" +
+                        "('2023-01-01T06:00:00.000Z', '2023-01-02T05:59:59.999Z')\t60\t2022-02-24T06:00:00.000000Z\n" +
+                        "('2023-01-01T06:00:00.000Z', '2023-01-02T05:59:59.999Z')\t60\t2022-02-24T07:00:00.000000Z\n" +
+                        "('2023-01-01T06:00:00.000Z', '2023-01-02T05:59:59.999Z')\t20\t2022-02-24T08:00:00.000000Z\n",
+                "select first(today), count(x), ts " +
+                        "from ( " +
+                        "  select today('UTC-06:00') today, x, timestamp_sequence('2022-02-24', 60*1000*1000) ts " +
+                        "  from long_sequence(500) " +
+                        ") timestamp(ts) " +
+                        "SAMPLE by 1h;"
+        ));
+    }
+
+    @Test
     public void testNoSampleByWithDeferredSingleSymbolFilterPageFrameRecordCursorFactory() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table xx (k timestamp, d DOUBLE, s SYMBOL)" +
@@ -4883,8 +4904,8 @@ public class SampleByTest extends AbstractCairoTest {
             String query = "select timestamp, count() from trades\n" +
                     "sample by 1m FROM date_trunc('day', now()) FILL (null) \n";
 
-            Date today = new Date();
-
+            SimpleDateFormat formatter = new SimpleDateFormat("yyyy-MM-dd");
+            formatter.setTimeZone(TimeZone.getTimeZone("UTC"));
             assertPlanNoLeakCheck(query, "Sample By\n" +
                     "  fill: null\n" +
                     "  range: (timestamp_floor('day',now()),null)\n" +
@@ -4892,7 +4913,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "    PageFrame\n" +
                     "        Row forward scan\n" +
                     "        Interval forward scan on: trades\n" +
-                    "          intervals: [(\"" + new SimpleDateFormat("yyyy-MM-dd").format(today) + "T00:00:00.000000Z\",\"MAX\")]\n");
+                    "          intervals: [(\"" + formatter.format(Os.currentTimeMicros() / 1000) + "T00:00:00.000000Z\",\"MAX\")]\n");
 
             assertSql("timestamp\tcount\n", query);
         });

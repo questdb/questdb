@@ -115,7 +115,7 @@ public class LPadStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return false;
         }
 

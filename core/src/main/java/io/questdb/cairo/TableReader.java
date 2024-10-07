@@ -83,9 +83,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long rowCount;
     private TableToken tableToken;
     private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
-    private long txColumnVersion = -1;
-    private long txPartitionVersion = -1;
-    private long txTruncateVersion = -1;
+    private long txColumnVersion;
+    private long txPartitionVersion;
+    private long txTruncateVersion;
     private long txn = TableUtils.INITIAL_TXN;
     private boolean txnAcquired = false;
 
@@ -124,6 +124,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             txFile = new TxReader(ff).ofRO(path.trimTo(rootLen).concat(TXN_FILE_NAME).$(), partitionBy);
             path.trimTo(rootLen);
             reloadSlow(false);
+            txPartitionVersion = txFile.getPartitionTableVersion();
+            txColumnVersion = txFile.getColumnVersion();
+            txTruncateVersion = txFile.getTruncateVersion();
             columnCount = metadata.getColumnCount();
             columnCountShl = getColumnBits(columnCount);
             openSymbolMaps();
@@ -922,7 +925,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (ff.exists(path.$())) {
                     final long partitionSize = txFile.getPartitionSize(partitionIndex);
                     if (partitionSize > -1L) {
-                        LOG.debug()
+                        LOG.info()
                                 .$("open partition [path=").$substr(dbRootSize, path)
                                 .$(", rowCount=").$(partitionSize)
                                 .$(", partitionIndex=").$(partitionIndex)
@@ -932,7 +935,8 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getVersion());
+                        final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.PARQUET);
                         // TODO(puzpuzpuz): handle reopen properly - partition format may have changed
                         if (isReopen) {
@@ -965,7 +969,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getVersion());
+                        final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.NATIVE);
                         if (!isReopen) {
                             openPartitionCount++;

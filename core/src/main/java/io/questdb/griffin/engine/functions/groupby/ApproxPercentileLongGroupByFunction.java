@@ -151,7 +151,7 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return false;
     }
 

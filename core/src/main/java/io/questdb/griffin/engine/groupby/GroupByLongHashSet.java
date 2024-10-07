@@ -33,7 +33,7 @@ import io.questdb.std.Vect;
 /**
  * Specialized flyweight hash set used in {@link io.questdb.griffin.engine.functions.GroupByFunction}s.
  * <p>
- * Uses provided {@link GroupByAllocatorImpl} to allocate the underlying buffer. Grows the buffer when needed.
+ * Uses provided {@link GroupByAllocator} to allocate the underlying buffer. Grows the buffer when needed.
  * <p>
  * Buffer layout is the following:
  * <pre>
@@ -45,7 +45,7 @@ import io.questdb.std.Vect;
  */
 public class GroupByLongHashSet {
     private static final long HEADER_SIZE = 4 * Integer.BYTES;
-    private static final int MIN_INITIAL_CAPACITY = 16;
+    private static final int MIN_INITIAL_CAPACITY = 4;
     private static final long SIZE_LIMIT_OFFSET = 2 * Integer.BYTES;
     private static final long SIZE_OFFSET = Integer.BYTES;
     private final int initialCapacity;
@@ -172,6 +172,7 @@ public class GroupByLongHashSet {
     }
 
     private long probe(long key, long index) {
+        final long index0 = index;
         do {
             index = (index + 1) & mask;
             long k = keyAt(index);
@@ -181,12 +182,14 @@ public class GroupByLongHashSet {
             if (key == k) {
                 return -index - 1;
             }
-        } while (true);
+        } while (index != index0);
+
+        throw CairoException.critical(0).put("corrupt long hash set");
     }
 
     private void rehash(int newCapacity, int newSizeLimit) {
         if (newCapacity < 0) {
-            throw CairoException.nonCritical().put("set capacity overflow");
+            throw CairoException.nonCritical().put("long hash set capacity overflow");
         }
 
         final int oldSize = size();
