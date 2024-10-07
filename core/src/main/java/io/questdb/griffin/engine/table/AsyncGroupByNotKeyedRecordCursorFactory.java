@@ -38,13 +38,10 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
-import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
-import io.questdb.std.DirectLongList;
-import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
+import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -63,7 +60,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     private final int workerCount;
 
     public AsyncGroupByNotKeyedRecordCursorFactory(
-            @NotNull GroupByFunctionsUpdaterFactory functionsUpdaterFactory,
+            @Transient @NotNull BytecodeAssembler asm,
             @NotNull CairoConfiguration configuration,
             @NotNull MessageBus messageBus,
             @NotNull RecordCursorFactory base,
@@ -84,7 +81,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             this.base = base;
             this.groupByFunctions = groupByFunctions;
             AsyncGroupByNotKeyedAtom atom = new AsyncGroupByNotKeyedAtom(
-                    functionsUpdaterFactory,
+                    asm,
                     configuration,
                     groupByFunctions,
                     perWorkerGroupByFunctions,

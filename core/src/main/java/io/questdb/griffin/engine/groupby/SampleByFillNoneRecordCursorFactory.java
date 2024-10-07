@@ -46,7 +46,6 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
 
     public SampleByFillNoneRecordCursorFactory(
             @Transient @NotNull BytecodeAssembler asm,
-            @NotNull GroupByFunctionsUpdaterFactory functionsUpdaterFactory,
             CairoConfiguration configuration,
             RecordCursorFactory base,
             RecordMetadata groupByMetadata,
@@ -72,7 +71,7 @@ public class SampleByFillNoneRecordCursorFactory extends AbstractSampleByRecordC
             final RecordSink mapSink = RecordSinkFactory.getInstance(asm, base.getMetadata(), listColumnFilter);
             // this is the map itself, which we must not forget to free when factory closes
             final Map map = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes);
-            final GroupByFunctionsUpdater groupByFunctionsUpdater = functionsUpdaterFactory.getInstance(groupByFunctions);
+            final GroupByFunctionsUpdater groupByFunctionsUpdater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
             cursor = new SampleByFillNoneRecordCursor(
                     configuration,
                     map,

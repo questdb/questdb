@@ -136,6 +136,8 @@ public class RecordSinkFactory {
     /**
      * Same as the getInstance() methods, but returns the generated class instead of its instance.
      * An instance can be later created via the {@link #getInstance(Class, ObjList)} method.
+     * <p>
+     * Used when creating per-worker sinks for parallel GROUP BY.
      */
     public static Class<RecordSink> getInstanceClass(
             BytecodeAssembler asm,

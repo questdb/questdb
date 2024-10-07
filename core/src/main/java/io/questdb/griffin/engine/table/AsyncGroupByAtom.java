@@ -80,7 +80,6 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
 
     public AsyncGroupByAtom(
             @Transient @NotNull BytecodeAssembler asm,
-            @NotNull GroupByFunctionsUpdaterFactory functionsUpdaterFactory,
             @NotNull CairoConfiguration configuration,
             @Transient @NotNull ColumnTypes columnTypes,
             @Transient @NotNull ArrayColumnTypes keyTypes,
@@ -115,11 +114,12 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
             this.ownerGroupByFunctions = ownerGroupByFunctions;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
 
-            ownerFunctionUpdater = functionsUpdaterFactory.getInstance(ownerGroupByFunctions);
+            final Class<GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, ownerGroupByFunctions.size());
+            ownerFunctionUpdater = GroupByFunctionsUpdaterFactory.getInstance(updaterClass, ownerGroupByFunctions);
             if (perWorkerGroupByFunctions != null) {
                 perWorkerFunctionUpdaters = new ObjList<>(slotCount);
                 for (int i = 0; i < slotCount; i++) {
-                    perWorkerFunctionUpdaters.extendAndSet(i, functionsUpdaterFactory.getInstance(perWorkerGroupByFunctions.getQuick(i)));
+                    perWorkerFunctionUpdaters.extendAndSet(i, GroupByFunctionsUpdaterFactory.getInstance(updaterClass, perWorkerGroupByFunctions.getQuick(i)));
                 }
             } else {
                 perWorkerFunctionUpdaters = null;

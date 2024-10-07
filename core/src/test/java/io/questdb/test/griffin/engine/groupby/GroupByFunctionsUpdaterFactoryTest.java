@@ -48,8 +48,7 @@ public class GroupByFunctionsUpdaterFactoryTest {
         functions.add(new TestGroupByFunction());
         functions.add(new TestGroupByFunction());
         functions.add(new TestGroupByFunction());
-        GroupByFunctionsUpdaterFactory factory = new GroupByFunctionsUpdaterFactory(new BytecodeAssembler());
-        GroupByFunctionsUpdater updater = factory.getInstance(functions);
+        GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(new BytecodeAssembler(), functions);
 
         MapValue value = new SimpleMapValue(2);
         Record record = new TestRecord();
