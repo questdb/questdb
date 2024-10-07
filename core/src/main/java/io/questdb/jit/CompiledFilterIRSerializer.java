@@ -97,7 +97,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final LongObjHashMap<ExpressionNode> backfillNodes = new LongObjHashMap<>();
     private final PostOrderTreeTraversalAlgo inPredicateTraverseAlgo = new PostOrderTreeTraversalAlgo();
     private final PredicateContext predicateContext = new PredicateContext();
-    private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private ObjList<Function> bindVarFunctions;
     private final LongObjHashMap.LongObjConsumer<ExpressionNode> backfillNodeConsumer = this::backfillNode;
     private SqlExecutionContext executionContext;
@@ -838,7 +837,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final ExpressionNode lhs = predicateContext.inOperationNode.lhs;
 
         int orCount = -1;
-        for (int i = 0; i < intervals.size() / 2; i += 1) {
+        for (int i = 0, n = intervals.size() / 2; i < n; i += 1) {
             long lo = IntervalUtils.getEncodedPeriodLo(intervals, i * 2);
             long hi = IntervalUtils.getEncodedPeriodHi(intervals, i * 2);
             putOperand(IMM, I8_TYPE, lo);
@@ -1357,7 +1356,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             final int columnType = metadata.getColumnType(columnIndex);
             final int columnTypeTag = ColumnType.tagOf(columnType);
             if (columnTypeTag == ColumnType.SYMBOL) {
-                symbolTable = (StaticSymbolTable) pageFrameCursor.getSymbolTable(columnIndex);
+                symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
                 symbolColumnIndex = columnIndex;
             }
 
