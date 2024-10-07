@@ -56,7 +56,6 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 import static io.questdb.cairo.ErrorTag.*;
@@ -1600,7 +1599,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
 
             assertSql(
                     "name\tsuspended\twriterTxn\twriterLagTxnCount\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                            tableToken.getTableName() + "\ttrue\t1\t1\t4\t" + expectedTag +
+                            tableToken.getTableName() + "\ttrue\t1\t0\t4\t" + expectedTag +
                             "\t" + errorMessage + "\t0\n",
                     "wal_tables()"
             );

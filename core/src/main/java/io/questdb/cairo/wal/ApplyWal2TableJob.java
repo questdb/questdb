@@ -387,7 +387,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             } catch (Throwable th) {
                 // There is an exception the table will be marked as suspended.
                 // Update the last applied transactions before it happens.
-                engine.getTableSequencerAPI().notifyCommitReadable(tableToken, writer.getTxn(), writer.getAppliedSeqTxn());
+                engine.getTableSequencerAPI().notifyCommitReadable(tableToken, writer.getTxn(), writer.getTxn());
                 throw th;
             } finally {
                 Misc.free(structuralChangeCursor);
