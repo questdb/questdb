@@ -948,6 +948,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // If they are defined, the pipeline entry
         // will have the supplied parameter types.
 
+        sqlExecutionContext.initNow();
         int cachedStatus = CACHE_MISS;
         final TypesAndInsertModern tai = taiCache.peek(utf16SqlText);
         if (tai != null) {
@@ -1004,24 +1005,24 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
     // processes one or more queries (batch/script). "Simple Query" in PostgresSQL docs.
     private void msgQuery(long lo, long limit) throws BadProtocolException, PeerIsSlowToReadException, QueryPausedException, PeerDisconnectedException {
         CharacterStoreEntry e = characterStore.newEntry();
-        if (Utf8s.utf8ToUtf16(lo, limit - 1, e)) {
-            CharSequence activeSqlText = characterStore.toImmutable();
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                compiler.compileBatch(activeSqlText, sqlExecutionContext, batchCallback);
-                if (pipelineCurrentEntry == null) {
-                    pipelineCurrentEntry = new PGPipelineEntry(engine);
-                    pipelineCurrentEntry.ofEmpty(activeSqlText);
-                }
-            } catch (Throwable ex) {
-                if (transactionState == IN_TRANSACTION) {
-                    transactionState = ERROR_TRANSACTION;
-                }
-                throw msgKaput().put(ex);
-            } finally {
-                msgSync();
-            }
-        } else {
+        if (!Utf8s.utf8ToUtf16(lo, limit - 1, e)) {
             throw msgKaput().put("invalid UTF8 bytes in parse query");
+        }
+        sqlExecutionContext.initNow();
+        CharSequence activeSqlText = characterStore.toImmutable();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.compileBatch(activeSqlText, sqlExecutionContext, batchCallback);
+            if (pipelineCurrentEntry == null) {
+                pipelineCurrentEntry = new PGPipelineEntry(engine);
+                pipelineCurrentEntry.ofEmpty(activeSqlText);
+            }
+        } catch (Throwable ex) {
+            if (transactionState == IN_TRANSACTION) {
+                transactionState = ERROR_TRANSACTION;
+            }
+            throw msgKaput().put(ex);
+        } finally {
+            msgSync();
         }
     }
 
