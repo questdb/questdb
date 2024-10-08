@@ -55,7 +55,6 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED + "=true",
                 PropertyKey.SHARED_WORKER_COUNT + "=4",
                 PropertyKey.PG_WORKER_COUNT + "=4",
-                PropertyKey.LINE_TCP_IO_WORKER_COUNT + "=64", // TODO(puzpuzpuz): remove after debugging
                 PropertyKey.PG_SELECT_CACHE_ENABLED + "=true",
                 PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD + "=1",
                 PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD + "=100",
@@ -182,6 +181,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
 
     @Test
     public void testServerMainParallelGroupBySmokeTest1() throws Exception {
+        // Verify that circuit breaker checks don't have weird bugs unseen in fast tests.
         try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
             serverMain.start();
             try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
@@ -202,6 +202,7 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
 
     @Test
     public void testServerMainParallelGroupBySmokeTest2() throws Exception {
+        // Verify that circuit breaker checks don't have weird bugs unseen in fast tests.
         try (final ServerMain serverMain = new ServerMain(getServerMainArgs())) {
             serverMain.start();
             try (Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES)) {
