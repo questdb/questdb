@@ -1933,6 +1933,11 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testComentOnlyQuery() throws Exception {
+        assertSql("\n", "/* comment */");
+    }
+
+    @Test
     public void testCompareStringAndChar() throws Exception {
         assertMemoryLeak(() -> {
             // constant
@@ -2851,7 +2856,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             @Override
             public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                if (mapCount++ == 6) {
+                if (mapCount++ == 7) {
                     return -1;
                 }
                 return super.mmap(fd, len, offset, flags, memoryTag);
@@ -3536,11 +3541,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
     @Test
     public void testEmptyQuery() throws Exception {
-        assertException(
-                "                        ",
-                0,
-                "empty query"
-        );
+        assertSql("\n", "                        ");
     }
 
     @Test
@@ -4640,7 +4641,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
             @Override
             public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                if (inError.get() && pageCount++ == 14) {
+                if (inError.get() && pageCount++ == 15) {
                     return -1;
                 }
                 return super.mmap(fd, len, offset, flags, memoryTag);

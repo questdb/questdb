@@ -194,6 +194,8 @@ public interface SqlExecutionContext extends Closeable {
 
     void pushTimestampRequiredFlag(boolean flag);
 
+    void setCacheHit(boolean value);
+
     // This method is used to override intrinsic values in the query execution context
     // It is initial usage is in the Materialized view refresh
     // where the queried timestamp of the base table is limited to the range affected since last refresh
@@ -218,6 +220,4 @@ public interface SqlExecutionContext extends Closeable {
 
     default void storeTelemetry(short event, short origin) {
     }
-
-    void setCacheHit(boolean value);
 }

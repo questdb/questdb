@@ -50,7 +50,7 @@ public class IPv4BindVariable extends IPv4Function implements ScalarFunction, Mu
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return true;
     }
 

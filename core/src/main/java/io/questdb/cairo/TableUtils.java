@@ -225,7 +225,8 @@ public final class TableUtils {
                         false,
                         null,
                         columnIndex,
-                        false
+                        false,
+                        existingIndex + 1 // replacing column index by convention can be 0 if not in use
                 )
         );
         columnMetadata.getQuick(existingIndex).markDeleted();
@@ -664,7 +665,8 @@ public final class TableUtils {
             case ColumnType.TIMESTAMP:
             case ColumnType.LONG128:
             case ColumnType.UUID:
-                // Long128 and UUID are null when all 2 longs are NaNs
+            case ColumnType.INTERVAL:
+                // Long128, UUID, and INTERVAL are null when all 2 longs are NaNs
                 // Long256 is null when all 4 longs are NaNs
                 return Numbers.LONG_NULL;
             case ColumnType.GEOBYTE:
@@ -1012,6 +1014,15 @@ public final class TableUtils {
                     .put(']');
         }
         return address;
+    }
+
+    public static long mapRO(FilesFacade ff, LPSZ path, Log log, long size, int memoryTag) {
+        final long fd = openRO(ff, path, log);
+        try {
+            return mapRO(ff, fd, size, memoryTag);
+        } finally {
+            ff.close(fd);
+        }
     }
 
     public static long mapRW(FilesFacade ff, long fd, long size, int memoryTag) {
@@ -1503,6 +1514,16 @@ public final class TableUtils {
         }
     }
 
+    public static void setParquetPartitionPath(
+            Path path,
+            int partitionBy,
+            long partitionTimestamp,
+            long nameTxn
+    ) {
+        TableUtils.setPathForPartition(path, partitionBy, partitionTimestamp, nameTxn);
+        path.concat("data.parquet");
+    }
+
     /**
      * Sets the path to the directory of a partition taking into account the timestamp, the partitioning scheme
      * and the partition version.
@@ -1537,7 +1558,7 @@ public final class TableUtils {
         }
     }
 
-    public static void setTxReaderPath(@NotNull TxReader reader, @NotNull FilesFacade ff, @NotNull Path path, int partitionBy) {
+    public static void setTxReaderPath(@NotNull TxReader reader, @NotNull Path path, int partitionBy) {
         reader.ofRO(path.concat(TXN_FILE_NAME).$(), partitionBy);
     }
 
@@ -1754,6 +1775,46 @@ public final class TableUtils {
             prev = newTs;
         }
         return true;
+    }
+
+    static void buildWriterOrderMap(MemoryMR metaMem, IntList columnOrderMap, MemoryMR newMeta, int newColumnCount) {
+        int nameOffset = (int) TableUtils.getColumnNameOffset(newColumnCount);
+        columnOrderMap.clear();
+
+        int denseSymbolIndex = 0;
+        for (int i = 0; i < newColumnCount; i++) {
+            int strLen = TableUtils.getInt(newMeta, newMeta.size(), nameOffset);
+            if (strLen == TableUtils.NULL_LEN) {
+                throw validationException(metaMem).put("NULL column name at [").put(i).put(']');
+            }
+            if (strLen < 1 || strLen > 255) {
+                // EXT4 and many others do not allow file name length > 255 bytes
+                throw validationException(metaMem).put("String length of ").put(strLen).put(" is invalid at offset ").put(nameOffset);
+            }
+            int nameLen = (int) Vm.getStorageLength(strLen);
+            int newOrderIndex = TableUtils.getReplacingColumnIndex(newMeta, i);
+            boolean isSymbol = ColumnType.isSymbol(TableUtils.getColumnType(newMeta, i));
+
+            if (newOrderIndex > -1 && newOrderIndex < newColumnCount - 1) {
+                // Replace the column index
+                columnOrderMap.set(3 * newOrderIndex, i);
+                columnOrderMap.set(3 * newOrderIndex + 1, nameOffset);
+                columnOrderMap.set(3 * newOrderIndex + 2, isSymbol ? denseSymbolIndex : -1);
+
+                columnOrderMap.add(-newOrderIndex - 1);
+                columnOrderMap.add(0);
+                columnOrderMap.add(0);
+
+            } else {
+                columnOrderMap.add(i);
+                columnOrderMap.add(nameOffset);
+                columnOrderMap.add(isSymbol ? denseSymbolIndex : -1);
+            }
+            nameOffset += nameLen;
+            if (isSymbol) {
+                denseSymbolIndex++;
+            }
+        }
     }
 
     static void createDirsOrFail(FilesFacade ff, Path path, int mkDirMode) {

@@ -219,6 +219,10 @@ public interface CairoConfiguration {
     @NotNull
     CharSequence getLegacyCheckpointRoot(); // same as root/../snapshot
 
+    boolean getLogLevelVerbose();
+
+    boolean getLogSqlQueryProgressExe();
+
     int getMaxCrashFiles();
 
     int getMaxFileNameLength();
@@ -627,5 +631,15 @@ public interface CairoConfiguration {
 
     boolean useFastAsOfJoin();
 
-    int getMaterializedViewUpdateQueueCapacity();
+    int getPartitionEncoderParquetVersion();
+
+    boolean isPartitionEncoderParquetStatisticsEnabled();
+
+    int getPartitionEncoderParquetCompressionCodec();
+
+    int getPartitionEncoderParquetCompressionLevel();
+
+    int getPartitionEncoderParquetRowGroupSize();
+
+    int getPartitionEncoderParquetDataPageSize();
 }

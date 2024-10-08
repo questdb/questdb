@@ -39,11 +39,11 @@ import org.jetbrains.annotations.Nullable;
  * sequence itself.
  * <br>
  * The information about whether a stored sequence is direct or not is not stored in the header of the Holder. Instead, the
- * top bit of the pointer returned by {@link #ptr()} is used to store this information. This is done to save space in the
- * header and to avoid the need to store this information separately. Thus, the value returned by {@link #ptr()} cannot
+ * top bit of the pointer returned by {@link #colouredPtr()} is used to store this information. This is done to save space in the
+ * header and to avoid the need to store this information separately. Thus, the value returned by {@link #colouredPtr()} cannot
  * be used as a pointer directly and should be treated as an opaque value.
  * <p>
- * Uses provided {@link GroupByAllocatorImpl} to allocate the underlying buffer. Grows the buffer when needed.
+ * Uses provided {@link GroupByAllocator} to allocate the underlying buffer. Grows the buffer when needed.
  * <p>
  * Buffer layout is the following:
  * <pre>
@@ -99,6 +99,10 @@ public class StableAwareStringHolder implements CharSequence {
         Unsafe.getUnsafe().putInt(ptr + LEN_OFFSET, thatLen);
     }
 
+    public long colouredPtr() {
+        return ptr | (direct ? 0x8000000000000000L : 0);
+    }
+
     @Override
     public int length() {
         return ptr != 0 ? Unsafe.getUnsafe().getInt(ptr + LEN_OFFSET) : 0;
@@ -110,10 +114,6 @@ public class StableAwareStringHolder implements CharSequence {
         // extract the top bit
         this.direct = (ptr & 0x8000000000000000L) != 0;
         return this;
-    }
-
-    public long ptr() {
-        return ptr | (direct ? 0x8000000000000000L : 0);
     }
 
     public void setAllocator(GroupByAllocator allocator) {

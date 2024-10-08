@@ -47,6 +47,18 @@ public class ShowTablesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowColumnsWithFunctionAndMissingTable() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table balances(cust_id int, ccy symbol, balance double)");
+            assertException(
+                    "select * from table_columns('balances2')",
+                    14,
+                    "table does not exist"
+            );
+        });
+    }
+
+    @Test
     public void testShowColumnsWithMissingTable() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table balances(cust_id int, ccy symbol, balance double)");

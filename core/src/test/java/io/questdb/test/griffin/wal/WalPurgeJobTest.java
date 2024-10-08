@@ -362,7 +362,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     + ") timestamp(ts) partition by DAY WAL");
 
             final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;  // ms to us.
-            currentMicros = interval + 1;  // Set to some point in time that's not 0.
+            setCurrentMicros(interval + 1);  // Set to some point in time that's not 0.
 
             try (WalPurgeJob walPurgeJob = new WalPurgeJob(engine, ff, configuration.getMicrosecondClock())) {
                 counter.set(0);
@@ -370,18 +370,18 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                 walPurgeJob.delayByHalfInterval();
                 walPurgeJob.run(0);
                 Assert.assertEquals(0, counter.get());
-                currentMicros += interval / 2 + 1;
+                setCurrentMicros(currentMicros + interval / 2 + 1);
                 walPurgeJob.run(0);
                 Assert.assertEquals(1, counter.get());
-                currentMicros += interval / 2 + 1;
+                setCurrentMicros(currentMicros + interval / 2 + 1);
                 walPurgeJob.run(0);
                 walPurgeJob.run(0);
                 walPurgeJob.run(0);
                 Assert.assertEquals(1, counter.get());
-                currentMicros += interval;
+                setCurrentMicros(currentMicros + interval);
                 walPurgeJob.run(0);
                 Assert.assertEquals(2, counter.get());
-                currentMicros += 10 * interval;
+                setCurrentMicros(currentMicros + 10 * interval);
                 walPurgeJob.run(0);
                 Assert.assertEquals(3, counter.get());
             }
@@ -1092,7 +1092,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             engine.releaseInactive();
 
             final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;  // ms to us.
-            currentMicros = interval + 1;  // Set to some point in time that's not 0.
+            setCurrentMicros(interval + 1);  // Set to some point in time that's not 0.
             try (WalPurgeJob job = new WalPurgeJob(engine)) {
                 final SimpleWaitingLock lock = job.getRunLock();
                 try {
@@ -1104,7 +1104,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
                     assertWalExistence(true, tableName, 1);
                 }
 
-                currentMicros += 2 * interval;
+                setCurrentMicros(currentMicros + 2 * interval);
                 job.drain(0);
 
                 assertSegmentExistence(false, tableName, 1, 0);

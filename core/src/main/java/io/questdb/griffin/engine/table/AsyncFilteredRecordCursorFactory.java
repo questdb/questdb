@@ -43,7 +43,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.*;
 
-public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactory implements StealableFilterRecordCursorFactory {
+public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactory {
 
     private static final PageFrameReducer REDUCER = AsyncFilteredRecordCursorFactory::filter;
 
@@ -228,7 +228,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         rows.clear();
 
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
-        final int filterId = atom.acquireFilter(workerId, owner, circuitBreaker);
+        final int filterId = atom.maybeAcquireFilter(workerId, owner, circuitBreaker);
         final Function filter = atom.getFilter(filterId);
         try {
             for (long r = 0; r < frameRowCount; r++) {

@@ -22,45 +22,40 @@
  *
  ******************************************************************************/
 
-package io.questdb.griffin.engine.table;
+package io.questdb.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.jit.CompiledFilter;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
-public interface StealableFilterRecordCursorFactory {
+public class StringDistinctAggVarcharGroupByFunctionFactory implements FunctionFactory {
 
-    // to be used in combination with compiled filter
-    @Nullable
-    default ObjList<Function> getBindVarFunctions() {
-        return null;
+    @Override
+    public String getSignature() {
+        return "string_distinct_agg(Øa)";
     }
 
-    // to be used in combination with compiled filter
-    @Nullable
-    default MemoryCARW getBindVarMemory() {
-        return null;
+    @Override
+    public boolean isGroupBy() {
+        return true;
     }
 
-    @Nullable
-    default CompiledFilter getCompiledFilter() {
-        return null;
+    @Override
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new StringDistinctAggVarcharGroupByFunction(
+                args.getQuick(0),
+                args.getQuick(1).getChar(null),
+                configuration.getCountDistinctCapacity(),
+                configuration.getCountDistinctLoadFactor()
+        );
     }
-
-    @NotNull
-    Function getFilter();
-
-    /**
-     * Closes everything but base factory and filter.
-     */
-    void halfClose();
-
-    /**
-     * Returns true if the factory stands for nothing more but a filter, so that
-     * the above factory (e.g. a parallel GROUP BY one) can steal the filter.
-     */
-    boolean supportsFilterStealing();
 }

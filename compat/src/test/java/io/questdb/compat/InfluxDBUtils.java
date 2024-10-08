@@ -37,6 +37,7 @@ import java.util.List;
 public class InfluxDBUtils {
 
     public static void assertRequestErrorContains(InfluxDB influxDB, List<String> points, String line, String... errors) {
+        assert errors.length > 0;
         points.add(line);
         try {
             influxDB.write(points);

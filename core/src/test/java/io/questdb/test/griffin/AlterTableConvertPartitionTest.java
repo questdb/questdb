@@ -44,10 +44,10 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             ddl("alter table " + tableName + " convert partition to parquet where timestamp > 0");
 
-            assertPartitionExists(tableName, "2024-06-10");
-            assertPartitionExists(tableName, "2024-06-11.0");
-            assertPartitionExists(tableName, "2024-06-12.1");
-            assertPartitionExists(tableName, "2024-06-15.3");
+            assertPartitionExists(tableName, "2024-06-10.8");
+            assertPartitionExists(tableName, "2024-06-11.7");
+            assertPartitionExists(tableName, "2024-06-12.6");
+            assertPartitionExists(tableName, "2024-06-15.9");
         });
     }
 
@@ -58,14 +58,14 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             ddl("create table x as (select" + " x id," + " rnd_boolean() a_boolean," + " rnd_byte() a_byte," + " timestamp_sequence('2024-06', 500) designated_ts" + " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");
 
             ddl("alter table x convert partition to parquet list '2024-06'");
-            assertPartitionExists("x", "2024-06");
+            assertPartitionExists("x", "2024-06.1");
 
             // RO partition, should be ignored
             insert("insert into x(designated_ts) values('2024-06-20')");
 
             insert("insert into x(designated_ts) values('1970-01')");
             ddl("alter table x convert partition to parquet list '1970-01'");
-            assertPartitionExists("x", "1970-01.1");
+            assertPartitionExists("x", "1970-01.4");
         });
     }
 
@@ -77,9 +77,9 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             ddl("alter table " + tableName + " convert partition to parquet list '2024-06-10', '2024-06-11', '2024-06-12'");
 
-            assertPartitionExists(tableName, "2024-06-10");
-            assertPartitionExists(tableName, "2024-06-11.0");
-            assertPartitionExists(tableName, "2024-06-12.1");
+            assertPartitionExists(tableName, "2024-06-10.6");
+            assertPartitionExists(tableName, "2024-06-11.7");
+            assertPartitionExists(tableName, "2024-06-12.8");
             assertPartitionDoesntExists(tableName, "2024-06-15.3");
         });
     }
@@ -90,7 +90,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             ddl("create table x as (select" + " case when x % 2 = 0 then rnd_varchar(1, 40, 1) end as a_varchar," + " to_timestamp('2024-07', 'yyyy-MM') as a_ts," + " from long_sequence(1)) timestamp (a_ts) partition by MONTH");
 
             ddl("alter table x convert partition to parquet where a_ts > 0");
-            assertPartitionExists("x", "2024-07");
+            assertPartitionExists("x", "2024-07.1");
         });
     }
 
@@ -103,7 +103,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             assertException("alter table x convert partition to parquet list '2024-06'", 0, "cannot convert partition to parquet, partition does not exist");
 
             ddl("alter table x convert partition to parquet list '1970-01'");
-            assertPartitionExists("x", "1970-01");
+            assertPartitionExists("x", "1970-01.1");
         });
     }
 
@@ -130,7 +130,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             } catch (Exception e) {
                 TestUtils.assertContains(e.getMessage(), " SymbolMap is too short");
             }
-            assertPartitionDoesntExists(tableName, "1970-01");
+            assertPartitionDoesntExists(tableName, "1970-01.1");
         });
     }
 
@@ -154,7 +154,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             } catch (Exception e) {
                 TestUtils.assertContains(e.getMessage(), "SymbolMap does not exist");
             }
-            assertPartitionDoesntExists(tableName, "1970-01");
+            assertPartitionDoesntExists(tableName, "1970-01.1");
         });
     }
 
@@ -169,9 +169,11 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
             ddl("alter table " + tableName + " convert partition to parquet where timestamp > 0 and timestamp < '2024-06-15'");
 
-            assertPartitionExists(tableName, "2024-06-10");
-            assertPartitionExists(tableName, "2024-06-11.0");
-            assertPartitionExists(tableName, "2024-06-12.1");
+            assertPartitionExists(tableName, "2024-06-10.10");
+            assertPartitionExists(tableName, "2024-06-11.9");
+            assertPartitionExists(tableName, "2024-06-12.8");
+
+            assertPartitionDoesntExists(tableName, "2024-06-15.3");
         });
     }
 
@@ -198,13 +200,13 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             assertQuery("index\tname\treadOnly\tisParquet\tparquetFileSize\tminTimestamp\tmaxTimestamp\n"
                             + "0\t2024-06-10\tfalse\tfalse\t-1\t2024-06-10T00:00:00.000000Z\t2024-06-10T00:00:00.000000Z\n"
                             + "1\t2024-06-11\tfalse\tfalse\t-1\t2024-06-11T00:00:00.000000Z\t2024-06-11T00:00:00.000000Z\n"
-                            + "2\t2024-06-12\ttrue\ttrue\t594\t\t\n" +
+                            + "2\t2024-06-12\tfalse\ttrue\t594\t\t\n" +
                             "3\t2024-06-15\tfalse\tfalse\t-1\t2024-06-15T00:00:00.000000Z\t2024-06-15T00:00:00.000000Z\n",
                     "select index, name, readOnly, isParquet, parquetFileSize, minTimestamp, maxTimestamp from table_partitions('" + tableName + "')", false, true);
 
             assertPartitionDoesntExists(tableName, "2024-06-10");
             assertPartitionDoesntExists(tableName, "2024-06-11.0");
-            assertPartitionExists(tableName, "2024-06-12.1");
+            assertPartitionExists(tableName, "2024-06-12.6");
             assertPartitionDoesntExists(tableName, "2024-06-15.3");
         });
     }
@@ -223,7 +225,8 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         int tablePathLen = path.size();
 
         path.trimTo(tablePathLen);
-        path.concat(partition).put(".parquet");
+        path.concat(partition).concat("data.parquet");
+
         if (rev) {
             Assert.assertFalse(ff.exists(path.$()));
         } else {

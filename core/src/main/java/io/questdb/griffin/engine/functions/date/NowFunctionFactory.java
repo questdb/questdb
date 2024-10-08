@@ -36,7 +36,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class NowFunctionFactory implements FunctionFactory {
-
     private static final String SIGNATURE = "now()";
 
     @Override
@@ -50,26 +49,31 @@ public class NowFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
         return new Func();
     }
 
     private static class Func extends TimestampFunction implements Function {
-        private SqlExecutionContext context;
+        private long now;
 
         @Override
         public long getTimestamp(Record rec) {
-            return context.getNow();
+            return now;
         }
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
-            executionContext.initNow();
-            context = executionContext;
+            now = executionContext.getNow();
         }
 
         @Override
-        public boolean isReadThreadSafe() {
+        public boolean isThreadSafe() {
             return true;
         }
 

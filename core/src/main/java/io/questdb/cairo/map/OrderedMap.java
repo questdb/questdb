@@ -75,10 +75,10 @@ import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
  * Length field is present for var-size keys only. It stores key length in bytes.
  */
 public class OrderedMap implements Map, Reopenable {
-
     static final long VAR_KEY_HEADER_SIZE = 4;
     private static final long MAX_HEAP_SIZE = (Integer.toUnsignedLong(-1) - 1) << 3;
     private static final int MIN_KEY_CAPACITY = 16;
+
     private final OrderedMapCursor cursor;
     private final int heapMemoryTag;
     private final Key key;
@@ -253,6 +253,7 @@ public class OrderedMap implements Map, Reopenable {
             free = 0;
             size = 0;
             heapSize = 0;
+            nResizes = 0;
         }
     }
 
@@ -555,30 +556,30 @@ public class OrderedMap implements Map, Reopenable {
     // Returns delta between new and old heapStart addresses.
     private long resize(long entrySize, long appendAddress) {
         assert appendAddress >= heapStart;
-        if (nResizes < maxResizes) {
-            nResizes++;
-            long kCapacity = (heapLimit - heapStart) << 1;
-            long target = appendAddress + entrySize - heapStart;
-            if (kCapacity < target) {
-                kCapacity = Numbers.ceilPow2(target);
-            }
-            if (kCapacity > MAX_HEAP_SIZE) {
-                throw LimitOverflowException.instance().put("limit of ").put(MAX_HEAP_SIZE).put(" memory exceeded in FastMap");
-            }
-            long kAddress = Unsafe.realloc(heapStart, heapSize, kCapacity, heapMemoryTag);
-
-            this.heapSize = kCapacity;
-            long delta = kAddress - heapStart;
-            kPos += delta;
-            assert kPos > 0;
-
-            this.heapStart = kAddress;
-            this.heapLimit = kAddress + kCapacity;
-
-            return delta;
-        } else {
+        if (nResizes == maxResizes) {
             throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in FastMap");
         }
+
+        nResizes++;
+        long kCapacity = (heapLimit - heapStart) << 1;
+        long target = appendAddress + entrySize - heapStart;
+        if (kCapacity < target) {
+            kCapacity = Numbers.ceilPow2(target);
+        }
+        if (kCapacity > MAX_HEAP_SIZE) {
+            throw LimitOverflowException.instance().put("limit of ").put(MAX_HEAP_SIZE).put(" memory exceeded in FastMap");
+        }
+        long kAddress = Unsafe.realloc(heapStart, heapSize, kCapacity, heapMemoryTag);
+
+        this.heapSize = kCapacity;
+        long delta = kAddress - heapStart;
+        kPos += delta;
+        assert kPos > 0;
+
+        this.heapStart = kAddress;
+        this.heapLimit = kAddress + kCapacity;
+
+        return delta;
     }
 
     private OrderedMapValue valueOf(long startAddress, long valueAddress, boolean newValue, OrderedMapValue value) {
@@ -679,6 +680,13 @@ public class OrderedMap implements Map, Reopenable {
         public void putInt(int value) {
             Unsafe.getUnsafe().putInt(appendAddress, value);
             appendAddress += 4L;
+        }
+
+        @Override
+        public void putInterval(Interval interval) {
+            Unsafe.getUnsafe().putLong(appendAddress, interval.getLo());
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, interval.getHi());
+            appendAddress += 16L;
         }
 
         @Override
@@ -841,8 +849,6 @@ public class OrderedMap implements Map, Reopenable {
                 long delta = resize(requiredSize, appendAddress);
                 startAddress += delta;
                 appendAddress += delta;
-                assert startAddress > 0;
-                assert appendAddress > 0;
             }
         }
 
@@ -947,6 +953,14 @@ public class OrderedMap implements Map, Reopenable {
             checkCapacity(4L);
             Unsafe.getUnsafe().putInt(appendAddress, value);
             appendAddress += 4L;
+        }
+
+        @Override
+        public void putInterval(Interval interval) {
+            checkCapacity(16L);
+            Unsafe.getUnsafe().putLong(appendAddress, interval.getLo());
+            Unsafe.getUnsafe().putLong(appendAddress + Long.BYTES, interval.getHi());
+            appendAddress += 16L;
         }
 
         @Override

@@ -45,7 +45,7 @@ class DateBindVariable extends DateFunction implements ScalarFunction, Mutable {
     }
 
     @Override
-    public boolean isReadThreadSafe() {
+    public boolean isThreadSafe() {
         return true;
     }
 

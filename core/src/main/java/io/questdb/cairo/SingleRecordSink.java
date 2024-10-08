@@ -37,7 +37,6 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
     private long heapLimit;
     private long heapStart;
 
-
     public SingleRecordSink(long maxHeapSizeBytes, int memoryTag) {
         this.memoryTag = memoryTag;
         this.maxHeapSize = maxHeapSizeBytes;
@@ -138,6 +137,14 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
         checkCapacity(4);
         Unsafe.getUnsafe().putInt(appendAddress, value);
         appendAddress += 4;
+    }
+
+    @Override
+    public void putInterval(Interval interval) {
+        checkCapacity(16);
+        Unsafe.getUnsafe().putLong(appendAddress, interval.getLo());
+        Unsafe.getUnsafe().putLong(appendAddress + 8, interval.getHi());
+        appendAddress += 16;
     }
 
     @Override

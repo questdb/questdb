@@ -89,7 +89,10 @@ public final class MemoryTag {
     public static final int NATIVE_UNORDERED_MAP = NATIVE_TREE_CHAIN + 1;
     public static final int NATIVE_INDEX_READER = NATIVE_UNORDERED_MAP + 1;
     public static final int NATIVE_TABLE_WAL_WRITER = NATIVE_INDEX_READER + 1;
-    public static final int SIZE = NATIVE_TABLE_WAL_WRITER + 1;
+    public static final int NATIVE_METADATA_READER = NATIVE_TABLE_WAL_WRITER + 1;
+    public static final int NATIVE_BIT_SET = NATIVE_METADATA_READER + 1;
+    public static final int SIZE = NATIVE_BIT_SET + 1;
+
     private static final ObjList<String> tagNameMap = new ObjList<>(SIZE);
 
     public static String nameOf(int tag) {
@@ -159,5 +162,7 @@ public final class MemoryTag {
         tagNameMap.extendAndSet(NATIVE_GROUP_BY_FUNCTION, "NATIVE_GROUP_BY_FUNCTION");
         tagNameMap.extendAndSet(NATIVE_INDEX_READER, "NATIVE_INDEX_READER");
         tagNameMap.extendAndSet(NATIVE_TABLE_WAL_WRITER, "NATIVE_TABLE_WAL_WRITER");
+        tagNameMap.extendAndSet(NATIVE_METADATA_READER, "NATIVE_METADATA_READER");
+        tagNameMap.extendAndSet(NATIVE_BIT_SET, "NATIVE_BIT_SET");
     }
 }

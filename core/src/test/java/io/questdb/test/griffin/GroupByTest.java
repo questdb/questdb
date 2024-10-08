@@ -983,6 +983,38 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByInterval1() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "i\tcount\n" +
+                        "('1970-01-01T00:00:00.100Z', '1970-01-01T00:00:00.200Z')\t2\n" +
+                        "\t1\n",
+                "select i, count() from (" +
+                        "  (select interval(100000,200000) i) " +
+                        "  union all " +
+                        "  (select interval(100000,200000) i) " +
+                        "  union all " +
+                        "  (select null::interval i)" +
+                        ")"
+        ));
+    }
+
+    @Test
+    public void testGroupByInterval2() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                "i\ts\tcount\n" +
+                        "('1970-01-01T00:00:00.100Z', '1970-01-01T00:00:00.200Z')\tfoobar\t2\n" +
+                        "\t\t1\n",
+                "select i, s, count() from (" +
+                        "  (select interval(100000,200000) i, 'foobar' s) " +
+                        "  union all " +
+                        "  (select interval(100000,200000) i, 'foobar' s) " +
+                        "  union all " +
+                        "  (select null::interval i, null::string s)" +
+                        ")"
+        ));
+    }
+
+    @Test
     public void testGroupByInvalidOrderByExpression() throws Exception {
         assertException(
                 "SELECT ts AS ref0 FROM x WHERE 1=1 GROUP BY ts ORDER BY (ts) NOT IN ('{}') LIMIT 1;",

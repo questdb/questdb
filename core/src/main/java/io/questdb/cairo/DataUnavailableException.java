@@ -44,7 +44,7 @@ public class DataUnavailableException extends CairoException {
         ex.message.clear();
         ex.errno = CairoException.NON_CRITICAL;
         ex.event = event;
-        ex.put("partition is located in cold storage, query will be suspended [table=").put(tableToken)
+        ex.put("partition is located in cold storage, query will be suspended [table=").put(tableToken.getTableName())
                 .put(", partition=").put(partition)
                 .put(']');
         return ex;

@@ -171,7 +171,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 this.isOpen = true;
                 this.dataMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes);
                 this.groupByFunctionsUpdater = groupByFunctionsUpdater;
-                this.allocator = GroupByAllocatorFactory.createThreadUnsafeAllocator(configuration);
+                this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
                 GroupByUtils.setAllocator(groupByFunctions, allocator);
             } catch (Throwable th) {
                 close();

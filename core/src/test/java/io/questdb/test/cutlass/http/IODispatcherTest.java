@@ -79,6 +79,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
+import static io.questdb.test.cutlass.http.HttpUtils.urlEncodeQuery;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static io.questdb.test.tools.TestUtils.drainWalQueue;
 import static org.junit.Assert.assertTrue;
@@ -363,7 +364,6 @@ public class IODispatcherTest extends AbstractTest {
 
     @Test
     public void testConnectDisconnect() throws Exception {
-
         LOG.info().$("started testConnectDisconnect").$();
 
         assertMemoryLeak(() -> {
@@ -2849,6 +2849,34 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testInterval() throws Exception {
+        testJsonQuery(
+                0,
+                "GET /query?query=" + urlEncodeQuery("select interval(x*10000,(x+1)*10000) from long_sequence(3)") + " HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "0154\r\n" +
+                        "{\"query\":\"select interval(x*10000,(x+1)*10000) from long_sequence(3)\",\"columns\":[{\"name\":\"interval\",\"type\":\"INTERVAL\"}],\"timestamp\":-1,\"dataset\":[[\"('1970-01-01T00:00:00.010Z', '1970-01-01T00:00:00.020Z')\"],[\"('1970-01-01T00:00:00.020Z', '1970-01-01T00:00:00.030Z')\"],[\"('1970-01-01T00:00:00.030Z', '1970-01-01T00:00:00.040Z')\"]],\"count\":3}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
     public void testInvalidRequestIsHandled() throws Exception {
         new HttpQueryTestBuilder()
                 .withTempFolder(root)
@@ -2908,7 +2936,8 @@ public class IODispatcherTest extends AbstractTest {
                 1
         );
 
-        testJsonQuery(0,
+        testJsonQuery(
+                0,
                 "GET /exec?limit=0%2C1000&explain=true&count=true&src=con&query=insert%20into%20op%20values%20(%27abc%27) HTTP/1.1\r\n" +
                         "Accept: */*\r\n" +
                         "Accept-Encoding: gzip, deflate, br\n" +
@@ -2927,14 +2956,15 @@ public class IODispatcherTest extends AbstractTest {
                         "6b\r\n" +
                         "{\"query\":\"insert into op values ('abc')\",\"error\":\"inconvertible value: `abc` [STRING -> INT]\",\"position\":0}\r\n" +
                         "00\r\n" +
-                        "\r\n"
-                , 1
+                        "\r\n",
+                1
         );
     }
 
     @Test
     public void testJsonNullColumnType() throws Exception {
-        testJsonQuery(0,
+        testJsonQuery(
+                0,
                 "GET /query?limit=0%2C1000&explain=true&count=true&src=con&query=%0D%0A%0D%0A%0D%0ASELECT%20*%20FROM%20(%0D%0A%20%20SELECT%20%0D%0A%20%20%20%20n.nspname%0D%0A%20%20%20%20%2Cc.relname%0D%0A%20%20%20%20%2Ca.attname%0D%0A%20%20%20%20%2Ca.atttypid%0D%0A%20%20%20%20%2Ca.attnotnull%20OR%20(t.typtype%20%3D%20%27d%27%20AND%20t.typnotnull)%20AS%20attnotnull%0D%0A%20%20%20%20%2Ca.atttypmod%0D%0A%20%20%20%20%2Ca.attlen%0D%0A%20%20%20%20%2Ct.typtypmod%0D%0A%20%20%20%20%2Crow_number()%20OVER%20(PARTITION%20BY%20a.attrelid%20ORDER%20BY%20a.attnum)%20AS%20attnum%0D%0A%20%20%20%20%2C%20nullif(a.attidentity%2C%20%27%27)%20as%20attidentity%0D%0A%20%20%20%20%2Cnull%20as%20attgenerated%0D%0A%20%20%20%20%2Cpg_catalog.pg_get_expr(def.adbin%2C%20def.adrelid)%20AS%20adsrc%0D%0A%20%20%20%20%2Cdsc.description%0D%0A%20%20%20%20%2Ct.typbasetype%0D%0A%20%20%20%20%2Ct.typtype%20%20%0D%0A%20%20FROM%20pg_catalog.pg_namespace%20n%0D%0A%20%20JOIN%20pg_catalog.pg_class%20c%20ON%20(c.relnamespace%20%3D%20n.oid)%0D%0A%20%20JOIN%20pg_catalog.pg_attribute%20a%20ON%20(a.attrelid%3Dc.oid)%0D%0A%20%20JOIN%20pg_catalog.pg_type%20t%20ON%20(a.atttypid%20%3D%20t.oid)%0D%0A%20%20LEFT%20JOIN%20pg_catalog.pg_attrdef%20def%20ON%20(a.attrelid%3Ddef.adrelid%20AND%20a.attnum%20%3D%20def.adnum)%0D%0A%20%20LEFT%20JOIN%20pg_catalog.pg_description%20dsc%20ON%20(c.oid%3Ddsc.objoid%20AND%20a.attnum%20%3D%20dsc.objsubid)%0D%0A%20%20LEFT%20JOIN%20pg_catalog.pg_class%20dc%20ON%20(dc.oid%3Ddsc.classoid%20AND%20dc.relname%3D%27pg_class%27)%0D%0A%20%20LEFT%20JOIN%20pg_catalog.pg_namespace%20dn%20ON%20(dc.relnamespace%3Ddn.oid%20AND%20dn.nspname%3D%27pg_catalog%27)%0D%0A%20%20WHERE%20%0D%0A%20%20%20%20c.relkind%20in%20(%27r%27%2C%27p%27%2C%27v%27%2C%27f%27%2C%27m%27)%0D%0A%20%20%20%20and%20a.attnum%20%3E%200%20%0D%0A%20%20%20%20AND%20NOT%20a.attisdropped%0D%0A%20%20%20%20AND%20c.relname%20LIKE%20E%27x%27%0D%0A%20%20)%20c%20WHERE%20true%0D%0A%20%20ORDER%20BY%20nspname%2Cc.relname%2Cattnum HTTP/1.1\r\n" +
                         "Accept: */*\r\n" +
                         "Accept-Encoding: gzip, deflate, br\r\n" +
@@ -2961,15 +2991,14 @@ public class IODispatcherTest extends AbstractTest {
                         "0b2d\r\n" +
                         "{\"query\":\"\\r\\n\\r\\n\\r\\nSELECT * FROM (\\r\\n  SELECT \\r\\n    n.nspname\\r\\n    ,c.relname\\r\\n    ,a.attname\\r\\n    ,a.atttypid\\r\\n    ,a.attnotnull OR (t.typtype = 'd' AND t.typnotnull) AS attnotnull\\r\\n    ,a.atttypmod\\r\\n    ,a.attlen\\r\\n    ,t.typtypmod\\r\\n    ,row_number() OVER (PARTITION BY a.attrelid ORDER BY a.attnum) AS attnum\\r\\n    , nullif(a.attidentity, '') as attidentity\\r\\n    ,null as attgenerated\\r\\n    ,pg_catalog.pg_get_expr(def.adbin, def.adrelid) AS adsrc\\r\\n    ,dsc.description\\r\\n    ,t.typbasetype\\r\\n    ,t.typtype  \\r\\n  FROM pg_catalog.pg_namespace n\\r\\n  JOIN pg_catalog.pg_class c ON (c.relnamespace = n.oid)\\r\\n  JOIN pg_catalog.pg_attribute a ON (a.attrelid=c.oid)\\r\\n  JOIN pg_catalog.pg_type t ON (a.atttypid = t.oid)\\r\\n  LEFT JOIN pg_catalog.pg_attrdef def ON (a.attrelid=def.adrelid AND a.attnum = def.adnum)\\r\\n  LEFT JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid)\\r\\n  LEFT JOIN pg_catalog.pg_class dc ON (dc.oid=dsc.classoid AND dc.relname='pg_class')\\r\\n  LEFT JOIN pg_catalog.pg_namespace dn ON (dc.relnamespace=dn.oid AND dn.nspname='pg_catalog')\\r\\n  WHERE \\r\\n    c.relkind in ('r','p','v','f','m')\\r\\n    and a.attnum > 0 \\r\\n    AND NOT a.attisdropped\\r\\n    AND c.relname LIKE E'x'\\r\\n  ) c WHERE true\\r\\n  ORDER BY nspname,c.relname,attnum\",\"columns\":[{\"name\":\"nspname\",\"type\":\"STRING\"},{\"name\":\"relname\",\"type\":\"STRING\"},{\"name\":\"attname\",\"type\":\"STRING\"},{\"name\":\"atttypid\",\"type\":\"INT\"},{\"name\":\"attnotnull\",\"type\":\"BOOLEAN\"},{\"name\":\"atttypmod\",\"type\":\"INT\"},{\"name\":\"attlen\",\"type\":\"SHORT\"},{\"name\":\"typtypmod\",\"type\":\"INT\"},{\"name\":\"attnum\",\"type\":\"LONG\"},{\"name\":\"attidentity\",\"type\":\"STRING\"},{\"name\":\"attgenerated\",\"type\":\"STRING\"},{\"name\":\"adsrc\",\"type\":\"STRING\"},{\"name\":\"description\",\"type\":\"STRING\"},{\"name\":\"typbasetype\",\"type\":\"INT\"},{\"name\":\"typtype\",\"type\":\"CHAR\"}],\"timestamp\":-1,\"dataset\":[[\"public\",\"x\",\"a\",21,false,0,2,0,\"1\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"b\",21,false,0,2,0,\"2\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"c\",23,false,0,4,0,\"3\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"d\",20,false,0,8,0,\"4\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"e\",1114,false,0,-1,0,\"5\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"f\",1114,false,0,-1,0,\"6\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"g\",700,false,0,4,0,\"7\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"h\",701,false,0,8,0,\"8\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"i\",1043,false,0,-1,0,\"9\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"j\",1043,false,0,-1,0,\"10\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"k\",16,false,0,1,0,\"11\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"l\",17,false,0,-1,0,\"12\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"m\",2950,false,0,16,0,\"13\",null,null,null,null,0,\"b\"],[\"public\",\"x\",\"n\",1043,false,0,-1,0,\"14\",null,null,null,null,0,\"b\"]],\"count\":14,\"explain\":{\"jitCompiled\":false}}\r\n" +
                         "00\r\n" +
-                        "\r\n"
-                , 10
+                        "\r\n",
+                10
         );
     }
 
     @Test
     public void testJsonQueryAndDisconnectWithoutWaitingForResult() throws Exception {
         assertMemoryLeak(() -> {
-
             final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
             final String baseDir = root;
             final DefaultHttpServerConfiguration httpConfiguration = createHttpServerConfiguration(nf, baseDir, 256, false, false);
@@ -3143,6 +3172,34 @@ public class IODispatcherTest extends AbstractTest {
                         "\r\n" +
                         "09ca\r\n" +
                         "{\"query\":\"x\",\"columns\":[{\"name\":\"a\",\"type\":\"BYTE\"},{\"name\":\"b\",\"type\":\"SHORT\"},{\"name\":\"c\",\"type\":\"INT\"},{\"name\":\"d\",\"type\":\"LONG\"},{\"name\":\"e\",\"type\":\"DATE\"},{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"g\",\"type\":\"FLOAT\"},{\"name\":\"h\",\"type\":\"DOUBLE\"},{\"name\":\"i\",\"type\":\"STRING\"},{\"name\":\"j\",\"type\":\"SYMBOL\"},{\"name\":\"k\",\"type\":\"BOOLEAN\"},{\"name\":\"l\",\"type\":\"BINARY\"},{\"name\":\"m\",\"type\":\"UUID\"},{\"name\":\"n\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[59,-13676,-1529726228,4092568845903588572,null,\"31470-11-18T18:43:57.264562Z\",0.3480476,0.48782086416459025,\"KYFLU\",\"ZQS\",true,[],\"c48ad6b8-f696-2219-b27b-0ac7fbdee201\",\"\uD9E2\uDC2C\uD93B\uDD81*\uDBAE\uDF56飃\"],[100,-22306,1604613885,null,\"192651811-02-20T17:11:20.516Z\",\"-102298-11-25T12:53:13.351961Z\",0.21047932,0.8796413468565342,\"UTZOD\",\"KOC\",false,[],\"79ec07ef-72dc-a7a1-a27b-49491adab237\",null],[-8,5698,1926049591,-5591900440341014879,null,\"-188627-11-22T03:41:41.053028Z\",0.001653254,null,\"SBEGM\",\"TIN\",true,[],\"7a404335-fb0c-03a1-b722-c5d1c4541bf8\",\"\uDA4D\uDEE3u\uDA83\uDD58ߡ˪\"],[1,-22839,1579145140,null,\"-179476546-07-29T11:31:49.216Z\",\"277796-03-22T01:05:12.468447Z\",0.5700419,null,null,null,true,[],null,\"@p\uD981\uDF09۾芊\"],[11,-3298,null,5040581546737547170,\"217663545-06-24T17:53:59.219Z\",\"-188590-01-28T12:21:46.923000Z\",0.4755193,0.7617663592833062,null,\"ZSF\",true,[],\"41457ebc-5a02-a2b5-42cb-d49414e022a0\",null],[108,8860,-1849825758,7001278939159424665,\"-179968926-04-15T02:07:40.791Z\",\"153077-08-01T18:41:42.471066Z\",0.56758314,0.21224614178286005,\"LFORG\",\"IEV\",true,[],null,\"\uDA65\uDE071(rո\"],[-83,-21070,421740366,-7994129278119873659,\"247843724-01-25T23:44:08.505Z\",\"154471-01-21T09:24:15.152962Z\",0.4417268,0.6713174919725877,\"PIQBU\",\"ZVQ\",true,[],\"721304ff-e1c9-3438-6466-208d506905af\",\"\uDA47\uDE9AخF\uD9DC\uDE05\uD8F0\uDF66\"],[-24,20018,172654235,3941299526844453307,\"-94778819-04-19T21:15:26.452Z\",\"263660-07-19T21:05:32.383556Z\",null,0.837738444021418,\"UIGEN\",null,true,[],\"138a6faa-5024-d18e-6536-0e5c86f6bf00\",\"5ŪD꘥\u061C\"],[-42,28924,-692944212,null,\"-288207102-10-16T11:59:11.774Z\",null,0.45388764,0.6728521416263535,\"FPVRQ\",\"GYD\",true,[],\"b9adab80-3662-ea78-7789-11f953eae95f\",\">\uD9F3\uDFD5a~=\"],[4,-8777,-1073362485,-5062925852203035101,\"-243518060-10-14T07:21:35.668Z\",\"180225-11-18T07:14:57.722116Z\",0.47486305,0.15464367746097551,\"KMEKP\",\"OYM\",false,[],null,\"䭣^寻&L\"],[-9,-21964,-1854980244,8551330700532522833,\"-283077346-06-27T16:03:38.091Z\",\"127497-03-02T22:08:20.151047Z\",0.8395367,0.8967196946317529,\"NMURE\",\"JUH\",false,[],\"697ed4cb-072a-e571-7181-091980558b1c\",\"2 \u0381駊:\"]],\"count\":20}\r\n" +
+                        "00\r\n" +
+                        "\r\n"
+        );
+    }
+
+    @Test
+    public void testJsonQueryCommentOnly() throws Exception {
+        testJsonQuery(
+                20,
+                "GET /query?query=--comment HTTP/1.1\r\n" +
+                        "Host: localhost:9001\r\n" +
+                        "Connection: keep-alive\r\n" +
+                        "Cache-Control: max-age=0\r\n" +
+                        "Upgrade-Insecure-Requests: 1\r\n" +
+                        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/74.0.3729.169 Safari/537.36\r\n" +
+                        "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3\r\n" +
+                        "Accept-Encoding: gzip, deflate, br\r\n" +
+                        "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
+                        "\r\n",
+                "HTTP/1.1 200 OK\r\n" +
+                        "Server: questDB/1.0\r\n" +
+                        "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
+                        "Transfer-Encoding: chunked\r\n" +
+                        "Content-Type: application/json; charset=utf-8\r\n" +
+                        "Keep-Alive: timeout=5, max=10000\r\n" +
+                        "\r\n" +
+                        "3a\r\n" +
+                        "{\"error\":\"empty query\",\"query\":\"--comment\",\"position\":\"0\"}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -3378,7 +3435,6 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testJsonQueryCreateInsertTruncateAndDrop() throws Exception {
         testJsonQuery0(1, engine -> {
-
             // create table
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
@@ -3674,7 +3730,7 @@ public class IODispatcherTest extends AbstractTest {
                     TestDataUnavailableFunctionFactory.eventCallback = eventRef::set;
 
                     final String query = "select * from test_data_unavailable(1, 10)";
-                    final String request = "GET /query?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n"
+                    final String request = "GET /query?query=" + urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n"
                             + SendAndReceiveRequestBuilder.RequestHeaders;
 
                     final NetworkFacade nf = NetworkFacadeImpl.INSTANCE;
@@ -3761,7 +3817,7 @@ public class IODispatcherTest extends AbstractTest {
                         "Accept-Encoding: gzip, deflate, br\r\n" +
                         "Accept-Language: en-GB,en-US;q=0.9,en;q=0.8\r\n" +
                         "\r\n",
-                "HTTP/1.1 400 Bad request\r\n" +
+                "HTTP/1.1 200 OK\r\n" +
                         "Server: questDB/1.0\r\n" +
                         "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
                         "Transfer-Encoding: chunked\r\n" +
@@ -3769,7 +3825,7 @@ public class IODispatcherTest extends AbstractTest {
                         "Keep-Alive: timeout=5, max=10000\r\n" +
                         "\r\n" +
                         "31\r\n" +
-                        "{\"query\":\"\",\"error\":\"No query text\",\"position\":0}\r\n" +
+                        "{\"error\":\"empty query\",\"query\":\"\",\"position\":\"0\"}\r\n" +
                         "00\r\n" +
                         "\r\n"
         );
@@ -4964,7 +5020,7 @@ public class IODispatcherTest extends AbstractTest {
                         engine.ddl(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                         for (int i = 0; i < iterations; i++) {
                             new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                                    "GET /exec?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
+                                    "GET /exec?query=" + urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
                                     "f9\r\n" +
                                             "{\"query\":\"select i, avg(l), max(l) from t group by i order by i asc limit 3\",\"columns\":[{\"name\":\"i\",\"type\":\"INT\"},{\"name\":\"avg\",\"type\":\"DOUBLE\"},{\"name\":\"max\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[0,55.0,100],[1,46.0,91],[2,47.0,92]],\"count\":3}\r\n" +
                                             "00\r\n" +
@@ -5080,7 +5136,7 @@ public class IODispatcherTest extends AbstractTest {
             final String vacuumQuery = "vacuum table x";
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
-                    "GET /query?query=" + HttpUtils.urlEncodeQuery(vacuumQuery) + "&count=true HTTP/1.1\r\n" +
+                    "GET /query?query=" + urlEncodeQuery(vacuumQuery) + "&count=true HTTP/1.1\r\n" +
                             "Host: localhost:9001\r\n" +
                             "Connection: keep-alive\r\n" +
                             "Cache-Control: max-age=0\r\n" +
@@ -5871,7 +5927,7 @@ public class IODispatcherTest extends AbstractTest {
 
                     final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                            "GET /query?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
+                            "GET /query?query=" + urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
                             "0100\r\n" +
                                     "{\"query\":\"select * from test_data_unavailable(32, 10)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1,1,1],[2,2,2],[3,3,3],[4,4,4],[5,5,5],[6,6,6],[7,7,7],[8,8,8],[9,9,9],[10,10,10]\r\n" +
                                     "ff\r\n" +
@@ -5933,7 +5989,7 @@ public class IODispatcherTest extends AbstractTest {
 
                     final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
                     new SendAndReceiveRequestBuilder().executeWithStandardHeaders(
-                            "GET /query?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
+                            "GET /query?query=" + urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
                             "d0\r\n" +
                                     "{\"query\":\"select * from test_data_unavailable(3, 10)\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"y\",\"type\":\"LONG\"},{\"name\":\"z\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1,1,1],[2,2,2],[3,3,3]],\"count\":3}\r\n" +
                                     "00\r\n" +
@@ -6880,7 +6936,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testTextExportDisconnectOnDataUnavailableEventNeverFired() throws Exception {
         testDisconnectOnDataUnavailableEventNeverFired(
-                "GET /exp?query=" + HttpUtils.urlEncodeQuery("select * from test_data_unavailable(1, 10)") + "&count=true HTTP/1.1\r\n"
+                "GET /exp?query=" + urlEncodeQuery("select * from test_data_unavailable(1, 10)") + "&count=true HTTP/1.1\r\n"
                         + SendAndReceiveRequestBuilder.RequestHeaders
         );
     }
@@ -6900,7 +6956,7 @@ public class IODispatcherTest extends AbstractTest {
 
                     final String select = "select * from test_data_unavailable(32, 10)";
                     new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
-                            "GET /exp?query=" + HttpUtils.urlEncodeQuery(select) + "&count=true HTTP/1.1\r\n",
+                            "GET /exp?query=" + urlEncodeQuery(select) + "&count=true HTTP/1.1\r\n",
                             "HTTP/1.1 200 OK\r\n" +
                                     "Server: questDB/1.0\r\n" +
                                     "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -6973,7 +7029,7 @@ public class IODispatcherTest extends AbstractTest {
 
                     final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
                     new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
-                            "GET /exp?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
+                            "GET /exp?query=" + urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
                             "HTTP/1.1 200 OK\r\n" +
                                     "Server: questDB/1.0\r\n" +
                                     "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -7019,7 +7075,7 @@ public class IODispatcherTest extends AbstractTest {
 
                     final String query = "select * from test_data_unavailable(" + totalRows + ", " + backoffCount + ")";
                     new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
-                            "GET /exp?query=" + HttpUtils.urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
+                            "GET /exp?query=" + urlEncodeQuery(query) + "&count=true HTTP/1.1\r\n",
                             "HTTP/1.1 200 OK\r\n" +
                                     "Server: questDB/1.0\r\n" +
                                     "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -7055,7 +7111,7 @@ public class IODispatcherTest extends AbstractTest {
                     final String copyQuery = "copy test from 'test-numeric-headers.csv' with header true";
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
-                            "GET /query?query=" + HttpUtils.urlEncodeQuery(copyQuery) + "&count=true HTTP/1.1\r\n" +
+                            "GET /query?query=" + urlEncodeQuery(copyQuery) + "&count=true HTTP/1.1\r\n" +
                                     "Host: localhost:9000\r\n" +
                                     "Connection: keep-alive\r\n" +
                                     "Accept: */*\r\n" +
@@ -7087,7 +7143,7 @@ public class IODispatcherTest extends AbstractTest {
                     final String cancelQuery = "copy '0000000000000000' cancel";
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
-                            "GET /query?query=" + HttpUtils.urlEncodeQuery(cancelQuery) + "&count=true HTTP/1.1\r\n" +
+                            "GET /query?query=" + urlEncodeQuery(cancelQuery) + "&count=true HTTP/1.1\r\n" +
                                     "Host: localhost:9000\r\n" +
                                     "Connection: keep-alive\r\n" +
                                     "Accept: */*\r\n" +
@@ -7119,7 +7175,7 @@ public class IODispatcherTest extends AbstractTest {
                     final String incorrectCancelQuery = "copy 'ffffffffffffffff' cancel";
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
-                            "GET /query?query=" + HttpUtils.urlEncodeQuery(incorrectCancelQuery) + "&count=true HTTP/1.1\r\n" +
+                            "GET /query?query=" + urlEncodeQuery(incorrectCancelQuery) + "&count=true HTTP/1.1\r\n" +
                                     "Host: localhost:9000\r\n" +
                                     "Connection: keep-alive\r\n" +
                                     "Accept: */*\r\n" +
@@ -7352,7 +7408,7 @@ public class IODispatcherTest extends AbstractTest {
                     final String createTableDdl = "create table balances(cust_id int, ccy symbol, balance double)";
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
-                            "GET /query?query=" + HttpUtils.urlEncodeQuery(createTableDdl) + "&count=true HTTP/1.1\r\n" +
+                            "GET /query?query=" + urlEncodeQuery(createTableDdl) + "&count=true HTTP/1.1\r\n" +
                                     "Host: localhost:9000\r\n" +
                                     "Connection: keep-alive\r\n" +
                                     "Accept: */*\r\n" +
@@ -7381,7 +7437,7 @@ public class IODispatcherTest extends AbstractTest {
                     final String showColumnsQuery = "show columns from balances";
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
-                            "GET /query?query=" + HttpUtils.urlEncodeQuery(showColumnsQuery) + "&count=true HTTP/1.1\r\n" +
+                            "GET /query?query=" + urlEncodeQuery(showColumnsQuery) + "&count=true HTTP/1.1\r\n" +
                                     "Host: localhost:9000\r\n" +
                                     "Connection: keep-alive\r\n" +
                                     "Accept: */*\r\n" +
@@ -7412,7 +7468,7 @@ public class IODispatcherTest extends AbstractTest {
                     final String dropTableDdl = "drop table balances";
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
-                            "GET /query?query=" + HttpUtils.urlEncodeQuery(dropTableDdl) + "&count=true HTTP/1.1\r\n" +
+                            "GET /query?query=" + urlEncodeQuery(dropTableDdl) + "&count=true HTTP/1.1\r\n" +
                                     "Host: localhost:9000\r\n" +
                                     "Connection: keep-alive\r\n" +
                                     "Accept: */*\r\n" +
@@ -7441,7 +7497,7 @@ public class IODispatcherTest extends AbstractTest {
                     // We should get a meaningful error.
                     sendAndReceive(
                             NetworkFacadeImpl.INSTANCE,
-                            "GET /query?query=" + HttpUtils.urlEncodeQuery(showColumnsQuery) + "&count=true HTTP/1.1\r\n" +
+                            "GET /query?query=" + urlEncodeQuery(showColumnsQuery) + "&count=true HTTP/1.1\r\n" +
                                     "Host: localhost:9000\r\n" +
                                     "Connection: keep-alive\r\n" +
                                     "Accept: */*\r\n" +
@@ -7519,7 +7575,7 @@ public class IODispatcherTest extends AbstractTest {
                         engine.ddl(QUERY_TIMEOUT_TABLE_DDL, executionContext);
                         for (int i = 0; i < iterations; i++) {
                             new SendAndReceiveRequestBuilder().executeWithStandardRequestHeaders(
-                                    "GET /exp?query=" + HttpUtils.urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
+                                    "GET /exp?query=" + urlEncodeQuery(QUERY_TIMEOUT_SELECT) + "&count=true HTTP/1.1\r\n",
                                     "HTTP/1.1 200 OK\r\n" +
                                             "Server: questDB/1.0\r\n" +
                                             "Date: Thu, 1 Jan 1970 00:00:00 GMT\r\n" +
@@ -8328,7 +8384,7 @@ public class IODispatcherTest extends AbstractTest {
         model.col("j", ColumnType.SYMBOL);
         TestUtils.create(model, engine);
 
-        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("y"))) {
+        try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("y"), engine)) {
             for (int i = 0; i < 20; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putSym(0, "ok\0ok");
@@ -9076,6 +9132,7 @@ public class IODispatcherTest extends AbstractTest {
         return testJsonQuery0(2, engine -> {
             // create table with all column types
             createTableX(engine, recordCount);
+            engine.metadataCacheHydrateAllTables();
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
                     request,

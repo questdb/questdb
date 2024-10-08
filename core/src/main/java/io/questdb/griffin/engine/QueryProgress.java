@@ -104,14 +104,15 @@ public class QueryProgress extends AbstractRecordCursorFactory {
             SqlExecutionContext executionContext,
             boolean jit
     ) {
-        LOG.infoW()
-                .$("exe")
-                .$(" [id=").$(sqlId)
-                .$(", sql=`").utf8(sqlText).$('`')
-                .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
-                .$(", cache=").$(executionContext.isCacheHit())
-                .$(", jit=").$(jit)
-                .I$();
+        if (executionContext.getCairoEngine().getConfiguration().getLogSqlQueryProgressExe())
+            LOG.infoW()
+                    .$("exe")
+                    .$(" [id=").$(sqlId)
+                    .$(", sql=`").utf8(sqlText).$('`')
+                    .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
+                    .$(", cache=").$(executionContext.isCacheHit())
+                    .$(", jit=").$(jit)
+                    .I$();
     }
 
     @Override

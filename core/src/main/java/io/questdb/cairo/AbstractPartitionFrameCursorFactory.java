@@ -62,7 +62,7 @@ public abstract class AbstractPartitionFrameCursorFactory implements PartitionFr
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.meta("on").val(tableToken);
+        sink.meta("on").val(tableToken.getTableName());
     }
 
     @Override

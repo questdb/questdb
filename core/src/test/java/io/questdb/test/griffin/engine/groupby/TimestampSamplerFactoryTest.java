@@ -63,6 +63,17 @@ public class TimestampSamplerFactoryTest {
     }
 
     @Test
+    public void testFindIntervalEndIndex() throws SqlException {
+        assertFindIntervalEndIndexFailure(1, "missing interval", null, 1);
+        assertFindIntervalEndIndexFailure(1_002, "expected interval qualifier", "45", 1000);
+        assertFindIntervalEndIndexFailure(42, "expected interval qualifier", "", 42);
+        assertFindIntervalEndIndexFailure(50, "expected single letter qualifier", "1bar", 49);
+        assertFindIntervalEndIndexFailure(100, "negative interval is not allowed", "-", 100);
+
+        Assert.assertEquals(0, TimestampSamplerFactory.findIntervalEndIndex("m", 11));
+    }
+
+    @Test
     public void testLongQualifier() {
         try {
             TimestampSamplerFactory.getInstance("1sa", 130);
@@ -141,8 +152,32 @@ public class TimestampSamplerFactoryTest {
     }
 
     @Test
+    public void testNegativeInterval() {
+        assertFailure(110, "negative interval is not allowed", "-1m", 110);
+    }
+
+    @Test
     public void testNoQualifier() {
         assertFailure(100, "expected interval qualifier", "45", 98);
+    }
+
+    @Test
+    public void testParseInterval() throws SqlException {
+        Assert.assertEquals(1, TimestampSamplerFactory.parseInterval("1m", 1, 0));
+
+        try {
+            TimestampSamplerFactory.parseInterval("0m", 1, 0);
+        } catch (SqlException e) {
+            Assert.assertEquals(0, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "zero is not a valid sample value");
+        }
+
+        try {
+            TimestampSamplerFactory.parseInterval("fm", 1, 0);
+        } catch (SqlException e) {
+            Assert.assertEquals(0, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), "invalid sample value");
+        }
     }
 
     @Test
@@ -178,6 +213,16 @@ public class TimestampSamplerFactoryTest {
     @Test
     public void testUnsupportedQualifier2() {
         assertFailure(132, "unsupported interval qualifier", "21K", 130);
+    }
+
+    private static void assertFindIntervalEndIndexFailure(int expectedPosition, CharSequence expectedMessage, CharSequence sampleBy, int position) {
+        try {
+            TimestampSamplerFactory.findIntervalEndIndex(sampleBy, position);
+            Assert.fail();
+        } catch (SqlException e) {
+            Assert.assertEquals(expectedPosition, e.getPosition());
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+        }
     }
 
     private static TimestampSampler createTimestampSampler(int bucketSize, char units, StringSink sink) throws SqlException {

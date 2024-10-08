@@ -405,7 +405,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
         ddl("alter table " + tableName + " set type bypass wal", sqlExecutionContext);
         engine.releaseInactive();
-        ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
+        ObjList<TableToken> convertedTables = TableConverter.convertTables(engine, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
         engine.reloadTableNames(convertedTables);
 
         try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
@@ -426,7 +426,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
         ddl("alter table " + tableName + " set type wal", sqlExecutionContext);
         engine.releaseInactive();
-        ObjList<TableToken> convertedTables2 = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
+        ObjList<TableToken> convertedTables2 = TableConverter.convertTables(engine, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
         engine.reloadTableNames(convertedTables2);
 
         try (TxWriter tw = new TxWriter(engine.getConfiguration().getFilesFacade(), engine.getConfiguration())) {
@@ -454,7 +454,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             ddl("alter table " + tableName + " add col1 int");
             ddl("alter table " + tableName + " set type wal", sqlExecutionContext);
             engine.releaseInactive();
-            ObjList<TableToken> convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
+            ObjList<TableToken> convertedTables = TableConverter.convertTables(engine, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
             engine.reloadTableNames(convertedTables);
 
             ddl("alter table " + tableName + " add col2 int");
@@ -470,7 +470,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
 
             ddl("alter table " + tableName + " set type bypass wal");
             engine.releaseInactive();
-            convertedTables = TableConverter.convertTables(configuration, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
+            convertedTables = TableConverter.convertTables(engine, engine.getTableSequencerAPI(), engine.getTableFlagResolver());
             engine.reloadTableNames(convertedTables);
 
             ddl("alter table " + tableName + " drop column col2");
