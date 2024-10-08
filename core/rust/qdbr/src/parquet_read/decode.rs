@@ -3,8 +3,8 @@ use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResul
 use crate::parquet::qdb_metadata::{QdbMetaCol, QdbMetaColFormat};
 use crate::parquet_read::column_sink::fixed::{
     FixedBooleanColumnSink, FixedDoubleColumnSink, FixedFloatColumnSink, FixedInt2ByteColumnSink,
-    FixedInt2ShortColumnSink, FixedIntColumnSink, FixedLong256ColumnSink, FixedLongColumnSink,
-    IntDecimalColumnSink, NanoTimestampColumnSink, ReverseFixedColumnSink,
+    FixedInt2ShortColumnSink, FixedIntColumnSink, FixedLong128ColumnSink, FixedLong256ColumnSink,
+    FixedLongColumnSink, IntDecimalColumnSink, NanoTimestampColumnSink, ReverseFixedColumnSink,
 };
 use crate::parquet_read::column_sink::var::{
     BinaryColumnSink, StringColumnSink, VarcharColumnSink,
@@ -722,6 +722,24 @@ pub fn decode_page(
                         ),
                     )?;
                     Ok(())
+                }
+                _ => Err(encoding_error),
+            }
+        }
+        (PhysicalType::FixedLenByteArray(16), _logical_type, _) => {
+            match (page.encoding(), column_type.tag()) {
+                (Encoding::Plain, ColumnTypeTag::Long128) => {
+                    decode_page(
+                        version,
+                        page,
+                        row_count,
+                        &mut FixedLong128ColumnSink::new(
+                            &mut DataPageFixedSlicer::<16>::new(values_buffer, row_count),
+                            bufs,
+                            &UUID_NULL,
+                        ),
+                    )?;
+                    Ok(row_count)
                 }
                 _ => Err(encoding_error),
             }

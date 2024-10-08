@@ -24,10 +24,12 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -200,6 +202,54 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testConvertPartitionParquetAndBackAllTypes() throws Exception {
+        final long rows = 1000;
+        Overrides overrides = node1.getConfigurationOverrides();
+        // test multiple row groups
+        overrides.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 101);
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            ddl(
+                    "create table x as (select" +
+                            " x id," +
+                            " rnd_boolean() a_boolean," +
+                            " rnd_byte() a_byte," +
+                            " rnd_short() a_short," +
+                            " rnd_char() a_char," +
+                            " rnd_int() an_int," +
+                            " rnd_long() a_long," +
+                            " rnd_float() a_float," +
+                            " rnd_double() a_double," +
+                            " rnd_symbol('a','b','c') a_symbol," +
+                            " rnd_geohash(4) a_geo_byte," +
+                            " rnd_geohash(8) a_geo_short," +
+                            " rnd_geohash(16) a_geo_int," +
+                            " rnd_geohash(32) a_geo_long," +
+                            " rnd_str('abc', 'def', 'ghk') a_string," +
+                            " rnd_bin() a_bin," +
+                            " rnd_ipv4() a_ip," +
+                            " rnd_varchar('ганьба','слава','добрий','вечір', '1111111111111111') a_varchar," +
+                            " rnd_uuid4() a_uuid," +
+                            " rnd_long256() a_long256," +
+                            " to_long128(rnd_long(), rnd_long()) a_long128," +
+                            " cast(timestamp_sequence(600000000000, 700) as date) a_date," +
+                            " timestamp_sequence(500000000000, 600) a_ts," +
+                            " timestamp_sequence(400000000000, 500) designated_ts" +
+                            " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month"
+            );
+
+            ddl("create table y as (select * from x)", sqlExecutionContext);
+
+            assertException("alter table x convert partition to parquet list '2024-06'", 0, "cannot convert partition to parquet, partition does not exist");
+
+            ddl("alter table x convert partition to parquet list '1970-01'");
+            assertPartitionExists("x", "1970-01.1");
+            ddl("alter table x convert partition to native list '1970-01'");
+            assertPartitionDoesNotExist("x", "1970-01.1");
+
+            assertSqlCursors("select * from x", "select * from y");
+        });
+    }
     @Test
     public void testConvertPartitionBrokenSymbols() throws Exception {
         final long rows = 10;

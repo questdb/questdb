@@ -1354,7 +1354,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         LOG.info().$("converting parquet partition to native [path=").$substr(pathRootSize, path).I$();
         long parquetFd = TableUtils.openRO(ff, path.$(), LOG);
         final int columnCount = metadata.getColumnCount();
-        DirectLongList columnFds = new DirectLongList(2L * columnCount, MemoryTag.NATIVE_DEFAULT);
+
+        // packed as [auxFd, dataFd, dataVecBytesWritten]
+        // dataVecBytesWritten is used to adjust offsets in the auxiliary vector
+        DirectLongList columnFdAndDataSize = new DirectLongList(3L * columnCount, MemoryTag.NATIVE_DEFAULT);
 
         long parquetRowCount = 0;
         try (PartitionDecoder partitionDecoder = new PartitionDecoder();
@@ -1376,52 +1379,62 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (ColumnType.isVarSize(columnType)) {
                     long dstAuxFd = openAppend(ff, iFile(other.trimTo(newPartitionPathLen), columnName, columnNameTxn), LOG);
                     long dstDataFd = openAppend(ff, dFile(other.trimTo(newPartitionPathLen), columnName, columnNameTxn), LOG);
-                    columnFds.add(dstAuxFd);
-                    columnFds.add(dstDataFd);
+                    columnFdAndDataSize.add(dstAuxFd);
+                    columnFdAndDataSize.add(dstDataFd);
+                    columnFdAndDataSize.add(0);
                 } else {
                     long dstFixFd = openAppend(ff, dFile(other.trimTo(newPartitionPathLen), columnName, columnNameTxn), LOG);
-                    columnFds.add(-1);
-                    columnFds.add(dstFixFd);
+                    columnFdAndDataSize.add(-1);
+                    columnFdAndDataSize.add(dstFixFd);
+                    columnFdAndDataSize.add(0);
                 }
             }
 
             final int rowGroupCount = partitionDecoder.getMetadata().rowGroupCount();
             for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
-                final int rowGroupSize = partitionDecoder.getMetadata().rowGroupSize(rowGroupIndex);
-                parquetRowCount += partitionDecoder.decodeRowGroup(rowGroupBuffers, columns, rowGroupIndex, 0, rowGroupSize);
+                final long rowGroupRowCount = partitionDecoder.decodeRowGroup(rowGroupBuffers, columns, rowGroupIndex, 0, rowGroupCount);
+                parquetRowCount += rowGroupRowCount;
                 for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
                     final int columnType = metadata.getColumnType(columnIndex);
 
                     final long srcDataPtr = rowGroupBuffers.getChunkDataPtr(columnIndex);
                     final long srcDataSize = rowGroupBuffers.getChunkDataSize(columnIndex);
 
-                    final long srcAuxPtr = rowGroupBuffers.getChunkAuxPtr(columnIndex);
-                    final long srcAuxSize = rowGroupBuffers.getChunkAuxSize(columnIndex);
+                    long srcAuxPtr = rowGroupBuffers.getChunkAuxPtr(columnIndex);
+                    long srcAuxSize = rowGroupBuffers.getChunkAuxSize(columnIndex);
 
                     if (ColumnType.isVarSize(columnType)) {
-//                            ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
-//                            long dstAuxSize = columnTypeDriver.getAuxVectorSize(rowGroupRowCount);
-//                            final long dstDataSize = columnTypeDriver.getDataVectorSize(srcAuxPtr, 0, rowGroupRowCount - 1);
-                        final long dstAuxFd = columnFds.get(2L * columnIndex);
-                        final long dstDataFd = columnFds.get(2L * columnIndex + 1);
+                        ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
+                        final long dstAuxFd = columnFdAndDataSize.get(3L * columnIndex);
+                        final long dstDataFd = columnFdAndDataSize.get(3L * columnIndex + 1);
+                        final long dataVecBytesWritten = columnFdAndDataSize.get(3L * columnIndex + 2);
+
+                        if (rowGroupIndex > 0) {
+                            // Adjust offsets in the auxiliary vector
+                            columnTypeDriver.shiftCopyAuxVector(-dataVecBytesWritten, srcAuxPtr, 0, rowGroupRowCount - 1, srcAuxPtr, srcAuxSize);
+                            // Remove the extra entry for string columns
+                            final long adjust = columnTypeDriver.getMinAuxVectorSize();
+                            srcAuxPtr += adjust;
+                            srcAuxSize -= adjust;
+                        }
 
                         appendBuffer(dstDataFd, srcDataPtr, srcDataSize);
                         appendBuffer(dstAuxFd, srcAuxPtr, srcAuxSize);
+                        columnFdAndDataSize.set(3L * columnIndex + 2, dataVecBytesWritten + srcDataSize);
                     } else {
-//                            final long dstFixSize = rowGroupRowCount << ColumnType.pow2SizeOf(columnType);
-                        final long dstFixFd = columnFds.get(2L * columnIndex + 1);
+                        final long dstFixFd = columnFdAndDataSize.get(3L * columnIndex + 1);
                         appendBuffer(dstFixFd, srcDataPtr, srcDataSize);
                     }
                 }
             }
         } finally {
-            for (long i = 0, n = columnFds.size(); i < n; i++) {
-                final long fd = columnFds.get(i);
-                if (fd > 0) {
-                    ff.close(fd);
-                }
+            for (long i = 0; i < columnCount; i++) {
+                final long dstAuxFd = columnFdAndDataSize.get(3L * i);
+                ff.close(dstAuxFd);
+                final long dstDataFd = columnFdAndDataSize.get(3L * i + 1);
+                ff.close(dstDataFd);
             }
-            Misc.free(columnFds);
+            Misc.free(columnFdAndDataSize);
             path.trimTo(pathSize);
             other.trimTo(pathSize);
             ff.close(parquetFd);
@@ -1429,10 +1442,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         path.trimTo(pathSize);
         other.trimTo(pathSize);
-        final long originalSize = txWriter.getPartitionSize(partitionIndex);
-        assert originalSize == parquetRowCount;
         // used to update txn and bump recordStructureVersion
-        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
+        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, parquetRowCount);
         txWriter.resetPartitionParquetFormat(partitionTimestamp);
         txWriter.bumpPartitionTableVersion();
         txWriter.commit(denseSymbolMapWriters);
