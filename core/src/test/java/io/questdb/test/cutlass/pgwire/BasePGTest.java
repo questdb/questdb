@@ -370,13 +370,14 @@ public abstract class BasePGTest extends AbstractCairoTest {
             Mode mode,
             boolean binary,
             int prepareThreshold,
-            PGJobContextTest.ConnectionAwareRunnable runnable
+            Runnable setupCode, PGJobContextTest.ConnectionAwareRunnable testCode
     ) throws Exception {
         LOG.info().$("asserting PG Wire server [mode=").$(mode)
                 .$(", binary=").$(binary)
                 .$(", prepareThreshold=").$(prepareThreshold)
                 .I$();
         super.setUp();
+        setupCode.run();
         try {
             assertMemoryLeak(() -> {
                 try (
@@ -385,7 +386,7 @@ public abstract class BasePGTest extends AbstractCairoTest {
                 ) {
                     workerPool.start(LOG);
                     try (final Connection connection = getConnection(mode, server.getPort(), binary, prepareThreshold)) {
-                        runnable.run(connection, binary, mode, server.getPort());
+                        testCode.run(connection, binary, mode, server.getPort());
                     }
                 }
             });
@@ -394,60 +395,66 @@ public abstract class BasePGTest extends AbstractCairoTest {
         }
     }
 
-    protected void assertWithPgServer(long bits, PGJobContextTest.ConnectionAwareRunnable runnable) throws Exception {
+    protected void assertWithPgServer(long bits, PGJobContextTest.ConnectionAwareRunnable testCode) throws Exception {
+        assertWithPgServer(bits, () -> {/*no-op*/}, testCode);
+    }
+
+    protected void assertWithPgServer(
+            long bits, Runnable setupCode, PGJobContextTest.ConnectionAwareRunnable testCode
+    ) throws Exception {
         if ((bits & BasePGTest.CONN_AWARE_SIMPLE_BINARY) == BasePGTest.CONN_AWARE_SIMPLE_BINARY) {
             LOG.info().$("Mode: asserting simple binary").$();
-            assertWithPgServer(Mode.SIMPLE, true, -2, runnable);
-            assertWithPgServer(Mode.SIMPLE, true, -1, runnable);
+            assertWithPgServer(Mode.SIMPLE, true, -2, setupCode, testCode);
+            assertWithPgServer(Mode.SIMPLE, true, -1, setupCode, testCode);
         }
 
         if ((bits & BasePGTest.CONN_AWARE_SIMPLE_TEXT) == BasePGTest.CONN_AWARE_SIMPLE_TEXT) {
             LOG.info().$("Mode: asserting simple text").$();
-            assertWithPgServer(Mode.SIMPLE, false, -2, runnable);
-            assertWithPgServer(Mode.SIMPLE, false, -1, runnable);
+            assertWithPgServer(Mode.SIMPLE, false, -2, setupCode, testCode);
+            assertWithPgServer(Mode.SIMPLE, false, -1, setupCode, testCode);
         }
 
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_BINARY) == BasePGTest.CONN_AWARE_EXTENDED_BINARY) {
             LOG.info().$("Mode: asserting extended binary").$();
-            assertWithPgServer(Mode.EXTENDED, true, -2, runnable);
+            assertWithPgServer(Mode.EXTENDED, true, -2, setupCode, testCode);
             if ((bits & CONN_AWARE_QUIRKS) == CONN_AWARE_QUIRKS) {
-                assertWithPgServer(Mode.EXTENDED, true, -1, runnable);
+                assertWithPgServer(Mode.EXTENDED, true, -1, setupCode, testCode);
             }
         }
 
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_TEXT) == BasePGTest.CONN_AWARE_EXTENDED_TEXT) {
             LOG.info().$("Mode: asserting extended text").$();
-            assertWithPgServer(Mode.EXTENDED, false, -2, runnable);
+            assertWithPgServer(Mode.EXTENDED, false, -2, setupCode, testCode);
             if ((bits & CONN_AWARE_QUIRKS) == CONN_AWARE_QUIRKS) {
-                assertWithPgServer(Mode.EXTENDED, false, -1, runnable);
+                assertWithPgServer(Mode.EXTENDED, false, -1, setupCode, testCode);
             }
         }
 
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_PREPARED_BINARY) == BasePGTest.CONN_AWARE_EXTENDED_PREPARED_BINARY) {
             LOG.info().$("Mode: asserting extended prepared binary").$();
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, true, -2, runnable);
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, true, -1, runnable);
+            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, true, -2, setupCode, testCode);
+            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, true, -1, setupCode, testCode);
         }
 
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_PREPARED_TEXT) == BasePGTest.CONN_AWARE_EXTENDED_PREPARED_TEXT) {
             LOG.info().$("Mode: asserting extended prepared text").$();
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, -2, runnable);
-            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, -1, runnable);
+            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, -2, setupCode, testCode);
+            assertWithPgServer(Mode.EXTENDED_FOR_PREPARED, false, -1, setupCode, testCode);
         }
 
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_CACHED_BINARY) == BasePGTest.CONN_AWARE_EXTENDED_CACHED_BINARY) {
             LOG.info().$("Mode: asserting extended cached binary").$();
-            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, -2, runnable);
+            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, -2, setupCode, testCode);
             if ((bits & CONN_AWARE_QUIRKS) == CONN_AWARE_QUIRKS) {
-                assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, -1, runnable);
+                assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, true, -1, setupCode, testCode);
             }
         }
 
         if ((bits & BasePGTest.CONN_AWARE_EXTENDED_CACHED_TEXT) == BasePGTest.CONN_AWARE_EXTENDED_CACHED_TEXT) {
             LOG.info().$("Mode: asserting extended cached text").$();
-            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, -2, runnable);
+            assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, -2, setupCode, testCode);
             if ((bits & CONN_AWARE_QUIRKS) == CONN_AWARE_QUIRKS) {
-                assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, -1, runnable);
+                assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, -1, setupCode, testCode);
             }
         }
     }
