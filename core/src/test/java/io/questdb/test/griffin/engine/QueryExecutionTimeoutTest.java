@@ -540,7 +540,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
         }
     }
 
-    private void assertTimeout(String ddl, String dml, String query, SqlCompiler compiler, SqlExecutionContext context) throws Exception {
+    private void assertTimeout(String ddl, String dml, String query, SqlCompiler compiler, SqlExecutionContext context) {
         try {
             if (dml != null || query != null) {
                 unsetTimeout();
@@ -707,7 +707,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
         ) {
             sqlExecutionContext.with(circuitBreaker);
             if (pool != null) {
-                WorkerPoolUtils.setupQueryJobs(pool, engine, null);
+                WorkerPoolUtils.setupQueryJobs(pool, engine);
                 pool.start(LOG);
             }
 

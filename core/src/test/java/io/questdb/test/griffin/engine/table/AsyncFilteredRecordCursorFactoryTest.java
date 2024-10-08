@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.*;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.QueryFutureUpdateListener;
@@ -40,9 +41,7 @@ import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.*;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.Rnd;
+import io.questdb.std.*;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.CustomisableRunnable;
@@ -133,7 +132,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             }
 
             resetTaskCapacities();
-        });
+        }, new AtomicBooleanCircuitBreaker());
     }
 
     @Test
@@ -422,7 +421,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             );
 
             resetTaskCapacities();
-        });
+        }, new AtomicBooleanCircuitBreaker());
     }
 
     @Test
@@ -450,7 +449,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             );
 
             resetTaskCapacities();
-        });
+        }, new AtomicBooleanCircuitBreaker());
     }
 
     @Test
@@ -513,7 +512,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     sqlExecutionContext,
                     false
             );
-        });
+        }, new AtomicBooleanCircuitBreaker());
     }
 
     @Test
@@ -532,7 +531,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     sqlExecutionContext,
                     true
             );
-        });
+        }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB1));
     }
 
     @Test
@@ -555,7 +554,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                             "foobar\t1970-01-01T00:52:14.800000Z\t0.345765350101064\t0.5880181545675813\n" +
                             "foobar\t1970-01-01T00:58:31.000000Z\t0.34580598176419974\t0.5880527032198728\n"
             );
-        });
+        }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB1));
     }
 
     @Test
@@ -606,7 +605,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             );
 
             resetTaskCapacities();
-        });
+        }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB1));
     }
 
     private void resetTaskCapacities() {
@@ -742,7 +741,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                         sqlExecutionContext,
                         false
                 );
-            });
+            }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB1));
         } finally {
             sqlExecutionContext.setParallelFilterEnabled(true);
         }
@@ -851,7 +850,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                                 });
                             }
                         } catch (Throwable e) {
-                            e.printStackTrace();
+                            e.printStackTrace(System.out);
                             errorCounter.incrementAndGet();
                         } finally {
                             doneLatch.countDown();
@@ -876,19 +875,33 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     private void withPool(CustomisableRunnable runnable) throws Exception {
+        withPool(runnable, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+    }
+
+    private void withPool(CustomisableRunnable runnable, SqlExecutionCircuitBreaker circuitBreaker) throws Exception {
         int workerCount = 4;
-        withPool0(runnable, workerCount, workerCount);
+        withPool0(runnable, workerCount, workerCount, circuitBreaker);
     }
 
     private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedWorkerCount) throws Exception {
+        withPool0(runnable, workerCount, sharedWorkerCount, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+    }
+
+    private void withPool0(CustomisableRunnable runnable, int workerCount, int sharedWorkerCount, SqlExecutionCircuitBreaker circuitBreaker) throws Exception {
         assertMemoryLeak(() -> {
-            WorkerPool pool = new TestWorkerPool(workerCount);
+            final TestWorkerPool pool = new TestWorkerPool(workerCount);
             TestUtils.setupWorkerPool(pool, engine);
+            final ObjList<PageFrameReduceJob> pageFrameReduceJobs = pool.getPageFrameReduceJobs();
             pool.start();
 
             try {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     runnable.run(engine, compiler, new DelegatingSqlExecutionContext() {
+                        @Override
+                        public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
+                            return circuitBreaker;
+                        }
+
                         @Override
                         public int getSharedWorkerCount() {
                             return sharedWorkerCount;
@@ -900,8 +913,15 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                         }
                     });
                 }
+
+                for (int i = 0, n = pageFrameReduceJobs.size(); i < n; i++) {
+                    final PageFrameReduceJob job = pageFrameReduceJobs.getQuick(i);
+                    // if the job was never used the circuit breaker is null,
+                    // if the job was used the type of the circuit breaker has to match with the one from SqlExecutionContext
+                    assert job.getCircuitBreaker() == null || job.getCircuitBreaker().getClass() == circuitBreaker.getClass();
+                }
             } catch (Throwable e) {
-                e.printStackTrace();
+                e.printStackTrace(System.out);
                 throw e;
             } finally {
                 pool.halt();
