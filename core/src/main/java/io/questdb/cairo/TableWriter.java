@@ -35,25 +35,95 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.NullMapWriter;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.*;
-import io.questdb.cairo.wal.*;
+import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.MemoryCMOR;
+import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.cairo.vm.api.MemoryMA;
+import io.questdb.cairo.vm.api.MemoryMAR;
+import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.vm.api.MemoryMAT;
+import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.cairo.vm.api.NullMemory;
+import io.questdb.cairo.wal.MetadataService;
+import io.questdb.cairo.wal.O3JobParallelismRegulator;
+import io.questdb.cairo.wal.SymbolMapDiff;
+import io.questdb.cairo.wal.SymbolMapDiffCursor;
+import io.questdb.cairo.wal.SymbolMapDiffEntry;
+import io.questdb.cairo.wal.WalTxnDetails;
+import io.questdb.cairo.wal.WriterRowUtils;
 import io.questdb.cairo.wal.seq.TableSequencer;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
-import io.questdb.griffin.*;
+import io.questdb.griffin.ConvertOperatorImpl;
+import io.questdb.griffin.DropIndexOperator;
+import io.questdb.griffin.PurgingOperator;
+import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
-import io.questdb.griffin.engine.table.parquet.*;
+import io.questdb.griffin.engine.table.parquet.MappedMemoryPartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
+import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
-import io.questdb.mp.*;
-import io.questdb.std.*;
+import io.questdb.mp.MPSequence;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SCSequence;
+import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.mp.Sequence;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
+import io.questdb.std.DirectIntList;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FindVisitor;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.LongList;
+import io.questdb.std.LongObjHashMap;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Os;
+import io.questdb.std.PagedDirectLongList;
+import io.questdb.std.ReadOnlyObjList;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Uuid;
+import io.questdb.std.Vect;
+import io.questdb.std.WeakClosableObjectPool;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.str.*;
-import io.questdb.tasks.*;
+import io.questdb.std.str.DirectUtf8Sequence;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
+import io.questdb.tasks.ColumnIndexerTask;
+import io.questdb.tasks.ColumnTask;
+import io.questdb.tasks.O3CopyTask;
+import io.questdb.tasks.O3OpenColumnTask;
+import io.questdb.tasks.O3PartitionTask;
+import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -1366,7 +1436,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         ) {
             partitionDecoder.of(parquetFd);
             final GenericRecordMetadata metadata = new GenericRecordMetadata();
-            partitionDecoder.getMetadata().copyTo(metadata, false);
+            final PartitionDecoder.Metadata parquetMetadata = partitionDecoder.getMetadata();
+            parquetMetadata.copyTo(metadata, false);
 
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 final int columnType = metadata.getColumnType(i);
@@ -1390,9 +1461,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
 
-            final int rowGroupCount = partitionDecoder.getMetadata().rowGroupCount();
+            final int rowGroupCount = parquetMetadata.rowGroupCount();
             for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
-                final long rowGroupRowCount = partitionDecoder.decodeRowGroup(rowGroupBuffers, columns, rowGroupIndex, 0, rowGroupCount);
+                final long rowGroupRowCount = partitionDecoder.decodeRowGroup(
+                        rowGroupBuffers,
+                        columns,
+                        rowGroupIndex,
+                        0,
+                        parquetMetadata.rowGroupSize(rowGroupIndex)
+                );
                 parquetRowCount += rowGroupRowCount;
                 for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
                     final int columnType = metadata.getColumnType(columnIndex);
