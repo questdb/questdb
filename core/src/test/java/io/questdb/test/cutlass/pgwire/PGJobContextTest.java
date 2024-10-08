@@ -11397,7 +11397,9 @@ create table tab as (
     }
 
     private void queryTimestampsInRange(Connection connection) throws SQLException, IOException {
-        try (PreparedStatement statement = connection.prepareStatement("select ts FROM xts WHERE ts <= dateadd('d', -1, ?) and ts >= dateadd('d', -2, ?)")) {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "select ts FROM xts WHERE ts <= dateadd('d', -1, ?) and ts >= dateadd('d', -2, ?)")
+        ) {
             ResultSet rs = null;
             for (long micros = 0; micros < count * Timestamps.HOUR_MICROS; micros += Timestamps.HOUR_MICROS * 7) {
                 sink.clear();
