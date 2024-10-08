@@ -10774,8 +10774,8 @@ create table tab as (
 
     @Test
     public void testUpdateWithNowAndSystimestamp() throws Exception {
-        Runnable setupCode = () -> setCurrentMicros(123678000);
-        assertWithPgServer(CONN_AWARE_ALL, setupCode, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            setCurrentMicros(123678000);
             final PreparedStatement statement = connection.prepareStatement("create table x (a timestamp, b double, ts timestamp) timestamp(ts)");
             statement.execute();
 
@@ -11410,7 +11410,9 @@ create table tab as (
                 rs = statement.executeQuery();
 
                 long finalMicros = micros;
-                String expected = datesArr.stream().filter(arr -> (long) arr[0] <= (finalMicros - DAY_MICROS) && (long) arr[0] >= (finalMicros - 2 * DAY_MICROS))
+                String expected = datesArr
+                        .stream()
+                        .filter(arr -> (long) arr[0] <= (finalMicros - DAY_MICROS) && (long) arr[0] >= (finalMicros - 2 * DAY_MICROS))
                         .map(arr -> arr[1] + "\n")
                         .collect(Collectors.joining());
 
