@@ -204,8 +204,19 @@ public class PartitionDecoder implements QuietCloseable {
             for (int i = 0; i < columnCount; i++) {
                 final String columnName = Chars.toString(columnName(i));
                 final int columnType = getColumnType(i);
-                if (ColumnType.isSymbol(columnType) && treatSymbolsAsVarchar) {
-                    metadata.add(new TableColumnMetadata(columnName, ColumnType.VARCHAR));
+                if (ColumnType.isSymbol(columnType)) {
+                    if (treatSymbolsAsVarchar) {
+                        metadata.add(new TableColumnMetadata(columnName, ColumnType.VARCHAR));
+                    } else {
+                        metadata.add(new TableColumnMetadata(
+                                columnName,
+                                columnType,
+                                false,
+                                64,
+                                true,
+                                null
+                        ));
+                    }
                 } else {
                     metadata.add(new TableColumnMetadata(columnName, columnType));
                 }
