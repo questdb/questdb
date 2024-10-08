@@ -729,17 +729,18 @@ pub fn decode_page(
         (PhysicalType::FixedLenByteArray(16), _logical_type, _) => {
             match (page.encoding(), column_type.tag()) {
                 (Encoding::Plain, ColumnTypeTag::Long128) => {
-                    decode_page(
+                    decode_page0(
                         version,
                         page,
-                        row_count,
+                        row_lo,
+                        row_hi,
                         &mut FixedLong128ColumnSink::new(
                             &mut DataPageFixedSlicer::<16>::new(values_buffer, row_count),
                             bufs,
                             &UUID_NULL,
                         ),
                     )?;
-                    Ok(row_count)
+                    Ok(())
                 }
                 _ => Err(encoding_error),
             }
