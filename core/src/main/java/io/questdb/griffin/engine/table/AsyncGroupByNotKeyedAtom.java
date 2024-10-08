@@ -60,6 +60,8 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
     private final CompiledFilter compiledFilter;
     private final GroupByAllocator ownerAllocator;
     private final Function ownerFilter;
+    // Note: all function updaters should be used through a getFunctionUpdater() call
+    // to properly initialize group by functions' allocator.
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final SimpleMapValue ownerMapValue;
@@ -129,7 +131,8 @@ public class AsyncGroupByNotKeyedAtom implements StatefulAtom, Closeable, Planna
 
     @Override
     public void clear() {
-        // Make sure to set ownerFunctionUpdater's allocator.
+        // Make sure to set the allocator for the owner's group by functions.
+        // This is done by the getFunctionUpdater() method.
         final GroupByFunctionsUpdater functionUpdater = getFunctionUpdater(-1);
         functionUpdater.updateEmpty(ownerMapValue);
         ownerMapValue.setNew(true);

@@ -84,6 +84,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
     private final GroupByAllocator ownerAllocator;
     private final Function ownerFilter;
     private final MapFragment ownerFragment;
+    // Note: all function updaters should be used through a getFunctionUpdater() call
+    // to properly initialize group by functions' allocator.
     private final GroupByFunctionsUpdater ownerFunctionUpdater;
     private final ObjList<GroupByFunction> ownerGroupByFunctions;
     private final ObjList<Function> ownerKeyFunctions;
@@ -388,7 +390,8 @@ public class AsyncGroupByAtom implements StatefulAtom, Closeable, Reopenable, Pl
         lastSharded = false;
         final Map destMap = ownerFragment.reopenMap();
         final int perWorkerMapCount = perWorkerFragments.size();
-        // Make sure to set ownerFunctionUpdater's allocator.
+        // Make sure to set the allocator for the owner's group by functions.
+        // This is done by the getFunctionUpdater() method.
         final GroupByFunctionsUpdater functionUpdater = getFunctionUpdater(-1);
 
         // Calculate medians before the merge.
