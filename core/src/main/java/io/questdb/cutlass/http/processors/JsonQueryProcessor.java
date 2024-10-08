@@ -461,7 +461,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, Closeable {
         final HttpChunkedResponse response = context.getChunkedResponse();
         header(response, context, keepAliveHeader, 200);
         response.put('{')
-                .putAsciiQuoted("error").putAscii(':').putAsciiQuoted("empty query")
+                .putAsciiQuoted("notice").putAscii(':').putAsciiQuoted("empty query")
                 .putAscii(",")
                 .putAsciiQuoted("query").putAscii(':').putAsciiQuoted(state.getQuery())
                 .putAscii(",")
