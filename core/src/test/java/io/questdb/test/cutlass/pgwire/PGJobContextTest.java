@@ -25,7 +25,12 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -34,24 +39,50 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cutlass.pgwire.DefaultCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.IPGWireServer;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.griffin.*;
+import io.questdb.griffin.QueryFutureUpdateListener;
+import io.questdb.griffin.QueryRegistry;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.*;
-import io.questdb.std.*;
+import io.questdb.network.DefaultIODispatcherConfiguration;
+import io.questdb.network.IODispatcherConfiguration;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
+import io.questdb.network.SuspendEvent;
+import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
+import io.questdb.std.IntIntHashMap;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectFactory;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.*;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.*;
+import org.junit.After;
+import org.junit.Assert;
+import org.junit.Assume;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Ignore;
+import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
@@ -66,10 +97,26 @@ import org.postgresql.util.PSQLException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
+import java.sql.CallableStatement;
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.sql.Date;
-import java.sql.*;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.sql.Time;
+import java.sql.Timestamp;
+import java.sql.Types;
 import java.text.SimpleDateFormat;
-import java.util.*;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.GregorianCalendar;
+import java.util.List;
+import java.util.Properties;
+import java.util.TimeZone;
+import java.util.UUID;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -161,7 +208,6 @@ public class PGJobContextTest extends BasePGTest {
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{
                 {LegacyMode.MODERN, WalMode.WITH_WAL},
-//                 @Ignore("Some tests randomly block")
                 {LegacyMode.MODERN, WalMode.NO_WAL},
                 {LegacyMode.LEGACY, WalMode.WITH_WAL},
                 {LegacyMode.LEGACY, WalMode.NO_WAL},
@@ -2574,7 +2620,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testCancelQueryThatReusesCircuitBreakerFromPreviousConnection() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table if not exists tab as (select x::timestamp ts, x, rnd_double() d from long_sequence(1)) timestamp(ts) partition by day");
@@ -2621,8 +2666,9 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0: Mem leak")
     public void testCancelRunningQuery() throws Exception {
+        // @Ignore("TODO PGWire 2.0: Mem leak")
+        Assume.assumeTrue(legacyMode);
         String[] queries = {
                 "create table new_tab as (select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000))",
                 "select count(*) from tab t1 join tab t2 on t1.x = t2.x where sleep(120000)",
@@ -2826,8 +2872,9 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testCloseMessageWithBadUtf8InStatementNameHex() throws Exception {
+        // @Ignore("TODO PGWire 2.0")
+        Assume.assumeTrue(legacyMode);
         skipOnWalRun(); // select only
         assertHexScriptAltCreds(
                 ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
@@ -2852,8 +2899,9 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testCloseMessageWithInvalidTypeHex() throws Exception {
+        // @Ignore("TODO PGWire 2.0")
+        Assume.assumeTrue(legacyMode);
         skipOnWalRun(); // select only
         assertHexScriptAltCreds(
                 ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
@@ -3003,8 +3051,7 @@ if __name__ == "__main__":
 
     @Test
     public void testCursorFetch() throws Exception {
-        // @Ignore("This test doesn't use partitioned tables.")
-        Assume.assumeFalse(walEnabled);
+        skipOnWalRun(); // the test doesn't use partitioned tables
 
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.setAutoCommit(false);
@@ -3170,9 +3217,9 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testExecuteAndCancelSqlCommands() throws Exception {
-        // @Ignore("test covers all table types on its own")
+        // @Ignore("TODO PGWire 2.0")
+        Assume.assumeTrue(legacyMode);
         Assume.assumeTrue(walEnabled);
 
         final long TIMEOUT = 240_000;
@@ -3512,8 +3559,11 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
+    @Ignore("ERROR: dangling literal")
+//  explain select * from xx where x > ('0'::int8) and x < ('10.0'::double precision)::double limit 10
+//                                                                         ^^^^^^^^^
     public void testExplainPlanWithBindVariables() throws Exception {
+
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (PreparedStatement pstmt = connection.prepareStatement("create table xx as (" +
                     "select x," +
@@ -4043,7 +4093,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testGroupByExpressionWithBindVariableNotAppearingInSelectClause() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED_PREPARED_BINARY, (conn, binary, mode, port) -> {
             ddl("create table t1 as (select 's' || x as s from long_sequence(1000));");
@@ -5643,7 +5692,6 @@ nodejs code:
     }
 
     @Test
-    @Ignore("legacy code regression - must fix")
     public void testIntAndLongParametersWithFormatCountGreaterThanValueCount() throws Exception {
         skipOnWalRun(); // non-partitioned table
         // this test does not send 'S' message, the modern server will be waiting until timeout before responding.
@@ -5664,7 +5712,6 @@ nodejs code:
     }
 
     @Test
-    @Ignore("legacy code regression - must fix")
     public void testIntAndLongParametersWithFormatCountSmallerThanValueCount() throws Exception {
         skipOnWalRun(); // non-partitioned table
         // this test does not send 'S' message, the modern server will be waiting until timeout before responding.
@@ -6410,8 +6457,9 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testLocalCopyFrom() throws Exception {
+        // @Ignore("TODO PGWire 2.0")
+        Assume.assumeTrue(legacyMode);
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (
@@ -6438,8 +6486,9 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testLocalCopyFromCancellation() throws Exception {
+        // @Ignore("TODO PGWire 2.0")
+        Assume.assumeTrue(legacyMode);
         skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (final PreparedStatement copyStatement = connection.prepareStatement("copy x from '/test-numeric-headers.csv' with header true")) {
@@ -6707,7 +6756,8 @@ nodejs code:
     }
 
     @Test
-    @Ignore("both legacy and modern fail: cannot create portal for non-SELECT SQL")
+    @Ignore("PGWire 2.0: cannot create portal for non-SELECT SQL " +
+            "legacy: expected 101, actual 100")
     public void testMultistatement() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
@@ -6814,7 +6864,6 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testNoDataAndEmptyQueryResponsesHex_simpleTextProtocol() throws Exception {
         /*
          * go.mod:
@@ -6932,8 +6981,9 @@ nodejs code:
     }
 
     @Test
-    @Ignore
     public void testPHPSelectHex() throws Exception {
+        // @Ignore("line = 12, pos = 0, expected: 67, actual: 69")
+        Assume.assumeTrue(legacyMode);
         //         PHP client script to reproduce
         //        $dbName = 'qdb';
         //        $hostname = '127.0.0.1';
@@ -6989,8 +7039,9 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testParameterTypeCountGreaterThanParameterValueCount() throws Exception {
+        // @Ignore("Assert.assertTrue(Net.isDead(clientFd))")
+        Assume.assumeTrue(legacyMode);
         skipOnWalRun(); // non-partitioned table
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -7061,11 +7112,9 @@ nodejs code:
     }
 
     @Test
-    @Ignore
     public void testParseMessageBadQueryTerminator() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        // this test sends a malformed "P" message and does not send "S", therefore the modern server is
-        // not going to respond.
+        // @Ignore("test sends a malformed P message and does not send S, so the modern server doesn't respond")
         Assume.assumeTrue(legacyMode);
         final String script = ">0000006900030000757365720078797a006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -7081,8 +7130,9 @@ nodejs code:
     }
 
     @Test
-    @Ignore
     public void testParseMessageBadStatementTerminator() throws Exception {
+        // @Ignore("test sends a malformed packet and the modern server does not respond")
+        Assume.assumeTrue(legacyMode);
         skipOnWalRun(); // non-partitioned table
         final String script = ">0000006900030000757365720078797a006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -7098,8 +7148,9 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testParseMessageNegativeParameterCount() throws Exception {
+        // @Ignore("TODO PGWire 2.0")
+        Assume.assumeTrue(legacyMode);
         skipOnWalRun(); // non-partitioned table
         final String script = ">0000006900030000757365720078797a006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -7119,8 +7170,9 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testParseMessageTruncatedAtParameter() throws Exception {
+        // @Ignore("Assert.assertTrue(Net.isDead(clientFd));")
+        Assume.assumeTrue(legacyMode);
         skipOnWalRun(); // non-partitioned table
         final String script = ">0000006900030000757365720078797a006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -7140,8 +7192,9 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testParseMessageTruncatedAtParameterCount() throws Exception {
+        // @Ignore("Modern server doesn't respond")
+        Assume.assumeTrue(legacyMode);
         skipOnWalRun(); // non-partitioned table
         final String script = ">0000006900030000757365720078797a006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -7163,8 +7216,7 @@ nodejs code:
 
     @Test
     public void testPrepareInsertAsSelect() throws Exception {
-        // @Ignore("This test doesn't use partitioned tables.")
-        Assume.assumeFalse(walEnabled);
+        skipOnWalRun(); // the test uses non-partitioned tables
 
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             CallableStatement stmt = connection.prepareCall("drop table if exists mining_event;");
@@ -7397,8 +7449,9 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testPreparedStatementParamBadInt() throws Exception {
+        // @Ignore("Assert.assertTrue(Net.isDead(clientFd));")
+        Assume.assumeTrue(legacyMode);
         skipOnWalRun(); // non-partitioned table
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
@@ -7417,8 +7470,9 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testPreparedStatementParamBadLong() throws Exception {
+        // @Ignore("Assert.assertTrue(Net.isDead(clientFd));")
+        Assume.assumeTrue(legacyMode);
         skipOnWalRun(); // non-partitioned table
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
@@ -7437,8 +7491,9 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testPreparedStatementParamValueLengthOverflow() throws Exception {
+        // @Ignore("Assert.assertTrue(Net.isDead(clientFd));")
+        Assume.assumeTrue(legacyMode);
         skipOnWalRun(); // non-partitioned table
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
@@ -7457,7 +7512,7 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
+    @Ignore("Same output for legacy and modern, column types not as expected")
     public void testPreparedStatementParams() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
@@ -7485,7 +7540,8 @@ nodejs code:
                     TimeZone.setDefault(TimeZone.getTimeZone("EDT"));
                     final String url = String.format("jdbc:postgresql://127.0.0.1:%d/qdb", server.getPort());
                     final Connection connection = DriverManager.getConnection(url, properties);
-                    PreparedStatement statement = connection.prepareStatement("select x,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? from long_sequence(5)");
+                    PreparedStatement statement = connection.prepareStatement(
+                            "select x,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? from long_sequence(5)");
                     statement.setInt(1, 4);
                     statement.setLong(2, 123L);
                     statement.setFloat(3, 5.43f);
@@ -7576,7 +7632,7 @@ nodejs code:
     }
 
     @Test
-    @Ignore
+    @Ignore("legacy: output column 16 of wrong type; modern: Can't change resolved type for param: 19 from 1082 to 1114")
     public void testPreparedStatementTextParams() throws Exception {
         skipOnWalRun(); // non-partitioned table
         sendBufferSize = 1024;
@@ -8104,8 +8160,7 @@ nodejs code:
 
     @Test
     public void testQueryEventuallySucceedsOnDataUnavailableEventTriggeredAfterDelay() throws Exception {
-        // @Ignore("This test doesn't use tables.")
-        Assume.assumeFalse(walEnabled);
+        skipOnWalRun(); // non-partitioned table
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             int totalRows = 3;
             int backoffCount = 3;
@@ -8183,8 +8238,7 @@ nodejs code:
 
     @Test
     public void testQueryEventuallySucceedsOnDataUnavailableSmallSendBuffer() throws Exception {
-        // @Ignore("This test doesn't use tables.")
-        Assume.assumeFalse(walEnabled);
+        skipOnWalRun(); // test doesn't use tables
         assertMemoryLeak(() -> {
             PGWireConfiguration configuration = new Port0PGWireConfiguration() {
                 @Override
@@ -8307,7 +8361,6 @@ nodejs code:
     }
 
     @Test
-    @Ignore("this test executes the same prepared statement with different values in the same pipeline, right now we have all 3 executions as one PE, 2.0 needs a fix")
     public void testRegularBatchInsertMethod() throws Exception {
         // bind variables do not work well over "simple" protocol
         skipOnWalRun(); // non-partitioned table
@@ -8591,7 +8644,6 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testRunAlterWhenTableLockedAndAlterTakesTooLong() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
@@ -8613,7 +8665,6 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testRunAlterWhenTableLockedAndAlterTakesTooLongFailsToWait() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
@@ -8639,7 +8690,6 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testRunAlterWhenTableLockedAndAlterTimeoutsToStart() throws Exception {
         skipOnWalRun(); // non-partitioned table
         assertMemoryLeak(() -> {
@@ -8658,7 +8708,6 @@ nodejs code:
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testRunAlterWhenTableLockedWithInserts() throws Exception {
         skipOnWalRun(); // non-partitioned table
         node1.setProperty(CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 10_000);
@@ -9877,7 +9926,6 @@ create table tab as (
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testStaleQueryCacheOnTableDropped() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (CallableStatement st1 = connection.prepareCall("create table y as (" +
@@ -10296,7 +10344,7 @@ create table tab as (
 
     @Test
     public void testUndefinedBindVariableInSymbol() throws Exception {
-//        @Ignore("ERROR: bind variable at 0 is defined as unknown and cannot accept STRING")
+        // @Ignore("ERROR: bind variable at 0 is defined as unknown and cannot accept STRING")
         Assume.assumeFalse(legacyMode);
         final String[] values = {"'5'", "null", "'5' || ''", "replace(null, 'A', 'A')", "?5", "?null"};
         final CharSequenceObjHashMap<String> valMap = new CharSequenceObjHashMap<>();
@@ -10487,7 +10535,6 @@ create table tab as (
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
     public void testUpdateAsync() throws Exception {
         testUpdateAsync(null, writer -> {
                 },
@@ -10499,7 +10546,7 @@ create table tab as (
     }
 
     @Test
-    @Ignore("TODO PGWire 2.0")
+    @Ignore("Update not observed on both modern and legacy")
     public void testUpdateAsyncWithReaderOutOfDateException() throws Exception {
         skipOnWalRun();
         SOCountDownLatch queryScheduledCount = new SOCountDownLatch(1);
@@ -10569,8 +10616,12 @@ create table tab as (
     }
 
     @Test
-    @Ignore("multi-use of the prepared statement")
     public void testUpdateNoAutoCommit() throws Exception {
+        // @Ignore("
+        // WAL: comparison failure
+        // NO_WAL: ERROR: Timeout expired on waiting for the async command execution result [instance=1] Position: 1
+        // ")
+        Assume.assumeTrue(legacyMode);
         assertMemoryLeak(() -> {
             try (
                     final IPGWireServer server = createPGServer(1);
@@ -10978,7 +11029,7 @@ create table tab as (
         )
      */
     @Test
-    @Ignore("TODO PGWire 2.0")
+    @Ignore("line = 8, pos = 0, expected: 50, actual: 69")
     public void testVarargBindVariables() throws Exception {
         skipOnWalRun();
         engine.ddl("CREATE TABLE all_types (" +
