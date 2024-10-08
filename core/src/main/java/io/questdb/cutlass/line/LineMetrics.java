@@ -30,12 +30,24 @@ import io.questdb.metrics.MetricsRegistry;
 public class LineMetrics {
 
     private final LongGauge connectionCountGauge;
+    private final LongGauge totalIlpTcpBytesGauge;
+    private final LongGauge totalIlpHttpBytesGauge;
 
     public LineMetrics(MetricsRegistry metricsRegistry) {
         this.connectionCountGauge = metricsRegistry.newLongGauge("line_tcp_connections");
+        this.totalIlpTcpBytesGauge = metricsRegistry.newLongGauge("line_tcp_recv_bytes");
+        this.totalIlpHttpBytesGauge = metricsRegistry.newLongGauge("line_http_recv_bytes");
     }
 
     public LongGauge connectionCountGauge() {
         return connectionCountGauge;
+    }
+
+    public LongGauge totalIlpTcpBytesGauge() {
+        return totalIlpTcpBytesGauge;
+    }
+
+    public LongGauge totalIlpHttpBytesGauge() {
+        return totalIlpHttpBytesGauge;
     }
 }

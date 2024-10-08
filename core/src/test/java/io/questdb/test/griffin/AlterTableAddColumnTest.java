@@ -348,7 +348,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
 
     @Test
     public void testAddInvalidType() throws Exception {
-        assertFailure("alter table x add column abc blah", 29, "invalid type");
+        assertFailure("alter table x add column abc blah", 29, "unsupported column type: blah");
     }
 
     @Test

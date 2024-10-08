@@ -65,8 +65,8 @@ public class LtTimestampFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return Numbers.lessThan(
-                    this.left.getTimestamp(rec),
-                    this.right.getTimestamp(rec),
+                    left.getTimestamp(rec),
+                    right.getTimestamp(rec),
                     negated
             );
         }

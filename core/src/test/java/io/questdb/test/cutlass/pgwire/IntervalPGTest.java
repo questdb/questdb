@@ -22,50 +22,24 @@
  *
  ******************************************************************************/
 
-package io.questdb.std;
+package io.questdb.test.cutlass.pgwire;
 
-import org.jetbrains.annotations.NotNull;
+import org.junit.Test;
 
-import java.io.Closeable;
+import java.sql.PreparedStatement;
 
-public class WeakMutableObjectPool<T extends Mutable> extends WeakObjectPoolBase<T> implements Closeable {
-    private final ObjectFactory<T> factory;
-
-    public WeakMutableObjectPool(@NotNull ObjectFactory<T> factory, int initSize) {
-        super(initSize);
-        this.factory = factory;
-        try {
-            fill();
-        } catch (Throwable e) {
-            close();
-            throw e;
-        }
-    }
-
-    @Override
-    public void close() {
-        while (!cache.isEmpty()) {
-            Misc.freeIfCloseable(cache.pop());
-        }
-    }
-
-    @Override
-    public boolean push(T obj) {
-        return super.push(obj);
-    }
-
-    @Override
-    void clear(T obj) {
-        obj.clear();
-    }
-
-    @Override
-    void close(T obj) {
-        Misc.freeIfCloseable(obj);
-    }
-
-    @Override
-    T newInstance() {
-        return factory.newInstance();
+public class IntervalPGTest extends BasePGTest {
+    @Test
+    public void testIntervalSelect() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (PreparedStatement ps = connection.prepareStatement("SELECT interval(100, 200)")) {
+                assertResultSet(
+                        "interval[VARCHAR]\n" +
+                                "('1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z')\n",
+                        sink,
+                        ps.executeQuery()
+                );
+            }
+        });
     }
 }
