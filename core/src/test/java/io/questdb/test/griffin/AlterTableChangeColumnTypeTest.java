@@ -609,6 +609,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
             ddl("alter table x dedup enable upsert keys(timestamp, ik)");
             drainWalQueue();
             checkDedupSet("ik", true);
+            checkDedupSet("f", false);
 
             ddl("alter table x alter column ik type varchar");
             drainWalQueue();
@@ -779,7 +780,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     @Test
     public void testNewTypeInvalid() throws Exception {
         assumeNonWal();
-        assertFailure("alter table x alter column c type abracadabra", 34, "invalid type");
+        assertFailure("alter table x alter column c type abracadabra", 34, "unsupported column type: abracadabra");
     }
 
     @Test
