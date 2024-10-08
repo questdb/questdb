@@ -82,20 +82,32 @@ public class QueryProgress extends AbstractRecordCursorFactory {
             long beginNanos,
             boolean jit
     ) {
-        final int errno = e instanceof CairoException ? ((CairoException) e).getErrno() : 0;
-        final int pos = e instanceof FlyweightMessageContainer ? ((FlyweightMessageContainer) e).getPosition() : 0;
-        LOG.errorW()
-                .$("err")
-                .$(" [id=").$(sqlId)
-                .$(", sql=`").utf8(sqlText).$('`')
-                .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
-                .$(", cache=").$(executionContext.isCacheHit())
-                .$(", jit=").$(jit)
-                .$(", time=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
-                .$(", msg=").$(e.getMessage())
-                .$(", errno=").$(errno)
-                .$(", pos=").$(pos)
-                .I$();
+        if (e instanceof FlyweightMessageContainer) {
+            final int pos = ((FlyweightMessageContainer) e).getPosition();
+            final int errno = e instanceof CairoException ? ((CairoException) e).getErrno() : 0;
+            LOG.errorW()
+                    .$("err")
+                    .$(" [id=").$(sqlId)
+                    .$(", sql=`").utf8(sqlText).$('`')
+                    .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
+                    .$(", cache=").$(executionContext.isCacheHit())
+                    .$(", jit=").$(jit)
+                    .$(", time=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
+                    .$(", msg=").$(e.getMessage())
+                    .$(", errno=").$(errno)
+                    .$(", pos=").$(pos)
+                    .I$();
+        } else {
+            LOG.errorW().$("err")
+                    .$(" [id=").$(sqlId)
+                    .$(", sql=`").utf8(sqlText).$('`')
+                    .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
+                    .$(", cache=").$(executionContext.isCacheHit())
+                    .$(", jit=").$(jit)
+                    .$(", time=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
+                    .$(", exception=").$(e)
+                    .I$();
+        }
     }
 
     public static void logStart(
