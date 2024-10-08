@@ -31,8 +31,6 @@ import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.*;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -47,6 +45,7 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
     private final CairoEngine engine;
     private final MatViewRefreshExecutionContext matViewRefreshExecutionContext;
     private final WalTxnRangeLoader txnRangeLoader;
+    private final MvRefreshTask mvRefreshTask = new MvRefreshTask();
     private int queueFullCount;
 
     public MaterializedViewRefreshJob(CairoEngine engine) {
@@ -258,32 +257,19 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
                 refreshed = refreshView(viewGraph, baseToken, viewSeqTracker, viewToken, viewDef, appliedToParentTxn, lastBaseQueryableTxn);
             }
         }
-        viewGraph.notifyBaseRefreshed(baseToken, minRefreshToTxn);
+        mvRefreshTask.baseTable = baseToken;
+        viewGraph.notifyBaseRefreshed(mvRefreshTask, minRefreshToTxn);
         return refreshed;
     }
 
     private boolean refreshNotifiedViews() {
         MatViewGraph materializedViewGraph = engine.getMaterializedViewGraph();
-        Sequence subSequence = materializedViewGraph.getMvUpdateTaskSubSequence();
-        RingQueue<MvRefreshTask> refreshTaskQueue = materializedViewGraph.getMvUpdateTaskQueue();
-        long cursor;
         boolean refreshed = false;
-        do {
-            cursor = subSequence.next();
-            if (cursor > -1) {
-                TableToken baseTable, viewTable;
-                try {
-                    MvRefreshTask refreshTask = refreshTaskQueue.get(cursor);
-                    baseTable = refreshTask.baseTable;
-                    refreshed = true;
-                } finally {
-                    subSequence.done(cursor);
-                }
-
-                LOG.info().$("refreshing materialized views dependent on after notification [table=").$(baseTable).I$();
-                refreshed |= refreshDependentViews(baseTable, materializedViewGraph);
-            }
-        } while (cursor != -1);
+        while (materializedViewGraph.tryDequeueRefreshTask(mvRefreshTask)) {
+            TableToken baseTable = mvRefreshTask.baseTable;
+            LOG.info().$("refreshing materialized views dependent on after notification [table=").$(baseTable).I$();
+            refreshed |= refreshDependentViews(baseTable, materializedViewGraph);
+        }
         return refreshed;
     }
 
@@ -341,12 +327,6 @@ public class MaterializedViewRefreshJob extends SynchronizedJob {
     @Override
     protected boolean runSerially() {
         boolean refreshed = refreshNotifiedViews();
-        int queueFullCount = engine.getMaterializedViewGraph().getQueueFullCount();
-        if (queueFullCount > this.queueFullCount) {
-            refreshed |= refreshAll();
-            this.queueFullCount = queueFullCount;
-        }
         return refreshed;
-//        return refreshAll();
     }
 }

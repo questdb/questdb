@@ -28,10 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TableToken;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.MCSequence;
-import io.questdb.mp.MPSequence;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.Sequence;
+import io.questdb.mp.ConcurrentQueue;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
 
@@ -42,15 +39,10 @@ public class MatViewGraph implements QuietCloseable {
     private final ConcurrentHashMap<BaseTableMatViewRefreshState> dependantViewsByTableName = new ConcurrentHashMap<>();
     private final AtomicInteger queueFullCounter = new AtomicInteger();
     private final ConcurrentHashMap<MaterializedViewRefreshState> refreshStateByTableDirName = new ConcurrentHashMap<>();
-    private final RingQueue<MvRefreshTask> refreshTaskQueue;
-    private final MCSequence refreshTaskSubSequence;
-    private final MPSequence updateTaskPubSequence;
+    private final ConcurrentQueue<MvRefreshTask> refreshTaskQueue;
 
     public MatViewGraph(CairoConfiguration configuration) {
-        refreshTaskQueue = new RingQueue<>(MvRefreshTask::new, configuration.getMaterializedViewUpdateQueueCapacity());
-        updateTaskPubSequence = new MPSequence(refreshTaskQueue.getCycle());
-        refreshTaskSubSequence = new MCSequence(refreshTaskQueue.getCycle());
-        updateTaskPubSequence.then(refreshTaskSubSequence).then(updateTaskPubSequence);
+        refreshTaskQueue = new ConcurrentQueue<MvRefreshTask>(MvRefreshTask::new);
     }
 
     @Override
@@ -85,14 +77,6 @@ public class MatViewGraph implements QuietCloseable {
         }
     }
 
-    public RingQueue<MvRefreshTask> getMvUpdateTaskQueue() {
-        return refreshTaskQueue;
-    }
-
-    public Sequence getMvUpdateTaskSubSequence() {
-        return refreshTaskSubSequence;
-    }
-
     public int getQueueFullCount() {
         return queueFullCounter.get();
     }
@@ -101,26 +85,31 @@ public class MatViewGraph implements QuietCloseable {
         return getRefreshState(tableToken.getDirName());
     }
 
-    public void notifyBaseRefreshed(TableToken tableToken, long seqTxn) {
+    public void notifyBaseRefreshed(MvRefreshTask task, long seqTxn) {
+        TableToken tableToken = task.baseTable;
         BaseTableMatViewRefreshState state = dependantViewsByTableName.get(tableToken.getTableName());
         if (state != null) {
             if (state.notifyOnBaseTableRefreshedNoLock(seqTxn)) {
                 // While refreshing more txn were committed. Refresh will need to re-run.
-                addToRefreshQueue(tableToken);
+                addToRefreshQueue(task);
             }
         }
     }
 
-    public void notifyTxnApplied(TableToken tableToken, long seqTxn) {
-        BaseTableMatViewRefreshState state = dependantViewsByTableName.get(tableToken.getTableName());
+    public void notifyTxnApplied(MvRefreshTask task, long seqTxn) {
+        BaseTableMatViewRefreshState state = dependantViewsByTableName.get(task.baseTable.getTableName());
         if (state != null) {
             if (state.notifyOnBaseTableCommitNoLock(seqTxn)) {
-                addToRefreshQueue(tableToken);
-                LOG.info().$("refresh notified table=").$(tableToken.getTableName()).$();
+                addToRefreshQueue(task);
+                LOG.info().$("refresh notified table=").$(task.baseTable.getTableName()).$();
             } else {
-                LOG.info().$("no need to notify to refresh table=").$(tableToken.getTableName()).$();
+                LOG.info().$("no need to notify to refresh table=").$(task.baseTable.getTableName()).$();
             }
         }
+    }
+
+    public boolean tryDequeueRefreshTask(MvRefreshTask task) {
+        return refreshTaskQueue.tryDequeue(task);
     }
 
     public void upsertView(TableToken base, MaterializedViewDefinition viewDefinition) {
@@ -140,24 +129,8 @@ public class MatViewGraph implements QuietCloseable {
         }
     }
 
-    private void addToRefreshQueue(TableToken tableToken) {
-        long cycle;
-        do {
-            cycle = updateTaskPubSequence.next();
-            if (cycle > -1) {
-                try {
-                    MvRefreshTask task = refreshTaskQueue.get(cycle);
-                    task.baseTable = tableToken;
-                } finally {
-                    updateTaskPubSequence.done(cycle);
-                }
-                return;
-            }
-        } while (cycle != -1);
-
-        if (cycle == -1) {
-            queueFullCounter.incrementAndGet();
-        }
+    private void addToRefreshQueue(MvRefreshTask task) {
+        refreshTaskQueue.enqueue(task);
     }
 
     @NotNull

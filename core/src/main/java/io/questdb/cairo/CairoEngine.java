@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.*;
 import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.mv.MatViewGraph;
+import io.questdb.cairo.mv.MvRefreshTask;
 import io.questdb.cairo.pool.*;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.*;
@@ -1164,8 +1165,8 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.dropTable(tableToken);
     }
 
-    public void notifyMaterializedViewBaseCommit(TableToken tableToken, long seqTxn) {
-        matViewGraph.notifyTxnApplied(tableToken, seqTxn);
+    public void notifyMaterializedViewBaseCommit(MvRefreshTask task, long seqTxn) {
+        matViewGraph.notifyTxnApplied(task, seqTxn);
     }
 
     /**

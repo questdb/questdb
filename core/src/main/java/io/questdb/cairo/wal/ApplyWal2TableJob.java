@@ -28,6 +28,7 @@ import io.questdb.Telemetry;
 import io.questdb.TelemetryOrigin;
 import io.questdb.TelemetrySystemEvent;
 import io.questdb.cairo.*;
+import io.questdb.cairo.mv.MvRefreshTask;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
@@ -79,6 +80,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final Telemetry<TelemetryWalTask> walTelemetry;
     private final WalTelemetryFacade walTelemetryFacade;
     private long lastAttemptSeqTxn;
+    private final MvRefreshTask mvRefreshTask = new MvRefreshTask();
 
     public ApplyWal2TableJob(CairoEngine engine, int workerCount, int sharedWorkerCount) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
@@ -387,7 +389,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
 
                 if (initialSeqTxn < writer.getAppliedSeqTxn()) {
-                    engine.notifyMaterializedViewBaseCommit(writer.getTableToken(), writer.getSeqTxn());
+                    mvRefreshTask.baseTable = writer.getTableToken();
+                    engine.notifyMaterializedViewBaseCommit(mvRefreshTask, writer.getSeqTxn());
                 }
             } finally {
                 Misc.free(structuralChangeCursor);
