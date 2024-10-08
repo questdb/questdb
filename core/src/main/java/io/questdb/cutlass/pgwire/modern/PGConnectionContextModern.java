@@ -832,6 +832,7 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         lo = hi + 1;
         pipelineCurrentEntry.setReturnRowCountLimit(pipelineCurrentEntry.getInt(lo, msgLimit, "could not read max rows value"));
         pipelineCurrentEntry.setStateExec(true);
+        sqlExecutionContext.initNow();
         transactionState = pipelineCurrentEntry.msgExecute(
                 sqlExecutionContext,
                 transactionState,
@@ -948,7 +949,6 @@ public class PGConnectionContextModern extends IOContext<PGConnectionContextMode
         // If they are defined, the pipeline entry
         // will have the supplied parameter types.
 
-        sqlExecutionContext.initNow();
         int cachedStatus = CACHE_MISS;
         final TypesAndInsertModern tai = taiCache.peek(utf16SqlText);
         if (tai != null) {
