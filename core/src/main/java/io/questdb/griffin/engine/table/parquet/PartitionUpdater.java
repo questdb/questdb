@@ -111,8 +111,6 @@ public class PartitionUpdater implements QuietCloseable {
 
     private static native void destroy(long impl);
 
-    private static native void finish(long impl);
-
     private static native void updateRowGroup(
             long impl,
             short rowGroupId,
@@ -126,9 +124,11 @@ public class PartitionUpdater implements QuietCloseable {
 
     private void destroy() {
         if (ptr != 0) {
-            finish(ptr); // write out metadata
-            destroy(ptr);
-            ptr = 0;
+            try {
+                destroy(ptr);
+            } finally {
+                ptr = 0;
+            }
         }
     }
 
