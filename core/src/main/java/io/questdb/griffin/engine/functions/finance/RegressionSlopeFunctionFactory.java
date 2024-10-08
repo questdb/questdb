@@ -136,14 +136,14 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
                 return Double.NaN;
             }
 
-            double covXY = rec.getDouble(valueIndex + 3) / count;
-            double varX = rec.getDouble(valueIndex + 2) / count;
+            double sumXY = rec.getDouble(valueIndex + 3);
+            double sumX = rec.getDouble(valueIndex + 2);
 
-            if (varX == 0) {
+            if (sumX == 0) {
                 return Double.NaN;
             }
 
-            return covXY / varX;
+            return sumXY / sumX;
         }
 
         @Override
