@@ -447,6 +447,16 @@ public class SqlKeywords {
                 && (tok.charAt(7) | 32) == 't';
     }
 
+    public static boolean isDoubleKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'd'
+                && (tok.charAt(1) | 32) == 'o'
+                && (tok.charAt(2) | 32) == 'u'
+                && (tok.charAt(3) | 32) == 'b'
+                && (tok.charAt(4) | 32) == 'l'
+                && (tok.charAt(5) | 32) == 'e';
+    }
+
     public static boolean isDowKeyword(CharSequence tok) {
         return tok.length() == 3
                 && (tok.charAt(0) | 32) == 'd'

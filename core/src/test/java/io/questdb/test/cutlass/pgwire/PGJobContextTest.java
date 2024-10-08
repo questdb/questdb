@@ -25,12 +25,7 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.*;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -39,50 +34,24 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cutlass.pgwire.DefaultCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.IPGWireServer;
 import io.questdb.cutlass.pgwire.PGWireConfiguration;
-import io.questdb.griffin.QueryFutureUpdateListener;
-import io.questdb.griffin.QueryRegistry;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.test.TestDataUnavailableFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
-import io.questdb.network.DefaultIODispatcherConfiguration;
-import io.questdb.network.IODispatcherConfiguration;
-import io.questdb.network.NetworkFacade;
-import io.questdb.network.NetworkFacadeImpl;
-import io.questdb.network.SuspendEvent;
-import io.questdb.std.CharSequenceObjHashMap;
-import io.questdb.std.Chars;
-import io.questdb.std.IntIntHashMap;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.ObjList;
-import io.questdb.std.ObjectFactory;
-import io.questdb.std.Os;
-import io.questdb.std.Rnd;
+import io.questdb.network.*;
+import io.questdb.std.*;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
 import io.questdb.std.datetime.microtime.Timestamps;
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf16Sink;
-import io.questdb.std.str.Utf8s;
+import io.questdb.std.str.*;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.NetUtils;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Assume;
-import org.junit.Before;
-import org.junit.BeforeClass;
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.*;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 import org.junit.runners.Parameterized.Parameters;
@@ -97,26 +66,10 @@ import org.postgresql.util.PSQLException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
-import java.sql.CallableStatement;
-import java.sql.Connection;
-import java.sql.DatabaseMetaData;
 import java.sql.Date;
-import java.sql.DriverManager;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
-import java.sql.Time;
-import java.sql.Timestamp;
-import java.sql.Types;
+import java.sql.*;
 import java.text.SimpleDateFormat;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.GregorianCalendar;
-import java.util.List;
-import java.util.Properties;
-import java.util.TimeZone;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -3559,9 +3512,6 @@ if __name__ == "__main__":
     }
 
     @Test
-    @Ignore("ERROR: dangling literal")
-//  explain select * from xx where x > ('0'::int8) and x < ('10.0'::double precision)::double limit 10
-//                                                                         ^^^^^^^^^
     public void testExplainPlanWithBindVariables() throws Exception {
 
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
@@ -3572,7 +3522,18 @@ if __name__ == "__main__":
                 pstmt.execute();
             }
 
-            try (PreparedStatement statement = connection.prepareStatement("explain select * from xx where x > ? and x < ?::double limit 10")) {
+            String query;
+            if (mode == Mode.SIMPLE && !binary) {
+                // In the simple text mode we have to explicitly cast the first variable to long
+                // otherwise JDBC driver sends just text 'explain select * from xx where x > ('0') and x < ('10.0')::double limit 10'
+                // QuestDB complains with 'there is no matching operator`>` with the argument types: LONG > CHAR'
+                query = "explain select * from xx where x > ?::long and x < ?::double limit 10";
+            } else {
+                // in other modes we can keep things simple
+                // we still cast the 2nd variable, to test it actually works
+                query = "explain select * from xx where x > ? and x < ?::double limit 10";
+            }
+            try (PreparedStatement statement = connection.prepareStatement(query)) {
                 for (int i = 0; i < 3; i++) {
                     System.out.println(i);
                     statement.setLong(1, i);
@@ -3580,14 +3541,29 @@ if __name__ == "__main__":
                     statement.execute();
                     sink.clear();
                     try (ResultSet rs = statement.getResultSet()) {
+                        StringSink expectedResult = new StringSink();
+                        if (mode == Mode.SIMPLE) {
+                            // simple mode inline variables in the sql text
+                            expectedResult.put("QUERY PLAN[VARCHAR]\n" +
+                                    "Async Filter workers: 2\n" +
+                                    "  limit: 10\n" +
+                                    "  filter: ('" + i + "'::long<x and x<'" + (i + 1) * 10 + ".0'::double)\n" +
+                                    "    PageFrame\n" +
+                                    "        Row forward scan\n" +
+                                    "        Frame forward scan on: xx\n");
+                        } else {
+                            // extended mode actually uses binding vars
+                            expectedResult.put("QUERY PLAN[VARCHAR]\n" +
+                                    "Async Filter workers: 2\n" +
+                                    "  limit: 10\n" +
+                                    "  filter: ($0::long<x and x<$1::double)\n" +
+                                    "    PageFrame\n" +
+                                    "        Row forward scan\n" +
+                                    "        Frame forward scan on: xx\n");
+                        }
+
                         assertResultSet(
-                                "QUERY PLAN[VARCHAR]\n" +
-                                        "Async Filter workers: 2\n" +
-                                        "  limit: 10\n" +
-                                        "  filter: ($0::long<x and x<$1::double)\n" +
-                                        "    PageFrame\n" +
-                                        "        Row forward scan\n" +
-                                        "        Frame forward scan on: xx\n",
+                                expectedResult,
                                 sink,
                                 rs
                         );

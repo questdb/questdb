@@ -1322,6 +1322,9 @@ public class ExpressionParser {
                                     }
 
                                 }
+                            } else if (SqlKeywords.isDoubleKeyword(last.token) && SqlKeywords.isPrecisionKeyword(tok)) {
+                                // ignore 'precision' keyword after 'double'
+                                continue;
                             }
                         }
                         // literal can be at start of input, after a bracket or part of an operator
