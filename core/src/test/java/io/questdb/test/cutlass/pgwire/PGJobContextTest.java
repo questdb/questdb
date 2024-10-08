@@ -10774,8 +10774,8 @@ create table tab as (
 
     @Test
     public void testUpdateWithNowAndSystimestamp() throws Exception {
-        setCurrentMicros(123678000);
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+        Runnable setupCode = () -> setCurrentMicros(123678000);
+        assertWithPgServer(CONN_AWARE_ALL, setupCode, (connection, binary, mode, port) -> {
             final PreparedStatement statement = connection.prepareStatement("create table x (a timestamp, b double, ts timestamp) timestamp(ts)");
             statement.execute();
 
