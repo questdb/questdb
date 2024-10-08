@@ -133,10 +133,7 @@ public class MetricsIODispatcherTest {
 
     @Test
     public void testPeerIsSlowToReadPar() throws Exception {
-        for (int i = 0; i < 50; i++) {
-            System.err.println("testPeerIsSlowToReadPar :: (A) i=" + i);
-            testPrometheusScenario(10_000, 1024, 1024 * 1024, PARALLEL_REQUESTS);
-        }
+        testPrometheusScenario(10_000, 1024, 1024 * 1024, PARALLEL_REQUESTS);
     }
 
     @Test
