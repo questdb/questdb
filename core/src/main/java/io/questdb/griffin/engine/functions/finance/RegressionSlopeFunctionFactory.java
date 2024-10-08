@@ -124,7 +124,7 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean supportsParallelism() {
-            return false;
+            return true;
         }
 
 
@@ -183,7 +183,30 @@ public class RegressionSlopeFunctionFactory implements FunctionFactory {
             mapValue.putDouble(valueIndex + 1, meanY);
             mapValue.putDouble(valueIndex + 2, sumX);
             mapValue.putDouble(valueIndex + 3, sumXY);
-            mapValue.addLong(valueIndex + 4, 1L);
+            mapValue.putLong(valueIndex + 4, count);
+        }
+
+        @Override
+        public void merge(MapValue destValue, MapValue srcValue) {
+            double srcMeanX = srcValue.getDouble(valueIndex);
+            double srcMeanY = srcValue.getDouble(valueIndex + 1);
+            double srcSumX = srcValue.getDouble(valueIndex + 2);
+            double srcSumXY = srcValue.getDouble(valueIndex + 3);
+            long srcCount = srcValue.getLong(valueIndex + 4);
+            double destMeanX = destValue.getDouble(valueIndex);
+            double destMeanY = destValue.getDouble(valueIndex + 1);
+            double destSumX = destValue.getDouble(valueIndex + 2);
+            double destSumXY = destValue.getDouble(valueIndex + 3);
+            long destCount = destValue.getLong(valueIndex + 4);
+
+            destMeanX = ((srcMeanX * srcCount) + (destMeanX * destCount)) / (srcCount + destCount);
+            destMeanY = ((srcMeanY * srcCount) + (destMeanY * destCount)) / (srcCount + destCount);
+
+            destValue.putDouble(valueIndex, destMeanX);
+            destValue.putDouble(valueIndex + 1, destMeanY);
+            destValue.putDouble(valueIndex + 2, srcSumX + destSumX);
+            destValue.putDouble(valueIndex + 3, srcSumXY + destSumXY);
+            destValue.putLong(valueIndex + 4, srcCount + destCount);
         }
     }
 
