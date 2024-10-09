@@ -8808,9 +8808,12 @@ nodejs code:
                             resultSet
                     );
                 }
-                connection.prepareStatement("alter table x drop column str;").execute();
-                drainWalQueue();
 
+                //drop a column
+                try (PreparedStatement stmt = connection.prepareStatement("alter table x drop column str;")) {
+                    stmt.execute();
+                }
+                drainWalQueue();
                 // Query the data once again - this time the schema is different,
                 ps.setInt(1, 2);
                 try (ResultSet rs = ps.executeQuery()) {
@@ -8818,6 +8821,42 @@ nodejs code:
                     assertResultSet(
                             "id[INTEGER],ts[TIMESTAMP]\n" +
                                     "2,1970-01-01 00:00:00.000001\n",
+                            sink, rs
+                    );
+                }
+
+                //add a column
+                try (Statement stmt = connection.createStatement()) {
+                    stmt.execute("alter table x add column str2 varchar");
+                    stmt.execute("update x set str2 = id::varchar");
+                }
+                drainWalQueue();
+
+                ps.setInt(1, 2);
+                try (ResultSet rs = ps.executeQuery()) {
+                    sink.clear();
+                    assertResultSet(
+                            "id[INTEGER],ts[TIMESTAMP],str2[VARCHAR]\n" +
+                                    "2,1970-01-01 00:00:00.000001,2\n",
+                            sink, rs
+                    );
+                }
+
+                //add and remove a column
+                try (Statement stmt = connection.createStatement()) {
+                    stmt.execute("alter table x add column str3 varchar");
+                    stmt.execute("update x set str3 = concat(str2, '_new')");
+                    stmt.execute("alter table x drop column str2");
+                }
+                drainWalQueue();
+
+                // check it does not use a stale column name
+                ps.setInt(1, 2);
+                try (ResultSet rs = ps.executeQuery()) {
+                    sink.clear();
+                    assertResultSet(
+                            "id[INTEGER],ts[TIMESTAMP],str3[VARCHAR]\n" +
+                                    "2,1970-01-01 00:00:00.000001,2_new\n",
                             sink, rs
                     );
                 }
