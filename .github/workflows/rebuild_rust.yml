@@ -50,6 +50,7 @@ jobs:
           submodules: false
       - name: Build Rust Library
         run: |
+          export MACOSX_DEPLOYMENT_TARGET=13.0
           cd core/rust/qdbr
           cargo clean
           cargo build --release
