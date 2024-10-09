@@ -66,23 +66,15 @@ public class PartitionDecoder implements QuietCloseable {
             int rowHi // high row index within the row group, exclusive
     ) {
         assert ptr != 0;
-        try {
-            return decodeRowGroup(
-                    ptr,
-                    rowGroupBuffers.ptr(),
-                    columns.getAddress(),
-                    (int) (columns.size() >>> 1),
-                    rowGroupIndex,
-                    rowLo,
-                    rowHi
-            );
-        } catch (Throwable th) {
-            LOG.error().$("could not decode [fd=").$(fd)
-                    .$(", rowGroup=").$(rowGroupIndex)
-                    .$(", msg=").$(th.getMessage())
-                    .I$();
-            throw CairoException.nonCritical().put(th.getMessage());
-        }
+        return decodeRowGroup(  // throws CairoException on error
+                ptr,
+                rowGroupBuffers.ptr(),
+                columns.getAddress(),
+                (int) (columns.size() >>> 1),
+                rowGroupIndex,
+                rowLo,
+                rowHi
+        );
     }
 
     public long getFd() {
@@ -100,36 +92,27 @@ public class PartitionDecoder implements QuietCloseable {
             int rowGroupIndex
     ) {
         assert ptr != 0;
-        try {
-            getRowGroupStats(
-                    ptr,
-                    rowGroupStatBuffers.ptr(),
-                    columns.getAddress(),
-                    (int) (columns.size() >>> 1),
-                    rowGroupIndex
-            );
-        } catch (Throwable th) {
-            LOG.error().$("could not get row group stats [fd=").$(fd)
-                    .$(", rowGroup=").$(rowGroupIndex)
-                    .$(", msg=").$(th.getMessage())
-                    .I$();
-            throw CairoException.nonCritical().put(th.getMessage());
-        }
+        getRowGroupStats(  // throws CairoException on error
+                ptr,
+                rowGroupStatBuffers.ptr(),
+                columns.getAddress(),
+                (int) (columns.size() >>> 1),
+                rowGroupIndex
+        );
     }
 
     public void of(long fd) {
+        of(fd, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+    }
+
+    public void of(long fd, int memoryTag) {
         destroy();
-        try {
-            this.fd = fd;
-            ptr = create(Files.toOsFd(fd));
-            columnsPtr = Unsafe.getUnsafe().getLong(ptr + COLUMNS_PTR_OFFSET);
-            rowGroupSizesPtr = Unsafe.getUnsafe().getLong(ptr + ROW_GROUP_SIZES_PTR_OFFSET);
-            metadata.init();
-        } catch (Throwable th) {
-            throw CairoException.nonCritical().put("could not read parquet file: [fd=").put(fd)
-                    .put(", msg=").put(th.getMessage())
-                    .put(']');
-        }
+        this.fd = fd;
+        final long allocator = Unsafe.getNativeAllocator(memoryTag);
+        ptr = create(allocator, Files.toOsFd(fd));  // throws CairoException on error
+        columnsPtr = Unsafe.getUnsafe().getLong(ptr + COLUMNS_PTR_OFFSET);
+        rowGroupSizesPtr = Unsafe.getUnsafe().getLong(ptr + ROW_GROUP_SIZES_PTR_OFFSET);
+        metadata.init();
     }
 
     private static native long columnCountOffset();
@@ -146,7 +129,7 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native long columnsPtrOffset();
 
-    private static native long create(int fd);
+    private static native long create(long allocator, int fd) throws CairoException;
 
     private static native int decodeRowGroup(
             long decoderPtr,
@@ -156,7 +139,7 @@ public class PartitionDecoder implements QuietCloseable {
             int rowGroup,
             int rowLo,
             int rowHi
-    );
+    ) throws CairoException;
 
     private static native void destroy(long impl);
 
@@ -166,7 +149,7 @@ public class PartitionDecoder implements QuietCloseable {
             long requestedColumnsPtr,
             int requestedColumnCount,
             int rowGroup
-    );
+    ) throws CairoException;
 
     private static native long rowCountOffset();
 

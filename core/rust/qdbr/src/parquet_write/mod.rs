@@ -172,7 +172,6 @@ mod tests {
 
         let partition = Partition { table: "test_table".to_string(), columns };
 
-        println!("start writing");
         // Measure the start time
         let start = Instant::now();
         ParquetWriter::new(&mut buf)

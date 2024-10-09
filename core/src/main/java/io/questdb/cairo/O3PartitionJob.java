@@ -96,14 +96,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         CairoConfiguration cairoConfiguration = tableWriter.getConfiguration();
         FilesFacade ff = tableWriter.getFilesFacade();
         try (PartitionDecoder partitionDecoder = new PartitionDecoder();
-             RowGroupBuffers rowGroupBuffers = new RowGroupBuffers();
-             RowGroupStatBuffers rowGroupStatBuffers = new RowGroupStatBuffers();
+             RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
+             RowGroupStatBuffers rowGroupStatBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
              PartitionUpdater partitionUpdater = new PartitionUpdater(ff);
              DirectIntList columnsIdsAndTypes = new DirectIntList(2, MemoryTag.NATIVE_O3);
              PartitionDescriptor partitionDescriptor = new OwnedMemoryPartitionDescriptor()) {
 
             parquetFileFd = TableUtils.openRO(ff, path.$(), LOG);
-            partitionDecoder.of(parquetFileFd);
+            partitionDecoder.of(parquetFileFd, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
 
             final int rowGroupCount = partitionDecoder.getMetadata().rowGroupCount();
             final int timestampIndex = tableWriterMetadata.getTimestampIndex();
@@ -119,7 +119,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
             // partitionUpdater is the owner of the partitionDecoder descriptor
             final long opts = cairoConfiguration.getWriterFileOpenOpts();
-            partitionUpdater.of(path.$(),
+            partitionUpdater.of(
+                    path.$(),
                     opts,
                     partitionParquetFileSize,
                     timestampIndex,

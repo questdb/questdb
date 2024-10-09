@@ -43,7 +43,8 @@ dependencies = [
 [[package]]
 name = "alloc-checked"
 version = "0.1.0"
-source = "git+https://github.com/questdb/alloc-checked.git?rev=6650c3969b2c7c65e5a77ed47b4df22736781396#6650c3969b2c7c65e5a77ed47b4df22736781396"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5795f1d249026cf6f8a31fac09c8764196b708add2e4cdbe3a48d4151045517c"
 
 [[package]]
 name = "alloc-no-stdlib"

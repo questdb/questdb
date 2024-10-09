@@ -187,7 +187,6 @@ mod tests {
             (100073, "could not parse 100073 to a valid ColumnType: unknown QuestDB column tag code: 233"),
         ];
         for &(code, exp_err_msg) in &scenarios {
-            eprintln!("testing invalid code: {}", code);
             let deserialized: ParquetResult<ColumnType> =
                 serde_json::from_value(serde_json::json!(code))
                     .map_err(|e| ParquetErrorCause::QdbMeta(Arc::new(e)).into_err());

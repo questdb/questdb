@@ -54,6 +54,18 @@ impl NonOwningFile {
     pub fn new(file: File) -> Self {
         Self { file: ManuallyDrop::new(file) }
     }
+
+    #[cfg(unix)]
+    pub fn as_raw_fd_i32(&self) -> i32 {
+        use std::os::fd::AsRawFd;
+        self.file.as_raw_fd()
+    }
+
+    #[cfg(windows)]
+    pub fn as_raw_fd_i32(&self) -> i32 {
+        use std::os::windows::io::AsRawHandle;
+        self.file.as_raw_handle() as i32
+    }
 }
 
 impl io::Read for NonOwningFile {

@@ -24,13 +24,15 @@
 
 package io.questdb.test.griffin.engine.table.parquet;
 
-import io.questdb.cairo.TableReader;
-import io.questdb.cairo.TableReaderMetadata;
-import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.*;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
+import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -100,6 +102,74 @@ public class PartitionDecoderTest extends AbstractCairoTest {
             } finally {
                 ff.close(fd);
             }
+        });
+    }
+
+    @Test
+    public void testOutOfMemory() throws Exception {
+        final long rows = 10;
+        final FilesFacade ff = configuration.getFilesFacade();
+
+        // We first set up the table without memory limits.
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select" +
+                    " x id," +
+                    " timestamp_sequence(400000000000, 500) designated_ts" +
+                    " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by day");
+        });
+
+        assertMemoryLeak(() -> {
+            final long memInit = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            long fd = -1;
+            try (Path path = new Path();
+                 RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                 DirectIntList columns = new DirectIntList(2, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                 PartitionDecoder partitionDecoder = new PartitionDecoder()
+            ) {
+                path.of(root).concat("x.parquet").$();
+
+                // Encode
+                try (
+                        TableReader reader = engine.getReader("x");
+                        PartitionDescriptor partitionDescriptor = new PartitionDescriptor()
+                ) {
+                    PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                    PartitionEncoder.encode(partitionDescriptor, path);
+                }
+
+                fd = TableUtils.openRO(configuration.getFilesFacade(), path.$(), LOG);
+                partitionDecoder.of(fd);
+                columns.add(0);
+                columns.add(ColumnType.LONG);
+
+                try {
+                    // prevent more allocs
+                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
+                    partitionDecoder.decodeRowGroup(rowGroupBuffers, columns, 0, 0, 1);
+                    Assert.fail("Expected CairoException for out of memory");
+                } catch (CairoException e) {
+                    final String msg = e.getMessage();
+                    Assert.assertTrue(e.isOutOfMemory());
+                    TestUtils.assertContains(msg, "could not decode row group 0 with fd ");
+                    TestUtils.assertContains(msg, "memory limit exceeded when allocating");
+                } finally {
+                    // Reset to allow allocs again
+                    Unsafe.setRssMemLimit(0);
+                }
+
+                final long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                partitionDecoder.decodeRowGroup(rowGroupBuffers, columns, 0, 0, 1);
+                final long memAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+
+                // Allocation happened in Rust code, associated to the `RowGroupBuffers` object.
+                Assert.assertTrue(memAfter > memBefore);
+            } finally {
+                ff.close(fd);
+            }
+
+            // Freed memory is tracked.
+            final long memFinal = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            Assert.assertEquals(memFinal, memInit);
         });
     }
 }

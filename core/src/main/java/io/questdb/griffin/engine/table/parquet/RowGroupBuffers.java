@@ -39,10 +39,12 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
     private static final long CHUNK_DATA_SIZE_OFFSET;
     private static final long CHUNK_STRUCT_SIZE;
     private static final Log LOG = LogFactory.getLog(RowGroupBuffers.class);
+    private final int memoryTag;
     private long ptr;
 
-    public RowGroupBuffers() {
-        this.ptr = create();
+    public RowGroupBuffers(int memoryTag) {
+        this.memoryTag = memoryTag;
+        this.ptr = create(Unsafe.getNativeAllocator(memoryTag));
     }
 
     @Override
@@ -80,7 +82,7 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
     @Override
     public void reopen() {
         if (ptr == 0) {
-            ptr = create();
+            ptr = create(Unsafe.getNativeAllocator(memoryTag));
         }
     }
 
@@ -96,7 +98,7 @@ public class RowGroupBuffers implements QuietCloseable, Reopenable {
 
     private static native long columnChunkBuffersSize();
 
-    private static native long create();
+    private static native long create(long allocator);
 
     private static native void destroy(long impl);
 
