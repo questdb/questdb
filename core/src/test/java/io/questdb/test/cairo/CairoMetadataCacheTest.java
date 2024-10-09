@@ -77,7 +77,6 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
             "\t\tCairoColumn [name=m, position=14, type=BINARY, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=14]\n" +
             "\t\tCairoColumn [name=n, position=15, type=STRING, isDedupKey=false, isDesignated=false, isSymbolTableStatic=true, symbolCached=false, symbolCapacity=0, isIndexed=false, indexBlockCapacity=0, writerIndex=15]\n";
 
-
     @Test
     public void fuzzConcurrentCreatesAndDrops() throws InterruptedException {
 
@@ -134,6 +133,68 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
             } else {
                 Assert.assertNotNull(cairoTable);
             }
+        }
+    }
+
+    @Test
+    public void fuzzRenames() throws InterruptedException, Exception {
+
+        ddl("create table foo ( ts timestamp, x int ) timestamp(ts) partition by day wal;");
+
+        Thread fooToBahThread = new Thread() {
+            public void run() {
+                try {
+                    ddl("rename table foo to bah");
+                    assertException("show columns from foo", 18, "table does not exist");
+                    assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
+                            "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from bah");
+                } catch (Exception ignore) {
+                }
+            }
+        };
+
+        Thread bahToFooThread = new Thread() {
+            public void run() {
+                try {
+                    ddl("rename table bah to foo");
+                    assertException("show columns from bah", 18, "table does not exist");
+                    assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
+                            "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from foo");
+                } catch (Exception ignore) {
+                }
+            }
+        };
+
+        fooToBahThread.start();
+        bahToFooThread.start();
+
+        Thread.sleep(2_000);
+
+        fooToBahThread.interrupt();
+        bahToFooThread.interrupt();
+
+        fooToBahThread.join();
+        bahToFooThread.join();
+
+        drainWalQueue();
+
+        TableToken fooToken = engine.getTableTokenIfExists("foo");
+        TableToken bahToken = engine.getTableTokenIfExists("bah");
+
+        // one should be null
+        Assert.assertNotSame(fooToken, bahToken);
+
+        String cacheString = engine.metadataCacheToString0();
+
+        if (fooToken == null) {
+            Assert.assertFalse(cacheString.contains("name=foo"));
+            Assert.assertTrue(cacheString.contains("name=bah"));
+        }
+        if (bahToken == null) {
+            Assert.assertFalse(cacheString.contains("name=bah"));
+            Assert.assertTrue(cacheString.contains("name=foo"));
         }
     }
 
