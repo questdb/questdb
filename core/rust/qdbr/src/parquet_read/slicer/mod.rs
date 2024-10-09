@@ -347,7 +347,7 @@ pub struct BooleanBitmapSlicer<'a> {
 const BOOL_TRUE: [u8; 1] = [1];
 const BOOL_FALSE: [u8; 1] = [0];
 
-impl<'a> DataPageSlicer for BooleanBitmapSlicer<'a> {
+impl DataPageSlicer for BooleanBitmapSlicer<'_> {
     fn next(&mut self) -> &[u8] {
         if let Some(val) = self.bitmap_iter.next() {
             if val {
