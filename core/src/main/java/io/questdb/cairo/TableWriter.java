@@ -3195,7 +3195,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             commitToTimestamp,
                             0,
                             lagRows - 1,
-                            BinarySearch.SCAN_DOWN
+                            Vect.BIN_SEARCH_SCAN_DOWN
                     );
                     long applyCount = (binarySearchInsertionPoint < 0) ? -binarySearchInsertionPoint - 1 : binarySearchInsertionPoint + 1;
 
@@ -5731,7 +5731,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             lagThresholdTimestamp,
                             0,
                             o3RowCount - 1,
-                            BinarySearch.SCAN_DOWN
+                            Vect.BIN_SEARCH_SCAN_DOWN
                     );
                     o3LagRowCount = o3RowCount - lagThresholdRow - 1;
                     if (o3LagRowCount > maxUncommittedRows) {
@@ -6521,7 +6521,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 srcOooTimestampCeil,
                                 srcOooLo,
                                 srcOooMax - 1,
-                                BinarySearch.SCAN_DOWN
+                                Vect.BIN_SEARCH_SCAN_DOWN
                         );
                     } else {
                         srcOooHi = srcOooMax - 1;

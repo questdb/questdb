@@ -27,12 +27,14 @@ import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.std.MemoryTag;
 import org.junit.Test;
 
-import static io.questdb.cairo.AbstractIntervalPartitionFrameCursor.*;
+import static io.questdb.cairo.AbstractIntervalPartitionFrameCursor.binarySearch;
+import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
+import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
 import static org.junit.Assert.assertEquals;
 
 public class AbstractIntervalPartitionFrameCursorTest extends AbstractCairoTest {
     // see implementation of Vect.binarySearch64Bit 
-    static final int THRESHOLD = 65;
+    private static final int THRESHOLD = 65;
 
     @Test
     public void testBinarySearchOnArrayWith4Duplicates() throws Exception {
@@ -54,13 +56,13 @@ public class AbstractIntervalPartitionFrameCursorTest extends AbstractCairoTest 
                     mem.putLong(0);
                 }
 
-                assertEquals(rows - 1, binarySearch(mem, 0, 0, rows - 1, SCAN_DOWN));
-                assertEquals(131071, binarySearch(mem, 0, 0, rows - 1, SCAN_DOWN));
+                assertEquals(rows - 1, binarySearch(mem, 0, 0, rows - 1, BIN_SEARCH_SCAN_DOWN));
+                assertEquals(131071, binarySearch(mem, 0, 0, rows - 1, BIN_SEARCH_SCAN_DOWN));
 
-                assertEquals(-1, binarySearch(mem, -1, 0, rows - 1, SCAN_DOWN));
-                assertEquals(-1, binarySearch(mem, -1, 0, rows - 1, SCAN_UP));
-                assertEquals(-131073, binarySearch(mem, 1, 0, rows - 1, SCAN_DOWN));
-                assertEquals(-131073, binarySearch(mem, 1, 0, rows - 1, SCAN_UP));
+                assertEquals(-1, binarySearch(mem, -1, 0, rows - 1, BIN_SEARCH_SCAN_DOWN));
+                assertEquals(-1, binarySearch(mem, -1, 0, rows - 1, BIN_SEARCH_SCAN_UP));
+                assertEquals(-131073, binarySearch(mem, 1, 0, rows - 1, BIN_SEARCH_SCAN_DOWN));
+                assertEquals(-131073, binarySearch(mem, 1, 0, rows - 1, BIN_SEARCH_SCAN_UP));
             }
         });
     }
@@ -77,14 +79,14 @@ public class AbstractIntervalPartitionFrameCursorTest extends AbstractCairoTest 
 
                 for (long i = 0; i < rows; i++) {
                     assertEquals(i, mem.getLong(i * Long.BYTES));
-                    assertEquals(i, binarySearch(mem, i, 0, rows - 1, SCAN_DOWN));
-                    assertEquals(i, binarySearch(mem, i, 0, rows - 1, SCAN_UP));
+                    assertEquals(i, binarySearch(mem, i, 0, rows - 1, BIN_SEARCH_SCAN_DOWN));
+                    assertEquals(i, binarySearch(mem, i, 0, rows - 1, BIN_SEARCH_SCAN_UP));
                 }
 
-                assertEquals(-1, binarySearch(mem, -1, 0, rows - 1, SCAN_DOWN));
-                assertEquals(-1, binarySearch(mem, -1, 0, rows - 1, SCAN_UP));
-                assertEquals(-131073, binarySearch(mem, rows, 0, rows - 1, SCAN_DOWN));
-                assertEquals(-131073, binarySearch(mem, rows, 0, rows - 1, SCAN_UP));
+                assertEquals(-1, binarySearch(mem, -1, 0, rows - 1, BIN_SEARCH_SCAN_DOWN));
+                assertEquals(-1, binarySearch(mem, -1, 0, rows - 1, BIN_SEARCH_SCAN_UP));
+                assertEquals(-131073, binarySearch(mem, rows, 0, rows - 1, BIN_SEARCH_SCAN_DOWN));
+                assertEquals(-131073, binarySearch(mem, rows, 0, rows - 1, BIN_SEARCH_SCAN_UP));
             }
         });
     }
@@ -102,14 +104,14 @@ public class AbstractIntervalPartitionFrameCursorTest extends AbstractCairoTest 
                 for (long i = 0; i < values; i++) {
                     long value = i / dupCount;
                     assertEquals(value, mem.getLong(i * Long.BYTES));
-                    assertEquals(i - (i % dupCount) + dupCount - 1, binarySearch(mem, value, 0, rows - 1, SCAN_DOWN));
-                    assertEquals(i - (i % dupCount), binarySearch(mem, value, 0, rows - 1, SCAN_UP));
+                    assertEquals(i - (i % dupCount) + dupCount - 1, binarySearch(mem, value, 0, rows - 1, BIN_SEARCH_SCAN_DOWN));
+                    assertEquals(i - (i % dupCount), binarySearch(mem, value, 0, rows - 1, BIN_SEARCH_SCAN_UP));
                 }
 
-                assertEquals(-1, binarySearch(mem, -1, 0, rows - 1, SCAN_DOWN));
-                assertEquals(-1, binarySearch(mem, -1, 0, rows - 1, SCAN_UP));
-                assertEquals(-131073, binarySearch(mem, rows, 0, rows - 1, SCAN_DOWN));
-                assertEquals(-131073, binarySearch(mem, rows, 0, rows - 1, SCAN_UP));
+                assertEquals(-1, binarySearch(mem, -1, 0, rows - 1, BIN_SEARCH_SCAN_DOWN));
+                assertEquals(-1, binarySearch(mem, -1, 0, rows - 1, BIN_SEARCH_SCAN_UP));
+                assertEquals(-131073, binarySearch(mem, rows, 0, rows - 1, BIN_SEARCH_SCAN_DOWN));
+                assertEquals(-131073, binarySearch(mem, rows, 0, rows - 1, BIN_SEARCH_SCAN_UP));
             }
         });
     }

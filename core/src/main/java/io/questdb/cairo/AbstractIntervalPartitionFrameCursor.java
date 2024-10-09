@@ -35,11 +35,13 @@ import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.TestOnly;
 
+import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
+import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
+
 public abstract class AbstractIntervalPartitionFrameCursor implements PartitionFrameCursor {
-    public static final int SCAN_DOWN = 1;
-    public static final int SCAN_UP = -1;
     protected final RuntimeIntrinsicIntervalModel intervalModel;
     protected final IntervalPartitionFrame partitionFrame = new IntervalPartitionFrame();
     protected final int timestampIndex;
@@ -68,9 +70,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     }
 
     public static long binarySearch(MemoryR column, long value, long low, long high, int scanDir) {
-        // TODO(puzpuzpuz): fix different behavior in native impl and use it
-        //return Vect.binarySearch64Bit(column.getPageAddress(0), value, low, high, scanDir);
-        return BinarySearch.find(column, value, low, high, scanDir);
+        return Vect.binarySearch64Bit(column.getPageAddress(0), value, low, high, scanDir);
     }
 
     @Override
@@ -202,22 +202,11 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
                 if (partitionTimestampLo >= intervalLo) {
                     lo = 0;
                 } else {
-                    lo = timestampFinder.findTimestamp(intervalLo, partitionLimit == -1 ? 0 : partitionLimit, rowCount, SCAN_UP);
-                    if (lo < 0) {
-                        lo = -lo - 1;
-                    }
+                    lo = timestampFinder.findTimestamp(intervalLo, partitionLimit == -1 ? 0 : partitionLimit, rowCount, BIN_SEARCH_SCAN_UP);
                 }
 
-                long hi = timestampFinder.findTimestamp(intervalHi, lo, rowCount - 1, SCAN_DOWN);
-
-                if (hi < 0) {
-                    hi = -hi - 1;
-                } else {
-                    // We have direct hit. Interval is inclusive of edges and we have to
-                    // bump to high bound because it is non-inclusive
-                    hi++;
-                }
-
+                // Interval is inclusive of edges, and we have to bump to high bound because it is non-inclusive.
+                long hi = timestampFinder.findTimestamp(intervalHi, lo, rowCount - 1, BIN_SEARCH_SCAN_DOWN) + 1;
                 if (lo < hi) {
                     size += (hi - lo);
 
@@ -246,7 +235,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     }
 
     private void cullIntervals(TableReader reader, LongList intervals) {
-        int intervalsLo = intervals.binarySearch(reader.getMinTimestamp(), BinarySearch.SCAN_UP);
+        int intervalsLo = intervals.binarySearch(reader.getMinTimestamp(), BIN_SEARCH_SCAN_UP);
 
         // not a direct hit
         if (intervalsLo < 0) {
@@ -261,7 +250,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         } else if (reader.getMaxTimestamp() == intervals.getQuick(0)) {
             this.initialIntervalsHi = 1;
         } else {
-            int intervalsHi = intervals.binarySearch(reader.getMaxTimestamp(), BinarySearch.SCAN_UP);
+            int intervalsHi = intervals.binarySearch(reader.getMaxTimestamp(), BIN_SEARCH_SCAN_UP);
             if (intervalsHi < 0) { // negative value means inexact match
                 intervalsHi = -intervalsHi - 1;
 
@@ -309,7 +298,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
          * @param value   timestamp value to find, the found value is equal or less than this value
          * @param rowLo   row low index for the search boundary, inclusive
          * @param rowHi   row high index for the search boundary, inclusive
-         * @param scanDir scan direction {@link #SCAN_DOWN} (1) or {@link #SCAN_UP} (-1)
+         * @param scanDir scan direction {@link Vect#BIN_SEARCH_SCAN_DOWN} (1) or {@link Vect#BIN_SEARCH_SCAN_UP} (-1)
          * @return TODO(puzpuzpuz): document me
          */
         long findTimestamp(long value, long rowLo, long rowHi, int scanDir);
@@ -379,7 +368,15 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
 
         @Override
         public long findTimestamp(long value, long rowLo, long rowHi, int scanDir) {
-            return binarySearch(column, value, rowLo, rowHi, scanDir);
+            long idx = binarySearch(column, value, rowLo, rowHi, scanDir);
+            if (idx < 0) {
+                if (scanDir == BIN_SEARCH_SCAN_UP) {
+                    idx = -idx - 1;
+                } else if (scanDir == BIN_SEARCH_SCAN_DOWN) {
+                    idx = -idx - 2;
+                }
+            }
+            return idx;
         }
 
         @Override

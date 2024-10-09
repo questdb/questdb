@@ -30,12 +30,25 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.griffin.engine.table.parquet.*;
+import io.questdb.griffin.engine.table.parquet.OwnedMemoryPartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
+import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
+import io.questdb.griffin.engine.table.parquet.RowGroupStatBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Sequence;
-import io.questdb.std.*;
+import io.questdb.std.DirectIntList;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
+import io.questdb.std.ReadOnlyObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.O3OpenColumnTask;
 import io.questdb.tasks.O3PartitionTask;
@@ -186,7 +199,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         min,
                         mergeRangeLo,
                         srcOooHi,
-                        BinarySearch.SCAN_DOWN
+                        Vect.BIN_SEARCH_SCAN_DOWN
                 );
 
                 // has no data to merge, continue to the next row group
@@ -515,7 +528,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 o3TimestampLo - mergeEquals,
                                 0,
                                 srcDataMax - 1,
-                                BinarySearch.SCAN_DOWN
+                                Vect.BIN_SEARCH_SCAN_DOWN
                         );
                         mergeDataLo = prefixHi + 1;
                         mergeO3Lo = srcOooLo;
@@ -535,7 +548,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     o3TimestampHi,
                                     mergeDataLo,
                                     srcDataMax - 1,
-                                    BinarySearch.SCAN_DOWN
+                                    Vect.BIN_SEARCH_SCAN_DOWN
                             );
                             assert mergeDataHi > -1;
 
@@ -571,7 +584,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     dataTimestampHi,
                                     srcOooLo,
                                     srcOooHi,
-                                    tableWriter.isDeduplicationEnabled() ? BinarySearch.SCAN_DOWN : BinarySearch.SCAN_UP
+                                    tableWriter.isDeduplicationEnabled() ? Vect.BIN_SEARCH_SCAN_DOWN : Vect.BIN_SEARCH_SCAN_UP
                             );
 
                             mergeDataHi = srcDataMax - 1;
@@ -625,7 +638,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 dataTimestampLo - 1,
                                 srcOooLo,
                                 srcOooHi,
-                                BinarySearch.SCAN_DOWN
+                                Vect.BIN_SEARCH_SCAN_DOWN
                         );
                         mergeO3Lo = prefixHi + 1;
 
@@ -647,7 +660,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     o3TimestampHi,
                                     0,
                                     srcDataMax - 1,
-                                    BinarySearch.SCAN_DOWN
+                                    Vect.BIN_SEARCH_SCAN_DOWN
                             );
 
                             suffixLo = mergeDataHi + 1;
@@ -672,7 +685,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     dataTimestampHi - 1 + mergeEquals,
                                     mergeO3Lo,
                                     srcOooHi,
-                                    BinarySearch.SCAN_DOWN
+                                    Vect.BIN_SEARCH_SCAN_DOWN
                             );
 
                             if (mergeO3Lo > mergeO3Hi) {
@@ -759,7 +772,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 o3TimestampLo,
                                 prefixLo,
                                 prefixHi - 1,
-                                BinarySearch.SCAN_UP
+                                Vect.BIN_SEARCH_SCAN_UP
                         );
 
                         if (newPrefixHi > -1L) {
