@@ -97,6 +97,7 @@ public class PartitionDecoder implements QuietCloseable {
     }
 
     public long getReadSize() {
+        assert readSize > 0 || fd == -1;
         return readSize;
     }
 
@@ -124,6 +125,8 @@ public class PartitionDecoder implements QuietCloseable {
     }
 
     public void of(long fd, long readSize) {
+        assert fd != -1;
+        assert readSize > 0;
         destroy();
         try {
             this.fd = fd;

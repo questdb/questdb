@@ -26,7 +26,12 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     let reader = NonOwningFile::new(unsafe { File::from_raw_fd_i32(raw_fd) });
     match ParquetDecoder::read(reader, read_size) {
         Ok(decoder) => Box::into_raw(Box::new(decoder)),
-        Err(err) => utils::throw_java_ex(&mut env, "PartitionDecoder.create", &err),
+        Err(mut err) => {
+            err.add_context(format!(
+                "failed to create ParquetDecoder from file descriptor {raw_fd} and read size {read_size}"
+            ));
+            utils::throw_java_ex(&mut env, "PartitionDecoder.create", &err)
+        },
     }
 }
 

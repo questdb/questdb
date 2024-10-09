@@ -306,11 +306,13 @@ public class BwdTableReaderPageFrameCursor implements PageFrameCursor {
 
         @Override
         public long getParquetFd() {
+            assert parquetFd != -1 || format != PartitionFormat.PARQUET;
             return parquetFd;
         }
 
         @Override
         public long getParquetReadSize() {
+            assert parquetReadSize > 0 || format != PartitionFormat.PARQUET;
             return parquetReadSize;
         }
 

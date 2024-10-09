@@ -100,6 +100,7 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
         frame.partitionIndex = partitionIndex;
         frame.partitionFormat = PartitionFormat.PARQUET;
         frame.parquetFd = parquetDecoder.getFd();
+        frame.parquetReadSize = parquetDecoder.getReadSize();
         frame.rowGroupLo = 0;
         frame.rowLo = rowLo;
         frame.rowHi = rowLo + parquetDecoder.getMetadata().rowGroupSize(rowGroupIndex);

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -101,6 +102,7 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
 
         @Override
         public long getParquetReadSize() {
+            assert parquetReadSize > 0 || partitionFormat != PartitionFormat.PARQUET;
             return parquetReadSize;
         }
 

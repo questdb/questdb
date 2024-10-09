@@ -100,7 +100,9 @@ public class PageFrameAddressCache implements Mutable {
         frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
         frameFormats.add(frame.getFormat());
         parquetFds.add(frame.getParquetFd());
-        parquetReadSizes.add(frame.getParquetReadSize());
+        final long readSize = frame.getParquetReadSize();
+        assert readSize > 0 || frame.getFormat() != PartitionFormat.PARQUET;
+        parquetReadSizes.add(readSize);
         parquetRowGroups.add(frame.getParquetRowGroup());
         parquetRowGroupLos.add(frame.getParquetRowGroupLo());
         parquetRowGroupHis.add(frame.getParquetRowGroupHi());
@@ -170,7 +172,9 @@ public class PageFrameAddressCache implements Mutable {
     }
 
     public long getParquetReadSize(int frameIndex) {
-        return parquetReadSizes.getQuick(frameIndex);
+        final long readSize = parquetReadSizes.getQuick(frameIndex);
+        assert readSize > 0;
+        return readSize;
     }
 
     public int getParquetRowGroup(int frameIndex) {
