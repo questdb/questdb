@@ -4846,16 +4846,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                                 long lagAuxOffset = driver.getAuxVectorOffset(roLo);
                                 long lagAuxSize = driver.getAuxVectorSize(lagRows);
-                                long lagAuxKeyAddr = mapAppendColumnBuffer(columns.get(getSecondaryColumnIndex(i)), lagAuxOffset, lagAuxSize, false);
+                                long lagAuxKeyAddrRaw = mapAppendColumnBuffer(columns.get(getSecondaryColumnIndex(i)), lagAuxOffset, lagAuxSize, false);
+                                long lagAuxKeyAddr = Math.abs(lagAuxKeyAddrRaw);
 
                                 long lagVarDataOffset = driver.getDataVectorOffset(lagAuxKeyAddr, 0);
                                 long lagVarDataSize = driver.getDataVectorSize(lagAuxKeyAddr, 0, lagRows - 1);
-                                long lagVarDataAddr = mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagVarDataOffset, lagVarDataSize, false);
+                                long lagVarDataAddrRaw = mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagVarDataOffset, lagVarDataSize, false);
+                                long lagVarDataAddr = Math.abs(lagVarDataAddrRaw);
                                 // Aux points into the var buffer as if it's mapped from 0 row.
                                 // Compensate the mapped with offset address of var buffer by subtracting lagVarDataOffset
-                                DedupColumnCommitAddresses.setO3DataAddressValues(addr, Math.abs(lagAuxKeyAddr), Math.abs(lagVarDataAddr) - lagVarDataOffset, lagVarDataSize + lagVarDataOffset);
-                                DedupColumnCommitAddresses.setReservedValuesSet1(addr, lagAuxKeyAddr, lagAuxOffset, lagAuxSize);
-                                DedupColumnCommitAddresses.setReservedValuesSet2(addr, lagVarDataAddr, lagVarDataOffset);
+                                DedupColumnCommitAddresses.setO3DataAddressValues(addr, lagAuxKeyAddr, lagVarDataAddr - lagVarDataOffset, lagVarDataSize + lagVarDataOffset);
+                                DedupColumnCommitAddresses.setReservedValuesSet1(addr, lagAuxKeyAddrRaw, lagAuxOffset, lagAuxSize);
+                                DedupColumnCommitAddresses.setReservedValuesSet2(addr, lagVarDataAddrRaw, lagVarDataOffset);
                             } else {
                                 DedupColumnCommitAddresses.setO3DataAddressValues(addr, DedupColumnCommitAddresses.NULL, DedupColumnCommitAddresses.NULL, 0);
                             }
