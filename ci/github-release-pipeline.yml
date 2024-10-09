@@ -63,6 +63,11 @@ stages:
         pool:
           vmImage: 'ubuntu-latest'
         steps:
+          - checkout: self
+            fetchDepth: 1
+            lfs: false
+            submodules: false
+            persistCredentials: true
 
           - task: DownloadBuildArtifacts@1
             inputs:
@@ -77,43 +82,21 @@ stages:
               echo "##vso[task.setvariable variable=TAG_NAME]${tag_name}"
               
               echo "Checking if release ${tag_name} already exists..."
-              release_info=$(curl -H \
-                -H "Accept: application/vnd.github.v3+json" \
-                "https://api.github.com/repos/questdb/questdb/releases/tags/${tag_name}" || true)
+              release_info=$(gh release view ${tag_name} | grep "github" | sed 's#.*/##')
               
-              if echo "$release_info" | grep -q 'Not Found'; then
-                echo "Release does not exist."
-                echo "##vso[task.setvariable variable=GITHUB_RELEASE_EXISTS]false"
-              else
-                echo "Release already exists."
-                echo "##vso[task.setvariable variable=GITHUB_RELEASE_EXISTS]true"
-              fi
+              echo "Using release tag ${release_info}"
+              echo "##vso[task.setvariable variable=GITHUB_RELEASE_TAG]${release_info}"
 
           - task: GitHubRelease@1
             displayName: "Upload binaries to release"
             inputs:
               gitHubConnection: 'ideoma'
-              repositoryName: 'questdb/questdb'  # e.g., my-org/my-repo
+              repositoryName: 'questdb/questdb'
               action: 'edit'
               assets: '$(Build.ArtifactStagingDirectory)/drop/*'
-              tag: '$(TAG_NAME)'
+              tag: '$(GITHUB_RELEASE_TAG)'
               addChangeLog: false
               isDraft: false
-
-          #          - task: GitHubRelease@1
-          #            displayName: "Create release"
-          #            condition: and(succeeded(), eq(variables['GITHUB_RELEASE_EXISTS'], 'false'))
-          #            inputs:
-          #              gitHubConnection: 'ideoma'
-          #              repositoryName: 'questdb/questdb'
-          #              target: '$(Build.SourceVersion)'
-          #              action: 'create'
-          #              tagSource: 'userSpecifiedTag'
-          #              tag: '$(TAG_NAME)'
-          #              title: '$(TAG_NAME)'
-          #              assets: '$(Build.ArtifactStagingDirectory)/drop/*'
-          #              addChangeLog: false
-          #              isDraft: false
 
           - script: |
               sudo apt-get update
