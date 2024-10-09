@@ -85,9 +85,9 @@ stages:
               echo "Checking if release ${tag_name} already exists..."
               
               release_tag=$(gh release view ${tag_name} | grep "github" | sed 's#.*/##')
-              echo "Using release tag ${release_info}"
+              echo "Using release tag ${release_tag}"
               
-              gh release upload ${release_tag} "$(Build.ArtifactStagingDirectory)/drop/*"
+              gh release upload ${release_tag} $(Build.ArtifactStagingDirectory)/drop/*.gz
               gh release edit ${release_tag} --draft=false --latest
             env:
               GITHUB_TOKEN: $(GITHUB_TOKEN)
