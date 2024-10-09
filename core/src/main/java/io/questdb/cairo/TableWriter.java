@@ -2518,6 +2518,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         // Record column structure version bump in txn file for WAL sequencer structure version to match writer structure version.
         bumpColumnStructureVersion();
+
+        engine.metadataCacheHydrateTable(toTableName, true, true);
+        engine.metadataCacheRemoveTable(fromTableName);
     }
 
     @Override

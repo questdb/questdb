@@ -989,11 +989,11 @@ public class CairoEngine implements Closeable, WriterSource {
      * @return The cached table metadata.
      */
     public @Nullable CairoTable metadataCacheGetTable(@NotNull TableToken tableToken) {
-        final CairoTable table = cairoTables.get(tableToken.getDirName());
+        final CairoTable table = cairoTables.get(tableToken.getTableName());
         if (table == null) {
             metadataCacheHydrateTable(tableToken, false, true);
         }
-        return cairoTables.get(tableToken.getDirName());
+        return cairoTables.get(tableToken.getTableName());
     }
 
     public @Nullable CairoTable metadataCacheGetVisibleTable(@NotNull TableToken tableToken) {
@@ -1036,6 +1036,14 @@ public class CairoEngine implements Closeable, WriterSource {
             tlTokens.get().clear();
             tlTokens.remove();
         }
+    }
+
+    public void metadataCacheHydrateTable(@NotNull CharSequence tableName, boolean blindUpsert, boolean infoLog) throws TableReferenceOutOfDateException {
+        final TableToken token = getTableTokenIfExists(tableName);
+        if (token == null) {
+            throw TableReferenceOutOfDateException.of(tableName);
+        }
+        metadataCacheHydrateTable(token, blindUpsert, infoLog);
     }
 
     /**
@@ -1158,8 +1166,13 @@ public class CairoEngine implements Closeable, WriterSource {
 
     }
 
+    public void metadataCacheRemoveTable(@NotNull CharSequence tableName) {
+        cairoTables.remove(tableName);
+        LOG.info().$("dropped metadata [table=").$(tableName).I$();
+    }
+
     public void metadataCacheRemoveTable(@NotNull TableToken tableToken) {
-        cairoTables.remove(tableToken.getDirName());
+        cairoTables.remove(tableToken.getTableName());
         LOG.info().$("dropped metadata [table=").$(tableToken).I$();
     }
 
@@ -1347,7 +1360,6 @@ public class CairoEngine implements Closeable, WriterSource {
                     } finally {
                         if (renamed) {
                             tableNameRegistry.rename(fromTableToken, toTableToken);
-                            metadataCacheHydrateTable(toTableToken, true, true);
                         } else {
                             LOG.info()
                                     .$("failed to rename table [from=").utf8(fromTableName)
@@ -1374,7 +1386,6 @@ public class CairoEngine implements Closeable, WriterSource {
                                 configuration.getFilesFacade(),
                                 toTableToken.getTableName()
                         );
-                        metadataCacheHydrateTable(toTableToken, true, true);
                     } finally {
                         unlock(securityContext, fromTableToken, null, false);
                     }
@@ -1665,7 +1676,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     private @Nullable CairoTable metadataCacheGetNullableTable(@NotNull TableToken tableToken) {
-        return cairoTables.get(tableToken.getDirName());
+        return cairoTables.get(tableToken.getTableName());
     }
 
     private void metadataCacheHydrateTable(
@@ -1831,9 +1842,9 @@ public class CairoEngine implements Closeable, WriterSource {
     private void metadataCacheSetTable(@NotNull CairoTable table, boolean blindUpsert) {
         final TableToken token = table.getTableToken();
         if (blindUpsert) {
-            cairoTables.put(token.getDirName(), table);
+            cairoTables.put(token.getTableName(), table);
         } else {
-            cairoTables.putIfAbsent(token.getDirName(), table);
+            cairoTables.putIfAbsent(token.getTableName(), table);
         }
     }
 
