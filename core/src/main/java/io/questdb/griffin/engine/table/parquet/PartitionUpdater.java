@@ -108,8 +108,6 @@ public class PartitionUpdater implements QuietCloseable {
 
     private static native void destroy(long impl);
 
-    private static native void finish(long impl) throws CairoException;
-
     private static native void updateRowGroup(
             long impl,
             int tableNameLen,
@@ -131,9 +129,11 @@ public class PartitionUpdater implements QuietCloseable {
         //                 the exception will prevent `destroy()` from being called.
         //                 In other words, we also have a memory leak here :-)
         if (ptr != 0) {
-            finish(ptr); // write out metadata
-            destroy(ptr);
-            ptr = 0;
+            try {
+                destroy(ptr);
+            } finally {
+                ptr = 0;
+            }
         }
     }
 

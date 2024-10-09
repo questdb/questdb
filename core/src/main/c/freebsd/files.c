@@ -229,7 +229,8 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus
         strcpy((char *) lpszName, sb.f_fstypename);
         switch (sb.f_type) {
             case 0x1C: // apfs
-            case 0x1a:
+            case 0x1a: // apfs too
+            case 0x19: // apfs, since MacOS 15.0.z Sequoia
                 return FLAG_FS_SUPPORTED * ((jlong) sb.f_type);
             default:
                 return sb.f_type;

@@ -162,6 +162,26 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddColumnTypeInterval() throws Exception {
+        ddl("create table x (a varchar)");
+        assertException(
+                "alter table x add column b interval",
+                27,
+                "non-persisted type: interval"
+        );
+    }
+
+    @Test
+    public void testAlterColumnTypeToInterval() throws Exception {
+        ddl("create table x (a varchar)");
+        assertException(
+                "alter table x alter column a type interval",
+                34,
+                "non-persisted type: interval"
+        );
+    }
+
+    @Test
     public void testCannotCreateTable() throws Exception {
         assertException(
                 new TestFilesFacadeImpl() {
@@ -2390,7 +2410,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 "alter table x convert partition to list '1970-01-01' to '1970-01-02'",
                 ddl,
                 35,
-                "'parquet' expected"
+                "'parquet' or 'native' expected"
         );
     }
 
@@ -3463,6 +3483,15 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     "миллионы"
             );
         });
+    }
+
+    @Test
+    public void testCreateTableWithInterval() throws Exception {
+        assertException(
+                "create table x (a varchar, b interval)",
+                29,
+                "non-persisted type: interval"
+        );
     }
 
     @Test

@@ -122,6 +122,7 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     " case when x % 2 = 0 then rnd_symbol(4,4,4,2) end as a_sym," +
                     " cast(rnd_timestamp('2015','2016',2) as date) as a_date," +
                     " rnd_long256() a_long256," +
+                    " to_long128(rnd_long(), rnd_long()) a_long128," +
                     " rnd_ipv4() a_ip," +
                     " rnd_geohash(4) a_geo_byte," +
                     " rnd_geohash(8) a_geo_short," +

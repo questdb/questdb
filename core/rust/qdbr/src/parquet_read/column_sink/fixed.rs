@@ -23,6 +23,7 @@ pub type FixedFloatColumnSink<'a, T> = FixedColumnSink<'a, 4, 4, T>;
 pub type FixedInt2ShortColumnSink<'a, T> = FixedColumnSink<'a, 2, 4, T>;
 pub type FixedInt2ByteColumnSink<'a, T> = FixedColumnSink<'a, 1, 4, T>;
 pub type FixedLong256ColumnSink<'a, T> = FixedColumnSink<'a, 32, 32, T>;
+pub type FixedLong128ColumnSink<'a, T> = FixedColumnSink<'a, 16, 16, T>;
 pub type FixedBooleanColumnSink<'a, T> = FixedColumnSink<'a, 1, 1, T>;
 
 impl<const N: usize, const R: usize, T: DataPageSlicer> Pushable for FixedColumnSink<'_, N, R, T> {
