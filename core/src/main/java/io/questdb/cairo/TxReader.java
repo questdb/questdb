@@ -27,7 +27,16 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryW;
-import io.questdb.std.*;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
+import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 
 import java.io.Closeable;
@@ -154,7 +163,7 @@ public class TxReader implements Closeable, Mutable {
 
     public int findAttachedPartitionIndexByLoTimestamp(long ts) {
         // Start from the end, usually it will be last partition searched / appended
-        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts, BinarySearch.SCAN_UP);
+        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts, Vect.BIN_SEARCH_SCAN_UP);
         if (index < 0) {
             return -((-index - 1) / LONGS_PER_TX_ATTACHED_PARTITION) - 1;
         }
@@ -229,7 +238,7 @@ public class TxReader implements Closeable, Mutable {
             return Long.MAX_VALUE;
         }
 
-        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, timestamp, BinarySearch.SCAN_UP);
+        int index = attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, timestamp, Vect.BIN_SEARCH_SCAN_UP);
         if (index < 0) {
             index = -index - 1;
         } else {
@@ -616,7 +625,7 @@ public class TxReader implements Closeable, Mutable {
 
     int findAttachedPartitionRawIndexByLoTimestamp(long ts) {
         // Start from the end, usually it will be last partition searched / appended
-        return attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts, BinarySearch.SCAN_UP);
+        return attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, ts, Vect.BIN_SEARCH_SCAN_UP);
     }
 
     protected void initPartitionAt(int index, long partitionTimestampLo, long partitionSize, long partitionNameTxn) {

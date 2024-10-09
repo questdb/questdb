@@ -25,10 +25,11 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.PartitionFrame;
-import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+
+import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
 
 public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFrameCursor {
     private static final Log LOG = LogFactory.getLog(IntervalFwdPartitionFrameCursor.class);
@@ -55,18 +56,19 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
             // are working with timestamp. Timestamp column cannot be added to existing table.
             long rowCount = reader.openPartition(partitionLo);
             if (rowCount > 0) {
-                final MemoryR column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionLo), timestampIndex));
+                final TimestampFinder timestampFinder = initTimestampFinder(partitionLo, rowCount);
+
                 final long intervalLo = intervals.getQuick(intervalsLo * 2);
                 final long intervalHi = intervals.getQuick(intervalsLo * 2 + 1);
 
-                final long partitionTimestampLo = column.getLong(0);
+                final long partitionTimestampLo = timestampFinder.minTimestamp();
                 // interval is wholly above partition, skip interval
                 if (partitionTimestampLo > intervalHi) {
                     intervalsLo++;
                     continue;
                 }
 
-                final long partitionTimestampHi = column.getLong((rowCount - 1) * Long.BYTES);
+                final long partitionTimestampHi = timestampFinder.maxTimestamp();
 
                 LOG.debug()
                         .$("next [partition=").$(partitionLo)
@@ -92,14 +94,14 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                     // and then do index + 1 to skip to top of where we need to be.
                     // We are not scanning up on the exact value of intervalLo because it may not exist. In which case
                     // the search function will scan up to top of the lower value.
-                    lo = BinarySearch.find(column, intervalLo - 1, partitionLimit, rowCount - 1, BinarySearch.SCAN_DOWN) + 1;
+                    lo = timestampFinder.findTimestamp(intervalLo - 1, partitionLimit, rowCount - 1, BIN_SEARCH_SCAN_DOWN) + 1;
                 } else {
                     lo = 0;
                 }
 
                 final long hi;
                 if (partitionTimestampHi > intervalHi) {
-                    hi = BinarySearch.find(column, intervalHi, lo, rowCount - 1, BinarySearch.SCAN_DOWN) + 1;
+                    hi = timestampFinder.findTimestamp(intervalHi, lo, rowCount - 1, BIN_SEARCH_SCAN_DOWN) + 1;
                 } else {
                     hi = rowCount;
                 }

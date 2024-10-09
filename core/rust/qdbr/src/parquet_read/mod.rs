@@ -101,7 +101,7 @@ mod tests {
             },
         );
 
-        let buf = gen_test_symbol_parquet(Some(qdb_meta.serialize()?))?;
+        let (buf, row_count) = gen_test_symbol_parquet(Some(qdb_meta.serialize()?))?;
         let buf_len = buf.len() as u64;
 
         let reader = Cursor::new(buf);
@@ -111,6 +111,8 @@ mod tests {
             &mut rgb,
             &[(0, ColumnTypeTag::Symbol.into_type())],
             0,
+            0,
+            row_count as u32,
         );
         let err = res.unwrap_err();
         let msg = err.to_string();
@@ -120,7 +122,7 @@ mod tests {
         Ok(())
     }
 
-    fn gen_test_symbol_parquet(qdb_metadata: Option<String>) -> ParquetResult<Vec<u8>> {
+    fn gen_test_symbol_parquet(qdb_metadata: Option<String>) -> ParquetResult<(Vec<u8>, usize)> {
         let symbol_col_data: Vec<ByteArray> = vec![
             ByteArray::from("abc"),
             ByteArray::from("defg"),
@@ -171,6 +173,6 @@ mod tests {
         row_group_writer.close()?;
         file_writer.close()?;
 
-        Ok(cursor.into_inner())
+        Ok((cursor.into_inner(), symbol_col_data.len()))
     }
 }

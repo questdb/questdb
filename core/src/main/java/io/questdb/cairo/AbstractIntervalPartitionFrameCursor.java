@@ -34,15 +34,18 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.TestOnly;
 
+import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
+import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
+
 public abstract class AbstractIntervalPartitionFrameCursor implements PartitionFrameCursor {
-    public static final int SCAN_DOWN = 1;
-    public static final int SCAN_UP = -1;
     protected final RuntimeIntrinsicIntervalModel intervalModel;
     protected final IntervalPartitionFrame partitionFrame = new IntervalPartitionFrame();
     protected final int timestampIndex;
+    private final NativeTimestampFinder nativeTimestampFinder = new NativeTimestampFinder();
     protected LongList intervals;
     protected int intervalsHi;
     protected int intervalsLo;
@@ -73,6 +76,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     @Override
     public void close() {
         reader = Misc.free(reader);
+        nativeTimestampFinder.clear();
     }
 
     @Override
@@ -118,6 +122,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
 
     @Override
     public void toTop() {
+        nativeTimestampFinder.clear();
         intervalsLo = initialIntervalsLo;
         intervalsHi = initialIntervalsHi;
         partitionLo = initialPartitionLo;
@@ -170,19 +175,21 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
                 Misc.free(e.getEvent());
                 return -1;
             }
+
             if (rowCount > 0) {
-                final MemoryR column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionLo), timestampIndex));
+                final TimestampFinder timestampFinder = initTimestampFinder(partitionLo, rowCount);
+
                 final long intervalLo = intervals.getQuick(intervalsLo * 2);
                 final long intervalHi = intervals.getQuick(intervalsLo * 2 + 1);
 
-                final long partitionTimestampLo = column.getLong(0);
+                final long partitionTimestampLo = timestampFinder.minTimestamp();
                 // interval is wholly above partition, skip interval
                 if (partitionTimestampLo > intervalHi) {
                     intervalsLo++;
                     continue;
                 }
 
-                final long partitionTimestampHi = column.getLong((rowCount - 1) * 8);
+                final long partitionTimestampHi = timestampFinder.maxTimestamp();
                 // interval is wholly below partition, skip partition
                 if (partitionTimestampHi < intervalLo) {
                     partitionLimit = 0;
@@ -195,22 +202,11 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
                 if (partitionTimestampLo >= intervalLo) {
                     lo = 0;
                 } else {
-                    lo = binarySearch(column, intervalLo, partitionLimit == -1 ? 0 : partitionLimit, rowCount, SCAN_UP);
-                    if (lo < 0) {
-                        lo = -lo - 1;
-                    }
+                    lo = timestampFinder.findTimestamp(intervalLo, partitionLimit == -1 ? 0 : partitionLimit, rowCount, BIN_SEARCH_SCAN_UP);
                 }
 
-                long hi = binarySearch(column, intervalHi, lo, rowCount - 1, SCAN_DOWN);
-
-                if (hi < 0) {
-                    hi = -hi - 1;
-                } else {
-                    // We have direct hit. Interval is inclusive of edges and we have to
-                    // bump to high bound because it is non-inclusive
-                    hi++;
-                }
-
+                // Interval is inclusive of edges, and we have to bump to high bound because it is non-inclusive.
+                long hi = timestampFinder.findTimestamp(intervalHi, lo, rowCount - 1, BIN_SEARCH_SCAN_DOWN) + 1;
                 if (lo < hi) {
                     size += (hi - lo);
 
@@ -239,7 +235,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     }
 
     private void cullIntervals(TableReader reader, LongList intervals) {
-        int intervalsLo = intervals.binarySearch(reader.getMinTimestamp(), BinarySearch.SCAN_UP);
+        int intervalsLo = intervals.binarySearch(reader.getMinTimestamp(), BIN_SEARCH_SCAN_UP);
 
         // not a direct hit
         if (intervalsLo < 0) {
@@ -254,7 +250,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         } else if (reader.getMaxTimestamp() == intervals.getQuick(0)) {
             this.initialIntervalsHi = 1;
         } else {
-            int intervalsHi = intervals.binarySearch(reader.getMaxTimestamp(), BinarySearch.SCAN_UP);
+            int intervalsHi = intervals.binarySearch(reader.getMaxTimestamp(), BIN_SEARCH_SCAN_UP);
             if (intervalsHi < 0) { // negative value means inexact match
                 intervalsHi = -intervalsHi - 1;
 
@@ -282,6 +278,36 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         this.initialPartitionLo = reader.getMinTimestamp() < intervalLo ? reader.getPartitionIndexByTimestamp(intervalLo) : 0;
         long intervalHi = reader.floorToPartitionTimestamp(intervals.getQuick((initialIntervalsHi - 1) * 2 + 1));
         this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionIndexByTimestamp(intervalHi) + 1);
+    }
+
+    protected TimestampFinder initTimestampFinder(int partitionIndex, long rowCount) {
+        final TimestampFinder timestampFinder;
+        if (reader.getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
+            throw new IllegalStateException("not implemented yet");
+        } else {
+            timestampFinder = nativeTimestampFinder.of(reader, partitionIndex, timestampIndex, rowCount);
+        }
+        return timestampFinder;
+    }
+
+    protected interface TimestampFinder {
+
+        /**
+         * Performs search on timestamp column.
+         *
+         * @param value   timestamp value to find, the found value is equal or less than this value
+         * @param rowLo   row low index for the search boundary, inclusive
+         * @param rowHi   row high index for the search boundary, inclusive
+         * @param scanDir scan direction {@link Vect#BIN_SEARCH_SCAN_DOWN} (1) or {@link Vect#BIN_SEARCH_SCAN_UP} (-1)
+         * @return TODO(puzpuzpuz): document me
+         */
+        long findTimestamp(long value, long rowLo, long rowHi, int scanDir);
+
+        long maxTimestamp();
+
+        long minTimestamp();
+
+        long timestampAt(long rowIndex);
     }
 
     protected static class IntervalPartitionFrame implements PartitionFrame {
@@ -332,6 +358,51 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         @Override
         public long getRowLo() {
             return rowLo;
+        }
+    }
+
+    protected static class NativeTimestampFinder implements TimestampFinder, Mutable {
+        private MemoryR column;
+        private long rowCount;
+
+        @Override
+        public void clear() {
+            this.column = null;
+            this.rowCount = 0;
+        }
+
+        @Override
+        public long findTimestamp(long value, long rowLo, long rowHi, int scanDir) {
+            long idx = binarySearch(column, value, rowLo, rowHi, scanDir);
+            if (idx < 0) {
+                if (scanDir == BIN_SEARCH_SCAN_UP) {
+                    idx = -idx - 1;
+                } else if (scanDir == BIN_SEARCH_SCAN_DOWN) {
+                    idx = -idx - 2;
+                }
+            }
+            return idx;
+        }
+
+        @Override
+        public long maxTimestamp() {
+            return column.getLong((rowCount - 1) * 8);
+        }
+
+        @Override
+        public long minTimestamp() {
+            return column.getLong(0);
+        }
+
+        public NativeTimestampFinder of(TableReader reader, int partitionIndex, int timestampIndex, long rowCount) {
+            this.column = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionIndex), timestampIndex));
+            this.rowCount = rowCount;
+            return this;
+        }
+
+        @Override
+        public long timestampAt(long rowIndex) {
+            return column.getLong(rowIndex * 8);
         }
     }
 }
