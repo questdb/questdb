@@ -78,14 +78,17 @@ stages:
               cleanDestinationFolder: true
 
           - script: |
-              tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
-              echo "##vso[task.setvariable variable=TAG_NAME]${tag_name}"
+              # Do not continue on errors
+              set -e
               
+              tag_name=$(echo "$(Build.SourceBranch)" | cut -d'/' -f '3-')
               echo "Checking if release ${tag_name} already exists..."
+              
               release_tag=$(gh release view ${tag_name} | grep "github" | sed 's#.*/##')
               echo "Using release tag ${release_info}"
               
               gh release upload ${release_tag} "$(Build.ArtifactStagingDirectory)/drop/*"
+              gh release edit ${release_tag} --draft=false --latest
             env:
               GITHUB_TOKEN: $(GITHUB_TOKEN)
 
