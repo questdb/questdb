@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -179,6 +180,84 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
         bahToFooThread.join();
 
         drainWalQueue();
+
+        TableToken fooToken = engine.getTableTokenIfExists("foo");
+        TableToken bahToken = engine.getTableTokenIfExists("bah");
+
+        // one should be null
+        Assert.assertNotSame(fooToken, bahToken);
+
+        String cacheString = engine.metadataCacheToString0();
+
+        if (fooToken == null) {
+            Assert.assertFalse(cacheString.contains("name=foo"));
+            Assert.assertTrue(cacheString.contains("name=bah"));
+        }
+        if (bahToken == null) {
+            Assert.assertFalse(cacheString.contains("name=bah"));
+            Assert.assertTrue(cacheString.contains("name=foo"));
+        }
+    }
+
+    @Test
+    public void fuzzRenamesWithConcurrentAlters() throws InterruptedException, Exception {
+
+        ddl("create table foo ( ts timestamp, x int ) timestamp(ts) partition by day wal;");
+
+        Thread fooToBahThread = new Thread() {
+            public void run() {
+                try {
+                    ddl("rename table foo to bah");
+                    assertException("show columns from foo", 18, "table does not exist");
+                    assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
+                            "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from bah");
+                } catch (Exception ignore) {
+                }
+            }
+        };
+
+        Thread bahToFooThread = new Thread() {
+            public void run() {
+                try {
+                    ddl("rename table bah to foo");
+                    assertException("show columns from bah", 18, "table does not exist");
+                    assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                            "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
+                            "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from foo");
+                } catch (Exception ignore) {
+                }
+            }
+        };
+
+        Thread adderThread = new Thread() {
+            public void run() {
+                try {
+                    ddl("alter table foo add column y symbol");
+                } catch (Exception ignore) {
+                }
+            }
+        };
+
+        fooToBahThread.start();
+        bahToFooThread.start();
+        adderThread.start();
+
+        Thread.sleep(2_000);
+
+        fooToBahThread.interrupt();
+        bahToFooThread.interrupt();
+        adderThread.interrupt();
+
+        fooToBahThread.join();
+        bahToFooThread.join();
+        adderThread.join();
+
+        try {
+            drainWalQueue();
+        } catch (TableReferenceOutOfDateException e) {
+            LOG.infoW().$(e).$();
+        }
 
         TableToken fooToken = engine.getTableTokenIfExists("foo");
         TableToken bahToken = engine.getTableTokenIfExists("bah");
