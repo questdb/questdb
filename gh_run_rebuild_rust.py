@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 
+import sys
+sys.dont_write_bytecode = True
 import subprocess
 import json
-import sys
 
 
 def check_gh_authentication():
@@ -28,13 +29,13 @@ def get_current_branch():
 def trigger_github_action(branch):
     """Trigger GitHub Action on the specified branch and get the run ID."""
     result = subprocess.run(
-        ["gh", "workflow", "run", "rebuild_rust_test.yml", "--ref", branch],
+        ["gh", "workflow", "run", "rebuild_rust.yml", "--ref", branch],
         capture_output=True, text=True
     )
     if result.returncode != 0:
         print(f"Could not trigger GitHub Action for branch: {branch}")
         print(result.stderr)
-        sys.exit(1):
+        sys.exit(1)
     print(f"To view the status, run: `gh run list` and `gh run view <run-id>`")
 
 
