@@ -63,7 +63,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             compile("alter table " + tableName + " dedup enable upsert keys(ts)");
 
             ObjList<FuzzTransaction> transactions = new ObjList<>();
-            Rnd rnd = generateRandom(LOG);
+            Rnd rnd = generateRandomAndProps(LOG);
             long initialDelta = Timestamps.MINUTE_MICROS * 15;
             int initialCount = 4 * 24 * 5;
             generateInsertsTransactions(
@@ -106,7 +106,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     @Test
     public void testDedupWithRandomShiftAndStepAndSymbolKey() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = generateRandom(LOG);
+            Rnd rnd = generateRandomAndProps(LOG);
 
             String tableName = testName.getMethodName();
             compile(
@@ -123,7 +123,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     @Test
     public void testDedupWithRandomShiftAndStepAndSymbolKeyAndColumnTops() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = generateRandom(LOG);
+            Rnd rnd = generateRandomAndProps(LOG);
 
             String tableName = testName.getMethodName();
             compile(
@@ -139,7 +139,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     @Test
     public void testDedupWithRandomShiftAndStepAndVarcharKey() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = generateRandom(LOG);
+            Rnd rnd = generateRandomAndProps(LOG);
 
             String tableName = testName.getMethodName();
             compile(
@@ -156,7 +156,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     @Test
     public void testDedupWithRandomShiftAndStepAndVarcharKeyAndColumnTops() throws Exception {
         assertMemoryLeak(() -> {
-            Rnd rnd = generateRandom(LOG);
+            Rnd rnd = generateRandomAndProps(LOG);
 
             String tableName = testName.getMethodName();
             compile(
@@ -176,7 +176,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             createEmptyTable(tableName, "");
 
             ObjList<FuzzTransaction> transactions = new ObjList<>();
-            Rnd rnd = generateRandom(LOG);
+            Rnd rnd = generateRandomAndProps(LOG);
             long initialDelta = Timestamps.MINUTE_MICROS * 15;
             int initialCount = 4 * 24 * 5;
             int initialDuplicates = 2 + rnd.nextInt(5);
@@ -225,7 +225,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             createEmptyTable(tableName, "DEDUP upsert keys(ts)");
 
             ObjList<FuzzTransaction> transactions = new ObjList<>();
-            Rnd rnd = generateRandom(LOG);
+            Rnd rnd = generateRandomAndProps(LOG);
             long initialDelta = Timestamps.MINUTE_MICROS * 15;
             int initialCount = 2 * 24 * 5;
             generateInsertsTransactions(
@@ -272,7 +272,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomColumnsDedupMultipleKeyCol() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandomAndProps(LOG);
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
@@ -304,7 +304,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomColumnsDedupOneKeyCol() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandomAndProps(LOG);
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
@@ -336,7 +336,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomDedupRepeat() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        Rnd rnd = generateRandomAndProps(LOG);
         setFuzzProbabilities(
                 0,
                 rnd.nextDouble(),
@@ -561,6 +561,13 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         if (rnd.nextBoolean()) {
             shuffle(transaction.operationList, rnd);
         }
+    }
+
+    private Rnd generateRandomAndProps(Log log) {
+        Rnd rnd = fuzzer.generateRandom(log);
+        setFuzzProperties(rnd);
+        setRandomAppendPageSize(rnd);
+        return rnd;
     }
 
     private long parseFloorPartialTimestamp(String from) {
@@ -791,7 +798,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
         int initialDuplicates = 1 + rnd.nextInt(1);
         long startTimestamp = parseFloorPartialTimestamp("2020-02-24T04:30");
-        int startCount = 4 * 24 * 5;
+        int startCount = rnd.nextInt(100_000);
         generateInsertsTransactions(
                 transactions,
                 1,
