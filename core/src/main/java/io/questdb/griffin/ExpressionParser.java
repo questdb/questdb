@@ -28,7 +28,15 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.GenericLexer;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntStack;
+import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
+import io.questdb.std.LowerCaseAsciiCharSequenceObjHashMap;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjStack;
+import io.questdb.std.ObjectPool;
 
 import static io.questdb.griffin.OperatorExpression.UNARY;
 
@@ -410,7 +418,48 @@ public class ExpressionParser {
                         }
 
                         break;
-
+                    case 'd':
+                    case 'D':
+                        if (prevBranch == BRANCH_LEFT_PARENTHESIS && SqlKeywords.isDistinctKeyword(tok)) {
+                            // rewrite count(distinct x) to count_distinct(x)
+                            // and string_agg(distinct x) to string_distinct_agg(x)
+                            if (opStack.size() > 1) {
+                                ExpressionNode en = opStack.peek();
+                                // we are in the BRANCH_LEFT_PARENTHESIS, so the previous token must be
+                                // a control token '('
+                                assert Chars.equals(en.token, '(') && en.type == ExpressionNode.CONTROL;
+                                CharSequence tokenStash = GenericLexer.immutableOf(tok);
+                                CharSequence nextToken = SqlUtil.fetchNext(lexer);
+                                if (nextToken != null) {
+                                    // if distinct is the only argument then we treat it as a column name
+                                    // and not a keyword. strictly speaking, keywords used as column names
+                                    // should be quoted, but for now we are not enforcing it here for backwards compatibility reasons.
+                                    // it's something we could/should consider in the future
+                                    if (!Chars.equals(nextToken, ')')) {
+                                        en = opStack.peek(1);
+                                        if (en.type == ExpressionNode.LITERAL) {
+                                            if (Chars.equalsIgnoreCase("count", en.token)) {
+                                                if (Chars.equals(nextToken, '*')) {
+                                                    throw SqlException.$(lastPos, "count(distinct *) is not supported");
+                                                }
+                                                en.token = "count_distinct";
+                                                lexer.unparseLast();
+                                                continue;
+                                            } else if (Chars.equalsIgnoreCase("string_agg", en.token)) {
+                                                en.token = "string_distinct_agg";
+                                                lexer.unparseLast();
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                    lexer.unparseLast();
+                                }
+                                // unparsing won't set `tok` to the previous token, so we need to do it manually
+                                tok = tokenStash;
+                            }
+                        }
+                        processDefaultBranch = true;
+                        break;
                     case 'g':
                     case 'G':
                         // this code ensures that "geohash(6c)" type will be converted to single "geohash6c" node (not two nodes)
