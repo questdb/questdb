@@ -54,6 +54,7 @@ public class PGPipelineEntry implements QuietCloseable {
     private final CompiledQueryImpl compiledQuery;
     private final CairoEngine engine;
     private final StringSink errorMessageSink = new StringSink();
+    private final int maxRecompileAttempts;
     private final BitSet msgBindParameterFormatCodes = new BitSet();
     // stores result format codes (0=Text,1=Binary) from the latest bind message
     // we need it in case cursor gets invalidated and bind used non-default binary format for some column(s)
@@ -118,9 +119,10 @@ public class PGPipelineEntry implements QuietCloseable {
     private TypesAndSelectModern tas = null;
 
     public PGPipelineEntry(CairoEngine engine) {
-        this.engine = engine;
         this.isCopy = false;
+        this.engine = engine;
         this.compiledQuery = new CompiledQueryImpl(engine);
+        this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
         this.msgParseParameterTypeOIDs = new IntList();
         this.outParameterTypeDescriptionTypeOIDs = new IntList();
         this.pgResultSetColumnTypes = new IntList();
@@ -135,6 +137,7 @@ public class PGPipelineEntry implements QuietCloseable {
         this.isCopy = true;
         this.engine = engine;
         this.compiledQuery = compiledQuery;
+        this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
         this.msgParseParameterTypeOIDs = msgParseParameterTypeOIDs;
         this.outParameterTypeDescriptionTypeOIDs = outParameterTypeDescriptionTypeOIDs;
         this.pgResultSetColumnTypes = pgResultSetColumnTypes;
@@ -440,7 +443,8 @@ public class PGPipelineEntry implements QuietCloseable {
                             characterStore,
                             utf8String,
                             binarySequenceParamsPool,
-                            tempSequence
+                            tempSequence,
+                            taiPool
                     );
                     break;
                 case CompiledQuery.DEALLOCATE:
@@ -1053,7 +1057,8 @@ public class PGPipelineEntry implements QuietCloseable {
             CharacterStore characterStore,
             DirectUtf8String utf8String,
             ObjectPool<DirectBinarySequence> binarySequenceParamsPool,
-            SCSequence tempSequence
+            SCSequence tempSequence,
+            WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
     ) throws SqlException, BadProtocolException {
         if (transactionState != ERROR_TRANSACTION) {
             copyParameterValuesToBindVariableService(
@@ -1063,10 +1068,18 @@ public class PGPipelineEntry implements QuietCloseable {
                     binarySequenceParamsPool
             );
             // execute against writer from the engine, synchronously (null sequence)
-            try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, true)) {
-                // this doesn't actually wait, because the call is synchronous
-                fut.await();
-                sqlAffectedRowCount = fut.getAffectedRowsCount();
+            for (int attempt = 1; ; attempt++) {
+                try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, true)) {
+                    // this doesn't actually wait, because the call is synchronous
+                    fut.await();
+                    sqlAffectedRowCount = fut.getAffectedRowsCount();
+                    break;
+                } catch (TableReferenceOutOfDateException e) {
+                    if (attempt == maxRecompileAttempts) {
+                        throw e;
+                    }
+                    compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
+                }
             }
         }
     }
@@ -1093,22 +1106,27 @@ public class PGPipelineEntry implements QuietCloseable {
                         utf8String,
                         binarySequenceParamsPool
                 );
-                try {
-                    m = insertOp.createMethod(sqlExecutionContext, writerSource);
-                } catch (TableReferenceOutOfDateException e) {
-                    compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
-                    m = insertOp.createMethod(sqlExecutionContext, writerSource);
-                }
-                try {
-                    sqlAffectedRowCount = m.execute();
-                    TableWriterAPI writer = m.popWriter();
-                    pendingWriters.put(writer.getTableToken(), writer);
-                    if (tai.hasBindVariables()) {
-                        taiCache.put(sqlText, tai);
+                for (int attempt = 1; ; attempt++) {
+                    try {
+                        m = insertOp.createMethod(sqlExecutionContext, writerSource);
+                        try {
+                            sqlAffectedRowCount = m.execute();
+                            TableWriterAPI writer = m.popWriter();
+                            pendingWriters.put(writer.getTableToken(), writer);
+                            if (tai.hasBindVariables()) {
+                                taiCache.put(sqlText, tai);
+                            }
+                        } catch (Throwable e) {
+                            Misc.free(m);
+                            throw e;
+                        }
+                        break;
+                    } catch (TableReferenceOutOfDateException e) {
+                        if (attempt == maxRecompileAttempts) {
+                            throw e;
+                        }
+                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
                     }
-                } catch (Throwable e) {
-                    Misc.free(m);
-                    throw e;
                 }
                 break;
             case ERROR_TRANSACTION:
@@ -1158,30 +1176,28 @@ public class PGPipelineEntry implements QuietCloseable {
             sqlExecutionContext.getCircuitBreaker().resetTimer();
             sqlExecutionContext.setCacheHit(cacheHit);
             try {
-                try {
-                    copyParameterValuesToBindVariableService(
-                            sqlExecutionContext,
-                            characterStore,
-                            utf8String,
-                            binarySequenceParamsPool
-                    );
-                    cursor = factory.getCursor(sqlExecutionContext);
-                } catch (TableReferenceOutOfDateException e) {
-                    RecordMetadata oldMeta = factory.getMetadata();
-                    cacheHit = false;
-                    sqlExecutionContext.setCacheHit(false);
-                    factory.close();
-                    pgResultSetColumnTypes.clear();
-                    compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
-
-                    validateMetadataAfterRecompileSelect(oldMeta);
-                    copyParameterValuesToBindVariableService(
-                            sqlExecutionContext,
-                            characterStore,
-                            utf8String,
-                            binarySequenceParamsPool
-                    );
-                    cursor = factory.getCursor(sqlExecutionContext);
+                for (int attempt = 1; ; attempt++) {
+                    try {
+                        copyParameterValuesToBindVariableService(
+                                sqlExecutionContext,
+                                characterStore,
+                                utf8String,
+                                binarySequenceParamsPool
+                        );
+                        cursor = factory.getCursor(sqlExecutionContext);
+                        break;
+                    } catch (TableReferenceOutOfDateException e) {
+                        if (attempt == maxRecompileAttempts) {
+                            throw e;
+                        }
+                        cacheHit = false;
+                        sqlExecutionContext.setCacheHit(false);
+                        RecordMetadata oldMeta = factory.getMetadata();
+                        factory.close();
+                        pgResultSetColumnTypes.clear();
+                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
+                        validateMetadataAfterRecompileSelect(oldMeta);
+                    }
                 }
             } catch (Throwable e) {
                 // un-cache the erroneous SQL
@@ -2007,7 +2023,6 @@ public class PGPipelineEntry implements QuietCloseable {
                 break;
             case CompiledQuery.UPDATE:
                 // copy contents of the mutable CompiledQuery into our cache
-                System.out.println("CLONING [" + Thread.currentThread().getId() + "] " + cq.getUpdateOperation());
                 compiledQuery.ofUpdate(cq.getUpdateOperation());
                 compiledQuery.withSqlText(cq.getSqlText());
                 sqlTag = TAG_UPDATE;
