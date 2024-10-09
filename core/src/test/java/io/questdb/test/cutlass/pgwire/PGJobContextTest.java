@@ -8865,6 +8865,43 @@ nodejs code:
     }
 
     @Test
+    public void testSchemaChangeBetweenUsagesOfSelectPreparedStatement_columnWithBindVariableDropped() throws Exception {
+        Assume.assumeFalse(legacyMode); // legacy code has a bug
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            connection.prepareStatement("create table x as" +
+                    " (select 2 id, 'foobar' str, timestamp_sequence(1,10000) ts from long_sequence(1))" +
+                    " timestamp(ts) partition by hour"
+            ).execute();
+            drainWalQueue();
+            try (PreparedStatement ps = connection.prepareStatement("x where id=?")) {
+                ps.setInt(1, 2);
+                try (ResultSet resultSet = ps.executeQuery()) {
+                    sink.clear();
+                    assertResultSet(
+                            "id[INTEGER],str[VARCHAR],ts[TIMESTAMP]\n" +
+                                    "2,foobar,1970-01-01 00:00:00.000001\n",
+                            sink,
+                            resultSet
+                    );
+                }
+
+                //drop a column
+                try (PreparedStatement stmt = connection.prepareStatement("alter table x drop column id;")) {
+                    stmt.execute();
+                }
+                drainWalQueue();
+
+                ps.setInt(1, 2);
+                try (ResultSet shouldNotBeCreated = ps.executeQuery()) {
+                    Assert.fail("id column was dropped, the query should fail");
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "Invalid column: id");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSchemasCall() throws Exception {
         skipOnWalRun(); // non-partitioned table
         recvBufferSize = 2048;
