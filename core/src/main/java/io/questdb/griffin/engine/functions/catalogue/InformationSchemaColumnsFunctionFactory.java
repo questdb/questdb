@@ -141,7 +141,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
                     }
                 }
 
-                if (columnIdx == -1 && !hasNext) {
+                if (!hasNext && columnIdx == -1) {
                     return false;
                 }
 
