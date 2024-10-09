@@ -24,9 +24,17 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
@@ -91,7 +99,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
             private final ColumnsRecord record = new ColumnsRecord();
             private final ShowColumnsCursor showColumnsCursor = new ShowColumnsCursor();
             private RecordCursor allTablesCursor;
-            private int columIdx;
+            private int columnIdx;
             private SqlExecutionContext executionContext;
             private CharSequence tableName;
 
@@ -106,7 +114,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
                 Misc.free(showColumnsCursor);
                 executionContext = null;
                 tableName = null;
-                columIdx = -1;
+                columnIdx = -1;
             }
 
             @Override
@@ -116,13 +124,24 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
             @Override
             public boolean hasNext() {
+                boolean tableExists = false;
                 boolean hasNext = false;
-                if (columIdx == -1 && (hasNext = allTablesCursor.hasNext())) {
-                    tableName = allTablesCursor.getRecord().getStrA(1);
-                    showColumnsCursor.of(executionContext, tableName);
+
+                while (!tableExists) {
+                    if (columnIdx == -1 && (hasNext = allTablesCursor.hasNext())) {
+                        tableName = allTablesCursor.getRecord().getStrA(1);
+                        try {
+                            showColumnsCursor.of(executionContext, tableName);
+                            tableExists = true;
+                        } catch (CairoException e) {
+                            // table didn't exist, likely due to a rename
+                        }
+                    } else {
+                        tableExists = true;
+                    }
                 }
 
-                if (!hasNext && columIdx == -1) {
+                if (columnIdx == -1 && !hasNext) {
                     return false;
                 }
 
@@ -130,11 +149,11 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
                     Record rec = showColumnsCursor.getRecord();
                     CharSequence columnName = rec.getStrA(ShowColumnsRecordCursorFactory.N_NAME_COL);
                     CharSequence dataType = rec.getStrA(ShowColumnsRecordCursorFactory.N_TYPE_COL);
-                    columIdx++;
-                    record.of(tableName, columIdx, columnName, dataType);
+                    columnIdx++;
+                    record.of(tableName, columnIdx, columnName, dataType);
                     return true;
                 }
-                columIdx = -1;
+                columnIdx = -1;
                 Misc.free(showColumnsCursor);
                 return hasNext();
             }
@@ -146,7 +165,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
             @Override
             public void toTop() {
-                columIdx = -1;
+                columnIdx = -1;
                 allTablesCursor.toTop();
             }
 

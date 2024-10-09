@@ -53,4 +53,31 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
             );
         });
     }
+
+    @Test
+    public void testRename() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table test_rename ( ts timestamp, x int ) timestamp(ts) partition by day wal");
+            drainWalQueue();
+
+            assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
+                    "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from test_rename");
+
+            assertSql("table_name\tordinal_position\tcolumn_name\tdata_type\n" +
+                    "test_rename\t0\tts\tTIMESTAMP\n" +
+                    "test_rename\t1\tx\tINT\n", "information_schema.columns()");
+
+            ddl("rename table test_rename to test_renamed");
+            drainWalQueue();
+
+            assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
+                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
+                    "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from test_renamed");
+
+            assertSql("table_name\tordinal_position\tcolumn_name\tdata_type\n" +
+                    "test_renamed\t0\tts\tTIMESTAMP\n" +
+                    "test_renamed\t1\tx\tINT\n", "information_schema.columns()");
+        });
+    }
 }
