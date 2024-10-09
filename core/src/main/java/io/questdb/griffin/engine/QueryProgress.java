@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
@@ -82,20 +83,51 @@ public class QueryProgress extends AbstractRecordCursorFactory {
             long beginNanos,
             boolean jit
     ) {
-        final int errno = e instanceof CairoException ? ((CairoException) e).getErrno() : 0;
-        final int pos = e instanceof FlyweightMessageContainer ? ((FlyweightMessageContainer) e).getPosition() : 0;
-        LOG.errorW()
-                .$("err")
-                .$(" [id=").$(sqlId)
-                .$(", sql=`").utf8(sqlText).$('`')
-                .$(", principal=").$(executionContext.getSecurityContext().getPrincipal())
-                .$(", cache=").$(executionContext.isCacheHit())
-                .$(", jit=").$(jit)
-                .$(", time=").$(executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos)
-                .$(", msg=").$(e.getMessage())
-                .$(", errno=").$(errno)
-                .$(", pos=").$(pos)
-                .I$();
+        // Extract all the varaibles before the call to call LOG.errorW() to avoid exception
+        // causing log sequence leaks.
+        long queryTime = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos;
+        CharSequence principal = executionContext.getSecurityContext().getPrincipal();
+        boolean cacheHit = executionContext.isCacheHit();
+
+        if (e instanceof FlyweightMessageContainer) {
+            final int pos = ((FlyweightMessageContainer) e).getPosition();
+            final int errno = e instanceof CairoException ? ((CairoException) e).getErrno() : 0;
+            final CharSequence messsage = ((FlyweightMessageContainer) e).getFlyweightMessage();
+            LOG.errorW()
+                    .$("err")
+                    .$(" [id=").$(sqlId)
+                    .$(", sql=`").utf8(sqlText).$('`')
+                    .$(", principal=").$(principal)
+                    .$(", cache=").$(cacheHit)
+                    .$(", jit=").$(jit)
+                    .$(", time=").$(queryTime)
+                    .$(", msg=").$(messsage)
+                    .$(", errno=").$(errno)
+                    .$(", pos=").$(pos)
+                    .I$();
+        } else {
+            // This is unknown exception, can be OOM that can cause exception in logging.
+            LogRecord log = null;
+            try {
+                log = LOG.errorW();
+                log.$("err")
+                        .$(" [id=").$(sqlId)
+                        .$(", sql=`").utf8(sqlText).$('`')
+                        .$(", principal=").$(principal)
+                        .$(", cache=").$(cacheHit)
+                        .$(", jit=").$(jit)
+                        .$(", time=").$(queryTime)
+                        .$(", exception=").$(e);
+            } catch (Throwable th) {
+                // Game over, we can't log anything
+                System.err.print("failed to log exception message");
+            } finally {
+                // Make sure logging sequence is always released.
+                if (log != null) {
+                    log.I$();
+                }
+            }
+        }
     }
 
     public static void logStart(
