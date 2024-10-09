@@ -100,7 +100,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
                     .$(", cache=").$(cacheHit)
                     .$(", jit=").$(jit)
                     .$(", time=").$(queryTime)
-                    .$(", msg=").$(e.getMessage())
+                    .$(", msg=").$(e.getFlyweightMessage())
                     .$(", errno=").$(errno)
                     .$(", pos=").$(pos)
                     .I$();
