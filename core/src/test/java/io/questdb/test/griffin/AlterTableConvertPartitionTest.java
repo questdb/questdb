@@ -25,7 +25,11 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolMapWriter;
+import io.questdb.cairo.TableToken;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
@@ -203,6 +207,39 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertPartitionBrokenSymbols() throws Exception {
+        final long rows = 10;
+        final String tableName = "x";
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            ddl(
+                    "create table " + tableName + " as (select" +
+                            " x id," +
+                            " rnd_symbol('a','b','c') a_symbol," +
+                            " timestamp_sequence(400000000000, 500) designated_ts" +
+                            " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month"
+            );
+
+            engine.releaseInactive();
+            try (Path path = new Path().of(configuration.getRoot())) {
+                TableToken tableToken = engine.getTableTokenIfExists(tableName);
+                path.concat(tableToken.getDirName()).concat("a_symbol").put(".o");
+                FilesFacade ff = configuration.getFilesFacade();
+                Assert.assertTrue(ff.exists(path.$()));
+                long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+                Assert.assertTrue(configuration.getFilesFacade().truncate(fd, SymbolMapWriter.HEADER_SIZE - 2));
+                ff.close(fd);
+            }
+            try {
+                ddl("alter table " + tableName + " convert partition to parquet list '1970-01'");
+                Assert.fail();
+            } catch (Exception e) {
+                TestUtils.assertContains(e.getMessage(), " SymbolMap is too short");
+            }
+            assertPartitionDoesNotExist(tableName, "1970-01.1");
+        });
+    }
+
+    @Test
     public void testConvertPartitionParquetAndBackAllTypes() throws Exception {
         final long rows = 1000;
         Overrides overrides = node1.getConfigurationOverrides();
@@ -248,38 +285,6 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             assertPartitionDoesNotExist("x", "1970-01.1");
 
             assertSqlCursors("select * from x", "select * from y");
-        });
-    }
-    @Test
-    public void testConvertPartitionBrokenSymbols() throws Exception {
-        final long rows = 10;
-        final String tableName = "x";
-        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
-            ddl(
-                    "create table " + tableName + " as (select" +
-                            " x id," +
-                            " rnd_symbol('a','b','c') a_symbol," +
-                            " timestamp_sequence(400000000000, 500) designated_ts" +
-                            " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month"
-            );
-
-            engine.releaseInactive();
-            try (Path path = new Path().of(configuration.getRoot())) {
-                TableToken tableToken = engine.getTableTokenIfExists(tableName);
-                path.concat(tableToken.getDirName()).concat("a_symbol").put(".o");
-                FilesFacade ff = configuration.getFilesFacade();
-                Assert.assertTrue(ff.exists(path.$()));
-                long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
-                Assert.assertTrue(configuration.getFilesFacade().truncate(fd, SymbolMapWriter.HEADER_SIZE - 2));
-                ff.close(fd);
-            }
-            try {
-                ddl("alter table " + tableName + " convert partition to parquet list '1970-01'");
-                Assert.fail();
-            } catch (Exception e) {
-                TestUtils.assertContains(e.getMessage(), " SymbolMap is too short");
-            }
-            assertPartitionDoesNotExist(tableName, "1970-01.1");
         });
     }
 
