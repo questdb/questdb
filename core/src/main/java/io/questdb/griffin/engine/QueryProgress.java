@@ -92,6 +92,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
         if (e instanceof FlyweightMessageContainer) {
             final int pos = ((FlyweightMessageContainer) e).getPosition();
             final int errno = e instanceof CairoException ? ((CairoException) e).getErrno() : 0;
+            final CharSequence messsage = ((FlyweightMessageContainer) e).getFlyweightMessage();
             LOG.errorW()
                     .$("err")
                     .$(" [id=").$(sqlId)
@@ -100,7 +101,7 @@ public class QueryProgress extends AbstractRecordCursorFactory {
                     .$(", cache=").$(cacheHit)
                     .$(", jit=").$(jit)
                     .$(", time=").$(queryTime)
-                    .$(", msg=").$(e.getFlyweightMessage())
+                    .$(", msg=").$(messsage)
                     .$(", errno=").$(errno)
                     .$(", pos=").$(pos)
                     .I$();
