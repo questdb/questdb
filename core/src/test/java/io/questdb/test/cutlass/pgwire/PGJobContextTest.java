@@ -5670,8 +5670,7 @@ nodejs code:
     @Test
     public void testIntAndLongParametersWithFormatCountGreaterThanValueCount() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        // this test does not send 'S' message, the modern server will be waiting until timeout before responding.
-        Assume.assumeTrue(legacyMode);
+        Assume.assumeTrue(legacyMode); // test doesn't send a Sync, so the server is not required to respond
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
                 ">70000000076f6800\n" +
@@ -5690,8 +5689,7 @@ nodejs code:
     @Test
     public void testIntAndLongParametersWithFormatCountSmallerThanValueCount() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        // this test does not send 'S' message, the modern server will be waiting until timeout before responding.
-        Assume.assumeTrue(legacyMode);
+        Assume.assumeTrue(legacyMode); // test doesn't send a Sync, so the server is not required to respond
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
                 ">70000000076f6800\n" +
@@ -7016,8 +7014,7 @@ nodejs code:
 
     @Test
     public void testParameterTypeCountGreaterThanParameterValueCount() throws Exception {
-        // @Ignore("Assert.assertTrue(Net.isDead(clientFd))")
-        Assume.assumeTrue(legacyMode);
+        Assume.assumeTrue(legacyMode); // modern server doesn't disconnect and instead ignores extra param types
         skipOnWalRun(); // non-partitioned table
         String script = ">0000006e00030000757365720078797a0064617461626173650071646200636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e65004575726f70652f4c6f6e646f6e0065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -7090,7 +7087,7 @@ nodejs code:
     @Test
     public void testParseMessageBadQueryTerminator() throws Exception {
         skipOnWalRun(); // non-partitioned table
-        // @Ignore("test sends a malformed P message and does not send S, so the modern server doesn't respond")
+        // test sends a malformed Parse message and doesn't send Sync, so the server isn't required to respond
         Assume.assumeTrue(legacyMode);
         final String script = ">0000006900030000757365720078797a006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -7107,8 +7104,7 @@ nodejs code:
 
     @Test
     public void testParseMessageBadStatementTerminator() throws Exception {
-        // @Ignore("test sends a malformed packet and the modern server does not respond")
-        Assume.assumeTrue(legacyMode);
+        Assume.assumeTrue(legacyMode); // test sends a malformed packet and the server isn't required to respond
         skipOnWalRun(); // non-partitioned table
         final String script = ">0000006900030000757365720078797a006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -7125,8 +7121,7 @@ nodejs code:
 
     @Test
     public void testParseMessageNegativeParameterCount() throws Exception {
-        // @Ignore("TODO PGWire 2.0")
-        Assume.assumeTrue(legacyMode);
+        Assume.assumeTrue(legacyMode); // Modern server correctly responds with an error and doesn't disconnect
         skipOnWalRun(); // non-partitioned table
         final String script = ">0000006900030000757365720078797a006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -7147,8 +7142,7 @@ nodejs code:
 
     @Test
     public void testParseMessageTruncatedAtParameter() throws Exception {
-        // @Ignore("Assert.assertTrue(Net.isDead(clientFd));")
-        Assume.assumeTrue(legacyMode);
+        Assume.assumeTrue(legacyMode); // Modern server correctly responds with an error and doesn't disconnect
         skipOnWalRun(); // non-partitioned table
         final String script = ">0000006900030000757365720078797a006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -7169,8 +7163,7 @@ nodejs code:
 
     @Test
     public void testParseMessageTruncatedAtParameterCount() throws Exception {
-        // @Ignore("Modern server doesn't respond")
-        Assume.assumeTrue(legacyMode);
+        Assume.assumeTrue(legacyMode); // Since the test doesn't send a Sync message, server isn't required to respond
         skipOnWalRun(); // non-partitioned table
         final String script = ">0000006900030000757365720078797a006461746162617365006e6162755f61707000636c69656e745f656e636f64696e67005554463800446174655374796c650049534f0054696d655a6f6e6500474d540065787472615f666c6f61745f64696769747300320000\n" +
                 "<520000000800000003\n" +
@@ -7426,8 +7419,7 @@ nodejs code:
 
     @Test
     public void testPreparedStatementParamBadInt() throws Exception {
-        // @Ignore("Assert.assertTrue(Net.isDead(clientFd));")
-        Assume.assumeTrue(legacyMode);
+        Assume.assumeTrue(legacyMode); // modern server correctly responds with an error and doesn't disconnect
         skipOnWalRun(); // non-partitioned table
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
@@ -7447,8 +7439,7 @@ nodejs code:
 
     @Test
     public void testPreparedStatementParamBadLong() throws Exception {
-        // @Ignore("Assert.assertTrue(Net.isDead(clientFd));")
-        Assume.assumeTrue(legacyMode);
+        Assume.assumeTrue(legacyMode); // modern server correctly responds with an error and doesn't disconnect
         skipOnWalRun(); // non-partitioned table
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
@@ -7468,8 +7459,7 @@ nodejs code:
 
     @Test
     public void testPreparedStatementParamValueLengthOverflow() throws Exception {
-        // @Ignore("Assert.assertTrue(Net.isDead(clientFd));")
-        Assume.assumeTrue(legacyMode);
+        Assume.assumeTrue(legacyMode); // modern server correctly responds with an error and doesn't disconnect
         skipOnWalRun(); // non-partitioned table
         assertHexScript(
                 NetworkFacadeImpl.INSTANCE,
@@ -10425,7 +10415,7 @@ create table tab as (
 
     @Test
     public void testUpdateAfterDropAndRecreate() throws Exception {
-        // todo: modern fails due to cached plan discarded after schema change
+        // @Ignore("modern fails due to stale query plan after schema change")
         Assume.assumeTrue(legacyMode);
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
@@ -10484,7 +10474,7 @@ create table tab as (
 
     @Test
     public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
-        // todo: modern test fails due to cached plan discarded after schema change
+        // @Ignore("modern test fails due to stale query plan after schema change")
         Assume.assumeTrue(legacyMode);
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
