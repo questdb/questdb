@@ -373,13 +373,12 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             srcDataTopOffset = columnTypeDriver.getAuxVectorOffset(srcDataTop);
 
             dstAuxFd = openRW(ff, iFile(pathToNewPartition.trimTo(pplen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-            dstAuxSize = columnTypeDriver.auxRowsToBytes(srcOooHi - srcOooLo + 1) +
-                    columnTypeDriver.getAuxVectorSize(srcDataMax - srcDataTop);
+            dstAuxSize = columnTypeDriver.getAuxVectorSize(srcDataNewPartitionSize - srcDataTop);
 
-            if (prefixType == O3_BLOCK_NONE) {
-                // split partition
-                dstAuxSize -= columnTypeDriver.auxRowsToBytes(prefixHi + 1 - srcDataTop);
-            }
+//            if (prefixType == O3_BLOCK_NONE) {
+//                // split partition
+//                dstAuxSize -= columnTypeDriver.auxRowsToBytes(prefixHi + 1 - srcDataTop);
+//            }
             dstAuxAddr = mapRW(ff, dstAuxFd, dstAuxSize, MemoryTag.MMAP_O3);
             if (!mixedIOFlag) {
                 ff.madvise(dstAuxAddr, dstAuxSize, Files.POSIX_MADV_RANDOM);
@@ -629,7 +628,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             BitmapIndexWriter indexWriter,
             long partitionUpdateSinkAddr
     ) {
-        long cursor = tableWriter.getO3CopyPubSeq().next();
+        long cursor = -1;// tableWriter.getO3CopyPubSeq().next();
         if (cursor > -1) {
             publishCopyTaskHarmonized(
                     columnCounter,
@@ -2376,7 +2375,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             dstIndexAdjust = srcDataTopOffset >> 2;
 
             dstFixFd = openRW(ff, dFile(pathToNewPartition.trimTo(pNewLen), columnName, columnNameTxn), LOG, tableWriter.getConfiguration().getWriterFileOpenOpts());
-            dstFixSize = ((srcOooHi - srcOooLo + 1) + srcDataMax - srcDataTop) << shl;
+            dstFixSize = (srcDataNewPartitionSize - srcDataTop) << shl;
             dstFixAddr = mapRW(ff, dstFixFd, dstFixSize, MemoryTag.MMAP_O3);
             if (!mixedIOFlag) {
                 ff.madvise(dstFixAddr, dstFixSize, Files.POSIX_MADV_RANDOM);
