@@ -10407,8 +10407,6 @@ create table tab as (
 
     @Test
     public void testUpdateAfterDropAndRecreate() throws Exception {
-        // @Ignore("modern fails due to stale query plan after schema change")
-        Assume.assumeTrue(legacyMode);
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
@@ -10466,8 +10464,6 @@ create table tab as (
 
     @Test
     public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
-        // @Ignore("modern test fails due to stale query plan after schema change")
-        Assume.assumeTrue(legacyMode);
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
                 statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
