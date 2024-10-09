@@ -24,8 +24,20 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IntervalBwdPartitionFrameCursor;
+import io.questdb.cairo.IntervalBwdPartitionFrameCursorFactory;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.PartitionFrame;
+import io.questdb.cairo.sql.PartitionFrameCursor;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.std.LongList;
@@ -575,7 +587,6 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     private void testIntervals(int partitionBy, long increment, int rowCount, CharSequence expected, long expectedCount) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-
             TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.SYMBOL).indexed(true, 4).
                     col("b", ColumnType.SYMBOL).indexed(true, 4).
