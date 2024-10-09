@@ -8801,7 +8801,7 @@ nodejs code:
     @Test
     public void testSchemaChangeBetweenUsagesOfPreparedStatement() throws Exception {
         Assume.assumeFalse(legacyMode); // legacy code has a bug
-        assertWithPgServer(CONN_AWARE_ALL & ~CONN_AWARE_QUIRKS, (connection, binary, mode, port) -> {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.prepareStatement("create table x as" +
                     " (select 2 id, 'foobar' str, timestamp_sequence(1,10000) ts from long_sequence(1))" +
                     " timestamp(ts) partition by hour"
@@ -8822,22 +8822,14 @@ nodejs code:
                 drainWalQueue();
 
                 // Query the data once again - this time the schema is different,
-                // so the query should get recompiled.
-                // The bug is here!
                 ps.setInt(1, 2);
                 try (ResultSet rs = ps.executeQuery()) {
-                    if (mode == Mode.SIMPLE || mode == Mode.EXTENDED_CACHE_EVERYTHING) {
-                        sink.clear();
-                        assertResultSet(
-                                "id[INTEGER],ts[TIMESTAMP]\n" +
-                                        "2,1970-01-01 00:00:00.000001\n",
-                                sink, rs
-                        );
-                        // JDBC driver has a bug in other modes: it doesn't take into account the changed schema.
-                        // We weaken the test for them and assert just the presence of a result.
-                    } else {
-                        assertTrue(rs.next());
-                    }
+                    sink.clear();
+                    assertResultSet(
+                            "id[INTEGER],ts[TIMESTAMP]\n" +
+                                    "2,1970-01-01 00:00:00.000001\n",
+                            sink, rs
+                    );
                 }
             }
         });

@@ -105,6 +105,7 @@ public class PGPipelineEntry implements QuietCloseable {
     private CharSequence sqlText = null;
     private boolean sqlTextHasSecret = false;
     private short sqlType = 0;
+    private boolean stalePlanError = false;
     private boolean stateBind;
     private boolean stateClosed;
     private int stateDesc;
@@ -1166,11 +1167,14 @@ public class PGPipelineEntry implements QuietCloseable {
                     );
                     cursor = factory.getCursor(sqlExecutionContext);
                 } catch (TableReferenceOutOfDateException e) {
+                    RecordMetadata oldMeta = factory.getMetadata();
                     cacheHit = false;
                     sqlExecutionContext.setCacheHit(false);
                     factory.close();
                     pgResultSetColumnTypes.clear();
                     compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
+
+                    validateMetadataAfterRecompileSelect(oldMeta);
                     copyParameterValuesToBindVariableService(
                             sqlExecutionContext,
                             characterStore,
@@ -1606,8 +1610,18 @@ public class PGPipelineEntry implements QuietCloseable {
         final int position = getErrorMessagePosition();
         utf8Sink.put(MESSAGE_TYPE_ERROR_RESPONSE);
         long addr = utf8Sink.skipInt();
-        utf8Sink.putAscii('C');
-        utf8Sink.putZ("00000");
+
+        utf8Sink.putAscii('C'); // C = SQLSTATE
+        if (stalePlanError) {
+            // this is what PostgreSQL sends when recompiling a query produces a different resultset.
+            // some clients acts on it by restarting the query from the beginning.
+            utf8Sink.putZ("0A000"); // SQLSTATE = feature_not_supported
+            utf8Sink.putAscii('R'); // R = Routine: the name of the source-code routine reporting the error, we mimic PostgreSQL here
+            utf8Sink.putZ("RevalidateCachedQuery"); // name of the routine
+        } else {
+            utf8Sink.putZ("00000"); // SQLSTATE = successful_completion (sic)
+        }
+
         utf8Sink.putAscii('M');
         utf8Sink.putZ(getErrorMessageSink());
         utf8Sink.putAscii('S');
@@ -2041,8 +2055,16 @@ public class PGPipelineEntry implements QuietCloseable {
         }
     }
 
+    private void validateMetadataAfterRecompileSelect(RecordMetadata oldMeta) throws BadProtocolException {
+        if (!TableUtils.equalColumnNamesAndTypes(oldMeta, factory.getMetadata())) {
+            stalePlanError = true;
+            throw kaput().put("cached plan must not change result type");
+        }
+    }
+
     void clearState() {
         error = false;
+        stalePlanError = false;
         stateSync = 0;
         stateParse = false;
         stateBind = false;
