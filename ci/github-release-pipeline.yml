@@ -91,7 +91,6 @@ stages:
 
           - task: GitHubRelease@1
             displayName: "Upload binaries to release"
-            condition: and(succeeded(), eq(variables['GITHUB_RELEASE_EXISTS'], 'true'))
             inputs:
               gitHubConnection: 'ideoma'
               repositoryName: 'questdb/questdb'  # e.g., my-org/my-repo
@@ -101,20 +100,20 @@ stages:
               addChangeLog: false
               isDraft: false
 
-          - task: GitHubRelease@1
-            displayName: "Create release"
-            condition: and(succeeded(), eq(variables['GITHUB_RELEASE_EXISTS'], 'false'))
-            inputs:
-              gitHubConnection: 'ideoma'
-              repositoryName: 'questdb/questdb'
-              target: '$(Build.SourceVersion)'
-              action: 'create'
-              tagSource: 'userSpecifiedTag'
-              tag: '$(TAG_NAME)'
-              title: '$(TAG_NAME)'
-              assets: '$(Build.ArtifactStagingDirectory)/drop/*'
-              addChangeLog: false
-              isDraft: false
+          #          - task: GitHubRelease@1
+          #            displayName: "Create release"
+          #            condition: and(succeeded(), eq(variables['GITHUB_RELEASE_EXISTS'], 'false'))
+          #            inputs:
+          #              gitHubConnection: 'ideoma'
+          #              repositoryName: 'questdb/questdb'
+          #              target: '$(Build.SourceVersion)'
+          #              action: 'create'
+          #              tagSource: 'userSpecifiedTag'
+          #              tag: '$(TAG_NAME)'
+          #              title: '$(TAG_NAME)'
+          #              assets: '$(Build.ArtifactStagingDirectory)/drop/*'
+          #              addChangeLog: false
+          #              isDraft: false
 
           - script: |
               sudo apt-get update
