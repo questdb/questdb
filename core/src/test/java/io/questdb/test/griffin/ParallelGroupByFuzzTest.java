@@ -2642,6 +2642,34 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testParallelRegressionSlope() throws Exception {
+        Assume.assumeTrue(enableJitCompiler);
+
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool((() -> 4));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        ddl(
+                                compiler,
+                                "create table tbl1 as (select cast(x as double) x, cast(x as double) y from long_sequence(100))",
+                                sqlExecutionContext
+                        );
+                        assertQueries(
+                                engine,
+                                sqlExecutionContext,
+                                "select regr_slope(x, y) from tbl1",
+                                "regr_slope\n1.0\n"
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+
+    }
+
     private static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String... queriesAndExpectedResults) throws SqlException {
         assertQueries(engine, sqlExecutionContext, sink, queriesAndExpectedResults);
     }
