@@ -1338,7 +1338,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         rowGroupSize,
                         dataPageSize,
                         parquetVersion
-
                 );
                 parquetFileLength = ff.length(other.$());
             }
@@ -1436,7 +1435,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         ) {
             partitionDecoder.of(parquetFd);
             final GenericRecordMetadata metadata = new GenericRecordMetadata();
-            final PartitionDecoder.Metadata parquetMetadata = partitionDecoder.getMetadata();
+            final PartitionDecoder.Metadata parquetMetadata = partitionDecoder.metadata();
             parquetMetadata.copyTo(metadata, false);
 
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {

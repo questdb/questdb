@@ -85,17 +85,17 @@ public class PartitionDecoderTest extends AbstractCairoTest {
 
                 fd = TableUtils.openRO(ff, path.$(), LOG);
                 partitionDecoder.of(fd);
-                Assert.assertEquals(reader.getMetadata().getColumnCount(), partitionDecoder.getMetadata().columnCount());
-                Assert.assertEquals(rows, partitionDecoder.getMetadata().rowCount());
-                Assert.assertEquals(1, partitionDecoder.getMetadata().rowGroupCount());
+                Assert.assertEquals(reader.getMetadata().getColumnCount(), partitionDecoder.metadata().columnCount());
+                Assert.assertEquals(rows, partitionDecoder.metadata().rowCount());
+                Assert.assertEquals(1, partitionDecoder.metadata().rowGroupCount());
 
                 TableReaderMetadata readerMeta = reader.getMetadata();
-                Assert.assertEquals(readerMeta.getColumnCount(), partitionDecoder.getMetadata().columnCount());
+                Assert.assertEquals(readerMeta.getColumnCount(), partitionDecoder.metadata().columnCount());
 
                 for (int i = 0; i < columns; i++) {
-                    TestUtils.assertEquals("column: " + i, readerMeta.getColumnName(i), partitionDecoder.getMetadata().columnName(i));
-                    Assert.assertEquals("column: " + i, i, partitionDecoder.getMetadata().columnId(i));
-                    Assert.assertEquals("column: " + i, readerMeta.getColumnType(i), partitionDecoder.getMetadata().getColumnType(i));
+                    TestUtils.assertEquals("column: " + i, readerMeta.getColumnName(i), partitionDecoder.metadata().columnName(i));
+                    Assert.assertEquals("column: " + i, i, partitionDecoder.metadata().columnId(i));
+                    Assert.assertEquals("column: " + i, readerMeta.getColumnType(i), partitionDecoder.metadata().getColumnType(i));
                 }
             } finally {
                 ff.close(fd);

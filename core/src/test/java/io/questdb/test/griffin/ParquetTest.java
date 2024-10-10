@@ -107,6 +107,34 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiplePartitionsWithTimeFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(
+                    "create table x as (\n" +
+                            "  select x id, timestamp_sequence(0,1000000000) as ts\n" +
+                            "  from long_sequence(10)\n" +
+                            ") timestamp(ts) partition by hour;"
+            );
+            ddl("alter table x convert partition to parquet where ts >= 0");
+
+            assertSql(
+                    "id\tts\n" +
+                            "1\t1970-01-01T00:00:00.000000Z\n" +
+                            "2\t1970-01-01T00:16:40.000000Z\n" +
+                            "3\t1970-01-01T00:33:20.000000Z\n" +
+                            "4\t1970-01-01T00:50:00.000000Z\n" +
+                            "5\t1970-01-01T01:06:40.000000Z\n" +
+                            "6\t1970-01-01T01:23:20.000000Z\n" +
+                            "7\t1970-01-01T01:40:00.000000Z\n" +
+                            "8\t1970-01-01T01:56:40.000000Z\n" +
+                            "9\t1970-01-01T02:13:20.000000Z\n" +
+                            "10\t1970-01-01T02:30:00.000000Z\n",
+                    "x where ts in '1970-01-01T01'"
+            );
+        });
+    }
+
+    @Test
     public void testNonJitFilter() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
@@ -166,7 +194,7 @@ public class ParquetTest extends AbstractCairoTest {
                             "  from long_sequence(10)\n" +
                             ") timestamp(ts) partition by hour;"
             );
-            //ddl("alter table x convert partition to parquet where ts >= 0");
+            ddl("alter table x convert partition to parquet where ts >= 0");
 
             assertSql(
                     "ts\n" +
@@ -315,43 +343,42 @@ public class ParquetTest extends AbstractCairoTest {
             insert("insert into x values (25, 172850000000, 'SYM_E_junk9923')");
             insert("insert into x values (26, 172860000000, 'SYM_E_junk9923')");
 
-            TestUtils.LeakProneCode checkData = () -> {
-                assertQueryNoLeakCheck(
-                        "id\tts\tname\n" +
-                                "0\t1970-01-01T00:00:00.000000Z\tSYM_A\n" +
-                                "1\t1970-01-01T00:00:10.000000Z\tSYM_A\n" +
-                                "2\t1970-01-01T00:00:20.000000Z\tSYM_B_junk123\n" +
-                                "3\t1970-01-01T00:00:30.000000Z\tSYM_C_junk123123123123\n" +
-                                "4\t1970-01-01T00:00:40.000000Z\tSYM_D_junk12319993\n" +
-                                "5\t1970-01-01T00:00:50.000000Z\tSYM_E_junk9923\n" +
-                                "6\t1970-01-01T00:01:00.000000Z\tSYM_A\n" +
-                                "7\t1970-01-01T00:01:10.000000Z\t\n" +
-                                "8\t1970-01-01T00:01:20.000000Z\tSYM_C_junk123123123123\n" +
-                                "9\t1970-01-01T00:01:30.000000Z\t\n" +
+            TestUtils.LeakProneCode checkData = () -> assertQueryNoLeakCheck(
+                    "id\tts\tname\n" +
+                            "0\t1970-01-01T00:00:00.000000Z\tSYM_A\n" +
+                            "1\t1970-01-01T00:00:10.000000Z\tSYM_A\n" +
+                            "2\t1970-01-01T00:00:20.000000Z\tSYM_B_junk123\n" +
+                            "3\t1970-01-01T00:00:30.000000Z\tSYM_C_junk123123123123\n" +
+                            "4\t1970-01-01T00:00:40.000000Z\tSYM_D_junk12319993\n" +
+                            "5\t1970-01-01T00:00:50.000000Z\tSYM_E_junk9923\n" +
+                            "6\t1970-01-01T00:01:00.000000Z\tSYM_A\n" +
+                            "7\t1970-01-01T00:01:10.000000Z\t\n" +
+                            "8\t1970-01-01T00:01:20.000000Z\tSYM_C_junk123123123123\n" +
+                            "9\t1970-01-01T00:01:30.000000Z\t\n" +
 
-                                "10\t1970-01-02T00:00:00.000000Z\tSYM_B_junk123\n" +
-                                "11\t1970-01-02T00:00:10.000000Z\t\n" +
-                                "12\t1970-01-02T00:00:20.000000Z\tSYM_B_junk123\n" +
-                                "13\t1970-01-02T00:00:30.000000Z\tSYM_B_junk123\n" +
-                                "14\t1970-01-02T00:00:40.000000Z\tSYM_B_junk123\n" +
-                                "15\t1970-01-02T00:00:50.000000Z\t\n" +
-                                "16\t1970-01-02T00:01:00.000000Z\t\n" +
-                                "17\t1970-01-02T00:01:10.000000Z\tSYM_D_junk12319993\n" +
-                                "18\t1970-01-02T00:01:20.000000Z\t\n" +
-                                "19\t1970-01-02T00:01:30.000000Z\t\n" +
+                            "10\t1970-01-02T00:00:00.000000Z\tSYM_B_junk123\n" +
+                            "11\t1970-01-02T00:00:10.000000Z\t\n" +
+                            "12\t1970-01-02T00:00:20.000000Z\tSYM_B_junk123\n" +
+                            "13\t1970-01-02T00:00:30.000000Z\tSYM_B_junk123\n" +
+                            "14\t1970-01-02T00:00:40.000000Z\tSYM_B_junk123\n" +
+                            "15\t1970-01-02T00:00:50.000000Z\t\n" +
+                            "16\t1970-01-02T00:01:00.000000Z\t\n" +
+                            "17\t1970-01-02T00:01:10.000000Z\tSYM_D_junk12319993\n" +
+                            "18\t1970-01-02T00:01:20.000000Z\t\n" +
+                            "19\t1970-01-02T00:01:30.000000Z\t\n" +
 
-                                "20\t1970-01-03T00:00:00.000000Z\tSYM_A\n" +
-                                "21\t1970-01-03T00:00:10.000000Z\tSYM_A\n" +
-                                "22\t1970-01-03T00:00:20.000000Z\tSYM_A\n" +
-                                "23\t1970-01-03T00:00:30.000000Z\tSYM_A\n" +
-                                "24\t1970-01-03T00:00:40.000000Z\tSYM_E_junk9923\n" +
-                                "25\t1970-01-03T00:00:50.000000Z\tSYM_E_junk9923\n" +
-                                "26\t1970-01-03T00:01:00.000000Z\tSYM_E_junk9923\n",
-                        "x",
-                        "ts",
-                        true,
-                        true);
-            };
+                            "20\t1970-01-03T00:00:00.000000Z\tSYM_A\n" +
+                            "21\t1970-01-03T00:00:10.000000Z\tSYM_A\n" +
+                            "22\t1970-01-03T00:00:20.000000Z\tSYM_A\n" +
+                            "23\t1970-01-03T00:00:30.000000Z\tSYM_A\n" +
+                            "24\t1970-01-03T00:00:40.000000Z\tSYM_E_junk9923\n" +
+                            "25\t1970-01-03T00:00:50.000000Z\tSYM_E_junk9923\n" +
+                            "26\t1970-01-03T00:01:00.000000Z\tSYM_E_junk9923\n",
+                    "x",
+                    "ts",
+                    true,
+                    true
+            );
 
             checkData.run();
 

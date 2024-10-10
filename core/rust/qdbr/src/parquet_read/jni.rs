@@ -92,7 +92,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_getRowGroupStats(
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_readRowGroupStats(
     mut env: JNIEnv,
     _class: JClass,
     decoder: *mut ParquetDecoder<NonOwningFile>,
@@ -113,12 +113,29 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     let columns = unsafe { slice::from_raw_parts(columns, column_count as usize) };
 
     let res = validate_jni_column_types(columns).and_then(|()| {
-        decoder.update_column_chunk_stats(row_group_stat_bufs, columns, row_group_index)
+        decoder.read_column_chunk_stats(row_group_stat_bufs, columns, row_group_index)
     });
 
     match res {
         Ok(_) => {}
-        Err(err) => utils::throw_java_ex(&mut env, "getRowGroupStats", &err),
+        Err(err) => utils::throw_java_ex(&mut env, "readRowGroupStats", &err),
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_timestampAt(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *mut ParquetDecoder<NonOwningFile>,
+    column_index: u32,
+    row_index: u64,
+) -> i64 {
+    assert!(!decoder.is_null(), "decoder pointer is null");
+
+    let decoder = unsafe { &mut *decoder };
+    match decoder.timestamp_at(column_index, row_index) {
+        Ok(v) => v,
+        Err(err) => utils::throw_java_ex(&mut env, "timestampAt", &err),
     }
 }
 
@@ -327,4 +344,20 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStat
     _class: JClass,
 ) -> usize {
     offset_of!(ColumnChunkStats, min_value_size)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_maxValuePtrOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ColumnChunkStats, max_value_ptr)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_maxValueSizeOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ColumnChunkStats, max_value_size)
 }

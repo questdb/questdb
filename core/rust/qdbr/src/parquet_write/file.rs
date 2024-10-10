@@ -22,7 +22,7 @@ use crate::POOL;
 use rayon::prelude::*;
 
 const DEFAULT_PAGE_SIZE: usize = 1024 * 1024;
-const DEFAULT_ROW_GROUP_SIZE: usize = 512 * 512;
+const DEFAULT_ROW_GROUP_SIZE: usize = 100_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WriteOptions {

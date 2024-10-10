@@ -63,7 +63,7 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
                     parquetDecoder.of(fd);
                     rowLo = 0;
                     rowGroupIndex = 0;
-                    rowGroupCount = parquetDecoder.getMetadata().rowGroupCount();
+                    rowGroupCount = parquetDecoder.metadata().rowGroupCount();
                     return prepareParquetFrame();
                 }
 
@@ -101,7 +101,7 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
         frame.parquetFd = parquetDecoder.getFd();
         frame.rowGroupLo = 0;
         frame.rowLo = rowLo;
-        frame.rowHi = rowLo + parquetDecoder.getMetadata().rowGroupSize(rowGroupIndex);
+        frame.rowHi = rowLo + parquetDecoder.metadata().rowGroupSize(rowGroupIndex);
         rowLo = frame.rowHi;
         if (++rowGroupIndex == rowGroupCount) {
             // Proceed to the next partition on the next call.

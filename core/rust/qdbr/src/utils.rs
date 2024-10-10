@@ -15,6 +15,12 @@ impl DefaultReturn for u32 {
     }
 }
 
+impl DefaultReturn for i64 {
+    fn default_return() -> Self {
+        0
+    }
+}
+
 impl DefaultReturn for usize {
     fn default_return() -> Self {
         0
