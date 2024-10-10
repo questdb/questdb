@@ -60,6 +60,69 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     }
 
     @Test
+    public void testInsertAfterDropAndRecreate() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("create table insert_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
+            }
+            mayDrainWalQueue();
+
+            try (PreparedStatement insertStatement = connection.prepareStatement("insert into insert_after_drop values (?, 0, '1990-01-01')")) {
+                insertStatement.setLong(1, 42);
+                Assert.assertEquals(1, insertStatement.executeUpdate());
+                mayDrainWalQueue();
+
+                try (Statement stmt = connection.createStatement()) {
+                    stmt.execute("drop table insert_after_drop");
+                    stmt.execute("create table insert_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
+                }
+                mayDrainWalQueue();
+
+                insertStatement.setLong(1, 43);
+                Assert.assertEquals(1, insertStatement.executeUpdate());
+                mayDrainWalQueue();
+
+                // assert it's actually written
+                assertSql("id\tval\tts\n" +
+                                "43\t0\t1990-01-01T00:00:00.000000Z\n",
+                        "select * from insert_after_drop");
+            }
+        });
+    }
+
+    @Test
+    public void testInsertAllAfterColNameChange() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("create table insert_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
+            }
+            mayDrainWalQueue();
+
+            try (PreparedStatement insertStatement = connection.prepareStatement("insert into insert_after_drop values (?, 0, '1990-01-01')")) {
+                insertStatement.setLong(1, 42);
+                Assert.assertEquals(1, insertStatement.executeUpdate());
+
+                mayDrainWalQueue();
+
+                try (Statement stmt = connection.createStatement()) {
+                    stmt.execute("drop table insert_after_drop");
+                    stmt.execute("create table insert_after_drop(id long, val2 int, ts timestamp) timestamp(ts) partition by YEAR");
+                }
+                mayDrainWalQueue();
+
+                insertStatement.setLong(1, 43);
+                Assert.assertEquals(1, insertStatement.executeUpdate());
+                mayDrainWalQueue();
+
+                // assert it's actually written
+                assertSql("id\tval2\tts\n" +
+                                "43\t0\t1990-01-01T00:00:00.000000Z\n",
+                        "select * from insert_after_drop");
+            }
+        });
+    }
+
+    @Test
     public void testPreparedStatement_selectScenario() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.prepareStatement("create table x as" +
