@@ -61,7 +61,6 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testPreparedStatement_selectScenario() throws Exception {
-        assumeModern(); // legacy code has a bug
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.prepareStatement("create table x as" +
                     " (select 2 id, 'foobar' str, timestamp_sequence(1,10000) ts from long_sequence(1))" +
@@ -137,7 +136,6 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectPreparedStatement_columnWithBindVariableDropped() throws Exception {
-        assumeModern(); // legacy code has a bug
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.prepareStatement("create table x as" +
                     " (select 2 id, 'foobar' str, timestamp_sequence(1,10000) ts from long_sequence(1))" +
@@ -262,7 +260,6 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectTwoColsPreparedThenColAdded() throws Exception {
-        assumeModern();
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (CallableStatement st1 = connection.prepareCall("create table y as (" +
                     "select timestamp_sequence(0, 1000000000) timestamp," +
