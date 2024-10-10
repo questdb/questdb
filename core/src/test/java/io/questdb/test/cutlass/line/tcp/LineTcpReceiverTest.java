@@ -543,15 +543,16 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
     public void testInvalidZeroSignature() throws Exception {
         test(AUTH_KEY_ID1, 768, 100, true, () -> {
             PlainTcpLineChannel channel = new PlainTcpLineChannel(NetworkFacadeImpl.INSTANCE, Net.parseIPv4("127.0.0.1"), bindPort, 4096);
-            LineTcpSender sender = new LineTcpSender(channel, 4096) {
+            try (LineTcpSender sender = new LineTcpSender(channel, 4096) {
                 @Override
                 protected byte[] signAndEncode(PrivateKey privateKey, byte[] challengeBytes) {
                     byte[] rawSignature = new byte[64];
                     return Base64.getEncoder().encode(rawSignature);
                 }
-            };
-            sender.authenticate(AUTH_KEY_ID1, null);
-            return sender;
+            }) {
+                sender.authenticate(AUTH_KEY_ID1, null);
+                return sender;
+            }
         });
     }
 
@@ -1939,7 +1940,12 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                 () -> {
                     AbstractLineSender sender = LineTcpSender.newSender(Net.parseIPv4("127.0.0.1"), bindPort, 4096);
                     if (authKeyId != null) {
-                        sender.authenticate(authKeyId, authPrivateKey);
+                        try {
+                            sender.authenticate(authKeyId, authPrivateKey);
+                        } catch (Throwable t) {
+                            Misc.free(sender);
+                            throw t;
+                        }
                     }
                     return sender;
                 }
@@ -2022,7 +2028,10 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         }
                     } finally {
                         for (AbstractLineSender sender : senders) {
-                            sender.close();
+                            try {
+                                sender.close();
+                            } catch (Throwable ignore) {
+                            }
                         }
                     }
 

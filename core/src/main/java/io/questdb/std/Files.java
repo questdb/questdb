@@ -342,6 +342,7 @@ public final class Files {
 
     public static long mmap(long fd, long len, long offset, int flags, int memoryTag) {
         long address = mmap0(toOsFd(fd), len, offset, flags, 0);
+        AllocationsTracker.onMalloc(address, len);
         if (address != -1) {
             Unsafe.recordMemAlloc(len, memoryTag);
         }
@@ -357,8 +358,10 @@ public final class Files {
                     .put(']');
         }
 
+        AllocationsTracker.onFree(address);
         address = mremap0(toOsFd(fd), address, previousSize, newSize, offset, flags);
         if (address != -1) {
+            AllocationsTracker.onMalloc(address, newSize);
             Unsafe.recordMemAlloc(newSize - previousSize, memoryTag);
         }
         return address;
@@ -367,8 +370,11 @@ public final class Files {
     public static native int msync(long addr, long len, boolean async);
 
     public static void munmap(long address, long len, int memoryTag) {
-        if (address != 0 && munmap0(address, len) != -1) {
-            Unsafe.recordMemAlloc(-len, memoryTag);
+        if (address != 0) {
+            AllocationsTracker.onFree(address);
+            if (munmap0(address, len) != -1) {
+                Unsafe.recordMemAlloc(-len, memoryTag);
+            }
         }
     }
 

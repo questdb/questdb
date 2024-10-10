@@ -86,7 +86,7 @@ public class GroupByLong256HashSet {
         setKeyAt(index, k0, k1, k2, k3);
         int size = size();
         int sizeLimit = sizeLimit();
-        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, ++size);
+        Unsafe.putInt(ptr + SIZE_OFFSET, ++size);
         if (size >= sizeLimit) {
             rehash(capacity() << 1, sizeLimit << 1);
         }
@@ -136,9 +136,9 @@ public class GroupByLong256HashSet {
         if (ptr == 0) {
             this.ptr = allocator.malloc(HEADER_SIZE + 32L * initialCapacity);
             zero(this.ptr, initialCapacity);
-            Unsafe.getUnsafe().putInt(this.ptr, initialCapacity);
-            Unsafe.getUnsafe().putInt(this.ptr + SIZE_OFFSET, 0);
-            Unsafe.getUnsafe().putInt(this.ptr + SIZE_LIMIT_OFFSET, (int) (initialCapacity * loadFactor));
+            Unsafe.putInt(this.ptr, initialCapacity);
+            Unsafe.putInt(this.ptr + SIZE_OFFSET, 0);
+            Unsafe.putInt(this.ptr + SIZE_LIMIT_OFFSET, (int) (initialCapacity * loadFactor));
             mask = initialCapacity - 1;
         } else {
             this.ptr = ptr;
@@ -198,9 +198,9 @@ public class GroupByLong256HashSet {
         long oldPtr = ptr;
         ptr = allocator.malloc(32L * newCapacity + HEADER_SIZE);
         zero(ptr, newCapacity);
-        Unsafe.getUnsafe().putInt(ptr, newCapacity);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, oldSize);
-        Unsafe.getUnsafe().putInt(ptr + SIZE_LIMIT_OFFSET, newSizeLimit);
+        Unsafe.putInt(ptr, newCapacity);
+        Unsafe.putInt(ptr + SIZE_OFFSET, oldSize);
+        Unsafe.putInt(ptr + SIZE_LIMIT_OFFSET, newSizeLimit);
         mask = newCapacity - 1;
 
         for (long p = oldPtr + HEADER_SIZE, lim = oldPtr + HEADER_SIZE + 32L * oldCapacity; p < lim; p += 32L) {
@@ -219,22 +219,22 @@ public class GroupByLong256HashSet {
 
     private void setKeyAt(long index, long k0, long k1, long k2, long k3) {
         long p = keyAddrAt(index);
-        Unsafe.getUnsafe().putLong(p, k0);
-        Unsafe.getUnsafe().putLong(p + 8L, k1);
-        Unsafe.getUnsafe().putLong(p + 16L, k2);
-        Unsafe.getUnsafe().putLong(p + 24L, k3);
+        Unsafe.putLong(p, k0);
+        Unsafe.putLong(p + 8L, k1);
+        Unsafe.putLong(p + 16L, k2);
+        Unsafe.putLong(p + 24L, k3);
     }
 
     private void zero(long ptr, int cap) {
         if (noKeyValue == 0) {
             // Vectorized fast path for zero default value.
-            Vect.memset(ptr + HEADER_SIZE, 32L * cap, 0);
+            Vect.memsetChecked(ptr + HEADER_SIZE, 32L * cap, 0);
         } else {
             for (long p = ptr + HEADER_SIZE, lim = ptr + HEADER_SIZE + 32L * cap; p < lim; p += 32L) {
-                Unsafe.getUnsafe().putLong(p, noKeyValue);
-                Unsafe.getUnsafe().putLong(p + 8L, noKeyValue);
-                Unsafe.getUnsafe().putLong(p + 16L, noKeyValue);
-                Unsafe.getUnsafe().putLong(p + 24L, noKeyValue);
+                Unsafe.putLong(p, noKeyValue);
+                Unsafe.putLong(p + 8L, noKeyValue);
+                Unsafe.putLong(p + 16L, noKeyValue);
+                Unsafe.putLong(p + 24L, noKeyValue);
             }
         }
     }

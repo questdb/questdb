@@ -170,7 +170,7 @@ class WalEventWriter implements Closeable {
     }
 
     private void appendIndex(long value) {
-        Unsafe.getUnsafe().putLong(longBuffer, value);
+        Unsafe.putLong(longBuffer, value);
         ff.append(indexFd, longBuffer, Long.BYTES);
     }
 

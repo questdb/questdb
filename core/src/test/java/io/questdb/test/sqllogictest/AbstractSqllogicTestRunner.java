@@ -24,7 +24,10 @@
 
 package io.questdb.test.sqllogictest;
 
-import io.questdb.std.*;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Misc;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -164,6 +167,7 @@ public abstract class AbstractSqllogicTestRunner extends AbstractBootstrapTest {
             serverMain.reset();
             removeNonSystemTables(root + Files.SEPARATOR + "db");
         }
+        Path.clearThreadLocals();
     }
 
     @Test

@@ -69,7 +69,7 @@ public class MemCopyBenchmark {
 
     @Benchmark
     public void testAMemSet() {
-        Vect.memset(mem1, len, 0);
+        Vect.memsetChecked(mem1, len, 0);
     }
 
     @Benchmark

@@ -3292,11 +3292,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCursorInSelectNotAliased() throws SqlException {
-        assertQuery(
-                "select-virtual pg_class, pg_class . n column from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1)",
-                "select pg_catalog.pg_class(), (pg_catalog.pg_class()).n from long_sequence(2)"
-        );
+    public void testCursorInSelectNotAliased() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery(
+                    "select-virtual pg_class, pg_class . n column from (long_sequence(2) cross join select-cursor [pg_catalog.pg_class() pg_class] pg_catalog.pg_class() pg_class from (pg_catalog.pg_class()) _xQdbA1)",
+                    "select pg_catalog.pg_class(), (pg_catalog.pg_class()).n from long_sequence(2)"
+            );
+        });
+
     }
 
     @Test

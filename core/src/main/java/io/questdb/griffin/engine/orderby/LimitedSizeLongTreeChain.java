@@ -319,8 +319,8 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     private int appendValue(long value, int prevValueOffset) {
         checkValueCapacity();
         final int offset = compressValueOffset(valueHeapPos - valueHeapStart);
-        Unsafe.getUnsafe().putLong(valueHeapPos, value);
-        Unsafe.getUnsafe().putInt(valueHeapPos + 8, prevValueOffset);
+        Unsafe.putLong(valueHeapPos, value);
+        Unsafe.putInt(valueHeapPos + 8, prevValueOffset);
         valueHeapPos += CHAIN_VALUE_SIZE;
         return offset;
     }
@@ -413,11 +413,11 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     }
 
     private void setNextValueOffset(int valueOffset, int nextValueOffset) {
-        Unsafe.getUnsafe().putInt(valueHeapStart + uncompressValueOffset(valueOffset) + 8, nextValueOffset);
+        Unsafe.putInt(valueHeapStart + uncompressValueOffset(valueOffset) + 8, nextValueOffset);
     }
 
     private void setRowId(int valueOffset, long rowId) {
-        Unsafe.getUnsafe().putLong(valueHeapStart + uncompressValueOffset(valueOffset), rowId);
+        Unsafe.putLong(valueHeapStart + uncompressValueOffset(valueOffset), rowId);
     }
 
     // if not empty - reuses most recently deleted node from freelist; otherwise allocates a new node

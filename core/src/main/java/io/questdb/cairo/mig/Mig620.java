@@ -118,7 +118,7 @@ public class Mig620 {
 
         long pageAddress = txMemory.getPageAddress(0);
         Vect.memmove(pageAddress + TX_BASE_HEADER_SIZE_MIG, pageAddress, existingTotalSize);
-        Vect.memset(pageAddress, TX_BASE_HEADER_SIZE_MIG, 0);
+        Vect.memsetChecked(pageAddress, TX_BASE_HEADER_SIZE_MIG, 0);
 
         txMemory.putLong(TX_BASE_OFFSET_VERSION_MIG, txn);
 

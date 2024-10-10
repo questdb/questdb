@@ -848,7 +848,7 @@ public final class Utf8s {
 
     public static void strCpy(@NotNull Utf8Sequence src, int destLen, long destAddr) {
         for (int i = 0; i < destLen; i++) {
-            Unsafe.getUnsafe().putByte(destAddr + i, src.byteAt(i));
+            Unsafe.putByte(destAddr + i, src.byteAt(i));
         }
     }
 
@@ -880,7 +880,7 @@ public final class Utf8s {
 
     public static void strCpyAscii(char @NotNull [] srcChars, int srcLo, int srcLen, long destAddr) {
         for (int i = 0; i < srcLen; i++) {
-            Unsafe.getUnsafe().putByte(destAddr + i, (byte) srcChars[i + srcLo]);
+            Unsafe.putByte(destAddr + i, (byte) srcChars[i + srcLo]);
         }
     }
 
@@ -895,7 +895,7 @@ public final class Utf8s {
 
     public static void strCpyAscii(@NotNull CharSequence asciiSrc, int srcLo, int srcLen, long destAddr) {
         for (int i = 0; i < srcLen; i++) {
-            Unsafe.getUnsafe().putByte(destAddr + i, (byte) asciiSrc.charAt(srcLo + i));
+            Unsafe.putByte(destAddr + i, (byte) asciiSrc.charAt(srcLo + i));
         }
     }
 

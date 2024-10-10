@@ -155,7 +155,7 @@ public class MemoryCARWImpl extends AbstractMemoryCR implements MemoryCARW, Muta
     @Override
     public void zero() {
         long baseLength = lim - pageAddress;
-        Vect.memset(pageAddress, baseLength, 0);
+        Vect.memsetChecked(pageAddress, baseLength, 0);
     }
 
     private void checkAndExtend(long address) {
