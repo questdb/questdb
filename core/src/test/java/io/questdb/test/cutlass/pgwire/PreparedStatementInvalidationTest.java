@@ -37,6 +37,8 @@ import java.sql.*;
 import java.util.Arrays;
 import java.util.Collection;
 
+import static org.junit.Assert.assertTrue;
+
 @RunWith(Parameterized.class)
 @SuppressWarnings("SqlNoDataSourceInspection")
 public class PreparedStatementInvalidationTest extends BasePGTest {
@@ -296,6 +298,44 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     }
 
     @Test
+    public void testSelectStarPreparedThenColDropped() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (CallableStatement st1 = connection.prepareCall("create table y as (" +
+                    "select timestamp_sequence(0, 1000000000) timestamp," +
+                    " rnd_symbol('a','b',null) symbol1 " +
+                    " from long_sequence(10)" +
+                    ") timestamp (timestamp) partition by YEAR")) {
+                st1.execute();
+            }
+
+            try (PreparedStatement select = connection.prepareStatement("select * from y");
+                 Statement statement = connection.createStatement()
+            ) {
+                ResultSet rs0 = select.executeQuery();
+                rs0.close();
+
+                statement.executeUpdate("alter table y drop column symbol1");
+
+                mayDrainWalQueue();
+                ResultSet rs1 = select.executeQuery();
+                sink.clear();
+                assertResultSet("timestamp[TIMESTAMP]\n" +
+                        "1970-01-01 00:00:00.0\n" +
+                        "1970-01-01 00:16:40.0\n" +
+                        "1970-01-01 00:33:20.0\n" +
+                        "1970-01-01 00:50:00.0\n" +
+                        "1970-01-01 01:06:40.0\n" +
+                        "1970-01-01 01:23:20.0\n" +
+                        "1970-01-01 01:40:00.0\n" +
+                        "1970-01-01 01:56:40.0\n" +
+                        "1970-01-01 02:13:20.0\n" +
+                        "1970-01-01 02:30:00.0\n", sink, rs1);
+                rs1.close();
+            }
+        });
+    }
+
+    @Test
     public void testSelectStarPreparedThenColNameChanges() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (CallableStatement st1 = connection.prepareCall("create table y as (" +
@@ -429,6 +469,34 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     }
 
     @Test
+    public void testSelectTwoColsPreparedThenColDropped() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (CallableStatement st1 = connection.prepareCall("create table y as (" +
+                    "select timestamp_sequence(0, 1000000000) timestamp," +
+                    " rnd_symbol('a','b',null) symbol1 " +
+                    " from long_sequence(10)" +
+                    ") timestamp (timestamp) partition by YEAR")) {
+                st1.execute();
+            }
+
+            try (PreparedStatement select = connection.prepareStatement("select timestamp, symbol1 from y");
+                 Statement statement = connection.createStatement()
+            ) {
+                ResultSet rs0 = select.executeQuery();
+                rs0.close();
+
+                statement.executeUpdate("alter table y drop column symbol1");
+                mayDrainWalQueue();
+                try (ResultSet ignored = select.executeQuery()) {
+                    Assert.fail();
+                } catch (Exception e) {
+                    assertMessageContains(e, "Invalid column: symbol1");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUpdateAfterDropAndRecreate() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
@@ -506,9 +574,17 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 stmt.executeUpdate();
                 assertExceptionNoLeakCheck("id column was dropped, the UPDATE should have failed");
             } catch (PSQLException e) {
-                TestUtils.assertContains(e.getMessage(), "Invalid column: id");
+                assertMessageContains(e, "Invalid column: id");
             }
         });
+    }
+
+    private void assertMessageContains(Exception e, String expectedSubstring) {
+        String message = e.getMessage();
+        assertTrue(
+                String.format("Exception message doesn't contain '%s'. Actual message: '%s'", expectedSubstring, message),
+                message.contains(expectedSubstring)
+        );
     }
 
     private void mayDrainWalQueue() {
