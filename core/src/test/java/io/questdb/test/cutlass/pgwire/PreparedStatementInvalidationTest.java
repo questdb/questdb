@@ -48,7 +48,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
         this.walEnabled = (walMode == WalMode.WITH_WAL);
     }
 
-    @Parameterized.Parameters(name = "{0}, {1}")
+    @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> testParams() {
         return Arrays.asList(new Object[][]{{WalMode.WITH_WAL}, {WalMode.NO_WAL}});
     }
