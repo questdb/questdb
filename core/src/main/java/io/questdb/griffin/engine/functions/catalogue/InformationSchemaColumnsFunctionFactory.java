@@ -98,8 +98,8 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
             } else {
                 checkForCacheForRefresh(engine); // otherwise check if we need to refresh any values
             }
-            // create new snapshot for the cursor to own
-            return cursor.of(executionContext);
+
+            return cursor.of();
         }
 
         @Override
@@ -136,10 +136,8 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
             private final ColumnsRecord record = new ColumnsRecord();
             private final ConcurrentHashMap<CairoTable> tableCache;
             private int columnIdx;
-            private SqlExecutionContext executionContext;
             private Iterator<Map.Entry<CharSequence, CairoTable>> iterator;
             private CairoTable table;
-
 
             private ColumnRecordCursor(ConcurrentHashMap<CairoTable> tableCache) {
                 this.tableCache = tableCache;
@@ -148,7 +146,6 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
             @Override
             public void close() {
-                executionContext = null;
                 columnIdx = -1;
             }
 
@@ -190,9 +187,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
                 if (iterator.hasNext()) {
                     table = iterator.next().getValue();
-                } else if (columnIdx == -1) {
-                    return false;
-                }
+                } else return columnIdx != -1;
 
                 return true;
             }
@@ -208,8 +203,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
                 this.iterator = tableCache.entrySet().iterator();
             }
 
-            private ColumnRecordCursor of(SqlExecutionContext sqlExecutionContext) {
-                executionContext = sqlExecutionContext;
+            private ColumnRecordCursor of() {
                 toTop();
                 return this;
             }
