@@ -340,6 +340,22 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
     }
 
     @Test
+    public void testPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x as (select * from (select rnd_symbol('a','b','c') a from long_sequence(20)))");
+            assertPlanNoLeakCheck("select a, approx_count_distinct(42) from x order by a", "Sort light\n" +
+                    "  keys: [a]\n" +
+                    "    Async Group By workers: 1\n" +
+                    "      keys: [a]\n" +
+                    "      values: [approx_count_distinct(42)]\n" +
+                    "      filter: null\n" +
+                    "        PageFrame\n" +
+                    "            Row forward scan\n" +
+                    "            Frame forward scan on: x\n");
+        });
+    }
+
+    @Test
     public void testPrecisionOutOfRange() throws Exception {
         assertException("select approx_count_distinct(x::int, 3) from long_sequence(1)", 7, "precision must be between 4 and 18");
         assertException("select approx_count_distinct(x::int, 19) from long_sequence(1)", 7, "precision must be between 4 and 18");
