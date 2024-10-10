@@ -417,6 +417,11 @@ public class JsonExtractVarcharFunctionFactoryTest extends AbstractCairoTest {
                             "1\n",
                     "select count_distinct(json_extract(text, '.list[2]')) from json_test"
             );
+            assertSql(
+                    "count_distinct\n" +
+                            "1\n",
+                    "select count(distinct json_extract(text, '.list[2]')) from json_test"
+            );
 
             assertSql(
                     "sum\n" +

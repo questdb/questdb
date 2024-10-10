@@ -227,12 +227,16 @@ public class UuidTest extends AbstractCairoTest {
             insert("insert into x values (1, cast('33333333-3333-3333-3333-333333333333' as varchar))");
             insert("insert into x values (1, cast('33333333-3333-3333-3333-333333333333' as varchar))");
 
-
+            String expected = "i\tcount_distinct\n" +
+                    "0\t2\n" +
+                    "1\t1\n";
             assertSql(
-                    "i\tcount_distinct\n" +
-                            "0\t2\n" +
-                            "1\t1\n",
+                    expected,
                     "select i, count_distinct(u) from x group by i order by i"
+            );
+            assertSql(
+                    expected,
+                    "select i, count(distinct u) from x group by i order by i"
             );
         });
     }
@@ -266,11 +270,16 @@ public class UuidTest extends AbstractCairoTest {
             insert("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
             insert("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
 
+            String expected = "i\tcount_distinct\n" +
+                    "0\t2\n" +
+                    "1\t1\n";
             assertSql(
-                    "i\tcount_distinct\n" +
-                            "0\t2\n" +
-                            "1\t1\n",
+                    expected,
                     "select i, count_distinct(u) from x group by i order by i"
+            );
+            assertSql(
+                    expected,
+                    "select i, count(distinct u) from x group by i order by i"
             );
         });
     }
@@ -285,10 +294,15 @@ public class UuidTest extends AbstractCairoTest {
             insert("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
             insert("insert into x values (1, '33333333-3333-3333-3333-333333333333')");
 
+            String expected = "count_distinct\n" +
+                    "3\n";
             assertSql(
-                    "count_distinct\n" +
-                            "3\n",
+                    expected,
                     "select count_distinct(u) from x"
+            );
+            assertSql(
+                    expected,
+                    "select count(distinct u) from x"
             );
         });
     }
