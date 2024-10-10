@@ -71,14 +71,17 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         setProperty(CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
         // We intentionally use a small capacity for the reduce queue to exhibit various edge cases.
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, QUEUE_CAPACITY);
-        // 0 means max timeout (Long.MAX_VALUE millis)
-        setProperty(PropertyKey.QUERY_TIMEOUT_SEC, 0);
+
+        circuitBreakerConfiguration = null;
+        circuitBreaker = Misc.free(circuitBreaker);
 
         AbstractCairoTest.setUpStatic();
     }
 
     @Override
     public void setUp() {
+        // 0 means max timeout (Long.MAX_VALUE millis)
+        node1.setProperty(PropertyKey.QUERY_TIMEOUT_SEC, 0);
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
