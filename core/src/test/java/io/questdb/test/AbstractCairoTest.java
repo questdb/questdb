@@ -2014,6 +2014,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return TestUtils.newOffPoolWriter(configuration, engine.verifyTableName(tableName), metrics, messageBus, engine);
     }
 
+    protected String printSqlToString(CharSequence sql) throws SqlException {
+        return TestUtils.printSqlToString(engine, sqlExecutionContext, sql, sink);
+    }
+
     protected TableToken registerTableName(CharSequence tableName) {
         TableToken token = engine.lockTableName(tableName, false);
         if (token != null) {

@@ -32,9 +32,10 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.time.Instant;
 import java.util.concurrent.atomic.AtomicInteger;
 
-// todo: fuzzers!
+
 public class CairoMetadataCacheTest extends AbstractCairoTest {
 
     private static final String xMetaString = "MetadataCache [tableCount=1]\n" +
@@ -162,7 +163,19 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
         fooToBahThread.start();
         bahToFooThread.start();
 
-        Thread.sleep(2_000);
+        Instant i = Instant.now();
+
+        String s;
+        // should only ever contain one or the other
+        // check that `tables()` gives consistent view
+        while (Instant.now().getEpochSecond() - i.getEpochSecond() < 2) {
+            s = printSqlToString("tables()");
+            try {
+                Assert.assertTrue(s.contains("foo\t") ^ s.contains("bah\t"));
+            } catch (AssertionError err) {
+                throw err;
+            }
+        }
 
         fooToBahThread.interrupt();
         bahToFooThread.interrupt();
@@ -691,5 +704,9 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
             counter.incrementAndGet();
             Thread.sleep(50);
         }
+    }
+
+    protected static boolean metadataCacheContains(String expectedToContain) {
+        return engine.metadataCacheToString0().contains(expectedToContain);
     }
 }
