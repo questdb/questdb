@@ -1097,15 +1097,15 @@ public class PGPipelineEntry implements QuietCloseable {
             ObjectPool<DirectBinarySequence> binarySequenceParamsPool,
             WeakSelfReturningObjectPool<TypesAndInsertModern> taiPool
     ) throws SqlException, BadProtocolException {
-        InsertMethod m;
         switch (transactionState) {
-            case IN_TRANSACTION:
+            case IN_TRANSACTION: {
                 copyParameterValuesToBindVariableService(
                         sqlExecutionContext,
                         characterStore,
                         utf8String,
                         binarySequenceParamsPool
                 );
+                InsertMethod m;
                 for (int attempt = 1; ; attempt++) {
                     try {
                         m = insertOp.createMethod(sqlExecutionContext, writerSource);
@@ -1128,40 +1128,40 @@ public class PGPipelineEntry implements QuietCloseable {
                         compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
                     }
                 }
-                break;
+            }
+            break;
             case ERROR_TRANSACTION:
                 // when transaction is in error state, skip execution
                 break;
-            default:
+            default: {
                 // in any other case we will commit in place
-                try {
-                    copyParameterValuesToBindVariableService(
-                            sqlExecutionContext,
-                            characterStore,
-                            utf8String,
-                            binarySequenceParamsPool
-                    );
-                    m = insertOp.createMethod(sqlExecutionContext, writerSource);
-                } catch (TableReferenceOutOfDateException e) {
-                    tai.close();
-                    taiPool.push(tai);
-                    compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
-                    copyParameterValuesToBindVariableService(
-                            sqlExecutionContext,
-                            characterStore,
-                            utf8String,
-                            binarySequenceParamsPool
-                    );
-                    m = insertOp.createMethod(sqlExecutionContext, writerSource);
+                for (int attempt = 1; ; attempt++) {
+                    try {
+                        copyParameterValuesToBindVariableService(
+                                sqlExecutionContext,
+                                characterStore,
+                                utf8String,
+                                binarySequenceParamsPool
+                        );
+                        try (final InsertMethod m2 = insertOp.createMethod(sqlExecutionContext, writerSource)) {
+                            sqlAffectedRowCount = m2.execute();
+                            m2.commit();
+                        }
+                        if (tai.hasBindVariables()) {
+                            taiCache.put(sqlText, tai);
+                        }
+                        break;
+                    } catch (TableReferenceOutOfDateException e) {
+                        if (attempt == maxRecompileAttempts) {
+                            throw e;
+                        }
+                        tai.close();
+                        taiPool.push(tai);
+                        compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
+                    }
                 }
-                try (final InsertMethod m2 = m) {
-                    sqlAffectedRowCount = m2.execute();
-                    m2.commit();
-                }
-                if (tai.hasBindVariables()) {
-                    taiCache.put(sqlText, tai);
-                }
-                break;
+            }
+            break;
         }
     }
 
@@ -1176,6 +1176,7 @@ public class PGPipelineEntry implements QuietCloseable {
             sqlExecutionContext.getCircuitBreaker().resetTimer();
             sqlExecutionContext.setCacheHit(cacheHit);
             try {
+                RecordMetadata oldMeta = factory.getMetadata();
                 for (int attempt = 1; ; attempt++) {
                     try {
                         copyParameterValuesToBindVariableService(
@@ -1192,7 +1193,6 @@ public class PGPipelineEntry implements QuietCloseable {
                         }
                         cacheHit = false;
                         sqlExecutionContext.setCacheHit(false);
-                        RecordMetadata oldMeta = factory.getMetadata();
                         factory.close();
                         pgResultSetColumnTypes.clear();
                         compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool);
