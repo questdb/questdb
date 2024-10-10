@@ -1458,6 +1458,8 @@ public class CairoEngine implements Closeable, WriterSource {
                     } finally {
                         if (renamed) {
                             tableNameRegistry.rename(fromTableToken, toTableToken);
+                            metadataCacheRemoveTable(fromTableName);
+                            metadataCacheHydrateTable(toTableName, true, true);
                         } else {
                             LOG.info()
                                     .$("failed to rename table [from=").utf8(fromTableName)
@@ -1478,6 +1480,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 if (lockedReason == null) {
                     try {
                         toTableToken = rename0(fromPath, fromTableToken, toPath, toTableName);
+                        metadataCacheHydrateTable(toTableName, true, true);
                         TableUtils.overwriteTableNameFile(
                                 fromPath.of(configuration.getRoot()).concat(toTableToken),
                                 memory,
@@ -1488,6 +1491,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         unlock(securityContext, fromTableToken, null, false);
                     }
                     tableNameRegistry.dropTable(fromTableToken);
+                    metadataCacheRemoveTable(fromTableName);
                 } else {
                     LOG.error()
                             .$("could not lock and rename [from=").utf8(fromTableName)

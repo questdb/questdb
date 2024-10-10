@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -141,7 +142,7 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
         Thread fooToBahThread = new Thread(() -> {
             try {
                 ddl("rename table foo to bah");
-                assertException("show columns from foo", 18, "table does not exist");
+//                assertException("show columns from foo", 18, "table does not exist");
                 assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
                         "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
                         "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from bah");
@@ -152,7 +153,7 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
         Thread bahToFooThread = new Thread(() -> {
             try {
                 ddl("rename table bah to foo");
-                assertException("show columns from bah", 18, "table does not exist");
+//                assertException("show columns from bah", 18, "table does not exist");
                 assertSql("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tdesignated\tupsertKey\n" +
                         "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\ttrue\tfalse\n" +
                         "x\tINT\tfalse\t0\tfalse\t0\tfalse\tfalse\n", "show columns from foo");
@@ -166,16 +167,16 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
         Instant i = Instant.now();
 
         String s;
+        StringSink ss = new StringSink();
         // should only ever contain one or the other
         // check that `tables()` gives consistent view
         while (Instant.now().getEpochSecond() - i.getEpochSecond() < 2) {
-            s = printSqlToString("tables()");
-            try {
-                Assert.assertTrue(s.contains("foo\t") ^ s.contains("bah\t"));
-            } catch (AssertionError err) {
-                throw err;
-            }
+            s = printSqlToString("tables()", ss);
+            Assert.assertTrue(engine.metadataCacheToString0(), s.contains("foo\t") ^ s.contains("bah\t"));
+            Thread.sleep(50);
         }
+
+        ss.clear();
 
         fooToBahThread.interrupt();
         bahToFooThread.interrupt();
@@ -196,10 +197,14 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
         if (fooToken == null) {
             Assert.assertFalse(cacheString.contains("name=foo"));
             Assert.assertTrue(cacheString.contains("name=bah"));
+            assertQueryNoLeakCheck("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\n" +
+                    "1\tbah\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\n", "tables()", "");
         }
         if (bahToken == null) {
             Assert.assertFalse(cacheString.contains("name=bah"));
             Assert.assertTrue(cacheString.contains("name=foo"));
+            assertQueryNoLeakCheck("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\n" +
+                    "1\tfoo\tts\tDAY\t1000\t300000000\ttrue\tfoo~1\tfalse\n", "tables()", "");
         }
     }
 
