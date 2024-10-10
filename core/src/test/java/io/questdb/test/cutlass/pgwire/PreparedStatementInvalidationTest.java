@@ -185,6 +185,37 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     }
 
     @Test
+    public void testInsertSpecificAfterColNameChange() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("create table insert_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
+            }
+            mayDrainWalQueue();
+
+            try (PreparedStatement insertStatement = connection.prepareStatement("insert into insert_after_drop (id, val, ts) values (?, 0, '1990-01-01')")) {
+                insertStatement.setLong(1, 42);
+                Assert.assertEquals(1, insertStatement.executeUpdate());
+
+                mayDrainWalQueue();
+
+                try (Statement stmt = connection.createStatement()) {
+                    stmt.execute("alter table insert_after_drop drop column val");
+                    stmt.execute("alter table insert_after_drop add column val2 int");
+                }
+                mayDrainWalQueue();
+
+                insertStatement.setLong(1, 43);
+                try {
+                    insertStatement.executeUpdate();
+                    Assert.fail("val column was dropped, the INSERT should have failed");
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "Invalid column: val");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPreparedStatement_selectScenario() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.prepareStatement("create table x as" +
