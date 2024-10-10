@@ -493,47 +493,53 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPositiveLimit() throws Exception {
-        withPool((engine, compiler, sqlExecutionContext) -> {
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-            compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
-            final String sql = "x where a > 0.345747032 and a < 0.34575 limit 5";
-            try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
-                Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getBaseFactory().getClass());
-            }
+        try(SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper()) {
+            wrapper.init(new AtomicBooleanCircuitBreaker());
+            withPool((engine, compiler, sqlExecutionContext) -> {
+                sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
+                final String sql = "x where a > 0.345747032 and a < 0.34575 limit 5";
+                try (RecordCursorFactory f = (compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory())) {
+                    Assert.assertEquals(AsyncFilteredRecordCursorFactory.class, f.getBaseFactory().getClass());
+                }
 
-            assertQueryNoLeakCheck(
-                    compiler,
-                    "a\tt\n" +
-                            "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
-                            "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
-                            "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
-                            "0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
-                    sql,
-                    "t",
-                    true,
-                    sqlExecutionContext,
-                    false
-            );
-        }, new AtomicBooleanCircuitBreaker());
+                assertQueryNoLeakCheck(
+                        compiler,
+                        "a\tt\n" +
+                                "0.34574819315105954\t1970-01-01T15:03:20.500000Z\n" +
+                                "0.34574734261660356\t1970-01-02T02:14:37.600000Z\n" +
+                                "0.34574784156471083\t1970-01-02T08:17:06.600000Z\n" +
+                                "0.34574958643398823\t1970-01-02T20:31:57.900000Z\n",
+                        sql,
+                        "t",
+                        true,
+                        sqlExecutionContext,
+                        false
+                );
+            }, wrapper);
+        }
     }
 
     @Test
     public void testPositiveLimitGroupBy() throws Exception {
-        withPool((engine, compiler, sqlExecutionContext) -> {
-            compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
-            final String sql = "select sum(a) from (x where a > 0.345747032 and a < 0.34575 limit 5)";
+        try(SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper()) {
+            wrapper.init(new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB1));
+            withPool((engine, compiler, sqlExecutionContext) -> {
+                compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
+                final String sql = "select sum(a) from (x where a > 0.345747032 and a < 0.34575 limit 5)";
 
-            assertQueryNoLeakCheck(
-                    compiler,
-                    "sum\n" +
-                            "1.382992963766362\n",
-                    sql,
-                    null,
-                    false,
-                    sqlExecutionContext,
-                    true
-            );
-        }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB1));
+                assertQueryNoLeakCheck(
+                        compiler,
+                        "sum\n" +
+                                "1.382992963766362\n",
+                        sql,
+                        null,
+                        false,
+                        sqlExecutionContext,
+                        true
+                );
+            }, wrapper);
+        }
     }
 
     @Test
@@ -608,6 +614,13 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
             resetTaskCapacities();
         }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB1));
+    }
+
+    private static Class<?> getClass(SqlExecutionCircuitBreaker circuitBreaker) {
+        if (circuitBreaker instanceof SqlExecutionCircuitBreakerWrapper) {
+            return getClass(((SqlExecutionCircuitBreakerWrapper) circuitBreaker).getDelegate());
+        }
+        return circuitBreaker.getClass();
     }
 
     private void resetTaskCapacities() {
@@ -920,7 +933,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     final PageFrameReduceJob job = pageFrameReduceJobs.getQuick(i);
                     // if the job was never used the circuit breaker is null,
                     // if the job was used the type of the circuit breaker has to match with the one from SqlExecutionContext
-                    assert job.getCircuitBreaker() == null || job.getCircuitBreaker().getClass() == circuitBreaker.getClass();
+                    assert job.getCircuitBreaker() == null || getClass(job.getCircuitBreaker()) == getClass(circuitBreaker);
                 }
             } catch (Throwable e) {
                 e.printStackTrace(System.out);
