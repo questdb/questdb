@@ -493,7 +493,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPositiveLimit() throws Exception {
-        try(SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper()) {
+        try (SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper()) {
             wrapper.init(new AtomicBooleanCircuitBreaker());
             withPool((engine, compiler, sqlExecutionContext) -> {
                 sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
@@ -522,7 +522,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPositiveLimitGroupBy() throws Exception {
-        try(SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper()) {
+        try (SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper()) {
             wrapper.init(new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB1));
             withPool((engine, compiler, sqlExecutionContext) -> {
                 compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
