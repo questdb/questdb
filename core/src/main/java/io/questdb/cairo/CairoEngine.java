@@ -979,6 +979,10 @@ public class CairoEngine implements Closeable, WriterSource {
         cairoTables.clear();
     }
 
+    public void metadataCacheCopyMap(ConcurrentHashMap<CairoTable> target) {
+        target.putAll(cairoTables);
+    }
+
     /**
      * Gets the current table metadata object from the list.
      * <p>

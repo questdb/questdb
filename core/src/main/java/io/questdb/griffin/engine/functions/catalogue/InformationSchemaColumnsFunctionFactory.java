@@ -25,11 +25,14 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoColumn;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -39,17 +42,20 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
-import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
+import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.IntList;
-import io.questdb.std.Misc;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 
+import java.util.Iterator;
+import java.util.Map;
+
 import static io.questdb.griffin.engine.functions.catalogue.TablesFunctionFactory.TablesCursorFactory;
-import static io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory.ShowColumnsCursor;
 
 public class InformationSchemaColumnsFunctionFactory implements FunctionFactory {
     public static final RecordMetadata METADATA;
     public static final String SIGNATURE = "information_schema.columns()";
+
 
     @Override
     public String getSignature() {
@@ -72,15 +78,27 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
         return new CursorFunction(new ColumnsCursorFactory());
     }
 
+
     private static class ColumnsCursorFactory extends AbstractRecordCursorFactory {
-        private final ColumnRecordCursor cursor = new ColumnRecordCursor();
+        private final ColumnRecordCursor cursor;
+        private final ConcurrentHashMap<CairoTable> tableCache = new ConcurrentHashMap<>();
+        ObjHashSet<TableToken> tableTokenSet = new ObjHashSet<>();
+
 
         private ColumnsCursorFactory() {
             super(METADATA);
+            this.cursor = new ColumnRecordCursor(tableCache);
         }
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            final CairoEngine engine = executionContext.getCairoEngine();
+            if (tableCache.isEmpty()) {
+                engine.metadataCacheCopyMap(tableCache); // initialise the first time this factory is created
+            } else {
+                checkForCacheForRefresh(engine); // otherwise check if we need to refresh any values
+            }
+            // create new snapshot for the cursor to own
             return cursor.of(executionContext);
         }
 
@@ -94,26 +112,43 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
             sink.type(SIGNATURE);
         }
 
+        private void checkForCacheForRefresh(CairoEngine engine) {
+            engine.getTableTokens(tableTokenSet, false);
+            ObjList<TableToken> tokens = tableTokenSet.getList();
+            for (int i = 0, n = tokens.size(); i < n; i++) {
+                TableToken token = tokens.getQuick(i);
+                CairoTable cachedTable = tableCache.get(token.getTableName());
+                CairoTable latestTable = engine.metadataCacheGetTable(token);
+                if (latestTable == null) {
+                    tableCache.remove(cachedTable.getTableName());
+                } else if (cachedTable.getMetadataVersion() < latestTable.getMetadataVersion()) {
+                    tableCache.put(cachedTable.getTableName(), latestTable);
+                } else if (cachedTable.getMetadataVersion() > latestTable.getMetadataVersion()) {
+                    throw new RuntimeException("disordered metadata versions");
+                } else {
+                    assert cachedTable.getMetadataVersion() == latestTable.getMetadataVersion();
+                    // otherwise its up to date, so we loop
+                }
+            }
+        }
+
         private static class ColumnRecordCursor implements NoRandomAccessRecordCursor {
-            private final AllTablesFunctionFactory.AllTablesCursorFactory allTablesCursorFactory;
             private final ColumnsRecord record = new ColumnsRecord();
-            private final ShowColumnsCursor showColumnsCursor = new ShowColumnsCursor();
-            private RecordCursor allTablesCursor;
+            private final ConcurrentHashMap<CairoTable> tableCache;
             private int columnIdx;
             private SqlExecutionContext executionContext;
-            private CharSequence tableName;
+            private Iterator<Map.Entry<CharSequence, CairoTable>> iterator;
+            private CairoTable table;
 
-            private ColumnRecordCursor() {
-                allTablesCursorFactory = new AllTablesFunctionFactory.AllTablesCursorFactory();
+
+            private ColumnRecordCursor(ConcurrentHashMap<CairoTable> tableCache) {
+                this.tableCache = tableCache;
+                this.iterator = tableCache.entrySet().iterator();
             }
 
             @Override
             public void close() {
-                Misc.free(allTablesCursor);
-                Misc.free(allTablesCursorFactory);
-                Misc.free(showColumnsCursor);
                 executionContext = null;
-                tableName = null;
                 columnIdx = -1;
             }
 
@@ -124,38 +159,42 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
             @Override
             public boolean hasNext() {
-                boolean tableExists = false;
-                boolean hasNext = false;
 
-                while (!tableExists) {
-                    if (columnIdx == -1 && (hasNext = allTablesCursor.hasNext())) {
-                        tableName = allTablesCursor.getRecord().getStrA(1);
-                        try {
-                            showColumnsCursor.of(executionContext, tableName);
-                            tableExists = true;
-                        } catch (CairoException e) {
-                            // table didn't exist, likely due to a rename
-                        }
-                    } else {
-                        tableExists = true;
+                if (table == null) {
+                    if (!nextTable()) {
+                        return false;
                     }
                 }
 
-                if (!hasNext && columnIdx == -1) {
+                assert table != null;
+                // we have a table
+
+                if (columnIdx < table.getColumnCount() - 1) {
+                    columnIdx++;
+                } else {
+                    columnIdx = -1;
+                    table = null;
+                    return hasNext();
+                }
+
+                CairoColumn column = table.getColumnQuiet(columnIdx);
+                assert column != null;
+
+                record.of(table.getTableName(), columnIdx, column.getName(), ColumnType.nameOf(column.getType()));
+
+                return true;
+            }
+
+            public boolean nextTable() {
+                assert table == null;
+
+                if (iterator.hasNext()) {
+                    table = iterator.next().getValue();
+                } else if (columnIdx == -1) {
                     return false;
                 }
 
-                if (showColumnsCursor.hasNext()) {
-                    Record rec = showColumnsCursor.getRecord();
-                    CharSequence columnName = rec.getStrA(ShowColumnsRecordCursorFactory.N_NAME_COL);
-                    CharSequence dataType = rec.getStrA(ShowColumnsRecordCursorFactory.N_TYPE_COL);
-                    columnIdx++;
-                    record.of(tableName, columnIdx, columnName, dataType);
-                    return true;
-                }
-                columnIdx = -1;
-                Misc.free(showColumnsCursor);
-                return hasNext();
+                return true;
             }
 
             @Override
@@ -166,12 +205,11 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
             @Override
             public void toTop() {
                 columnIdx = -1;
-                allTablesCursor.toTop();
+                this.iterator = tableCache.entrySet().iterator();
             }
 
             private ColumnRecordCursor of(SqlExecutionContext sqlExecutionContext) {
                 executionContext = sqlExecutionContext;
-                allTablesCursor = allTablesCursorFactory.getCursor(executionContext);
                 toTop();
                 return this;
             }
