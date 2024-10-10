@@ -23,7 +23,15 @@
  ******************************************************************************/
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoColumn;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoTable;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -107,9 +115,12 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             }
         }
 
-        public ShowColumnsCursor of(SqlExecutionContext executionContext, CharSequence tableName) {
+        public ShowColumnsCursor of(SqlExecutionContext executionContext, CharSequence tableName) throws CairoException {
             final CairoEngine engine = executionContext.getCairoEngine();
             final TableToken tableToken = engine.getTableTokenIfExists(tableName);
+            if (tableToken == null) {
+                throw CairoException.tableDoesNotExist(tableName);
+            }
             return of(executionContext, tableToken, -1);
         }
 
