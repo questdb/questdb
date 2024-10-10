@@ -58,7 +58,6 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         this.buffer = Unsafe.malloc(this.bufferSize, this.memoryTag);
         this.clock = configuration.getClock();
         long timeout = configuration.getQueryTimeout();
-        System.out.println(Thread.currentThread().getName() + " 1 timeout=" + timeout);
         if (timeout > 0) {
             this.timeout = timeout;
         } else if (timeout == TIMEOUT_FAIL_ON_FIRST_CHECK) {
@@ -66,7 +65,6 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         } else {
             this.timeout = Long.MAX_VALUE;
         }
-        System.out.println(Thread.currentThread().getName() + " 2 timeout=" + this.timeout);
         this.defaultMaxTime = this.timeout;
     }
 
@@ -177,7 +175,6 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     public void setTimeout(long timeout) {
-        System.out.println(Thread.currentThread().getName() + " 3 timeout=" + timeout);
         this.timeout = timeout;
     }
 
@@ -229,7 +226,6 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private void testTimeout() {
         final long currentMillis = clock.getTicks();
         if (currentMillis - timeout > powerUpTime) {
-            System.out.println(Thread.currentThread().getName() + " timeout=" + timeout + ", elapsed=" + (currentMillis - timeout) + ", powerUpTime=" + powerUpTime);
             if (isCancelled()) {
                 throw CairoException.queryCancelled(fd);
             } else {

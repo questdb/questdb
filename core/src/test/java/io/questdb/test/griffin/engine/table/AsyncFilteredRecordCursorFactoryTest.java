@@ -72,9 +72,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         // We intentionally use a small capacity for the reduce queue to exhibit various edge cases.
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, QUEUE_CAPACITY);
 
-        circuitBreakerConfiguration = null;
-        circuitBreaker = Misc.free(circuitBreaker);
-
         AbstractCairoTest.setUpStatic();
     }
 

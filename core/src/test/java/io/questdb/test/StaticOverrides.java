@@ -27,6 +27,7 @@ package io.questdb.test;
 import io.questdb.FactoryProvider;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.test.cairo.Overrides;
 
@@ -34,10 +35,6 @@ public class StaticOverrides extends Overrides {
 
     public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
         return AbstractCairoTest.circuitBreakerConfiguration;
-    }
-
-    public long getCurrentMicros() {
-        return AbstractCairoTest.currentMicros;
     }
 
     public FactoryProvider getFactoryProvider() {
@@ -69,29 +66,7 @@ public class StaticOverrides extends Overrides {
         AbstractCairoTest.sqlExecutionContext.initNow();
         AbstractCairoTest.ff = null;
         AbstractCairoTest.factoryProvider = null;
-    }
-
-    public void setCircuitBreakerConfiguration(SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration) {
-        AbstractCairoTest.circuitBreakerConfiguration = circuitBreakerConfiguration;
-    }
-
-    public void setFactoryProvider(FactoryProvider factoryProvider) {
-        AbstractCairoTest.factoryProvider = factoryProvider;
-    }
-
-    public void setFilesFacade(FilesFacade ff) {
-        AbstractCairoTest.ff = ff;
-    }
-
-    public void setInputRoot(String inputRoot) {
-        AbstractCairoTest.inputRoot = inputRoot;
-    }
-
-    public void setInputWorkRoot(String inputWorkRoot) {
-        AbstractCairoTest.inputWorkRoot = inputWorkRoot;
-    }
-
-    public void setTestMicrosClock(MicrosecondClock testMicrosClock) {
-        AbstractCairoTest.testMicrosClock = testMicrosClock;
+        AbstractCairoTest.circuitBreakerConfiguration = null;
+        AbstractCairoTest.circuitBreaker = Misc.free(AbstractCairoTest.circuitBreaker);
     }
 }
