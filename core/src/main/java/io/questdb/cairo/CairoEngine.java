@@ -102,6 +102,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.Comparator;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.concurrent.TimeUnit;
@@ -981,6 +982,47 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void metadataCacheCopyMap(ConcurrentHashMap<CairoTable> target) {
         target.putAll(cairoTables);
+    }
+
+    public @Nullable CairoTable metadataCacheFilterVisibleTables(ConcurrentHashMap<CairoTable> localCache) {
+        Iterator<Map.Entry<CharSequence, CairoTable>> iterator = localCache.entrySet().iterator();
+
+        boolean isSys = false;
+        boolean isTel = false;
+        boolean isNotFinal = false;
+
+        while (iterator.hasNext()) {
+            CairoTable table = iterator.next().getValue();
+
+            if (Chars.startsWith(table.getTableName(), configuration.getSystemTableNamePrefix())) {
+                isSys = true;
+            }
+
+            // telemetry table
+            if (configuration.getTelemetryConfiguration().hideTables()
+                    && (Chars.equals(table.getTableName(), TelemetryTask.TABLE_NAME)
+                    || Chars.equals(table.getTableName(), TelemetryConfigLogger.TELEMETRY_CONFIG_TABLE_NAME))
+            ) {
+                isTel = true;
+            }
+
+            if (!TableUtils.isFinalTableName(table.getTableName(), configuration.getTempRenamePendingTablePrefix())) {
+                isNotFinal = true;
+            }
+
+            // if shouldn't be visble, remove it
+            if (isSys || isTel || isNotFinal) {
+                iterator.remove();
+            }
+
+            // reset
+            isSys = false;
+            isTel = false;
+            isNotFinal = false;
+        }
+
+
+        return null;
     }
 
     /**

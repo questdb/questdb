@@ -98,6 +98,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
                 // otherwise check if we need to refresh any values
                 engine.metadataCacheRefreshSnapshot(tableTokenSet, tableCache);
             }
+            engine.metadataCacheFilterVisibleTables(tableCache);
 
             cursor.toTop();
             return cursor;
