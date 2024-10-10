@@ -79,17 +79,19 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 st1.execute();
             }
 
-            try (PreparedStatement select = connection.prepareStatement("select * from y")) {
+            try (PreparedStatement select = connection.prepareStatement("select * from y");
+                 Statement statement = connection.createStatement()
+            ) {
                 ResultSet rs0 = select.executeQuery();
                 rs0.close();
 
-                connection.prepareStatement("drop table y").execute();
-                connection.prepareStatement("create table y as ( " +
+                statement.executeUpdate("drop table y");
+                statement.executeUpdate("create table y as ( " +
                         " select " +
                         " timestamp_sequence('1970-01-01T02:30:00.000000Z', 1000000000L) timestamp, " +
                         " rnd_symbol('a','b',null) symbol2 " +
                         " from long_sequence(10)" +
-                        ")").execute();
+                        ")");
 
                 mayDrainWalQueue();
                 ResultSet rs1 = select.executeQuery();
@@ -122,17 +124,19 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 st1.execute();
             }
 
-            try (PreparedStatement select = connection.prepareStatement("select * from y")) {
+            try (PreparedStatement select = connection.prepareStatement("select * from y");
+                 Statement statement = connection.createStatement()
+            ) {
                 ResultSet rs0 = select.executeQuery();
                 rs0.close();
 
-                connection.prepareStatement("drop table y").execute();
-                connection.prepareStatement("create table y as ( " +
+                statement.executeUpdate("drop table y");
+                statement.executeUpdate("create table y as ( " +
                         " select " +
                         " timestamp_sequence('1970-01-01T02:30:00.000000Z', 1000000000L) timestamp, " +
                         " rnd_boolean symbol1" +
                         " from long_sequence(10)" +
-                        ")").execute();
+                        ")");
 
                 mayDrainWalQueue();
                 ResultSet rs1 = select.executeQuery();
@@ -164,18 +168,20 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 st1.execute();
             }
 
-            try (PreparedStatement select = connection.prepareStatement("select timestamp, symbol1 from y")) {
+            try (PreparedStatement select = connection.prepareStatement("select timestamp, symbol1 from y");
+                 Statement statement = connection.createStatement()
+            ) {
                 ResultSet rs0 = select.executeQuery();
                 rs0.close();
 
-                connection.prepareStatement("drop table y").execute();
-                connection.prepareStatement("create table y as ( " +
+                statement.executeUpdate("drop table y");
+                statement.executeUpdate("create table y as ( " +
                         " select " +
                         " timestamp_sequence('1970-01-01T02:30:00.000000Z', 1000000000L) timestamp " +
                         " ,rnd_str('a','b','c', 'd', 'e', 'f',null) symbol2" +
                         " ,rnd_str('a','b',null) symbol1" +
                         " from long_sequence(10)" +
-                        ")").execute();
+                        ")");
 
                 mayDrainWalQueue();
                 ResultSet rs1 = select.executeQuery();
