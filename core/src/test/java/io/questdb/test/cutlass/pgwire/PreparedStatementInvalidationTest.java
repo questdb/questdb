@@ -43,19 +43,14 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     private final boolean walEnabled;
 
-    public PreparedStatementInvalidationTest(LegacyMode legacyMode, WalMode walMode) {
-        super(legacyMode);
+    public PreparedStatementInvalidationTest(WalMode walMode) {
+        super(LegacyMode.MODERN);
         this.walEnabled = (walMode == WalMode.WITH_WAL);
     }
 
     @Parameterized.Parameters(name = "{0}, {1}")
     public static Collection<Object[]> testParams() {
-        return Arrays.asList(new Object[][]{
-                {LegacyMode.MODERN, WalMode.WITH_WAL},
-                {LegacyMode.MODERN, WalMode.NO_WAL},
-                {LegacyMode.LEGACY, WalMode.WITH_WAL},
-                {LegacyMode.LEGACY, WalMode.NO_WAL},
-        });
+        return Arrays.asList(new Object[][]{{WalMode.WITH_WAL}, {WalMode.NO_WAL}});
     }
 
     @Before
@@ -179,7 +174,6 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectStarPreparedThenColNameChanges() throws Exception {
-        assumeModern(); // Legacy code doesn't update result set shape
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (CallableStatement st1 = connection.prepareCall("create table y as (" +
                     "select timestamp_sequence(0, 1000000000) timestamp," +
@@ -224,7 +218,6 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectStarPreparedThenColTypeChanges() throws Exception {
-        assumeModern(); // Legacy code doesn't update result set shape
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (CallableStatement st1 = connection.prepareCall("create table y as (" +
                     "select timestamp_sequence(0, 1000000000) timestamp," +
@@ -293,7 +286,6 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                         " ,rnd_str('a','b',null) symbol1" +
                         " from long_sequence(10)" +
                         ")");
-
                 mayDrainWalQueue();
                 ResultSet rs1 = select.executeQuery();
                 sink.clear();
