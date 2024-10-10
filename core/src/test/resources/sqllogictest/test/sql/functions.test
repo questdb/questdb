@@ -1,0 +1,11 @@
+statement ok
+create table size_control (s varchar, x int, ts timestamp)
+timestamp(ts) partition by HOUR DEDUP UPSERT KEYS(ts, s);
+
+# long_sequence() function does not handle double argument, test the error message here
+statement error
+insert into size_control(s, x, ts)
+select '2022-02-24' || '-' || x , x, timestamp_sequence('2022-02-24', 1000000)
+from long_sequence(60 * 60 * 2.5));
+----
+db error: ERROR: argument type DOUBLE is not supported

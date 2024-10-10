@@ -53,10 +53,17 @@ public class LongSequenceFunctionFactory implements FunctionFactory {
         final Function seedHiFunc;
         if (args != null) {
             final int argCount = args.size();
-            if (argCount == 1 && ColumnType.isAssignableFrom((countFunc = args.getQuick(0)).getType(), ColumnType.LONG)) {
-                return new CursorFunction(
-                        new LongSequenceCursorFactory(METADATA, countFunc.getLong(null))
-                );
+            countFunc = args.getQuick(0);
+
+            if (argCount == 1 && ColumnType.isAssignableFrom(countFunc.getType(), ColumnType.LONG)) {
+                try {
+                    return new CursorFunction(
+                            new LongSequenceCursorFactory(METADATA, countFunc.getLong(null))
+                    );
+                } catch (UnsupportedOperationException ex) {
+                    throw SqlException.position(position).put("argument type ")
+                            .put(ColumnType.nameOf(countFunc.getType())).put(" is not supported");
+                }
             }
 
             if (

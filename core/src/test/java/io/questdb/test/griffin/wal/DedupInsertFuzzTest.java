@@ -563,6 +563,13 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    private Rnd generateRandomAndProps(Log log, long seed1, long seed2) {
+        Rnd rnd = fuzzer.generateRandom(log, seed1, seed2);
+        setFuzzProperties(rnd);
+        setRandomAppendPageSize(rnd);
+        return rnd;
+    }
+
     private Rnd generateRandomAndProps(Log log) {
         Rnd rnd = fuzzer.generateRandom(log);
         setFuzzProperties(rnd);
@@ -798,7 +805,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
         int initialDuplicates = 1 + rnd.nextInt(1);
         long startTimestamp = parseFloorPartialTimestamp("2020-02-24T04:30");
-        int startCount = rnd.nextInt(100_000);
+        int startCount = rnd.nextInt(24 * 60 / 15 * 10);
         generateInsertsTransactions(
                 transactions,
                 1,
