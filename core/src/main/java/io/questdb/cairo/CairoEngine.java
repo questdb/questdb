@@ -1177,6 +1177,33 @@ public class CairoEngine implements Closeable, WriterSource {
 
     }
 
+    /**
+     * Some sql functions require taking a consistent snapshot of the table metadata. This function
+     * allows for a snapshotted local cache to be updated based on version number comparisons.
+     *
+     * @param tableTokenSet
+     * @param localCache
+     */
+    public void metadataCacheRefreshSnapshot(ObjHashSet<TableToken> tableTokenSet, ConcurrentHashMap<CairoTable> localCache) {
+        getTableTokens(tableTokenSet, false);
+        ObjList<TableToken> tokens = tableTokenSet.getList();
+        for (int i = 0, n = tokens.size(); i < n; i++) {
+            TableToken token = tokens.getQuick(i);
+            CairoTable cachedTable = localCache.get(token.getTableName());
+            CairoTable latestTable = metadataCacheGetTable(token);
+            if (latestTable == null) {
+                localCache.remove(cachedTable.getTableName());
+            } else if (cachedTable.getMetadataVersion() < latestTable.getMetadataVersion()) {
+                localCache.put(cachedTable.getTableName(), latestTable);
+            } else if (cachedTable.getMetadataVersion() > latestTable.getMetadataVersion()) {
+                throw new RuntimeException("disordered metadata versions");
+            } else {
+                assert cachedTable.getMetadataVersion() == latestTable.getMetadataVersion();
+                // otherwise its up to date, so we loop
+            }
+        }
+    }
+
     public void metadataCacheRemoveTable(@NotNull CharSequence tableName) {
         cairoTables.remove(tableName);
         LOG.info().$("dropped metadata [table=").$(tableName).I$();

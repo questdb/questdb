@@ -24,19 +24,33 @@
 
 package io.questdb.griffin.engine.functions.catalogue;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoTable;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
+
+import java.util.Iterator;
+import java.util.Map;
 
 public class TablesFunctionFactory implements FunctionFactory {
     private static final int DEDUP_NAME_COLUMN = 8;
@@ -44,8 +58,8 @@ public class TablesFunctionFactory implements FunctionFactory {
     private static final int DIRECTORY_NAME_COLUMN = 7;
     private static final int ID_COLUMN = 0;
     private static final int MAX_UNCOMMITTED_ROWS_COLUMN = 4;
-    private static final int O3_MAX_LAG_COLUMN = 5;
     private static final RecordMetadata METADATA;
+    private static final int O3_MAX_LAG_COLUMN = 5;
     private static final int PARTITION_BY_COLUMN = 3;
     private static final int TABLE_NAME = 1;
     private static final int WAL_ENABLED_COLUMN = 6;
@@ -80,15 +94,28 @@ public class TablesFunctionFactory implements FunctionFactory {
         public static final Log LOG = LogFactory.getLog(TablesCursorFactory.class);
         public static final String TABLE_NAME_COLUMN_NAME = "table_name";
         public static final TableColumnMetadata TABLE_NAME_COLUMN_META = new TableColumnMetadata(TABLE_NAME_COLUMN_NAME, ColumnType.STRING);
-        private final TablesRecordCursor cursor = new TablesRecordCursor();
+        private final TablesRecordCursor cursor;
+        private final ConcurrentHashMap<CairoTable> tableCache = new ConcurrentHashMap<>();
+        ObjHashSet<TableToken> tableTokenSet = new ObjHashSet<>();
+
 
         public TablesCursorFactory() {
             super(METADATA);
+            cursor = new TablesRecordCursor(tableCache);
         }
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            cursor.of(executionContext);
+            final CairoEngine engine = executionContext.getCairoEngine();
+            if (tableCache.isEmpty()) {
+                // initialise the first time this factory is created
+                engine.metadataCacheCopyMap(tableCache);
+            } else {
+                // otherwise check if we need to refresh any values
+                engine.metadataCacheRefreshSnapshot(tableTokenSet, tableCache);
+            }
+
+            cursor.toTop();
             return cursor;
         }
 
@@ -109,13 +136,17 @@ public class TablesFunctionFactory implements FunctionFactory {
 
         private static class TablesRecordCursor implements NoRandomAccessRecordCursor {
             private final TableListRecord record = new TableListRecord();
-            private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
-            private SqlExecutionContext executionContext;
-            private int tableIndex = -1;
+            private final ConcurrentHashMap<CairoTable> tableCache;
+            private Iterator<Map.Entry<CharSequence, CairoTable>> iterator;
+
+            public TablesRecordCursor(ConcurrentHashMap<CairoTable> tableCache) {
+                this.tableCache = tableCache;
+                this.iterator = tableCache.entrySet().iterator();
+            }
 
             @Override
             public void close() {
-                tableIndex = -1;
+
             }
 
             @Override
@@ -125,13 +156,11 @@ public class TablesFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                tableIndex++;
-                int n = tableBucket.size();
-                for (; tableIndex < n; tableIndex++) {
-                    if (record.open(tableBucket.get(tableIndex))) {
-                        return true;
-                    }
+                if (iterator.hasNext()) {
+                    record.of(iterator.next().getValue());
+                    return true;
                 }
+
                 return false;
             }
 
@@ -142,16 +171,10 @@ public class TablesFunctionFactory implements FunctionFactory {
 
             @Override
             public void toTop() {
-                tableIndex = -1;
+                this.iterator = tableCache.entrySet().iterator();
             }
 
-            private void of(SqlExecutionContext executionContext) {
-                this.executionContext = executionContext;
-                executionContext.getCairoEngine().getTableTokens(tableBucket, false);
-                toTop();
-            }
-
-            private class TableListRecord implements Record {
+            private static class TableListRecord implements Record {
                 private StringSink lazyStringSink = null;
                 private CairoTable table;
 
@@ -217,9 +240,8 @@ public class TablesFunctionFactory implements FunctionFactory {
                     return str != null ? str.length() : -1;
                 }
 
-                private boolean open(TableToken tableToken) {
-                    table = executionContext.getCairoEngine().metadataCacheGetVisibleTable(tableToken);
-                    return table != null;
+                private void of(CairoTable table) {
+                    this.table = table;
                 }
             }
         }

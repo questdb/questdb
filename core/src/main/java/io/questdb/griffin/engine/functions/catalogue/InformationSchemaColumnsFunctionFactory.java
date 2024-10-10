@@ -94,12 +94,15 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             final CairoEngine engine = executionContext.getCairoEngine();
             if (tableCache.isEmpty()) {
-                engine.metadataCacheCopyMap(tableCache); // initialise the first time this factory is created
+                // initialise the first time this factory is created
+                engine.metadataCacheCopyMap(tableCache);
             } else {
-                checkForCacheForRefresh(engine); // otherwise check if we need to refresh any values
+                // otherwise check if we need to refresh any values
+                engine.metadataCacheRefreshSnapshot(tableTokenSet, tableCache);
             }
 
-            return cursor.of();
+            cursor.toTop();
+            return cursor;
         }
 
         @Override
@@ -110,26 +113,6 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
         @Override
         public void toPlan(PlanSink sink) {
             sink.type(SIGNATURE);
-        }
-
-        private void checkForCacheForRefresh(CairoEngine engine) {
-            engine.getTableTokens(tableTokenSet, false);
-            ObjList<TableToken> tokens = tableTokenSet.getList();
-            for (int i = 0, n = tokens.size(); i < n; i++) {
-                TableToken token = tokens.getQuick(i);
-                CairoTable cachedTable = tableCache.get(token.getTableName());
-                CairoTable latestTable = engine.metadataCacheGetTable(token);
-                if (latestTable == null) {
-                    tableCache.remove(cachedTable.getTableName());
-                } else if (cachedTable.getMetadataVersion() < latestTable.getMetadataVersion()) {
-                    tableCache.put(cachedTable.getTableName(), latestTable);
-                } else if (cachedTable.getMetadataVersion() > latestTable.getMetadataVersion()) {
-                    throw new RuntimeException("disordered metadata versions");
-                } else {
-                    assert cachedTable.getMetadataVersion() == latestTable.getMetadataVersion();
-                    // otherwise its up to date, so we loop
-                }
-            }
         }
 
         private static class ColumnRecordCursor implements NoRandomAccessRecordCursor {
@@ -201,11 +184,6 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
             public void toTop() {
                 columnIdx = -1;
                 this.iterator = tableCache.entrySet().iterator();
-            }
-
-            private ColumnRecordCursor of() {
-                toTop();
-                return this;
             }
 
             private static class ColumnsRecord implements Record {
