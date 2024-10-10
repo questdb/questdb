@@ -316,33 +316,38 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     }
 
     protected static class IntervalPartitionFrame implements PartitionFrame {
-        protected byte format;
-        protected long parquetFd;
         protected int partitionIndex;
-        protected int rowGroupIndex;
-        // we don't need rowGroupLo as it can be calculated as rowGroupLo+(rowHi-rowLo)
-        protected int rowGroupLo;
         protected long rowHi;
         protected long rowLo;
 
         @Override
         public long getParquetFd() {
-            return parquetFd;
+            // TODO(amunra): Add support for parquet interval intrinsics.
+            throw new UnsupportedOperationException("interval intrinsics not yet implemented for parquet partitions");
+        }
+
+        @Override
+        public long getParquetReadSize() {
+            // TODO(amunra): Add support for parquet interval intrinsics.
+            throw new UnsupportedOperationException("interval intrinsics not yet implemented for parquet partitions");
         }
 
         @Override
         public int getParquetRowGroup() {
-            return rowGroupIndex;
+            // TODO(amunra): Add support for parquet interval intrinsics.
+            throw new UnsupportedOperationException("interval intrinsics not yet implemented for parquet partitions");
         }
 
         @Override
         public int getParquetRowGroupLo() {
-            return rowGroupLo;
+            // TODO(amunra): Add support for parquet interval intrinsics.
+            throw new UnsupportedOperationException("interval intrinsics not yet implemented for parquet partitions");
         }
 
         @Override
         public byte getPartitionFormat() {
-            return format;
+            // TODO(amunra): Add support for parquet interval intrinsics.
+            return PartitionFormat.NATIVE;
         }
 
         @Override
@@ -446,8 +451,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         }
 
         public ParquetTimestampFinder of(TableReader reader, int partitionIndex, int timestampIndex, long rowCount) {
-            // TODO(puzpuzpuz): also use parquet metadata offset
-            partitionDecoder.of(reader.getParquetFd(partitionIndex));
+            partitionDecoder.of(reader.getParquetFd(partitionIndex), reader.getParquetReadSize(partitionIndex));
             this.timestampIndex = findTimestampIndex(partitionDecoder, timestampIndex);
             if (this.timestampIndex == -1) {
                 throw CairoException.critical(0).put("missing timestamp column in parquet partition [table=").put(reader.getTableToken())

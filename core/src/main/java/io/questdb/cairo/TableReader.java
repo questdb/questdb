@@ -58,11 +58,12 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class TableReader implements Closeable, SymbolTableSource {
     private static final Log LOG = LogFactory.getLog(TableReader.class);
-    private static final int PARTITIONS_SLOT_OFFSET_COLUMN_VERSION = 3;
-    private static final int PARTITIONS_SLOT_OFFSET_FORMAT = 4;
-    private static final int PARTITIONS_SLOT_OFFSET_NAME_TXN = 2;
-    private static final int PARTITIONS_SLOT_OFFSET_PARQUET_FD = 5;
     private static final int PARTITIONS_SLOT_OFFSET_SIZE = 1;
+    private static final int PARTITIONS_SLOT_OFFSET_NAME_TXN = PARTITIONS_SLOT_OFFSET_SIZE + 1;
+    private static final int PARTITIONS_SLOT_OFFSET_COLUMN_VERSION = PARTITIONS_SLOT_OFFSET_NAME_TXN + 1;
+    private static final int PARTITIONS_SLOT_OFFSET_FORMAT = PARTITIONS_SLOT_OFFSET_COLUMN_VERSION + 1;
+    private static final int PARTITIONS_SLOT_OFFSET_PARQUET_FD = PARTITIONS_SLOT_OFFSET_FORMAT + 1;
+    private static final int PARTITIONS_SLOT_OFFSET_PARQUET_READ_SIZE = PARTITIONS_SLOT_OFFSET_PARQUET_FD + 1;
     private static final int PARTITIONS_SLOT_SIZE = 8; // must be power of 2
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
     private final MillisecondClock clock;
@@ -153,14 +154,18 @@ public class TableReader implements Closeable, SymbolTableSource {
             for (int i = 0; i < partitionCount; i++) {
                 // ts, number of rows, txn, column version for each partition
                 // it is compared to attachedPartitions within the txn file to determine if a partition needs to be reloaded or not
-                int baseOffset = i * PARTITIONS_SLOT_SIZE;
-                long partitionTimestamp = txFile.getPartitionTimestampByIndex(i);
+                final int baseOffset = i * PARTITIONS_SLOT_SIZE;
+                final long partitionTimestamp = txFile.getPartitionTimestampByIndex(i);
+                final boolean isParquet = txFile.isPartitionParquet(i);
+                final long readSize = isParquet ? txFile.getPartitionParquetFileSize(i) : -1;
+                assert readSize > 0 || !isParquet;
                 openPartitionInfo.setQuick(baseOffset, partitionTimestamp);
                 openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_SIZE, -1L); // -1L means it is not open
                 openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txFile.getPartitionNameTxn(i));
                 openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
-                openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_FORMAT, txFile.isPartitionParquet(i) ? PartitionFormat.PARQUET : PartitionFormat.NATIVE);
+                openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_FORMAT, isParquet ? PartitionFormat.PARQUET : PartitionFormat.NATIVE);
                 openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_PARQUET_FD, -1);
+                openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_PARQUET_READ_SIZE, readSize);
             }
             columnTops = new LongList(capacity / 2);
             columnTops.setPos(capacity / 2);
@@ -294,6 +299,15 @@ public class TableReader implements Closeable, SymbolTableSource {
      */
     public long getParquetFd(int partitionIndex) {
         return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_PARQUET_FD);
+    }
+
+    /**
+     * Returns previously open Parquet partition read size or -1 in case of a native partition.
+     */
+    public long getParquetReadSize(int partitionIndex) {
+        final long readSize = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_PARQUET_READ_SIZE);
+        assert readSize > 0 || getParquetFd(partitionIndex) == -1;
+        return readSize;
     }
 
     public int getPartitionCount() {
@@ -638,6 +652,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (fd != -1) {
                     ff.close(fd);
                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_FD, -1);
+                    openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_READ_SIZE, -1);
                 }
             }
             openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, -1L);
@@ -826,6 +841,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             if (fd != -1) {
                 ff.close(fd);
                 openPartitionInfo.setQuick(i * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_PARQUET_FD, -1);
+                openPartitionInfo.setQuick(i * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_PARQUET_READ_SIZE, -1);
             }
         }
     }
@@ -950,10 +966,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                         if (isReopen) {
                             ff.close(openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_FD));
                         }
-                        // TODO(puzpuzpuz): we need to read txn's Parquet file size and use it when reading
-                        //                  that's because O3 appends new versions of the file to its end
-                        long fd = TableUtils.openRO(ff, path.$(), LOG);
+                        final long fd = TableUtils.openRO(ff, path.$(), LOG);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_FD, fd);
+                        final long readSize = this.txFile.getPartitionParquetFileSize(partitionIndex);
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_READ_SIZE, readSize);
                         if (!isReopen) {
                             openPartitionCount++;
                         }

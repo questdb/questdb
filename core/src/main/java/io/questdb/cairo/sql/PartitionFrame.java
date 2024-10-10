@@ -46,6 +46,13 @@ public interface PartitionFrame {
     long getParquetFd();
 
     /**
+     * Return Parquet partition's read size or -1 in case of a native partition.
+     * The read size allows us to find the correct metadata location to decode the partition.
+     * The parquet file may contain multiple metadata sections in case of O3 operations.
+     */
+    long getParquetReadSize();
+
+    /**
      * @return numeric index of the row group within Parquet partition;
      * shouldn't be called for native partitions
      */
