@@ -32,7 +32,6 @@ import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -44,7 +43,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.IntList;
-import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 
 import java.util.Iterator;
@@ -80,8 +78,6 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
     private static class ColumnsCursorFactory extends AbstractRecordCursorFactory {
         private final ColumnRecordCursor cursor;
         private final ConcurrentHashMap<CairoTable> tableCache = new ConcurrentHashMap<>();
-        ObjHashSet<TableToken> tableTokenSet = new ObjHashSet<>();
-
 
         private ColumnsCursorFactory() {
             super(METADATA);
@@ -96,7 +92,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
                 engine.metadataCacheCopyMap(tableCache);
             } else {
                 // otherwise check if we need to refresh any values
-                engine.metadataCacheRefreshSnapshot(tableTokenSet, tableCache);
+                engine.metadataCacheRefreshSnapshot(tableCache);
             }
             engine.metadataCacheFilterVisibleTables(tableCache);
 

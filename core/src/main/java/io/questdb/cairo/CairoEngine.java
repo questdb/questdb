@@ -1226,18 +1226,15 @@ public class CairoEngine implements Closeable, WriterSource {
      * @param tableTokenSet
      * @param localCache
      */
-    public void metadataCacheRefreshSnapshot(ObjHashSet<TableToken> tableTokenSet, ConcurrentHashMap<CairoTable> localCache) {
-        getTableTokens(tableTokenSet, false);
-        ObjList<TableToken> tokens = tableTokenSet.getList();
-        for (int i = 0, n = tokens.size(); i < n; i++) {
-            TableToken token = tokens.getQuick(i);
-            CairoTable cachedTable = localCache.get(token.getTableName());
-            CairoTable latestTable = metadataCacheGetTable(token);
+    public void metadataCacheRefreshSnapshot(ConcurrentHashMap<CairoTable> localCache) {
+        Iterator<Map.Entry<CharSequence, CairoTable>> iterator = cairoTables.entrySet().iterator();
 
+        // pull from cairoTables into localCache
+        while (iterator.hasNext()) {
+            CairoTable latestTable = iterator.next().getValue();
+            CairoTable cachedTable = localCache.get(latestTable.getTableName());
             if (cachedTable == null) {
-                localCache.put(token.getTableName(), latestTable);
-            } else if (latestTable == null) {
-                localCache.remove(cachedTable.getTableName());
+                localCache.put(latestTable.getTableName(), latestTable);
             } else if (cachedTable.getMetadataVersion() < latestTable.getMetadataVersion()) {
                 localCache.put(cachedTable.getTableName(), latestTable);
             } else if (cachedTable.getMetadataVersion() > latestTable.getMetadataVersion()) {
@@ -1246,6 +1243,24 @@ public class CairoEngine implements Closeable, WriterSource {
                 assert cachedTable.getMetadataVersion() == latestTable.getMetadataVersion();
                 // otherwise its up to date, so we loop
             }
+        }
+
+        iterator = localCache.entrySet().iterator();
+        while (iterator.hasNext()) {
+            CairoTable cachedTable = iterator.next().getValue();
+            CairoTable latestTable = cairoTables.get(cachedTable.getTableName());
+            if (latestTable == null) {
+                // if its not in the main cache, removed it from local cache
+                iterator.remove();
+            } else if (cachedTable.getMetadataVersion() < latestTable.getMetadataVersion()) {
+                localCache.put(cachedTable.getTableName(), latestTable);
+            } else if (cachedTable.getMetadataVersion() > latestTable.getMetadataVersion()) {
+                throw new RuntimeException("disordered metadata versions");
+            } else {
+                assert cachedTable.getMetadataVersion() == latestTable.getMetadataVersion();
+                // otherwise its up to date, so we loop
+            }
+
         }
     }
 
