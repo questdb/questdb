@@ -91,6 +91,36 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     }
 
     @Test
+    public void testInsertAllAfterColDropped() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("create table insert_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
+            }
+            mayDrainWalQueue();
+
+            try (PreparedStatement insertStatement = connection.prepareStatement("insert into insert_after_drop values (?, 0, '1990-01-01')")) {
+                insertStatement.setLong(1, 42);
+                Assert.assertEquals(1, insertStatement.executeUpdate());
+
+                mayDrainWalQueue();
+
+                try (Statement stmt = connection.createStatement()) {
+                    stmt.execute("alter table insert_after_drop drop column val");
+                }
+                mayDrainWalQueue();
+
+                insertStatement.setLong(1, 43);
+                try {
+                    insertStatement.executeUpdate();
+                    Assert.fail("val column was dropped, the INSERT should have failed");
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "row value count does not match column count [expected=2, actual=3, tuple=1]");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testInsertAllAfterColNameChange() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement statement = connection.createStatement()) {
@@ -117,6 +147,38 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 // assert it's actually written
                 assertSql("id\tval2\tts\n" +
                                 "43\t0\t1990-01-01T00:00:00.000000Z\n",
+                        "select * from insert_after_drop");
+            }
+        });
+    }
+
+    @Test
+    public void testInsertSpecificAfterColDropped() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("create table insert_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
+            }
+            mayDrainWalQueue();
+
+            try (PreparedStatement insertStatement = connection.prepareStatement("insert into insert_after_drop (id, ts) values (?, '1990-01-01')")) {
+                insertStatement.setLong(1, 42);
+                Assert.assertEquals(1, insertStatement.executeUpdate());
+
+                mayDrainWalQueue();
+
+                try (Statement stmt = connection.createStatement()) {
+                    stmt.execute("alter table insert_after_drop drop column val");
+                }
+                mayDrainWalQueue();
+
+                insertStatement.setLong(1, 43);
+                Assert.assertEquals(1, insertStatement.executeUpdate());
+                mayDrainWalQueue();
+
+                // assert it's actually written
+                assertSql("id\tts\n" +
+                                "42\t1990-01-01T00:00:00.000000Z\n" +
+                                "43\t1990-01-01T00:00:00.000000Z\n",
                         "select * from insert_after_drop");
             }
         });
