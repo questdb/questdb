@@ -3,7 +3,6 @@
 
 control iso_timestamp on
 
-# Absolute path
 statement ok
 create table size_control (s varchar, x int, ts timestamp)
 timestamp(ts) partition by HOUR DEDUP UPSERT KEYS(ts, s);
