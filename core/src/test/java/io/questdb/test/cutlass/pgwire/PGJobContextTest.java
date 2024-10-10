@@ -185,11 +185,6 @@ public class PGJobContextTest extends BasePGTest {
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
     }
 
-    @After
-    public void tearDown() throws Exception {
-        super.tearDown();
-    }
-
     @Test
     public void testAllParamsHex() throws Exception {
         skipOnWalRun();
