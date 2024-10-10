@@ -255,7 +255,7 @@ unsafe impl Allocator for QdbAllocator {
         let allocated = Global
             .allocate(layout)
             .map_err(|error| save_oom_err(error, layout.size()))?;
-        self.track_allocate(layout.size());
+        self.track_allocate(allocated.len());
         Ok(allocated)
     }
 
@@ -264,16 +264,11 @@ unsafe impl Allocator for QdbAllocator {
         let allocated = Global
             .allocate_zeroed(layout)
             .map_err(|error| save_oom_err(error, layout.size()))?;
-        self.track_allocate(layout.size());
+        self.track_allocate(allocated.len());
         Ok(allocated)
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-        // TODO(amunra): Ensure that allocated memory matches up with deallocated memory count.
-        //               I.e. should `track_allocate` track the requested layout or the actual
-        //               size that was allocated?
-        //               Sort this out with different tests for datatypes that require different
-        //               alignment. E.g. request 7 bytes, will probably allocate 8 bytes.
         Global.deallocate(ptr, layout);
         self.track_deallocate(layout.size());
     }
@@ -290,7 +285,8 @@ unsafe impl Allocator for QdbAllocator {
         let allocated = Global
             .grow(ptr, old_layout, new_layout)
             .map_err(|error| save_oom_err(error, delta))?;
-        self.track_grow(delta);
+        let true_delta = allocated.len() - old_layout.size();
+        self.track_grow(true_delta);
         Ok(allocated)
     }
 
@@ -306,7 +302,8 @@ unsafe impl Allocator for QdbAllocator {
         let allocated = Global
             .grow_zeroed(ptr, old_layout, new_layout)
             .map_err(|error| save_oom_err(error, delta))?;
-        self.track_grow(delta);
+        let true_delta = allocated.len() - old_layout.size();
+        self.track_grow(true_delta);
         Ok(allocated)
     }
 
@@ -321,7 +318,8 @@ unsafe impl Allocator for QdbAllocator {
         let allocated = Global
             .shrink(ptr, old_layout, new_layout)
             .map_err(|error| save_oom_err(error, delta))?;
-        self.track_shrink(delta);
+        let true_delta = old_layout.size() - allocated.len();
+        self.track_shrink(true_delta);
         Ok(allocated)
     }
 }
@@ -393,8 +391,10 @@ impl TestAllocatorState {
 #[cfg(test)]
 mod tests {
     use crate::allocator::{take_last_alloc_error, AllocFailure, TestAllocatorState};
+    use rand::Rng;
     use std::alloc::Allocator;
     use std::ptr::NonNull;
+    use std::sync::{Arc, Barrier};
 
     #[test]
     fn test_mem_tracking_size() {
@@ -509,5 +509,168 @@ mod tests {
         assert_eq!(tas.malloc_count(), 1);
         assert_eq!(tas.realloc_count(), 2);
         assert_eq!(tas.free_count(), 1);
+    }
+
+    #[test]
+    fn test_parallel() {
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let thread_count = 64;
+        let barrier = Arc::new(Barrier::new(thread_count));
+        let mut threads = Vec::with_capacity(thread_count);
+        let alignments = [8, 16, 32, 64, 128];
+
+        #[derive(Clone, Copy)]
+        enum Op {
+            Allocate,
+            AllocateZeroed,
+            Grow,
+            GrowZeroed,
+            Shrink,
+            Deallocate,
+        }
+
+        let ops = [
+            Op::Allocate,
+            Op::AllocateZeroed,
+            Op::Grow,
+            Op::GrowZeroed,
+            Op::Shrink,
+            Op::Deallocate,
+        ];
+
+        for _ in 0..thread_count {
+            let mut alloc_count = 0;
+            let mut realloc_count = 0;
+            let allocator = allocator.clone();
+            let barrier = barrier.clone();
+            threads.push(std::thread::spawn(move || {
+                let mut allocations = Vec::with_capacity(128);
+                let mut rng = rand::thread_rng();
+                barrier.wait();
+                let iterations = 10_000usize;
+                // Keep on allocating and deallocating randomly.
+                for _ in 0..iterations {
+                    let op_index = rng.gen_range(0..ops.len());
+                    let op = ops[op_index];
+                    match op {
+                        Op::Allocate => {
+                            let size = rng.gen_range(1..=1024);
+                            let alignment_index = rng.gen_range(0..=4);
+                            let alignment = alignments[alignment_index];
+                            let layout = std::alloc::Layout::from_size_align(size, alignment)
+                                .expect("layout creation failed");
+                            let allocation = allocator.allocate(layout).unwrap();
+                            allocations.push((allocation, layout));
+                            alloc_count += 1;
+                        }
+                        Op::AllocateZeroed => {
+                            let size = rng.gen_range(1..=1024);
+                            let alignment_index = rng.gen_range(0..=4);
+                            let alignment = alignments[alignment_index];
+                            let layout = std::alloc::Layout::from_size_align(size, alignment)
+                                .expect("layout creation failed");
+                            let allocation = allocator.allocate_zeroed(layout).unwrap();
+                            allocations.push((allocation, layout));
+                            alloc_count += 1;
+                        }
+                        Op::Grow => {
+                            // grow one at random, if any
+                            if !allocations.is_empty() {
+                                let grow_index = rng.gen_range(0..allocations.len());
+                                let (allocation, layout) = allocations[grow_index];
+                                let allocation =
+                                    NonNull::new(allocation.as_ptr() as *mut u8).unwrap();
+                                let new_size = layout.size() + rng.gen_range(1..=1024);
+                                let new_layout =
+                                    std::alloc::Layout::from_size_align(new_size, layout.align())
+                                        .expect("layout creation failed");
+                                let allocation = unsafe {
+                                    allocator.grow(allocation, layout, new_layout).unwrap()
+                                };
+                                allocations[grow_index] = (allocation, new_layout);
+                                realloc_count += 1;
+                            }
+                        }
+                        Op::GrowZeroed => {
+                            // grow one at random, if any
+                            if !allocations.is_empty() {
+                                let grow_index = rng.gen_range(0..allocations.len());
+                                let (allocation, layout) = allocations[grow_index];
+                                let allocation =
+                                    NonNull::new(allocation.as_ptr() as *mut u8).unwrap();
+                                let new_size = layout.size() + rng.gen_range(1..=1024);
+                                let new_layout =
+                                    std::alloc::Layout::from_size_align(new_size, layout.align())
+                                        .expect("layout creation failed");
+                                let allocation = unsafe {
+                                    allocator
+                                        .grow_zeroed(allocation, layout, new_layout)
+                                        .unwrap()
+                                };
+                                allocations[grow_index] = (allocation, new_layout);
+                                realloc_count += 1;
+                            }
+                        }
+                        Op::Shrink => {
+                            // shrink one at random, if any
+                            if !allocations.is_empty() {
+                                let shrink_index = rng.gen_range(0..allocations.len());
+                                let (allocation, layout) = allocations[shrink_index];
+                                let allocation =
+                                    NonNull::new(allocation.as_ptr() as *mut u8).unwrap();
+                                if layout.size() > 1 {
+                                    let shrink_by = rng.gen_range(1..layout.size());
+                                    assert!(shrink_by < layout.size());
+                                    let new_size = layout.size() - shrink_by;
+                                    let new_layout = std::alloc::Layout::from_size_align(
+                                        new_size,
+                                        layout.align(),
+                                    )
+                                    .expect("layout creation failed");
+                                    let allocation = unsafe {
+                                        allocator.shrink(allocation, layout, new_layout).unwrap()
+                                    };
+                                    allocations[shrink_index] = (allocation, new_layout);
+                                    realloc_count += 1;
+                                }
+                            }
+                        }
+                        Op::Deallocate => {
+                            // dealloc one at random, if any
+                            if !allocations.is_empty() {
+                                let pop_index = rng.gen_range(0..allocations.len());
+                                let (allocation, layout) = allocations.remove(pop_index);
+                                let allocation =
+                                    NonNull::new(allocation.as_ptr() as *mut u8).unwrap();
+                                unsafe { allocator.deallocate(allocation, layout) };
+                            }
+                        }
+                    }
+                }
+
+                // Deallocate all remaining allocations.
+                for (allocation, layout) in allocations {
+                    let allocation = NonNull::new(allocation.as_ptr() as *mut u8).unwrap();
+                    unsafe { allocator.deallocate(allocation, layout) };
+                }
+
+                (alloc_count, realloc_count)
+            }));
+        }
+
+        let (total_allocs, total_reallocs) = threads
+            .into_iter()
+            .map(|thread| thread.join().unwrap())
+            .fold((0, 0), |(acc_allocs, acc_reallocs), (allocs, reallocs)| {
+                (acc_allocs + allocs, acc_reallocs + reallocs)
+            });
+
+        assert_eq!(tas.rss_mem_used(), 0);
+        assert_eq!(tas.tagged_used(), 0);
+        assert_eq!(tas.malloc_count(), total_allocs);
+        assert_eq!(tas.realloc_count(), total_reallocs);
+        assert_eq!(tas.free_count(), total_allocs);
     }
 }
