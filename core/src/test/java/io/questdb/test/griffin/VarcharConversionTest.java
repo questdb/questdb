@@ -30,6 +30,17 @@ import org.junit.Test;
 public class VarcharConversionTest extends AbstractCairoTest {
 
     @Test
+    public void testConvertToGeohash() throws Exception {
+        assertMemoryLeak(() -> {
+            ddl("create table x (c_varchar varchar)");
+            ddl("create table y (c_geohash geohash(2B))");
+            insert("insert into x values('sr')");
+            insert("insert into y select * from x");
+            assertSql("c_geohash\n11\n", "y");
+        });
+    }
+
+    @Test
     public void testConvertToIpv4() throws Exception {
         assertMemoryLeak(() -> {
             ddl("create table x (c_varchar varchar)");
@@ -48,17 +59,6 @@ public class VarcharConversionTest extends AbstractCairoTest {
             insert("insert into x values('0x1')");
             insert("insert into y select * from x");
             assertSql("c_long256\n0x01\n", "y");
-        });
-    }
-
-    @Test
-    public void testConvertToGeohash() throws Exception {
-        assertMemoryLeak(() -> {
-            ddl("create table x (c_varchar varchar)");
-            ddl("create table y (c_geohash geohash(2B))");
-            insert("insert into x values('sr')");
-            insert("insert into y select * from x");
-            assertSql("c_geohash\n11\n", "y");
         });
     }
 }

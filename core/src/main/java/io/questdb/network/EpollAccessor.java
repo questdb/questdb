@@ -42,11 +42,11 @@ public class EpollAccessor {
 
     private static native long readEventFd(int fd);
 
+    private static native int writeEventFd(int fd);
+
     static native int epollCreate();
 
     static native int epollCtl(int epfd, int op, int fd, long eventPtr);
-
-    private static native int writeEventFd(int fd);
 
     static int epollWait(long epfd, long eventPtr, int eventCount, int timeout) {
         return epollWait(toOsFd(epfd), eventPtr, eventCount, timeout);

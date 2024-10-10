@@ -32,16 +32,6 @@ public class NullMapWriter implements MapWriter {
     public static final MapWriter INSTANCE = new NullMapWriter();
 
     @Override
-    public MemoryR getSymbolOffsetsMemory() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public MemoryR getSymbolValuesMemory() {
-        throw new UnsupportedOperationException();
-    }
-
-    @Override
     public boolean getNullFlag() {
         return false;
     }
@@ -53,6 +43,16 @@ public class NullMapWriter implements MapWriter {
 
     @Override
     public int getSymbolCount() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public MemoryR getSymbolOffsetsMemory() {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public MemoryR getSymbolValuesMemory() {
         throw new UnsupportedOperationException();
     }
 

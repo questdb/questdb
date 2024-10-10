@@ -39,10 +39,10 @@ public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
     private final PageFrameMemoryPool frameMemoryPool;
     private final IntList framePartitionIndexes = new IntList();
     private final LongList frameRowCounts = new LongList();
-    private final PageFrameMemoryRecord recordA = new PageFrameMemoryRecord();
-    private final PageFrameMemoryRecord recordB = new PageFrameMemoryRecord();
+    private final RecordMetadata metadata;
+    private final PageFrameMemoryRecord recordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
+    private final PageFrameMemoryRecord recordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
     private final TableReaderTimeFrame timeFrame = new TableReaderTimeFrame();
-    private final int timestampIndex;
     private int frameCount = 0;
     private PageFrameCursor frameCursor;
     private boolean isFrameCacheBuilt;
@@ -52,12 +52,11 @@ public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
 
     public TimeFrameRecordCursorImpl(
             @NotNull CairoConfiguration configuration,
-            @NotNull @Transient RecordMetadata metadata
+            @NotNull RecordMetadata metadata
     ) {
+        this.metadata = metadata;
         frameAddressCache = new PageFrameAddressCache(configuration);
-        frameAddressCache.of(metadata);
-        timestampIndex = metadata.getTimestampIndex();
-        frameMemoryPool = new PageFrameMemoryPool();
+        frameMemoryPool = new PageFrameMemoryPool(configuration.getSqlParquetFrameCacheCapacity());
     }
 
     @Override
@@ -124,7 +123,7 @@ public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
 
     public TimeFrameRecordCursor of(PageFrameCursor frameCursor) {
         this.frameCursor = frameCursor;
-        frameAddressCache.clear();
+        frameAddressCache.of(metadata, frameCursor.getColumnIndexes());
         frameMemoryPool.of(frameAddressCache);
         reader = frameCursor.getTableReader();
         recordA.of(frameCursor);
@@ -147,7 +146,7 @@ public class TimeFrameRecordCursorImpl implements TimeFrameRecordCursor {
             timeFrame.rowLo = 0;
             timeFrame.rowHi = rowCount;
             final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-            final long timestampAddress = frameMemory.getPageAddress(timestampIndex);
+            final long timestampAddress = frameMemory.getPageAddress(metadata.getTimestampIndex());
             timeFrame.timestampLo = Unsafe.getUnsafe().getLong(timestampAddress);
             timeFrame.timestampHi = Unsafe.getUnsafe().getLong(timestampAddress + (rowCount - 1) * 8) + 1;
             return rowCount;

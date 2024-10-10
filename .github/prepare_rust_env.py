@@ -37,7 +37,7 @@ def may_export_cargo_home(cargo_home):
         print(f'##vso[task.setvariable variable=CARGO_HOME]{cargo_home}')
 
 
-def install_rust():
+def install_rust(nightly):
     platform_key = {'linux': 'unix', 'darwin': 'unix',
                     'win32': 'windows'}.get(sys.platform)
     if not platform_key:
@@ -54,6 +54,8 @@ def install_rust():
             ['rustup-init.exe', '-y', '--profile', 'minimal'],
         ),
     }[platform_key]
+    if nightly:
+        install_cmd.extend(['--default-toolchain', 'nightly'])
     try:
         download_file(download_url, file_name)
         subprocess.check_call(install_cmd, stderr=subprocess.STDOUT)
@@ -90,14 +92,14 @@ def linux_glibc_version():
     raise RuntimeError('Failed to parse glibc version')
 
 
-def ensure_rust(components):
-    cargo_bin = shutil.which('cargo')
+def ensure_rust(nightly, components):
+    cargo_bin = None if nightly else shutil.which('cargo')
     if cargo_bin:
         cargo_path = pathlib.Path(cargo_bin).parent.parent
         print(f'Rust is already installed. Cargo path: {cargo_path}')
         may_export_cargo_home(cargo_path)
     else:
-        install_rust()
+        install_rust(nightly)
 
     install_components(components)
 
@@ -124,11 +126,12 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--export-cargo-install-env', action='store_true')
     parser.add_argument('--components', nargs='*', default=[])
+    parser.add_argument('--nightly', action='store_true')
     return parser.parse_args()
 
 
 if __name__ == '__main__':
     args = parse_args()
-    ensure_rust(args.components)
+    ensure_rust(args.nightly, args.components)
     if args.export_cargo_install_env:
         export_cargo_install_env()

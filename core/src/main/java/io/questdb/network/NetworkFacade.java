@@ -55,6 +55,8 @@ public interface NetworkFacade {
 
     int connect(long fd, long pSockaddr);
 
+    int connectAddrInfo(long fd, long pAddrInfo);
+
     int errno();
 
     void freeAddrInfo(long pAddrInfo);
@@ -71,8 +73,6 @@ public interface NetworkFacade {
 
     long getMMsgBufLen(long msg);
 
-    int connectAddrInfo(long fd, long pAddrInfo);
-
     long getPeerIP(long fd);
 
     int getSndBuf(long fd);
@@ -81,11 +81,11 @@ public interface NetworkFacade {
 
     boolean join(long fd, int bindIPv4, int groupIPv4);
 
+    void listen(long serverFd, int backlog);
+
     long msgHeaders(int msgBufferSize, int msgCount);
 
     int parseIPv4(CharSequence ipv4Address);
-
-    void listen(long serverFd, int backlog);
 
     int peekRaw(long fd, long buffer, int bufferLen);
 
@@ -116,11 +116,11 @@ public interface NetworkFacade {
 
     int setTcpNoDelay(long fd, boolean noDelay);
 
+    int shutdown(long fd, int how);
+
     long sockaddr(int address, int port);
 
     long sockaddr(CharSequence address, int port);
-
-    int shutdown(long fd, int how);
 
     long socketTcp(boolean blocking);
 

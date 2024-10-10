@@ -30,11 +30,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
 public class FullFwdPartitionFrameCursorFactory extends AbstractPartitionFrameCursorFactory {
-    private final FullFwdPartitionFrameCursor cursor = new FullFwdPartitionFrameCursor();
+    private final FullFwdPartitionFrameCursor cursor;
     private FullBwdPartitionFrameCursor bwdCursor;
 
-    public FullFwdPartitionFrameCursorFactory(TableToken tableToken, long tableVersion, GenericRecordMetadata metadata) {
-        super(tableToken, tableVersion, metadata);
+    public FullFwdPartitionFrameCursorFactory(TableToken tableToken, long metadataVersion, GenericRecordMetadata metadata) {
+        super(tableToken, metadataVersion, metadata);
+        this.cursor = new FullFwdPartitionFrameCursor();
     }
 
     @Override

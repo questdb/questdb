@@ -1113,7 +1113,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
     }
 
-    //replace column formats in activeSelectColumnTypes with those from latest bind call
+    // replace column formats in activeSelectColumnTypes with those from latest bind call
     private void applyLatestBindColumnFormats() {
         for (int i = 0; i < bindSelectColumnFormats.size(); i++) {
             int newValue = toColumnBinaryType((short) bindSelectColumnFormats.get(i), toColumnType(activeSelectColumnTypes.getQuick(2 * i)));
@@ -2148,7 +2148,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
             short columnFormatCodeCount = getShort(lo, msgLimit, "could not read result set column format codes");
             if (columnFormatCodeCount > 0) {
-
                 final RecordMetadata m = typesAndSelect.getFactory().getMetadata();
                 final int columnCount = m.getColumnCount();
                 // apply format codes to the cursor column types
@@ -2426,8 +2425,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         lo = hi + 1;
         hi = getStringLength(lo, msgLimit, "bad query text length");
 
-        // clear currentCursor and factory if they weren't cleared by previous execute with maxRows
-        if (currentCursor != null) {
+        // clear currentCursor and factory if they weren't cleared by previous execute, e.g. due to maxRows
+        if (currentCursor != null || typesAndSelect != null) {
             clearCursorAndFactory();
         }
 

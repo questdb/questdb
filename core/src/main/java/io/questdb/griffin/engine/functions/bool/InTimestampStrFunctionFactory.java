@@ -39,7 +39,8 @@ import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-import static io.questdb.griffin.model.IntervalUtils.*;
+import static io.questdb.griffin.model.IntervalUtils.isInIntervals;
+import static io.questdb.griffin.model.IntervalUtils.parseAndApplyIntervalEx;
 
 public class InTimestampStrFunctionFactory implements FunctionFactory {
     @Override

@@ -114,6 +114,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         super._close();
         Misc.free(recordCursorFactory);
         Misc.free(filter);
+        Misc.free(cursor);
     }
 
     private class PageFrameRecordCursorWrapper implements PageFrameRecordCursor {

@@ -35,13 +35,13 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 
 public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
+    private static final long MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL = 60_000;
     private static final short[] numericConvertableColumnTypes = {
             ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG,
             ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.BOOLEAN,
             ColumnType.DATE,
             ColumnType.STRING, ColumnType.VARCHAR
     };
-
     private static final short[] varSizeConvertableColumnTypes = {
             ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG,
             ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.BOOLEAN,
@@ -49,9 +49,6 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
             ColumnType.UUID, ColumnType.IPv4,
             ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR
     };
-
-    private static final long MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL = 60_000;
-
     private final boolean cacheSymbolMap;
     private final String columName;
     private final boolean indexFlag;

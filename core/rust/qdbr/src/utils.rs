@@ -1,30 +1,52 @@
+use crate::parquet::error::ParquetError;
 use jni::JNIEnv;
-use std::fs::File;
-use std::ptr;
 
-pub(crate) fn from_raw_file_descriptor(raw: i32) -> File {
-    unsafe {
-        #[cfg(unix)]
-        {
-            use std::os::unix::io::{FromRawFd, RawFd};
-            File::from_raw_fd(raw as RawFd)
-        }
+pub trait DefaultReturn {
+    fn default_return() -> Self;
+}
 
-        #[cfg(windows)]
-        {
-            use std::os::windows::io::{FromRawHandle, RawHandle};
-            File::from_raw_handle(raw as usize as RawHandle)
-        }
+impl DefaultReturn for () {
+    fn default_return() -> Self {}
+}
+
+impl DefaultReturn for u32 {
+    fn default_return() -> Self {
+        0
     }
 }
 
-pub(crate) fn throw_java_ex<T>(
+impl DefaultReturn for i64 {
+    fn default_return() -> Self {
+        0
+    }
+}
+
+impl DefaultReturn for usize {
+    fn default_return() -> Self {
+        0
+    }
+}
+
+impl<T> DefaultReturn for *mut T {
+    fn default_return() -> Self {
+        std::ptr::null_mut()
+    }
+}
+
+impl<T> DefaultReturn for *const T {
+    fn default_return() -> Self {
+        std::ptr::null()
+    }
+}
+
+pub(crate) fn throw_java_ex<T: DefaultReturn>(
     env: &mut JNIEnv,
     method_name: &str,
-    err: &impl std::fmt::Debug,
-) -> *mut T {
-    let msg = format!("error in {}: {:?}", method_name, err);
+    err: &ParquetError,
+) -> T {
+    let msg = format!("error in {}: {}", method_name, err.display_with_backtrace());
+    // TODO(amunra): Raise a CairoException instead (with appropriately concatenated arguments)
     env.throw_new("java/lang/RuntimeException", msg)
         .expect("failed to throw exception");
-    ptr::null_mut()
+    T::default_return()
 }

@@ -24,147 +24,120 @@
 
 package io.questdb.griffin.engine.table.parquet;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.DirectIntList;
+import io.questdb.std.Files;
+import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
+import io.questdb.std.Os;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectString;
-import io.questdb.std.str.LPSZ;
 
 public class PartitionDecoder implements QuietCloseable {
-    private static final long CHUNK_AUX_PTR_OFFSET;
-    private static final long CHUNK_DATA_PTR_OFFSET;
-    private static final long CHUNK_ROW_GROUP_COUNT_PTR_OFFSET;
-    private static final long CHUNK_STATS_MIN_VALUE_PTR_OFFSET;
-    private static final long CHUNK_STATS_MIN_VALUE_SIZE_OFFSET;
     private static final long COLUMNS_PTR_OFFSET;
     private static final long COLUMN_COUNT_OFFSET;
     private final static long COLUMN_IDS_OFFSET;
     private static final long COLUMN_RECORD_NAME_PTR_OFFSET;
     private static final long COLUMN_RECORD_NAME_SIZE_OFFSET;
-    private static final long COLUMN_RECORD_SIZE;
     private static final long COLUMN_RECORD_TYPE_OFFSET;
+    private static final long COLUMN_STRUCT_SIZE;
     private static final Log LOG = LogFactory.getLog(PartitionDecoder.class);
     private static final long ROW_COUNT_OFFSET;
     private static final long ROW_GROUP_COUNT_OFFSET;
+    private static final long ROW_GROUP_SIZES_PTR_OFFSET;
     private final ObjectPool<DirectString> directStringPool = new ObjectPool<>(DirectString::new, 16);
-    private final FilesFacade ff;
     private final Metadata metadata = new Metadata();
     private long columnsPtr;
-    private long fd;
+    private long fd; // kept around for logging purposes
     private long ptr;
-
-    public PartitionDecoder(FilesFacade ff) {
-        this.ff = ff;
-    }
-
-    public static long getChunkAuxPtr(long chunkPtr) {
-        return Unsafe.getUnsafe().getLong(chunkPtr + CHUNK_AUX_PTR_OFFSET);
-    }
-
-    public static long getChunkDataPtr(long chunkPtr) {
-        return Unsafe.getUnsafe().getLong(chunkPtr + CHUNK_DATA_PTR_OFFSET);
-    }
-
-    public static long getChunkStatsMinValuePtr(long chunkStatsPtr) {
-        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_MIN_VALUE_PTR_OFFSET);
-    }
-
-    public static long getChunkStatsMinValueSize(long chunkStatsPtr) {
-        return Unsafe.getUnsafe().getLong(chunkStatsPtr + CHUNK_STATS_MIN_VALUE_SIZE_OFFSET);
-    }
-
-    public static long getRowGroupRowCount(long chunkPtr) {
-        return Unsafe.getUnsafe().getLong(chunkPtr + CHUNK_ROW_GROUP_COUNT_PTR_OFFSET);
-    }
+    private long rowGroupSizesPtr;
 
     @Override
     public void close() {
         destroy();
-        // parquet decoder will close the FD
         fd = -1;
     }
 
-    public long decodeColumnChunk(
-            long rowGroup,
-            long columnId,
-            int columnType
+    public int decodeRowGroup(
+            RowGroupBuffers rowGroupBuffers,
+            DirectIntList columns, // contains [parquet_column_index, column_type] pairs
+            int rowGroupIndex,
+            int rowLo, // low row index within the row group, inclusive
+            int rowHi // high row index within the row group, exclusive
     ) {
         assert ptr != 0;
         try {
-            return decodeColumnChunk(
+            return decodeRowGroup(
                     ptr,
-                    rowGroup,
-                    columnId,
-                    columnType
+                    rowGroupBuffers.ptr(),
+                    columns.getAddress(),
+                    (int) (columns.size() >>> 1),
+                    rowGroupIndex,
+                    rowLo,
+                    rowHi
             );
         } catch (Throwable th) {
             LOG.error().$("could not decode [fd=").$(fd)
-                    .$(", columnId=").$(columnId)
-                    .$(", rowGroup=").$(rowGroup)
+                    .$(", rowGroup=").$(rowGroupIndex)
                     .$(", msg=").$(th.getMessage())
-                    .$(']').$();
-
+                    .I$();
             throw CairoException.nonCritical().put(th.getMessage());
         }
     }
 
-    public long getColumnChunkMinTimestamp(long rowGroup, long timestampIndex) {
-        final long chunkStatsPtr = getColumnChunkStats(rowGroup, timestampIndex);
-        final long size = getChunkStatsMinValueSize(chunkStatsPtr);
-        assert size == Long.BYTES;
-        final long ptr = getChunkStatsMinValuePtr(chunkStatsPtr);
-        assert ptr != 0;
-        return Unsafe.getUnsafe().getLong(ptr);
+    public long getFd() {
+        return fd;
     }
 
-    public long getColumnChunkStats(long rowGroup, long columnId) {
-        assert ptr != 0;
-        try {
-            return getColumnChunkStats(
-                    ptr,
-                    rowGroup,
-                    columnId
-            );
-        } catch (Throwable th) {
-            LOG.error().$("could not get stats [fd=").$(fd)
-                    .$(", columnId=").$(columnId)
-                    .$(", rowGroup=").$(rowGroup)
-                    .$(", msg=").$(th.getMessage())
-                    .$(']').$();
-
-            throw CairoException.nonCritical().put(th.getMessage());
-        }
-    }
-
-    public Metadata getMetadata() {
+    public Metadata metadata() {
         assert ptr != 0;
         return metadata;
     }
 
-    public void of(@Transient LPSZ srcPath) {
+    public void of(long fd) {
         destroy();
-        this.fd = TableUtils.openRO(ff, srcPath, LOG);
         try {
-            ptr = create(Files.detach(fd));
+            this.fd = fd;
+            ptr = create(Files.toOsFd(fd));
             columnsPtr = Unsafe.getUnsafe().getLong(ptr + COLUMNS_PTR_OFFSET);
+            rowGroupSizesPtr = Unsafe.getUnsafe().getLong(ptr + ROW_GROUP_SIZES_PTR_OFFSET);
             metadata.init();
         } catch (Throwable th) {
-            throw CairoException.nonCritical().put("could not read parquet file: [path=").put(srcPath)
+            throw CairoException.nonCritical().put("could not read parquet file: [fd=").put(fd)
                     .put(", msg=").put(th.getMessage())
                     .put(']');
         }
     }
 
-    private static native long chunkAuxPtrOffset();
-
-    private static native long chunkDataPtrOffset();
-
-    private static native long chunkRowGroupCountPtrOffset();
-
-    private static native long chunkStatMinValuePtrOffset();
-
-    private static native long chunkStatMinValueSizeOffset();
+    public void readRowGroupStats(
+            RowGroupStatBuffers statBuffers,
+            DirectIntList columns,
+            int rowGroupIndex
+    ) {
+        assert ptr != 0;
+        try {
+            readRowGroupStats(
+                    ptr,
+                    statBuffers.ptr(),
+                    columns.getAddress(),
+                    (int) (columns.size() >>> 1),
+                    rowGroupIndex
+            );
+        } catch (Throwable th) {
+            LOG.error().$("could not read row group stats [fd=").$(fd)
+                    .$(", rowGroup=").$(rowGroupIndex)
+                    .$(", msg=").$(th.getMessage())
+                    .I$();
+            throw CairoException.nonCritical().put(th.getMessage());
+        }
+    }
 
     private static native long columnCountOffset();
 
@@ -182,25 +155,38 @@ public class PartitionDecoder implements QuietCloseable {
 
     private static native long create(int fd);
 
-    private static native long decodeColumnChunk(
+    private static native int decodeRowGroup(
             long decoderPtr,
-            long rowGroup,
-            long columnId,
-            int columnType
+            long rowGroupBuffersPtr,
+            long columnsPtr,
+            int columnCount,
+            int rowGroup,
+            int rowLo,
+            int rowHi
     );
 
     private static native void destroy(long impl);
 
-    private static native long getColumnChunkStats(long decoderPtr, long rowGroup, long columnId);
+    private static native long readRowGroupStats(
+            long decoderPtr,
+            long statBuffersPtr,
+            long columnsPtr,
+            int columnCount,
+            int rowGroup
+    );
 
     private static native long rowCountOffset();
 
     private static native long rowGroupCountOffset();
 
+    private static native long rowGroupSizesPtrOffset();
+
     private void destroy() {
         if (ptr != 0) {
             destroy(ptr);
             ptr = 0;
+            columnsPtr = 0;
+            rowGroupSizesPtr = 0;
         }
     }
 
@@ -211,30 +197,41 @@ public class PartitionDecoder implements QuietCloseable {
             return Unsafe.getUnsafe().getInt(ptr + COLUMN_COUNT_OFFSET);
         }
 
-        public int columnId(int index) {
-            return Unsafe.getUnsafe().getInt(columnsPtr + index * COLUMN_RECORD_SIZE + COLUMN_IDS_OFFSET);
+        public int columnId(int columnIndex) {
+            return Unsafe.getUnsafe().getInt(columnsPtr + columnIndex * COLUMN_STRUCT_SIZE + COLUMN_IDS_OFFSET);
         }
 
-        public CharSequence columnName(int index) {
-            return columnNames.getQuick(index);
+        public CharSequence columnName(int columnIndex) {
+            return columnNames.getQuick(columnIndex);
         }
 
-        public void copyTo(GenericRecordMetadata metadata) {
+        public void copyTo(GenericRecordMetadata metadata, boolean treatSymbolsAsVarchar) {
             metadata.clear();
             final int columnCount = columnCount();
             for (int i = 0; i < columnCount; i++) {
                 final String columnName = Chars.toString(columnName(i));
                 final int columnType = getColumnType(i);
                 if (ColumnType.isSymbol(columnType)) {
-                    metadata.add(new TableColumnMetadata(columnName, columnType, true, 1024, true, null));
+                    if (treatSymbolsAsVarchar) {
+                        metadata.add(new TableColumnMetadata(columnName, ColumnType.VARCHAR));
+                    } else {
+                        metadata.add(new TableColumnMetadata(
+                                columnName,
+                                columnType,
+                                false,
+                                64,
+                                true,
+                                null
+                        ));
+                    }
                 } else {
                     metadata.add(new TableColumnMetadata(columnName, columnType));
                 }
             }
         }
 
-        public int getColumnType(int index) {
-            return Unsafe.getUnsafe().getInt(columnsPtr + index * COLUMN_RECORD_SIZE + COLUMN_RECORD_TYPE_OFFSET);
+        public int getColumnType(int columnIndex) {
+            return Unsafe.getUnsafe().getInt(columnsPtr + columnIndex * COLUMN_STRUCT_SIZE + COLUMN_RECORD_TYPE_OFFSET);
         }
 
         public long rowCount() {
@@ -243,6 +240,10 @@ public class PartitionDecoder implements QuietCloseable {
 
         public int rowGroupCount() {
             return Unsafe.getUnsafe().getInt(ptr + ROW_GROUP_COUNT_OFFSET);
+        }
+
+        public int rowGroupSize(int rowGroupIndex) {
+            return Unsafe.getUnsafe().getInt(rowGroupSizesPtr + 4L * rowGroupIndex);
         }
 
         private void init() {
@@ -257,7 +258,7 @@ public class PartitionDecoder implements QuietCloseable {
                 long colNamePtr = Unsafe.getUnsafe().getLong(currentColumnPtr + COLUMN_RECORD_NAME_PTR_OFFSET);
                 str.of(colNamePtr, len);
                 columnNames.add(str);
-                currentColumnPtr += COLUMN_RECORD_SIZE;
+                currentColumnPtr += COLUMN_STRUCT_SIZE;
             }
         }
     }
@@ -268,16 +269,12 @@ public class PartitionDecoder implements QuietCloseable {
         COLUMN_COUNT_OFFSET = columnCountOffset();
         COLUMNS_PTR_OFFSET = columnsPtrOffset();
         ROW_COUNT_OFFSET = rowCountOffset();
-        COLUMN_RECORD_SIZE = columnRecordSize();
+        COLUMN_STRUCT_SIZE = columnRecordSize();
         COLUMN_RECORD_TYPE_OFFSET = columnRecordTypeOffset();
         COLUMN_RECORD_NAME_SIZE_OFFSET = columnRecordNameSizeOffset();
         COLUMN_RECORD_NAME_PTR_OFFSET = columnRecordNamePtrOffset();
+        ROW_GROUP_SIZES_PTR_OFFSET = rowGroupSizesPtrOffset();
         ROW_GROUP_COUNT_OFFSET = rowGroupCountOffset();
         COLUMN_IDS_OFFSET = columnIdsOffset();
-        CHUNK_DATA_PTR_OFFSET = chunkDataPtrOffset();
-        CHUNK_AUX_PTR_OFFSET = chunkAuxPtrOffset();
-        CHUNK_ROW_GROUP_COUNT_PTR_OFFSET = chunkRowGroupCountPtrOffset();
-        CHUNK_STATS_MIN_VALUE_PTR_OFFSET = chunkStatMinValuePtrOffset();
-        CHUNK_STATS_MIN_VALUE_SIZE_OFFSET = chunkStatMinValueSizeOffset();
     }
 }

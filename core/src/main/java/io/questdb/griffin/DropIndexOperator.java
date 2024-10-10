@@ -129,7 +129,7 @@ public class DropIndexOperator {
             CharSequence columnName,
             long columnNameTxn
     ) {
-        TableUtils.setPathForPartition(
+        TableUtils.setPathForNativePartition(
                 path.trimTo(rootLen),
                 partitionBy,
                 partitionTimestamp,

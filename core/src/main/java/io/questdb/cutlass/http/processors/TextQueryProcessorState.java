@@ -39,13 +39,13 @@ import java.io.Closeable;
 public class TextQueryProcessorState implements Mutable, Closeable {
     final StringSink query = new StringSink();
     private final HttpConnectionContext httpConnectionContext;
-    boolean hasNext;
     int columnIndex;
     long count;
     boolean countRows = false;
     RecordCursor cursor;
     char delimiter = ',';
     String fileName;
+    boolean hasNext;
     RecordMetadata metadata;
     boolean noMeta = false;
     boolean pausedQuery = false;

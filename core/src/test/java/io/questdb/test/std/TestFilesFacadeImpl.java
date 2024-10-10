@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacadeImpl;
-import io.questdb.std.Os;
 import io.questdb.std.Utf8SequenceIntHashMap;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8Sequence;

@@ -42,13 +42,13 @@ import static io.questdb.cairo.wal.WalUtils.*;
 public class SequencerMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Closeable, TableDescriptor {
     private final FilesFacade ff;
     private final MemoryMARW metaMem;
+    private final IntList readColumnOrder = new IntList();
     private final boolean readonly;
     private final MemoryMR roMetaMem;
     private final AtomicLong structureVersion = new AtomicLong(-1);
     private volatile boolean suspended;
     private int tableId;
     private TableToken tableToken;
-    private final IntList readColumnOrder = new IntList();
 
     public SequencerMetadata(FilesFacade ff) {
         this(ff, false);
@@ -116,13 +116,13 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion.incrementAndGet();
     }
 
-    public IntList getReadColumnOrder() {
-        return readColumnOrder;
-    }
-
     @Override
     public long getMetadataVersion() {
         return structureVersion.get();
+    }
+
+    public IntList getReadColumnOrder() {
+        return readColumnOrder;
     }
 
     public int getRealColumnCount() {

@@ -436,7 +436,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
     }
 
     protected PGWireServer createPGServer(int workerCount, long maxQueryTime, int connectionLimit) throws SqlException {
-
         final SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
             @Override
             public int getCircuitBreakerThrottle() {
@@ -459,7 +458,6 @@ public abstract class BasePGTest extends AbstractCairoTest {
         };
 
         final PGWireConfiguration conf = new Port0PGWireConfiguration(connectionLimit) {
-
             @Override
             public SqlExecutionCircuitBreakerConfiguration getCircuitBreakerConfiguration() {
                 return circuitBreakerConfiguration;

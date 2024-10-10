@@ -89,7 +89,7 @@ public class HttpMinTest extends AbstractBootstrapTest {
 
                     while (true) {
                         try {
-                            rssAvailable = Unsafe.getRssMemAvailable();
+                            rssAvailable = Unsafe.getRssMemLimit() - Unsafe.getRssMemUsed();
                             buff = Unsafe.malloc(rssAvailable, MemoryTag.NATIVE_DEFAULT);
                             break;
                         } catch (CairoException e) {

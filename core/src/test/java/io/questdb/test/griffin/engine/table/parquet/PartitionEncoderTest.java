@@ -25,13 +25,16 @@
 package io.questdb.test.griffin.engine.table.parquet;
 
 import io.questdb.cairo.TableReader;
-import io.questdb.griffin.engine.table.parquet.*;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetVersion;
+import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
+import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QuestDBTestNode;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -59,7 +62,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     PartitionEncoder.encodeWithOptions(partitionDescriptor, path, 42, false, 0, 0, ParquetVersion.PARQUET_VERSION_V1);
                     Assert.fail();
                 } catch (Exception e) {
-                    Assert.assertTrue(Chars.contains(e.getMessage(), "Invalid value for CompressionCodec"));
+                    TestUtils.assertContains(e.getMessage(), "unsupported compression codec id: 42");
                 }
             }
         });
@@ -84,7 +87,7 @@ public class PartitionEncoderTest extends AbstractCairoTest {
                     PartitionEncoder.encodeWithOptions(partitionDescriptor, path, ParquetCompression.COMPRESSION_UNCOMPRESSED, false, 0, 0, 42);
                     Assert.fail();
                 } catch (Exception e) {
-                    Assert.assertTrue(Chars.contains(e.getMessage(), "Invalid value for Version"));
+                    TestUtils.assertContains(e.getMessage(), "unsupported parquet version 42");
                 }
             }
         });

@@ -25,8 +25,8 @@
 package io.questdb.network;
 
 public class HeartBeatException extends Exception {
+    public static final HeartBeatException INSTANCE = new HeartBeatException();
+
     private HeartBeatException() {
     }
-
-    public static final HeartBeatException INSTANCE = new HeartBeatException();
 }

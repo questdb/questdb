@@ -1,10 +1,9 @@
+use crate::parquet::error::ParquetResult;
+use crate::parquet_write::file::WriteOptions;
+use crate::parquet_write::util::{build_plain_page, encode_bool_iter};
 use parquet2::encoding::Encoding;
 use parquet2::page::Page;
 use parquet2::schema::types::PrimitiveType;
-
-use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::util::{build_plain_page, encode_bool_iter};
-use crate::parquet_write::ParquetResult;
 
 use super::util::BinaryMaxMin;
 

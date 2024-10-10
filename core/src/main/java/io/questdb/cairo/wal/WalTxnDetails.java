@@ -165,10 +165,6 @@ public class WalTxnDetails {
 
     }
 
-    private long getCommitMaxTimestamp(long seqTxn) {
-        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + MAX_TIMESTAMP_OFFSET));
-    }
-
     private static WalEventCursor openWalEFile(Path tempPath, WalEventReader eventReader, int segmentTxn, long seqTxn) {
         WalEventCursor walEventCursor;
         try {
@@ -178,6 +174,10 @@ public class WalTxnDetails {
                     .put(", ").put(ex.getFlyweightMessage()).put(']');
         }
         return walEventCursor;
+    }
+
+    private long getCommitMaxTimestamp(long seqTxn) {
+        return transactionMeta.get((int) ((seqTxn - startSeqTxn) * TXN_METADATA_LONGS_SIZE + MAX_TIMESTAMP_OFFSET));
     }
 
     private void loadTransactionDetailsV1(Path tempPath, TransactionLogCursor transactionLogCursor, int rootLen, long maxCommittedTimestamp) {

@@ -24,16 +24,18 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.RecordCursor;
 import org.jetbrains.annotations.Nullable;
 
 public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCursor {
+    protected long rowLo; // used for Parquet frames generation
 
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
         while (partitionIndex < partitionHi) {
-            final long hi = getTableReader().openPartition(partitionIndex);
+            final long hi = reader.openPartition(partitionIndex);
             if (hi > 0) {
                 counter.add(hi);
             }
@@ -43,15 +45,36 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
 
     @Override
     public @Nullable PartitionFrame next() {
+        if (rowGroupIndex < rowGroupCount) {
+            return prepareParquetFrame();
+        }
+
         while (partitionIndex < partitionHi) {
-            final long hi = getTableReader().openPartition(partitionIndex);
+            final long hi = reader.openPartition(partitionIndex);
             if (hi < 1) {
                 // this partition is missing, skip
                 partitionIndex++;
             } else {
+                final byte format = reader.getPartitionFormat(partitionIndex);
+
+                if (format == PartitionFormat.PARQUET) {
+                    final long fd = reader.getParquetFd(partitionIndex);
+                    assert fd != -1;
+                    parquetDecoder.of(fd);
+                    rowLo = 0;
+                    rowGroupIndex = 0;
+                    rowGroupCount = parquetDecoder.metadata().rowGroupCount();
+                    return prepareParquetFrame();
+                }
+
+                assert format == PartitionFormat.NATIVE;
                 frame.partitionIndex = partitionIndex;
+                frame.format = PartitionFormat.NATIVE;
+                frame.parquetFd = -1;
                 frame.rowLo = 0;
                 frame.rowHi = hi;
+                frame.rowGroupIndex = -1;
+                frame.rowGroupLo = -1;
                 partitionIndex++;
                 return frame;
             }
@@ -67,5 +90,23 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
     @Override
     public void toTop() {
         partitionIndex = 0;
+        rowGroupIndex = 0;
+        rowGroupCount = 0;
+        rowLo = 0;
+    }
+
+    private FullTablePartitionFrame prepareParquetFrame() {
+        frame.partitionIndex = partitionIndex;
+        frame.format = PartitionFormat.PARQUET;
+        frame.parquetFd = parquetDecoder.getFd();
+        frame.rowGroupLo = 0;
+        frame.rowLo = rowLo;
+        frame.rowHi = rowLo + parquetDecoder.metadata().rowGroupSize(rowGroupIndex);
+        rowLo = frame.rowHi;
+        if (++rowGroupIndex == rowGroupCount) {
+            // Proceed to the next partition on the next call.
+            partitionIndex++;
+        }
+        return frame;
     }
 }

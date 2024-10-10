@@ -122,7 +122,7 @@ impl<W: Write> FileWriter<W> {
         schema: SchemaDescriptor,
         options: WriteOptions,
         created_by: Option<String>,
-        sorting_columns: Option<Vec<SortingColumn>>
+        sorting_columns: Option<Vec<SortingColumn>>,
     ) -> Self {
         Self {
             writer,
@@ -134,7 +134,7 @@ impl<W: Write> FileWriter<W> {
             row_groups: vec![],
             page_specs: vec![],
             state: State::Initialised,
-            metadata: None
+            metadata: None,
         }
     }
     /// Writes the header of the file.
@@ -158,10 +158,9 @@ impl<W: Write> FileWriter<W> {
     /// Writes a row group to the file.
     ///
     /// This call is IO-bounded
-    pub fn write<E>(&mut self, row_group: RowGroupIter<'_, E>) -> Result<()>
+    pub fn write<E>(&mut self, row_group: RowGroupIter<'_, E>) -> std::result::Result<(), E>
     where
-        Error: From<E>,
-        E: std::error::Error,
+        E: std::error::Error + From<Error>,
     {
         if self.offset == 0 {
             self.start()?;
@@ -183,7 +182,7 @@ impl<W: Write> FileWriter<W> {
 
     /// Writes the footer of the parquet file. Returns the total size of the file and the
     /// underlying writer.
-    pub fn end(&mut self, additional_meta: Vec<KeyValue>) -> Result<u64> {
+    pub fn end(&mut self, additional_meta: Option<Vec<KeyValue>>) -> Result<u64> {
         if self.offset == 0 {
             self.start()?;
         }
@@ -372,14 +371,16 @@ impl<W: Write> ParquetFile<W> {
             self.state = State::Started;
             Ok(())
         } else {
-            Err(Error::InvalidParameter("Start cannot be called twice".to_string()))
+            Err(Error::InvalidParameter(
+                "Start cannot be called twice".to_string(),
+            ))
         }
     }
 
-    pub fn write<E>(&mut self, row_group: RowGroupIter<'_, E>) -> Result<()>
-        where
-            Error: From<E>,
-            E: std::error::Error,
+    pub fn write<E>(&mut self, row_group: RowGroupIter<'_, E>) -> std::result::Result<(), E>
+    where
+        Error: From<E>,
+        E: std::error::Error + From<Error>,
     {
         if self.offset == 0 {
             self.start()?;
@@ -388,10 +389,13 @@ impl<W: Write> ParquetFile<W> {
         self.add_row_group(row_group, ordinal)
     }
 
-    fn add_row_group<E>(&mut self, row_group: RowGroupIter<E>, ordinal: usize) -> Result<()>
-        where
-            Error: From<E>,
-            E: std::error::Error,
+    fn add_row_group<E>(
+        &mut self,
+        row_group: RowGroupIter<E>,
+        ordinal: usize,
+    ) -> std::result::Result<(), E>
+    where
+        E: std::error::Error + From<Error>,
     {
         let (group, specs, size) = write_row_group(
             &mut self.writer,
@@ -401,16 +405,20 @@ impl<W: Write> ParquetFile<W> {
             &self.sorting_columns,
             ordinal,
         )?;
+
         self.offset += size;
         self.row_groups.push(group);
         self.page_specs.push(specs);
         Ok(())
     }
 
-    pub fn replace<E>(&mut self, row_group: RowGroupIter<'_, E>, ordinal: Option<i16>) -> Result<()>
-        where
-            Error: From<E>,
-            E: std::error::Error,
+    pub fn replace<E>(
+        &mut self,
+        row_group: RowGroupIter<'_, E>,
+        ordinal: Option<i16>,
+    ) -> std::result::Result<(), E>
+    where
+        E: std::error::Error + From<Error>,
     {
         match &self.mode {
             Mode::Update(metadata) => {
@@ -418,9 +426,11 @@ impl<W: Write> ParquetFile<W> {
                     let num_row_groups = metadata.row_groups.len();
                     let ordinal = ordinal as usize;
                     if ordinal >= num_row_groups {
-                        return Err(Error::InvalidParameter(
-                            format!("Row group ordinal must be less then {}, got {}", num_row_groups, ordinal),
-                        ));
+                        return Err(Error::InvalidParameter(format!(
+                            "Row group ordinal must be less then {}, got {}",
+                            num_row_groups, ordinal
+                        ))
+                        .into());
                     }
                     ordinal
                 } else {
@@ -428,14 +438,16 @@ impl<W: Write> ParquetFile<W> {
                 };
                 self.add_row_group(row_group, ordinal)
             }
-            _ => Err(Error::InvalidParameter("Replace can only be called in update mode".to_string())),
+            _ => Err(Error::InvalidParameter(
+                "Replace can only be called in update mode".to_string(),
+            )
+            .into()),
         }
     }
 
-    pub fn append<E>(&mut self, row_group: RowGroupIter<'_, E>) -> Result<()>
-        where
-            Error: From<E>,
-            E: std::error::Error,
+    pub fn append<E>(&mut self, row_group: RowGroupIter<'_, E>) -> std::result::Result<(), E>
+    where
+        E: std::error::Error + From<Error>,
     {
         self.replace(row_group, None)
     }
@@ -448,7 +460,9 @@ impl<W: Write> ParquetFile<W> {
                 }
 
                 if self.state != State::Started {
-                    return Err(Error::InvalidParameter("End cannot be called twice".to_string()));
+                    return Err(Error::InvalidParameter(
+                        "End cannot be called twice".to_string(),
+                    ));
                 }
 
                 let num_rows = self.row_groups.iter().map(|group| group.num_rows).sum();
@@ -472,7 +486,9 @@ impl<W: Write> ParquetFile<W> {
             Mode::Update(metadata) => {
                 let mut num_rows = metadata.num_rows;
                 for group in &self.row_groups {
-                    let ordinal = group.ordinal.ok_or_else(|| Error::oos("Row group ordinal is missing"))?;
+                    let ordinal = group
+                        .ordinal
+                        .ok_or_else(|| Error::oos("Row group ordinal is missing"))?;
                     if ordinal < metadata.row_groups.len() as i16 {
                         num_rows -= metadata.row_groups[ordinal as usize].num_rows;
                         metadata.row_groups[ordinal as usize] = group.clone();
@@ -483,12 +499,15 @@ impl<W: Write> ParquetFile<W> {
                 }
 
                 metadata.num_rows = num_rows;
-                metadata.key_value_metadata = metadata.key_value_metadata.take().map_or(key_value_metadata.clone(), |mut kv| {
-                    if let Some(mut new_kv) = key_value_metadata {
-                        kv.append(&mut new_kv);
-                    }
-                    Some(kv)
-                });
+                metadata.key_value_metadata = metadata.key_value_metadata.take().map_or(
+                    key_value_metadata.clone(),
+                    |mut kv| {
+                        if let Some(mut new_kv) = key_value_metadata {
+                            kv.append(&mut new_kv);
+                        }
+                        Some(kv)
+                    },
+                );
 
                 let len = end_file(&mut self.writer, metadata)?;
                 self.state = State::Finished;
@@ -502,10 +521,7 @@ impl<W: Write> ParquetFile<W> {
     }
 
     pub fn into_inner_and_metadata(self) -> (W, ThriftFileMetaData) {
-        (
-            self.writer,
-            self.metadata.expect("File to have ended"),
-        )
+        (self.writer, self.metadata.expect("File to have ended"))
     }
 }
 

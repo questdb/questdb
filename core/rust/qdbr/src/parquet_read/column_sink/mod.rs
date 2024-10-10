@@ -1,7 +1,7 @@
+use crate::parquet::error::ParquetResult;
+
 pub mod fixed;
 pub mod var;
-
-use crate::parquet_write::ParquetResult;
 
 pub trait Pushable {
     fn reserve(&mut self);

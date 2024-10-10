@@ -52,11 +52,15 @@ pub struct PageWriteSpec {
     pub statistics: Option<Arc<dyn Statistics>>,
 }
 
-pub fn write_page<W: Write>(
+pub fn write_page<W: Write, E: std::error::Error>(
     writer: &mut W,
     offset: u64,
     compressed_page: &CompressedPage,
-) -> Result<PageWriteSpec> {
+) -> std::result::Result<PageWriteSpec, E>
+where
+    W: Write,
+    E: std::error::Error + From<Error>,
+{
     let num_values = compressed_page.num_values();
     let selected_rows = compressed_page.selected_rows();
 
@@ -70,11 +74,15 @@ pub fn write_page<W: Write>(
 
     bytes_written += match &compressed_page {
         CompressedPage::Data(compressed_page) => {
-            writer.write_all(&compressed_page.buffer)?;
+            writer
+                .write_all(&compressed_page.buffer)
+                .map_err(|e| e.into())?;
             compressed_page.buffer.len() as u64
         }
         CompressedPage::Dict(compressed_page) => {
-            writer.write_all(&compressed_page.buffer)?;
+            writer
+                .write_all(&compressed_page.buffer)
+                .map_err(|e| e.into())?;
             compressed_page.buffer.len() as u64
         }
     };

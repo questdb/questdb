@@ -97,20 +97,20 @@ public class PartitionDescriptor implements QuietCloseable {
         return (int) (getColumnDataLen() / COLUMN_ENTRY_SIZE);
     }
 
-    public long getColumnDataPtr() {
-        return columnData.getAddress();
-    }
-
     public long getColumnDataLen() {
         return columnData.size();
     }
 
-    public long getColumnNamesPtr() {
-        return columnNames.ptr();
+    public long getColumnDataPtr() {
+        return columnData.getAddress();
     }
 
     public int getColumnNamesLen() {
         return columnNames.size();
+    }
+
+    public long getColumnNamesPtr() {
+        return columnNames.ptr();
     }
 
     public long getPartitionRowCount() {

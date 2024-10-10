@@ -58,7 +58,7 @@ class SymbolIndexFilteredRowCursor implements RowCursor {
         this.filter = filter;
         this.cachedIndexReaderCursor = cachedIndexReaderCursor;
         this.indexDirection = indexDirection;
-        this.record = new PageFrameMemoryRecord();
+        this.record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     }
 
     @Override

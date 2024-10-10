@@ -59,7 +59,7 @@ impl RowGroupMetaData {
     /// If set, specifies a sort ordering of the rows in this RowGroup.
     /// The sorting columns can be a subset of all the columns.
     pub fn sorting_columns(&self) -> &Option<Vec<SortingColumn>> {
-       &self.sorting_columns
+        &self.sorting_columns
     }
 
     /// Total byte size of all uncompressed column data in this row group.

@@ -1,7 +1,7 @@
+use crate::parquet::error::ParquetResult;
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::DataPageSlicer;
 use crate::parquet_read::ColumnChunkBuffers;
-use crate::parquet_write::ParquetResult;
 use std::ptr;
 
 /// A sink for fixed length columns
@@ -22,6 +22,7 @@ pub type FixedFloatColumnSink<'a, T> = FixedColumnSink<'a, 4, 4, T>;
 pub type FixedInt2ShortColumnSink<'a, T> = FixedColumnSink<'a, 2, 4, T>;
 pub type FixedInt2ByteColumnSink<'a, T> = FixedColumnSink<'a, 1, 4, T>;
 pub type FixedLong256ColumnSink<'a, T> = FixedColumnSink<'a, 32, 32, T>;
+pub type FixedLong128ColumnSink<'a, T> = FixedColumnSink<'a, 16, 16, T>;
 pub type FixedBooleanColumnSink<'a, T> = FixedColumnSink<'a, 1, 1, T>;
 
 impl<const N: usize, const R: usize, T: DataPageSlicer> Pushable for FixedColumnSink<'_, N, R, T> {
@@ -84,6 +85,7 @@ impl<'a, const N: usize, const R: usize, T: DataPageSlicer> FixedColumnSink<'a, 
         Self { slicer, buffers, null_value }
     }
 }
+
 pub struct ReverseFixedColumnSink<'a, const N: usize, T: DataPageSlicer> {
     slicer: &'a mut T,
     buffers: &'a mut ColumnChunkBuffers,

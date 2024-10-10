@@ -30,6 +30,21 @@ import org.junit.Test;
 public class VarcharEqualsTest extends AbstractCairoTest {
 
     @Test
+    public void testColToCol() throws Exception {
+        assertQuery(
+                "name1\tname2\n" +
+                        "snthtneusd\tsnthtneusd\nšěčřž\tšěčřž\nšěčř\tšěčř\nsnthtneusd\tsnthtneusd\nšěčř\tšěčř\nšěčř\tšěčř\n" +
+                        "\t\nšěčř\tšěčř\nšěčřž\tšěčřž\nsntht\tsntht\nšěčř\tšěčř\n\t\nsntht\tsntht\nsnthtneusd\tsnthtneusd\n",
+                "x where name1 = name2",
+                "create table x as (select" +
+                        " rnd_varchar(null, 'sntht', 'snthtneusd', 'šěčř', 'šěčřž') name1," +
+                        " rnd_varchar(null, 'sntht', 'snthtneusd', 'šěčř', 'šěčřž') name2" +
+                        " from long_sequence(80))",
+                null
+        );
+    }
+
+    @Test
     public void testConstFullyInlinedAscii() throws Exception {
         assertQuery(
                 "name\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\nbac\n",
@@ -77,22 +92,6 @@ public class VarcharEqualsTest extends AbstractCairoTest {
                 "name\něšščř\něšščř\něšščř\něšščř\něšščř\něšščř\n",
                 "x where name = 'ěšščř'::varchar",
                 "create table x as (select rnd_varchar(null, 'ěšščř', 'ěššč', 'ěšščřěšščř') name from long_sequence(30))",
-                null
-        );
-    }
-
-
-    @Test
-    public void testColToCol() throws Exception {
-        assertQuery(
-                "name1\tname2\n" +
-                        "snthtneusd\tsnthtneusd\nšěčřž\tšěčřž\nšěčř\tšěčř\nsnthtneusd\tsnthtneusd\nšěčř\tšěčř\nšěčř\tšěčř\n" +
-                        "\t\nšěčř\tšěčř\nšěčřž\tšěčřž\nsntht\tsntht\nšěčř\tšěčř\n\t\nsntht\tsntht\nsnthtneusd\tsnthtneusd\n",
-                "x where name1 = name2",
-                "create table x as (select" +
-                        " rnd_varchar(null, 'sntht', 'snthtneusd', 'šěčř', 'šěčřž') name1," +
-                        " rnd_varchar(null, 'sntht', 'snthtneusd', 'šěčř', 'šěčřž') name2" +
-                        " from long_sequence(80))",
                 null
         );
     }

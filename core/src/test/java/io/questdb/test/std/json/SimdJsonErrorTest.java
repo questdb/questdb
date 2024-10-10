@@ -30,8 +30,8 @@ import org.junit.Test;
 
 public class SimdJsonErrorTest {
     @Test
-    public void testSuccess() {
-        Assert.assertEquals("SUCCESS: No error", SimdJsonError.getMessage(SimdJsonError.SUCCESS));
+    public void testLastErrorCode() {
+        Assert.assertEquals("TRAILING_CONTENT: Unexpected trailing content in the JSON input.", SimdJsonError.getMessage(SimdJsonError.TRAILING_CONTENT));
     }
 
     @Test
@@ -45,15 +45,15 @@ public class SimdJsonErrorTest {
     }
 
     @Test
-    public void testLastErrorCode() {
-        Assert.assertEquals("TRAILING_CONTENT: Unexpected trailing content in the JSON input.", SimdJsonError.getMessage(SimdJsonError.TRAILING_CONTENT));
-    }
-
-    @Test
     public void testOnePastLastErrorCode() {
         final int onePast = SimdJsonError.TRAILING_CONTENT + 1;
         Assert.assertEquals(SimdJsonError.NUM_ERROR_CODES, onePast);
         Assert.assertEquals("Unknown error code " + onePast, SimdJsonError.getMessage(onePast));
+    }
+
+    @Test
+    public void testSuccess() {
+        Assert.assertEquals("SUCCESS: No error", SimdJsonError.getMessage(SimdJsonError.SUCCESS));
     }
 
 }

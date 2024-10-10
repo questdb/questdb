@@ -41,12 +41,12 @@ import static io.questdb.griffin.SqlCodeGenerator.GKK_HOUR_INT;
 public class MaxShortVectorAggregateFunction extends IntFunction implements VectorAggregateFunction {
 
     public static final LongBinaryOperator MAX = Math::max;
-    private final int columnIndex;
-    private final DistinctFunc distinctFunc;
-    private final KeyValueFunc keyValueFunc;
     private final LongAccumulator accumulator = new LongAccumulator(
             MAX, Numbers.INT_NULL
     );
+    private final int columnIndex;
+    private final DistinctFunc distinctFunc;
+    private final KeyValueFunc keyValueFunc;
     private int valueOffset;
 
     @SuppressWarnings("unused")

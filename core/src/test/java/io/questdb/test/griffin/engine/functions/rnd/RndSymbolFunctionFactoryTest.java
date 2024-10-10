@@ -26,8 +26,8 @@ package io.questdb.test.griffin.engine.functions.rnd;
 
 import io.questdb.PropertyKey;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import io.questdb.griffin.engine.functions.rnd.RndSymbolFunctionFactory;
+import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
 import org.junit.Ignore;
 import org.junit.Test;
 

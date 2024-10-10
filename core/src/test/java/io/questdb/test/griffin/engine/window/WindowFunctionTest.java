@@ -28,7 +28,11 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.functions.window.*;
+import io.questdb.griffin.engine.functions.window.AvgDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.FirstValueDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.RankFunctionFactory;
+import io.questdb.griffin.engine.functions.window.RowNumberFunctionFactory;
+import io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -44,7 +48,7 @@ import java.util.List;
 
 public class WindowFunctionTest extends AbstractCairoTest {
     private static final List<String> FRAME_FUNCTIONS;
-    private final static List<String> FRAME_TYPES = Arrays.asList("rows  ", "groups", "range ");
+    private static final List<String> FRAME_TYPES = Arrays.asList("rows  ", "groups", "range ");
     private static final List<String> WINDOW_ONLY_FUNCTIONS;
 
     @Test

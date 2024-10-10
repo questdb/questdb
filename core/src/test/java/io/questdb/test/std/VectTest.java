@@ -24,11 +24,27 @@
 
 package io.questdb.test.std;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DedupColumnCommitAddresses;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.network.Net;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.LongHashSet;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -40,8 +56,8 @@ import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
-import static io.questdb.cairo.AbstractIntervalPartitionFrameCursor.SCAN_UP;
-import static io.questdb.cairo.BinarySearch.SCAN_DOWN;
+import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
+import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
 
 public class VectTest {
 
@@ -57,7 +73,6 @@ public class VectTest {
     @Test
     public void testAggregateBoundary() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-
             abstract class TestCase {
                 final long sizeBytes;
 
@@ -169,22 +184,22 @@ public class VectTest {
                 }
 
                 // Existing
-                Assert.assertEquals(2, Vect.binarySearchIndexT(addr, 0, 0, count - 1, SCAN_DOWN));
-                Assert.assertEquals(0, Vect.binarySearchIndexT(addr, 0, 0, count - 1, SCAN_UP));
+                Assert.assertEquals(2, Vect.binarySearchIndexT(addr, 0, 0, count - 1, BIN_SEARCH_SCAN_DOWN));
+                Assert.assertEquals(0, Vect.binarySearchIndexT(addr, 0, 0, count - 1, BIN_SEARCH_SCAN_UP));
 
                 // Non-existing
-                Assert.assertEquals(3, -Vect.binarySearchIndexT(addr, 1, 0, count - 1, SCAN_DOWN) - 1);
-                Assert.assertEquals(3, -Vect.binarySearchIndexT(addr, 1, 0, count - 1, SCAN_UP) - 1);
+                Assert.assertEquals(3, -Vect.binarySearchIndexT(addr, 1, 0, count - 1, BIN_SEARCH_SCAN_DOWN) - 1);
+                Assert.assertEquals(3, -Vect.binarySearchIndexT(addr, 1, 0, count - 1, BIN_SEARCH_SCAN_UP) - 1);
 
                 // Generalize
                 for (int i = 0; i < count / 3; i++) {
                     int existingValue = i * 2;
-                    Assert.assertEquals(i * 3 + 2, Vect.binarySearchIndexT(addr, existingValue, 0, count - 1, SCAN_DOWN));
-                    Assert.assertEquals(i * 3, Vect.binarySearchIndexT(addr, existingValue, 0, count - 1, SCAN_UP));
+                    Assert.assertEquals(i * 3 + 2, Vect.binarySearchIndexT(addr, existingValue, 0, count - 1, BIN_SEARCH_SCAN_DOWN));
+                    Assert.assertEquals(i * 3, Vect.binarySearchIndexT(addr, existingValue, 0, count - 1, BIN_SEARCH_SCAN_UP));
 
                     int nonExisting = i * 2 + 1;
-                    Assert.assertEquals(i * 3 + 3, -Vect.binarySearchIndexT(addr, nonExisting, 0, count - 1, SCAN_DOWN) - 1);
-                    Assert.assertEquals(i * 3 + 3, -Vect.binarySearchIndexT(addr, nonExisting, 0, count - 1, SCAN_UP) - 1);
+                    Assert.assertEquals(i * 3 + 3, -Vect.binarySearchIndexT(addr, nonExisting, 0, count - 1, BIN_SEARCH_SCAN_DOWN) - 1);
+                    Assert.assertEquals(i * 3 + 3, -Vect.binarySearchIndexT(addr, nonExisting, 0, count - 1, BIN_SEARCH_SCAN_UP) - 1);
                 }
             } finally {
                 Unsafe.free(addr, size, MemoryTag.NATIVE_DEFAULT);
@@ -207,22 +222,22 @@ public class VectTest {
                 }
 
                 // Existing
-                Assert.assertEquals(2, Vect.boundedBinarySearchIndexT(addr, 0, 0, count - 1, SCAN_DOWN));
-                Assert.assertEquals(0, Vect.boundedBinarySearchIndexT(addr, 0, 0, count - 1, SCAN_UP));
+                Assert.assertEquals(2, Vect.boundedBinarySearchIndexT(addr, 0, 0, count - 1, BIN_SEARCH_SCAN_DOWN));
+                Assert.assertEquals(0, Vect.boundedBinarySearchIndexT(addr, 0, 0, count - 1, BIN_SEARCH_SCAN_UP));
 
                 // Non-existing
-                Assert.assertEquals(2, Vect.boundedBinarySearchIndexT(addr, 1, 0, count - 1, SCAN_DOWN));
-                Assert.assertEquals(2, Vect.boundedBinarySearchIndexT(addr, 1, 0, count - 1, SCAN_UP));
+                Assert.assertEquals(2, Vect.boundedBinarySearchIndexT(addr, 1, 0, count - 1, BIN_SEARCH_SCAN_DOWN));
+                Assert.assertEquals(2, Vect.boundedBinarySearchIndexT(addr, 1, 0, count - 1, BIN_SEARCH_SCAN_UP));
 
                 // Generalize
                 for (int i = 0; i < count / 3; i++) {
                     int existingValue = i * 2;
-                    Assert.assertEquals(i * 3 + 2, Vect.boundedBinarySearchIndexT(addr, existingValue, 0, count - 1, SCAN_DOWN));
-                    Assert.assertEquals(i * 3, Vect.boundedBinarySearchIndexT(addr, existingValue, 0, count - 1, SCAN_UP));
+                    Assert.assertEquals(i * 3 + 2, Vect.boundedBinarySearchIndexT(addr, existingValue, 0, count - 1, BIN_SEARCH_SCAN_DOWN));
+                    Assert.assertEquals(i * 3, Vect.boundedBinarySearchIndexT(addr, existingValue, 0, count - 1, BIN_SEARCH_SCAN_UP));
 
                     int nonExisting = i * 2 + 1;
-                    Assert.assertEquals(i * 3 + 2, Vect.boundedBinarySearchIndexT(addr, nonExisting, 0, count - 1, SCAN_DOWN));
-                    Assert.assertEquals(i * 3 + 2, Vect.boundedBinarySearchIndexT(addr, nonExisting, 0, count - 1, SCAN_UP));
+                    Assert.assertEquals(i * 3 + 2, Vect.boundedBinarySearchIndexT(addr, nonExisting, 0, count - 1, BIN_SEARCH_SCAN_DOWN));
+                    Assert.assertEquals(i * 3 + 2, Vect.boundedBinarySearchIndexT(addr, nonExisting, 0, count - 1, BIN_SEARCH_SCAN_UP));
                 }
             } finally {
                 Unsafe.free(addr, size, MemoryTag.NATIVE_DEFAULT);
@@ -527,7 +542,7 @@ public class VectTest {
 
                         lastTs = 1;
                         for (int i = 0; i < indexLen * 2; i += 2) {
-                            while (src.binarySearch(lastTs, BinarySearch.SCAN_UP) >= 0) {
+                            while (src.binarySearch(lastTs, BIN_SEARCH_SCAN_UP) >= 0) {
                                 lastTs += rnd.nextLong(1_000L);
                             }
                             index.add(lastTs);

@@ -27,18 +27,24 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.TestOnly;
 
 public abstract class AbstractFullPartitionFrameCursor implements PartitionFrameCursor {
     protected final FullTablePartitionFrame frame = new FullTablePartitionFrame();
+    protected final PartitionDecoder parquetDecoder = new PartitionDecoder();
     protected int partitionHi;
     protected int partitionIndex;
     protected TableReader reader;
+    // row group fields are used for Parquet frames generation
+    protected int rowGroupCount;
+    protected int rowGroupIndex;
 
     @Override
     public void close() {
         reader = Misc.free(reader);
+        Misc.free(parquetDecoder);
     }
 
     @Override
@@ -78,9 +84,34 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
     }
 
     protected static class FullTablePartitionFrame implements PartitionFrame {
+        protected byte format;
+        protected long parquetFd;
         protected int partitionIndex;
+        protected int rowGroupIndex;
+        // we don't need rowGroupLo as it can be calculated as rowGroupLo+(rowHi-rowLo)
+        protected int rowGroupLo;
         protected long rowHi;
-        protected long rowLo = 0;
+        protected long rowLo;
+
+        @Override
+        public long getParquetFd() {
+            return parquetFd;
+        }
+
+        @Override
+        public int getParquetRowGroup() {
+            return rowGroupIndex;
+        }
+
+        @Override
+        public int getParquetRowGroupLo() {
+            return rowGroupLo;
+        }
+
+        @Override
+        public byte getPartitionFormat() {
+            return format;
+        }
 
         @Override
         public int getPartitionIndex() {

@@ -26,9 +26,11 @@ package io.questdb.test.griffin.engine.table.parquet;
 
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableUtils;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -40,6 +42,7 @@ public class PartitionDecoderTest extends AbstractCairoTest {
     @Test
     public void testMetadata() throws Exception {
         assertMemoryLeak(() -> {
+            final FilesFacade ff = configuration.getFilesFacade();
             final long columns = 24;
             final long rows = 1001;
             ddl("create table x as (select" +
@@ -69,9 +72,10 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                     " timestamp_sequence(400000000000, 500) designated_ts" +
                     " from long_sequence(" + rows + ")) timestamp(designated_ts) partition by month");
 
+            long fd = -1;
             try (
                     Path path = new Path();
-                    PartitionDecoder partitionDecoder = new PartitionDecoder(engine.getConfiguration().getFilesFacade());
+                    PartitionDecoder partitionDecoder = new PartitionDecoder();
                     PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
                     TableReader reader = engine.getReader("x")
             ) {
@@ -79,21 +83,23 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
                 PartitionEncoder.encode(partitionDescriptor, path);
 
-                partitionDecoder.of(path.$());
-                Assert.assertEquals(reader.getMetadata().getColumnCount(), partitionDecoder.getMetadata().columnCount());
-                Assert.assertEquals(rows, partitionDecoder.getMetadata().rowCount());
-                Assert.assertEquals(1, partitionDecoder.getMetadata().rowGroupCount());
+                fd = TableUtils.openRO(ff, path.$(), LOG);
+                partitionDecoder.of(fd);
+                Assert.assertEquals(reader.getMetadata().getColumnCount(), partitionDecoder.metadata().columnCount());
+                Assert.assertEquals(rows, partitionDecoder.metadata().rowCount());
+                Assert.assertEquals(1, partitionDecoder.metadata().rowGroupCount());
 
                 TableReaderMetadata readerMeta = reader.getMetadata();
-                Assert.assertEquals(readerMeta.getColumnCount(), partitionDecoder.getMetadata().columnCount());
+                Assert.assertEquals(readerMeta.getColumnCount(), partitionDecoder.metadata().columnCount());
 
                 for (int i = 0; i < columns; i++) {
-                    TestUtils.assertEquals("column: " + i, readerMeta.getColumnName(i), partitionDecoder.getMetadata().columnName(i));
-                    Assert.assertEquals("column: " + i, i, partitionDecoder.getMetadata().columnId(i));
-                    Assert.assertEquals("column: " + i, readerMeta.getColumnType(i), partitionDecoder.getMetadata().getColumnType(i));
+                    TestUtils.assertEquals("column: " + i, readerMeta.getColumnName(i), partitionDecoder.metadata().columnName(i));
+                    Assert.assertEquals("column: " + i, i, partitionDecoder.metadata().columnId(i));
+                    Assert.assertEquals("column: " + i, readerMeta.getColumnType(i), partitionDecoder.metadata().getColumnType(i));
                 }
+            } finally {
+                ff.close(fd);
             }
         });
     }
-
 }

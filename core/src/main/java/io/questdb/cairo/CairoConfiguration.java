@@ -308,6 +308,16 @@ public interface CairoConfiguration {
 
     int getParallelIndexThreshold();
 
+    int getPartitionEncoderParquetCompressionCodec();
+
+    int getPartitionEncoderParquetCompressionLevel();
+
+    int getPartitionEncoderParquetDataPageSize();
+
+    int getPartitionEncoderParquetRowGroupSize();
+
+    int getPartitionEncoderParquetVersion();
+
     long getPartitionO3SplitMinSize();
 
     int getPartitionPurgeListCapacity();
@@ -446,6 +456,8 @@ public interface CairoConfiguration {
     int getSqlPageFrameMinRows();
 
     int getSqlParallelWorkStealingThreshold();
+
+    int getSqlParquetFrameCacheCapacity();
 
     int getSqlSmallMapKeyCapacity();
 
@@ -596,6 +608,8 @@ public interface CairoConfiguration {
 
     boolean isParallelIndexingEnabled();
 
+    boolean isPartitionEncoderParquetStatisticsEnabled();
+
     boolean isReadOnlyInstance();
 
     boolean isSqlJitDebugEnabled();
@@ -630,16 +644,4 @@ public interface CairoConfiguration {
     }
 
     boolean useFastAsOfJoin();
-
-    int getPartitionEncoderParquetVersion();
-
-    boolean isPartitionEncoderParquetStatisticsEnabled();
-
-    int getPartitionEncoderParquetCompressionCodec();
-
-    int getPartitionEncoderParquetCompressionLevel();
-
-    int getPartitionEncoderParquetRowGroupSize();
-
-    int getPartitionEncoderParquetDataPageSize();
 }

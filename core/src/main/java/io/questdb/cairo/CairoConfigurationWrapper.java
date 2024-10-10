@@ -526,6 +526,31 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPartitionEncoderParquetCompressionCodec() {
+        return getDelegate().getPartitionEncoderParquetCompressionCodec();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetCompressionLevel() {
+        return getDelegate().getPartitionEncoderParquetCompressionLevel();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetDataPageSize() {
+        return getDelegate().getPartitionEncoderParquetDataPageSize();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetRowGroupSize() {
+        return getDelegate().getPartitionEncoderParquetRowGroupSize();
+    }
+
+    @Override
+    public int getPartitionEncoderParquetVersion() {
+        return getDelegate().getPartitionEncoderParquetVersion();
+    }
+
+    @Override
     public long getPartitionO3SplitMinSize() {
         return getDelegate().getPartitionO3SplitMinSize();
     }
@@ -788,6 +813,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getSqlParallelWorkStealingThreshold() {
         return getDelegate().getSqlParallelWorkStealingThreshold();
+    }
+
+    @Override
+    public int getSqlParquetFrameCacheCapacity() {
+        return getDelegate().getSqlParquetFrameCacheCapacity();
     }
 
     @Override
@@ -1106,6 +1136,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isPartitionEncoderParquetStatisticsEnabled() {
+        return getDelegate().isPartitionEncoderParquetStatisticsEnabled();
+    }
+
+    @Override
     public boolean isReadOnlyInstance() {
         return getDelegate().isReadOnlyInstance();
     }
@@ -1167,36 +1202,6 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean useFastAsOfJoin() {
         return getDelegate().useFastAsOfJoin();
-    }
-
-    @Override
-    public int getPartitionEncoderParquetVersion() {
-        return getDelegate().getPartitionEncoderParquetVersion();
-    }
-
-    @Override
-    public boolean isPartitionEncoderParquetStatisticsEnabled() {
-        return getDelegate().isPartitionEncoderParquetStatisticsEnabled();
-    }
-
-    @Override
-    public int getPartitionEncoderParquetCompressionCodec() {
-        return getDelegate().getPartitionEncoderParquetCompressionCodec();
-    }
-
-    @Override
-    public int getPartitionEncoderParquetCompressionLevel() {
-        return getDelegate().getPartitionEncoderParquetCompressionLevel();
-    }
-
-    @Override
-    public int getPartitionEncoderParquetRowGroupSize() {
-        return getDelegate().getPartitionEncoderParquetRowGroupSize();
-    }
-
-    @Override
-    public int getPartitionEncoderParquetDataPageSize() {
-        return getDelegate().getPartitionEncoderParquetDataPageSize();
     }
 
     protected CairoConfiguration getDelegate() {

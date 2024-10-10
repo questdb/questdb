@@ -86,11 +86,10 @@ pub fn write_row_group<
     columns: DynIter<'a, std::result::Result<DynStreamingIterator<'a, CompressedPage, E>, E>>,
     sorting_columns: &Option<Vec<SortingColumn>>,
     ordinal: usize,
-) -> Result<(RowGroup, Vec<Vec<PageWriteSpec>>, u64)>
+) -> std::result::Result<(RowGroup, Vec<Vec<PageWriteSpec>>, u64), E>
 where
     W: Write,
-    Error: From<E>,
-    E: std::error::Error,
+    E: std::error::Error + From<Error>,
 {
     let column_iter = descriptors.iter().zip(columns);
 
@@ -102,7 +101,7 @@ where
             offset += size;
             Ok((column, page_specs))
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<std::result::Result<Vec<_>, E>>()?;
     let bytes_written = offset - initial;
 
     let num_rows = compute_num_rows(&columns)?;

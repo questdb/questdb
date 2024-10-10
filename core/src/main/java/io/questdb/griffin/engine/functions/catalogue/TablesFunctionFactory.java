@@ -44,8 +44,8 @@ public class TablesFunctionFactory implements FunctionFactory {
     private static final int DIRECTORY_NAME_COLUMN = 7;
     private static final int ID_COLUMN = 0;
     private static final int MAX_UNCOMMITTED_ROWS_COLUMN = 4;
-    private static final int O3_MAX_LAG_COLUMN = 5;
     private static final RecordMetadata METADATA;
+    private static final int O3_MAX_LAG_COLUMN = 5;
     private static final int PARTITION_BY_COLUMN = 3;
     private static final int TABLE_NAME = 1;
     private static final int WAL_ENABLED_COLUMN = 6;

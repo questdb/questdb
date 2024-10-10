@@ -2,12 +2,13 @@ use std::fs::File;
 use std::path::Path;
 use std::slice;
 
+use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
 use crate::parquet_write::file::ParquetWriter;
 use crate::parquet_write::schema::{Column, Partition};
 use crate::parquet_write::update::ParquetUpdater;
-use crate::parquet_write::ParquetError;
 use crate::utils;
-use anyhow::Context;
+
+use crate::parquet::io::FromRawFdI32Ext;
 use jni::objects::JClass;
 use jni::sys::{jboolean, jint, jlong, jshort};
 use jni::JNIEnv;
@@ -27,7 +28,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     row_group_size: jlong,
     data_page_size: jlong,
 ) -> *mut ParquetUpdater {
-    let create = || -> anyhow::Result<ParquetUpdater> {
+    let create = || -> ParquetResult<ParquetUpdater> {
         let compression_options =
             compression_from_i64(compression_codec).context("CompressionCodec")?;
 
@@ -52,7 +53,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
         };
 
         ParquetUpdater::new(
-            utils::from_raw_file_descriptor(raw_fd),
+            unsafe { File::from_raw_fd_i32(raw_fd) },
             file_size,
             sorting_columns,
             statistics_enabled,
@@ -70,7 +71,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_destroy(
-    _env: JNIEnv,
+    mut env: JNIEnv,
     _class: JClass,
     updater: *mut ParquetUpdater,
 ) {
@@ -78,51 +79,22 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
         panic!("ParquetUpdater pointer is null");
     }
 
-    unsafe {
-        drop(Box::from_raw(updater));
-    }
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_finish(
-    mut env: JNIEnv,
-    _class: JClass,
-    parquet_updater: *mut ParquetUpdater,
-) {
-    assert!(
-        !parquet_updater.is_null(),
-        "parquet_updater pointer is null"
-    );
-    let parquet_updater = unsafe { &mut *parquet_updater };
+    let mut parquet_updater = unsafe { Box::from_raw(updater) };
     match parquet_updater.end(None) {
         Ok(_) => (),
-        Err(err) => {
-            if let Some(jni_err) = err.downcast_ref::<jni::errors::Error>() {
-                match jni_err {
-                    jni::errors::Error::JavaException => {
-                        // Already thrown.
-                    }
-                    _ => {
-                        let msg = format!("Failed to update partition: {:?}", jni_err);
-                        env.throw_new("java/lang/RuntimeException", msg)
-                            .expect("failed to throw exception");
-                    }
-                }
-            } else {
-                let msg = format!("Failed to update partition: {:?}", err);
-                env.throw_new("java/lang/RuntimeException", msg)
-                    .expect("failed to throw exception");
-            }
+        Err(mut err) => {
+            err.add_context("could not update partition");
+            utils::throw_java_ex(&mut env, "PartitionUpdater.destroy", &err)
         }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn update_partition(
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_updateRowGroup(
     mut env: JNIEnv,
     _class: JClass,
     parquet_updater: *mut ParquetUpdater,
-    row_group_id: Option<jshort>,
+    row_group_id: jshort,
     col_count: jint,
     col_names_ptr: *const u8,
     col_names_len: jint,
@@ -130,13 +102,15 @@ fn update_partition(
     col_data_len: jlong,
     row_count: jlong,
 ) {
+    let row_group_id = Some(row_group_id);
+
     assert!(
         !parquet_updater.is_null(),
         "parquet_updater pointer is null"
     );
     let parquet_updater = unsafe { &mut *parquet_updater };
 
-    let mut update = || -> anyhow::Result<()> {
+    let mut update = || -> ParquetResult<()> {
         let table_name = "update";
         let partition = create_partition_descriptor(
             table_name.as_ptr(),
@@ -157,52 +131,11 @@ fn update_partition(
 
     match update() {
         Ok(_) => (),
-        Err(err) => {
-            if let Some(jni_err) = err.downcast_ref::<jni::errors::Error>() {
-                match jni_err {
-                    jni::errors::Error::JavaException => {
-                        // Already thrown.
-                    }
-                    _ => {
-                        let msg = format!("Failed to update partition: {:?}", jni_err);
-                        env.throw_new("java/lang/RuntimeException", msg)
-                            .expect("failed to throw exception");
-                    }
-                }
-            } else {
-                let msg = format!("Failed to update partition: {:?}", err);
-                env.throw_new("java/lang/RuntimeException", msg)
-                    .expect("failed to throw exception");
-            }
+        Err(mut err) => {
+            err.add_context("could not update partition");
+            utils::throw_java_ex(&mut env, "PartitionUpdater.updateRowGroup", &err)
         }
     }
-}
-
-#[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_updateRowGroup(
-    env: JNIEnv,
-    _class: JClass,
-    parquet_updater: *mut ParquetUpdater,
-    row_group_id: jshort,
-    col_count: jint,
-    col_names_ptr: *const u8,
-    col_names_len: jint,
-    col_data_ptr: *const i64,
-    col_data_len: jlong,
-    row_count: jlong,
-) {
-    update_partition(
-        env,
-        _class,
-        parquet_updater,
-        Some(row_group_id),
-        col_count,
-        col_names_ptr,
-        col_names_len,
-        col_data_ptr,
-        col_data_len,
-        row_count,
-    );
 }
 
 #[no_mangle]
@@ -226,7 +159,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     data_page_size: jlong,
     version: jint,
 ) {
-    let encode = || -> anyhow::Result<()> {
+    let encode = || -> ParquetResult<()> {
         let partition = create_partition_descriptor(
             table_name_ptr,
             table_name_size,
@@ -245,6 +178,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         let dest_path = Path::new(&dest_path);
         let compression_options =
             compression_from_i64(compression_codec).context("CompressionCodec")?;
+
         let statistics_enabled = statistics_enabled != 0;
         let row_group_size = if row_group_size > 0 {
             Some(row_group_size as usize)
@@ -257,13 +191,11 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             None
         };
 
-        let version = version_from_i32(version).context("Version")?;
+        let version = version_from_i32(version)?;
 
-        let mut file = File::create(dest_path).with_context(|| {
-            format!(
-                "Could not send create parquet file for {}",
-                dest_path.display()
-            )
+        let file: ParquetResult<_> = File::create(dest_path).map_err(|e| e.into());
+        let mut file = file.with_context(|_| {
+            format!("Could not create parquet file for {}", dest_path.display())
         })?;
 
         let sorting_columns = if timestamp_index != -1 {
@@ -287,22 +219,12 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     match encode() {
         Ok(_) => (),
         Err(err) => {
-            if let Some(jni_err) = err.downcast_ref::<jni::errors::Error>() {
-                match jni_err {
-                    jni::errors::Error::JavaException => {
-                        // Already thrown.
-                    }
-                    _ => {
-                        let msg = format!("Failed to encode partition: {:?}", jni_err);
-                        env.throw_new("java/lang/RuntimeException", msg)
-                            .expect("failed to throw exception");
-                    }
-                }
-            } else {
-                let msg = format!("Failed to encode partition: {:?}", err);
-                env.throw_new("java/lang/RuntimeException", msg)
-                    .expect("failed to throw exception");
-            }
+            let msg = format!(
+                "Failed to encode partition: {}",
+                err.display_with_backtrace()
+            );
+            env.throw_new("java/lang/RuntimeException", msg)
+                .expect("failed to throw exception");
         }
     }
 }
@@ -317,7 +239,7 @@ fn create_partition_descriptor(
     col_data_ptr: *const i64,
     col_data_len: jlong,
     row_count: jlong,
-) -> anyhow::Result<Partition> {
+) -> ParquetResult<Partition> {
     let col_count = col_count as usize;
     let col_names_len = col_names_len as usize;
     let col_data_len = col_data_len as usize;
@@ -383,15 +305,11 @@ fn create_partition_descriptor(
 }
 
 fn version_from_i32(value: i32) -> Result<Version, ParquetError> {
-    Ok(match value {
-        1 => Version::V1,
-        2 => Version::V2,
-        _ => {
-            return Err(ParquetError::OutOfSpec(
-                "Invalid value for Version".to_string(),
-            ))
-        }
-    })
+    match value {
+        1 => Ok(Version::V1),
+        2 => Ok(Version::V2),
+        _ => Err(fmt_err!(Unsupported, "unsupported parquet version {value}")),
+    }
 }
 
 /// The `i64` value is expected to encode two `i32` values:
@@ -401,19 +319,24 @@ fn version_from_i32(value: i32) -> Result<Version, ParquetError> {
 fn compression_from_i64(value: i64) -> Result<CompressionOptions, ParquetError> {
     let codec_id = value as i32;
     let level_id = (value >> 32) as i32;
-    Ok(match codec_id {
-        0 => CompressionOptions::Uncompressed,
-        1 => CompressionOptions::Snappy,
-        2 => CompressionOptions::Gzip(Some(GzipLevel::try_new(level_id as u8)?)),
-        3 => CompressionOptions::Lzo,
-        4 => CompressionOptions::Brotli(Some(BrotliLevel::try_new(level_id as u32)?)),
-        5 => CompressionOptions::Lz4,
-        6 => CompressionOptions::Zstd(Some(ZstdLevel::try_new(level_id)?)),
-        7 => CompressionOptions::Lz4Raw,
-        _ => {
-            return Err(ParquetError::OutOfSpec(
-                "Invalid value for CompressionCodec".to_string(),
-            ))
-        }
-    })
+    match codec_id {
+        0 => Ok(CompressionOptions::Uncompressed),
+        1 => Ok(CompressionOptions::Snappy),
+        2 => Ok(CompressionOptions::Gzip(Some(GzipLevel::try_new(
+            level_id as u8,
+        )?))),
+        3 => Ok(CompressionOptions::Lzo),
+        4 => Ok(CompressionOptions::Brotli(Some(BrotliLevel::try_new(
+            level_id as u32,
+        )?))),
+        5 => Ok(CompressionOptions::Lz4),
+        6 => Ok(CompressionOptions::Zstd(Some(ZstdLevel::try_new(
+            level_id,
+        )?))),
+        7 => Ok(CompressionOptions::Lz4Raw),
+        _ => Err(fmt_err!(
+            Unsupported,
+            "unsupported compression codec id: {codec_id}"
+        )),
+    }
 }

@@ -1,8 +1,8 @@
+use crate::parquet::error::{ParquetErrorCause, ParquetResult};
 use crate::parquet_read::column_sink::Pushable;
 use crate::parquet_read::slicer::DataPageSlicer;
 use crate::parquet_read::ColumnChunkBuffers;
 use crate::parquet_write::varchar::{append_varchar, append_varchar_null, append_varchar_nulls};
-use crate::parquet_write::{ParquetError, ParquetResult};
 use std::mem::size_of;
 
 const VARCHAR_AUX_SIZE: usize = 2 * size_of::<u64>();
@@ -113,7 +113,7 @@ impl<T: DataPageSlicer> Pushable for StringColumnSink<'_, T> {
                     .extend_from_slice(self.buffers.data_vec.len().to_le_bytes().as_ref());
             }
             Err(utf8_str_err) => {
-                self.error = Err(ParquetError::OutOfSpec(utf8_str_err.to_string()));
+                self.error = Err(ParquetErrorCause::Utf8Decode(utf8_str_err).into_err());
                 self.push_null();
             }
         }

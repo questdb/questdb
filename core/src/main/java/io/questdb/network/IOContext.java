@@ -57,32 +57,14 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         _clear();
     }
 
-    public int getDisconnectReason() {
-        return disconnectReason;
-    }
-
-
-    public PeerIsSlowToReadException registerDispatcherWrite() {
-        return PeerIsSlowToReadException.INSTANCE;
-    }
-
-    public HeartBeatException registerDispatcherHeartBeat() {
-        return HeartBeatException.INSTANCE;
-    }
-
-    public ServerDisconnectException registerDispatcherDisconnect(int reason) {
-        disconnectReason = reason;
-        return ServerDisconnectException.INSTANCE;
-    }
-
     public long getAndResetHeartbeatId() {
         long id = heartbeatId;
         heartbeatId = -1;
         return id;
     }
 
-    public PeerIsSlowToWriteException registerDispatcherRead() {
-        return PeerIsSlowToWriteException.INSTANCE;
+    public int getDisconnectReason() {
+        return disconnectReason;
     }
 
     public long getFd() {
@@ -116,6 +98,23 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
         socket.of(fd);
         this.dispatcher = dispatcher;
         return (T) this;
+    }
+
+    public ServerDisconnectException registerDispatcherDisconnect(int reason) {
+        disconnectReason = reason;
+        return ServerDisconnectException.INSTANCE;
+    }
+
+    public HeartBeatException registerDispatcherHeartBeat() {
+        return HeartBeatException.INSTANCE;
+    }
+
+    public PeerIsSlowToWriteException registerDispatcherRead() {
+        return PeerIsSlowToWriteException.INSTANCE;
+    }
+
+    public PeerIsSlowToReadException registerDispatcherWrite() {
+        return PeerIsSlowToReadException.INSTANCE;
     }
 
     public void setHeartbeatId(long heartbeatId) {
