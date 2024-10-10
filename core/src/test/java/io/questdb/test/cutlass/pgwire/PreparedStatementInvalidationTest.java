@@ -24,8 +24,10 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.PropertyKey;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assume;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -57,6 +59,12 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 {LegacyMode.LEGACY, WalMode.WITH_WAL},
                 {LegacyMode.LEGACY, WalMode.NO_WAL},
         });
+    }
+
+    @Before
+    public void setUp() {
+        node1.setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, walEnabled);
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
     }
 
     @Test
