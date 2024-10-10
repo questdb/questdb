@@ -1175,7 +1175,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void notifyWalTxnRepublisher(TableToken tableToken) {
-        tableSequencerAPI.notifyCommitReadable(tableToken, -1);
+        tableSequencerAPI.notifyCommitReadable(tableToken, -1, -1);
         unpublishedWalTxnCount.incrementAndGet();
     }
 
