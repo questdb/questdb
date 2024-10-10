@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -640,7 +639,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             BitmapIndexWriter indexWriter,
             long partitionUpdateSinkAddr
     ) {
-        long cursor = -1;// tableWriter.getO3CopyPubSeq().next();
+        long cursor = tableWriter.getO3CopyPubSeq().next();
         if (cursor > -1) {
             publishCopyTaskHarmonized(
                     columnCounter,
