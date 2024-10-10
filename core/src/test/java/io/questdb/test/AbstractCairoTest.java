@@ -24,14 +24,46 @@
 
 package io.questdb.test;
 
-import io.questdb.*;
-import io.questdb.cairo.*;
+import io.questdb.FactoryProvider;
+import io.questdb.MessageBus;
+import io.questdb.MessageBusImpl;
+import io.questdb.Metrics;
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
-import io.questdb.cairo.wal.*;
-import io.questdb.griffin.*;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.engine.functions.catalogue.DumpThreadStacksFunctionFactory;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
@@ -42,11 +74,35 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
-import io.questdb.std.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.IOURingFacade;
+import io.questdb.std.IOURingFacadeImpl;
+import io.questdb.std.IntList;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.RostiAllocFacade;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.microtime.TimestampFormatUtils;
-import io.questdb.std.str.*;
+import io.questdb.std.str.AbstractCharSequence;
+import io.questdb.std.str.MutableCharSink;
+import io.questdb.std.str.MutableUtf16Sink;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
@@ -56,7 +112,12 @@ import io.questdb.test.tools.BindVariableTestTuple;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
-import org.junit.*;
+import org.junit.After;
+import org.junit.AfterClass;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
+import org.junit.Rule;
 import org.junit.rules.TestWatcher;
 import org.junit.rules.Timeout;
 import org.junit.runner.Description;
@@ -989,6 +1050,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 AbstractCairoTest.ff = ffBefore;
             }
         });
+    }
+
+    protected static void assertMetadataCache(String expected) {
+        TestUtils.assertEquals(expected, engine.metadataCacheToString0());
     }
 
     protected static void assertQuery(Record[] expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, boolean expectSize) throws Exception {
