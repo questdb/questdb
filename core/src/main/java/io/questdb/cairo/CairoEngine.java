@@ -1024,14 +1024,21 @@ public class CairoEngine implements Closeable, WriterSource {
         ObjHashSet<TableToken> tableTokensSet = tlTokens.get();
         getTableTokens(tableTokensSet, false);
         ObjList<TableToken> tableTokens = tableTokensSet.getList();
+
+        if (tableTokens.size() == 0) {
+            LOG.error().$("could not hydrate metadata, there are no table tokens").$();
+            return;
+        }
+
         TableToken tableToken = tableTokens.getQuick(0);
 
         try {
             for (int i = 0, n = tableTokens.size(); i < n; i++) {
-                metadataCacheHydrateTable(tableTokens.getQuick(i), true, true);
+                tableToken = tableTokens.getQuick(i);
+                metadataCacheHydrateTable(tableToken, true, true);
             }
         } catch (CairoException ex) {
-            LOG.error().$("could not hydrate metadata, exception:  ").$(ex.getMessage()).$(" [table=").$(tableToken).I$();
+            LOG.error().$("could not hydrate metadata, exception:  ").$(ex.getMessage()).$(" [table=").$(tableToken.getTableName()).I$();
         } finally {
             tlTokens.get().clear();
             tlTokens.remove();
