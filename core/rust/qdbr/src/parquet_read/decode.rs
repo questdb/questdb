@@ -97,6 +97,9 @@ impl ColumnChunkStats {
             min_value_ptr: ptr::null_mut(),
             min_value_size: 0,
             min_value: Vec::new(),
+            max_value_ptr: ptr::null_mut(),
+            max_value_size: 0,
+            max_value: Vec::new(),
         }
     }
 }
@@ -269,7 +272,11 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         Ok(row_count)
     }
 
-    pub fn update_column_chunk_stats(
+    pub fn timestamp_at(&mut self, _column_index: u32, _row_index: u64) -> ParquetResult<i64> {
+        Ok(0)
+    }
+
+    pub fn read_column_chunk_stats(
         &mut self,
         row_group_stat_buffers: &mut RowGroupStatBuffers,
         columns: &[(ParquetColumnIndex, ColumnType)],
@@ -305,17 +312,23 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             let stats = &mut row_group_stat_buffers.column_chunk_stats[dest_col_idx];
 
             stats.min_value.clear();
+            stats.max_value.clear();
 
             if let Some(meta_data) = &column_chunk.meta_data {
                 if let Some(statistics) = &meta_data.statistics {
                     if let Some(min) = statistics.min_value.as_ref() {
                         stats.min_value.extend_from_slice(min);
                     }
+                    if let Some(max) = statistics.max_value.as_ref() {
+                        stats.max_value.extend_from_slice(max);
+                    }
                 }
             }
 
             stats.min_value_ptr = stats.min_value.as_mut_ptr();
             stats.min_value_size = stats.min_value.len();
+            stats.max_value_ptr = stats.max_value.as_mut_ptr();
+            stats.max_value_size = stats.max_value.len();
         }
         Ok(())
     }

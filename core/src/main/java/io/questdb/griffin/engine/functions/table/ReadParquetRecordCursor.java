@@ -24,7 +24,11 @@
 
 package io.questdb.griffin.engine.functions.table;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DataUnavailableException;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -35,8 +39,23 @@ import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
-import io.questdb.std.str.*;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
+import io.questdb.std.DirectBinarySequence;
+import io.questdb.std.DirectIntList;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectString;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8SplitString;
 import org.jetbrains.annotations.Nullable;
 
 public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
@@ -121,7 +140,7 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public long size() throws DataUnavailableException {
-        return decoder.getMetadata().rowCount();
+        return decoder.metadata().rowCount();
     }
 
     @Override
@@ -139,23 +158,23 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private boolean metadataHasChanged(RecordMetadata metadata, PartitionDecoder decoder) {
-        if (metadata.getColumnCount() != decoder.getMetadata().columnCount()) {
+        if (metadata.getColumnCount() != decoder.metadata().columnCount()) {
             return true;
         }
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             final int metadataType = metadata.getColumnType(i);
-            final int decoderType = decoder.getMetadata().getColumnType(i);
+            final int decoderType = decoder.metadata().getColumnType(i);
 
             boolean remappingDetected = symbolToVarcharRemappingDetected(metadataType, decoderType);
             if (remappingDetected) {
                 continue;
             }
-            if (metadata.getColumnType(i) != decoder.getMetadata().getColumnType(i)) {
+            if (metadata.getColumnType(i) != decoder.metadata().getColumnType(i)) {
                 return true;
             }
         }
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            if (!Chars.equals(metadata.getColumnName(i), decoder.getMetadata().columnName(i))) {
+            if (!Chars.equals(metadata.getColumnName(i), decoder.metadata().columnName(i))) {
                 return true;
             }
         }
@@ -165,8 +184,8 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private boolean switchToNextRowGroup() {
         dataPtrs.clear();
         auxPtrs.clear();
-        if (++rowGroupIndex < decoder.getMetadata().rowGroupCount()) {
-            final int rowGroupSize = decoder.getMetadata().rowGroupSize(rowGroupIndex);
+        if (++rowGroupIndex < decoder.metadata().rowGroupCount()) {
+            final int rowGroupSize = decoder.metadata().rowGroupSize(rowGroupIndex);
             rowGroupRowCount = decoder.decodeRowGroup(rowGroupBuffers, columns, rowGroupIndex, 0, rowGroupSize);
 
             for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {

@@ -25,32 +25,47 @@
 package io.questdb.griffin.engine.table.parquet;
 
 import io.questdb.cairo.Reopenable;
-import io.questdb.log.Log;
-import io.questdb.log.LogFactory;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 
 public class RowGroupStatBuffers implements QuietCloseable, Reopenable {
-    private static final long CHUNK_STATS_PTR_OFFSET;
+    private static final long CHUNK_STATS_MAX_VALUE_PTR_OFFSET;
+    private static final long CHUNK_STATS_MAX_VALUE_SIZE_OFFSET;
     private static final long CHUNK_STATS_MIN_VALUE_PTR_OFFSET;
     private static final long CHUNK_STATS_MIN_VALUE_SIZE_OFFSET;
+    private static final long CHUNK_STATS_PTR_OFFSET;
     private static final long CHUNK_STATS_STRUCT_SIZE;
-    private static final Log LOG = LogFactory.getLog(RowGroupStatBuffers.class);
     private long ptr;
 
     public RowGroupStatBuffers() {
         this.ptr = create();
     }
 
-    public long getMinValuePtr(int columnIndex) {
-        final long statBuffersPtr = Unsafe.getUnsafe().getLong(ptr + CHUNK_STATS_PTR_OFFSET);
-        return Unsafe.getUnsafe().getLong(statBuffersPtr + columnIndex * CHUNK_STATS_STRUCT_SIZE + CHUNK_STATS_MIN_VALUE_PTR_OFFSET);
+    @Override
+    public void close() {
+        if (ptr != 0) {
+            destroy(ptr);
+            ptr = 0;
+        }
     }
 
-    public long getMinValueSize(int columnIndex) {
+    public long getMaxValueLong(int columnIndex) {
+        final long size = getMaxValueSize(columnIndex);
+        assert size == Long.BYTES;
+        final long ptr = getMaxValuePtr(columnIndex);
+        assert ptr != 0;
+        return Unsafe.getUnsafe().getLong(ptr);
+    }
+
+    public long getMaxValuePtr(int columnIndex) {
         final long statBuffersPtr = Unsafe.getUnsafe().getLong(ptr + CHUNK_STATS_PTR_OFFSET);
-        return Unsafe.getUnsafe().getLong(statBuffersPtr + columnIndex * CHUNK_STATS_STRUCT_SIZE + CHUNK_STATS_MIN_VALUE_SIZE_OFFSET);
+        return Unsafe.getUnsafe().getLong(statBuffersPtr + columnIndex * CHUNK_STATS_STRUCT_SIZE + CHUNK_STATS_MAX_VALUE_PTR_OFFSET);
+    }
+
+    public long getMaxValueSize(int columnIndex) {
+        final long statBuffersPtr = Unsafe.getUnsafe().getLong(ptr + CHUNK_STATS_PTR_OFFSET);
+        return Unsafe.getUnsafe().getLong(statBuffersPtr + columnIndex * CHUNK_STATS_STRUCT_SIZE + CHUNK_STATS_MAX_VALUE_SIZE_OFFSET);
     }
 
     public long getMinValueLong(int columnIndex) {
@@ -61,12 +76,14 @@ public class RowGroupStatBuffers implements QuietCloseable, Reopenable {
         return Unsafe.getUnsafe().getLong(ptr);
     }
 
-    @Override
-    public void close() {
-        if (ptr != 0) {
-            destroy(ptr);
-            ptr = 0;
-        }
+    public long getMinValuePtr(int columnIndex) {
+        final long statBuffersPtr = Unsafe.getUnsafe().getLong(ptr + CHUNK_STATS_PTR_OFFSET);
+        return Unsafe.getUnsafe().getLong(statBuffersPtr + columnIndex * CHUNK_STATS_STRUCT_SIZE + CHUNK_STATS_MIN_VALUE_PTR_OFFSET);
+    }
+
+    public long getMinValueSize(int columnIndex) {
+        final long statBuffersPtr = Unsafe.getUnsafe().getLong(ptr + CHUNK_STATS_PTR_OFFSET);
+        return Unsafe.getUnsafe().getLong(statBuffersPtr + columnIndex * CHUNK_STATS_STRUCT_SIZE + CHUNK_STATS_MIN_VALUE_SIZE_OFFSET);
     }
 
     public long ptr() {
@@ -80,10 +97,6 @@ public class RowGroupStatBuffers implements QuietCloseable, Reopenable {
         }
     }
 
-    private static native long minValuePtrOffset();
-
-    private static native long minValueSizeOffset();
-
     private static native long buffersPtrOffset();
 
     private static native long buffersSize();
@@ -92,6 +105,14 @@ public class RowGroupStatBuffers implements QuietCloseable, Reopenable {
 
     private static native void destroy(long impl);
 
+    private static native long maxValuePtrOffset();
+
+    private static native long maxValueSizeOffset();
+
+    private static native long minValuePtrOffset();
+
+    private static native long minValueSizeOffset();
+
     static {
         Os.init();
 
@@ -99,5 +120,7 @@ public class RowGroupStatBuffers implements QuietCloseable, Reopenable {
         CHUNK_STATS_STRUCT_SIZE = buffersSize();
         CHUNK_STATS_MIN_VALUE_PTR_OFFSET = minValuePtrOffset();
         CHUNK_STATS_MIN_VALUE_SIZE_OFFSET = minValueSizeOffset();
+        CHUNK_STATS_MAX_VALUE_PTR_OFFSET = maxValuePtrOffset();
+        CHUNK_STATS_MAX_VALUE_SIZE_OFFSET = maxValueSizeOffset();
     }
 }

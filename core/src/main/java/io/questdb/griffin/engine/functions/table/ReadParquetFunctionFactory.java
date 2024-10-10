@@ -36,7 +36,12 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.*;
+import io.questdb.std.Chars;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 
 public class ReadParquetFunctionFactory implements FunctionFactory {
@@ -76,7 +81,7 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                 decoder.of(fd, readSize);
                 final GenericRecordMetadata metadata = new GenericRecordMetadata();
                 // `read_parquet` function will request symbols to be converted to varchar
-                decoder.getMetadata().copyTo(metadata, true);
+                decoder.metadata().copyTo(metadata, true);
                 return new CursorFunction(new ReadParquetRecordCursorFactory(path, metadata, config.getFilesFacade()));
             } finally {
                 ff.close(fd);
