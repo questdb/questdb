@@ -50,8 +50,6 @@ import io.questdb.std.ObjList;
 import java.util.Iterator;
 import java.util.Map;
 
-import static io.questdb.griffin.engine.functions.catalogue.TablesFunctionFactory.TablesCursorFactory;
-
 public class InformationSchemaColumnsFunctionFactory implements FunctionFactory {
     public static final RecordMetadata METADATA;
     public static final String SIGNATURE = "information_schema.columns()";
@@ -233,7 +231,7 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
 
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        metadata.add(TablesCursorFactory.TABLE_NAME_COLUMN_META);
+        metadata.add(new TableColumnMetadata("table_name", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("ordinal_position", ColumnType.INT));
         metadata.add(new TableColumnMetadata("column_name", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("data_type", ColumnType.STRING));

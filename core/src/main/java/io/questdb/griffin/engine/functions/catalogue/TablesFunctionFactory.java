@@ -92,8 +92,6 @@ public class TablesFunctionFactory implements FunctionFactory {
 
     public static class TablesCursorFactory extends AbstractRecordCursorFactory {
         public static final Log LOG = LogFactory.getLog(TablesCursorFactory.class);
-        public static final String TABLE_NAME_COLUMN_NAME = "table_name";
-        public static final TableColumnMetadata TABLE_NAME_COLUMN_META = new TableColumnMetadata(TABLE_NAME_COLUMN_NAME, ColumnType.STRING);
         private final TablesRecordCursor cursor;
         private final ConcurrentHashMap<CairoTable> tableCache = new ConcurrentHashMap<>();
         ObjHashSet<TableToken> tableTokenSet = new ObjHashSet<>();
@@ -250,7 +248,7 @@ public class TablesFunctionFactory implements FunctionFactory {
     static {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("id", ColumnType.INT));
-        metadata.add(TablesCursorFactory.TABLE_NAME_COLUMN_META);
+        metadata.add(new TableColumnMetadata("table_name", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("designatedTimestamp", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("partitionBy", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("maxUncommittedRows", ColumnType.INT));
