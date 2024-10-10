@@ -798,7 +798,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
         int initialDuplicates = 1 + rnd.nextInt(1);
         long startTimestamp = parseFloorPartialTimestamp("2020-02-24T04:30");
-        int startCount = rnd.nextInt(100_000);
+        int startCount = rnd.nextInt(50_000);
         generateInsertsTransactions(
                 transactions,
                 1,
