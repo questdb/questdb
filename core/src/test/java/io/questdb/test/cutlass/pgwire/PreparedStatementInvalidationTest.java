@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -59,7 +60,93 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     }
 
     @Test
-    public void testStaleQueryCacheOnTableDropped() throws Exception {
+    public void testSelectStarPreparedThenColNameChanges() throws Exception {
+        Assume.assumeFalse(legacyMode); // Legacy code doesn't update result set shape
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (CallableStatement st1 = connection.prepareCall("create table y as (" +
+                    "select timestamp_sequence(0, 1000000000) timestamp," +
+                    " rnd_symbol('a','b',null) symbol1 " +
+                    " from long_sequence(10)" +
+                    ") timestamp (timestamp) partition by YEAR")) {
+                st1.execute();
+            }
+
+            try (PreparedStatement select = connection.prepareStatement("select * from y")) {
+                ResultSet rs0 = select.executeQuery();
+                rs0.close();
+
+                connection.prepareStatement("drop table y").execute();
+                connection.prepareStatement("create table y as ( " +
+                        " select " +
+                        " timestamp_sequence('1970-01-01T02:30:00.000000Z', 1000000000L) timestamp, " +
+                        " rnd_symbol('a','b',null) symbol2 " +
+                        " from long_sequence(10)" +
+                        ")").execute();
+
+                mayDrainWalQueue();
+                ResultSet rs1 = select.executeQuery();
+                sink.clear();
+                assertResultSet("timestamp[TIMESTAMP],symbol2[VARCHAR]\n" +
+                        "1970-01-01 02:30:00.0,b\n" +
+                        "1970-01-01 02:46:40.0,null\n" +
+                        "1970-01-01 03:03:20.0,b\n" +
+                        "1970-01-01 03:20:00.0,b\n" +
+                        "1970-01-01 03:36:40.0,b\n" +
+                        "1970-01-01 03:53:20.0,a\n" +
+                        "1970-01-01 04:10:00.0,a\n" +
+                        "1970-01-01 04:26:40.0,b\n" +
+                        "1970-01-01 04:43:20.0,a\n" +
+                        "1970-01-01 05:00:00.0,b\n", sink, rs1);
+                rs1.close();
+            }
+        });
+    }
+
+    @Test
+    public void testSelectStarPreparedThenColTypeChanges() throws Exception {
+        Assume.assumeFalse(legacyMode); // Legacy code doesn't update result set shape
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (CallableStatement st1 = connection.prepareCall("create table y as (" +
+                    "select timestamp_sequence(0, 1000000000) timestamp," +
+                    " rnd_symbol('a','b',null) symbol1 " +
+                    " from long_sequence(10)" +
+                    ") timestamp (timestamp) partition by YEAR")) {
+                st1.execute();
+            }
+
+            try (PreparedStatement select = connection.prepareStatement("select * from y")) {
+                ResultSet rs0 = select.executeQuery();
+                rs0.close();
+
+                connection.prepareStatement("drop table y").execute();
+                connection.prepareStatement("create table y as ( " +
+                        " select " +
+                        " timestamp_sequence('1970-01-01T02:30:00.000000Z', 1000000000L) timestamp, " +
+                        " rnd_boolean symbol1" +
+                        " from long_sequence(10)" +
+                        ")").execute();
+
+                mayDrainWalQueue();
+                ResultSet rs1 = select.executeQuery();
+                sink.clear();
+                assertResultSet("timestamp[TIMESTAMP],symbol1[BIT]\n" +
+                        "1970-01-01 02:30:00.0,false\n" +
+                        "1970-01-01 02:46:40.0,false\n" +
+                        "1970-01-01 03:03:20.0,false\n" +
+                        "1970-01-01 03:20:00.0,true\n" +
+                        "1970-01-01 03:36:40.0,true\n" +
+                        "1970-01-01 03:53:20.0,true\n" +
+                        "1970-01-01 04:10:00.0,true\n" +
+                        "1970-01-01 04:26:40.0,false\n" +
+                        "1970-01-01 04:43:20.0,false\n" +
+                        "1970-01-01 05:00:00.0,false\n", sink, rs1);
+                rs1.close();
+            }
+        });
+    }
+
+    @Test
+    public void testSelectTwoColsPreparedThenColAdded() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (CallableStatement st1 = connection.prepareCall("create table y as (" +
                     "select timestamp_sequence(0, 1000000000) timestamp," +
