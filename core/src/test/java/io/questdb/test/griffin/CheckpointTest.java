@@ -34,6 +34,7 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SimpleWaitingLock;
@@ -62,25 +63,6 @@ public class CheckpointTest extends AbstractCairoTest {
         path = new Path();
         triggerFilePath = new Path();
         ff = testFilesFacade;
-
-        circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
-            @Override
-            public int getCircuitBreakerThrottle() {
-                return 0;
-            }
-
-            @Override
-            public long getQueryTimeout() {
-                return 100;
-            }
-        };
-
-        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(circuitBreakerConfiguration, MemoryTag.NATIVE_CB5) {
-            @Override
-            protected boolean testConnection(long fd) {
-                return false;
-            }
-        };
         AbstractCairoTest.setUpStatic();
     }
 
@@ -102,7 +84,27 @@ public class CheckpointTest extends AbstractCairoTest {
         triggerFilePath.of(configuration.getRoot()).parent().concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME).$();
         rootLen = path.size();
         testFilesFacade.reset();
+
+        circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+            @Override
+            public int getCircuitBreakerThrottle() {
+                return 0;
+            }
+
+            @Override
+            public long getQueryTimeout() {
+                return 100;
+            }
+        };
+        circuitBreaker = new NetworkSqlExecutionCircuitBreaker(circuitBreakerConfiguration, MemoryTag.NATIVE_CB5) {
+            @Override
+            protected boolean testConnection(long fd) {
+                return false;
+            }
+        };
         circuitBreaker.setTimeout(Long.MAX_VALUE);
+        ((SqlExecutionContextImpl) sqlExecutionContext).with(circuitBreaker);
+
         rnd = TestUtils.generateRandom(LOG);
     }
 
@@ -405,7 +407,6 @@ public class CheckpointTest extends AbstractCairoTest {
             ddl("checkpoint release");
             Assert.assertFalse(lock.isLocked());
 
-            circuitBreakerConfiguration = null;
             engine.setWalPurgeJobRunLock(null);
         });
     }
@@ -439,7 +440,6 @@ public class CheckpointTest extends AbstractCairoTest {
                 ddl("checkpoint release");
                 Assert.assertFalse(lock.isLocked());
 
-                circuitBreakerConfiguration = null;
                 engine.setWalPurgeJobRunLock(null);
             }
         });
@@ -998,7 +998,6 @@ public class CheckpointTest extends AbstractCairoTest {
             try {
                 t.start();
                 latch2.await();
-                configureCircuitBreakerTimeoutOnFirstCheck();
                 assertExceptionNoLeakCheck("checkpoint create");
             } catch (CairoException ex) {
                 latch1.countDown();
@@ -1008,7 +1007,6 @@ public class CheckpointTest extends AbstractCairoTest {
             } finally {
                 ddl("checkpoint release");
                 Assert.assertFalse(lock.isLocked());
-                circuitBreakerConfiguration = null;
                 engine.setWalPurgeJobRunLock(null);
             }
         });

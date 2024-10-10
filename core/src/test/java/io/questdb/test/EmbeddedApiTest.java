@@ -97,7 +97,7 @@ public class EmbeddedApiTest {
             try (
                     final CairoEngine engine = new CairoEngine(configuration)
             ) {
-                WorkerPoolUtils.setupQueryJobs(workerPool, engine, null);
+                WorkerPoolUtils.setupQueryJobs(workerPool, engine);
                 workerPool.start(log);
                 try {
                     // number of cores is current thread + workers in the pool
@@ -214,7 +214,7 @@ public class EmbeddedApiTest {
                     }
                 }
             } catch (Exception e) {
-                e.printStackTrace();
+                e.printStackTrace(System.out);
                 errors.incrementAndGet();
             } finally {
                 latch.countDown();
@@ -261,7 +261,7 @@ public class EmbeddedApiTest {
                     }
                 }
             } catch (Exception e) {
-                e.printStackTrace();
+                e.printStackTrace(System.out);
                 errors.incrementAndGet();
             } finally {
                 latch.countDown();

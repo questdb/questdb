@@ -8156,7 +8156,7 @@ public class IODispatcherTest extends AbstractTest {
                     }
                 });
 
-                WorkerPoolUtils.setupQueryJobs(workerPool, engine, engine.getConfiguration().getCircuitBreakerConfiguration());
+                WorkerPoolUtils.setupQueryJobs(workerPool, engine);
                 workerPool.start(LOG);
 
                 try {

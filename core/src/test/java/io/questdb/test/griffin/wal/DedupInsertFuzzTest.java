@@ -366,10 +366,6 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         runFuzzWithRepeatDedup(rnd);
     }
 
-    private static boolean dedupSupported(int columnType) {
-        return true;
-    }
-
     private void assertAllSymbolsSet(
             boolean[] foundSymbols,
             String[] symbols,
@@ -440,9 +436,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             int start = rnd.nextInt(metadata.getColumnCount());
             for (int c = 0; c < metadata.getColumnCount(); c++) {
                 int col = (c + start) % metadata.getColumnCount();
-                int columnType = metadata.getColumnType(col);
-
-                if (!upsertKeyIndexes.contains(col) && dedupSupported(columnType)) {
+                if (!upsertKeyIndexes.contains(col)) {
                     upsertKeyIndexes.add(col);
                     break;
                 }
@@ -798,7 +792,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
         int initialDuplicates = 1 + rnd.nextInt(1);
         long startTimestamp = parseFloorPartialTimestamp("2020-02-24T04:30");
-        int startCount = rnd.nextInt(100_000);
+        int startCount = rnd.nextInt(50_000);
         generateInsertsTransactions(
                 transactions,
                 1,
@@ -885,7 +879,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         StringSink sink = new StringSink();
         for (int i = 0; i < upsertKeys.size(); i++) {
             int columnType = metadata.getColumnType(upsertKeys.get(i));
-            if (columnType > 0 && dedupSupported(columnType)) {
+            if (columnType > 0) {
                 if (i > 0) {
                     sink.put(',');
                 }
@@ -899,7 +893,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         StringSink sink = new StringSink();
         for (int i = 0; i < upsertKeys.size(); i++) {
             int columnType = metadata.getColumnType(upsertKeys.get(i));
-            if (columnType > 0 && dedupSupported(columnType)) {
+            if (columnType > 0) {
                 if (i > 0) {
                     sink.put(',');
                 }

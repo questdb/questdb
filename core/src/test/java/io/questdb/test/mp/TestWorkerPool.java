@@ -25,10 +25,14 @@
 package io.questdb.test.mp;
 
 import io.questdb.Metrics;
+import io.questdb.cairo.sql.async.PageFrameReduceJob;
+import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.std.ObjList;
 
 public class TestWorkerPool extends WorkerPool {
+    private final ObjList<PageFrameReduceJob> pageFrameReduceJobs = new ObjList<>();
 
     public TestWorkerPool(int workerCount) {
         this("testing", workerCount, Metrics.disabled());
@@ -54,5 +58,17 @@ public class TestWorkerPool extends WorkerPool {
                 return workerCount;
             }
         }, metrics);
+    }
+
+    @Override
+    public void assign(int worker, Job job) {
+        if (job instanceof PageFrameReduceJob) {
+            pageFrameReduceJobs.add((PageFrameReduceJob) job);
+        }
+        super.assign(worker, job);
+    }
+
+    public ObjList<PageFrameReduceJob> getPageFrameReduceJobs() {
+        return pageFrameReduceJobs;
     }
 }
