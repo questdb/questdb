@@ -1233,7 +1233,10 @@ public class CairoEngine implements Closeable, WriterSource {
             TableToken token = tokens.getQuick(i);
             CairoTable cachedTable = localCache.get(token.getTableName());
             CairoTable latestTable = metadataCacheGetTable(token);
-            if (latestTable == null) {
+
+            if (cachedTable == null) {
+                localCache.put(token.getTableName(), latestTable);
+            } else if (latestTable == null) {
                 localCache.remove(cachedTable.getTableName());
             } else if (cachedTable.getMetadataVersion() < latestTable.getMetadataVersion()) {
                 localCache.put(cachedTable.getTableName(), latestTable);

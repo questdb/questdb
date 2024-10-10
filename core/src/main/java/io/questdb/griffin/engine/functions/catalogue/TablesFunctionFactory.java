@@ -170,7 +170,7 @@ public class TablesFunctionFactory implements FunctionFactory {
 
             @Override
             public void toTop() {
-                this.iterator = tableCache.entrySet().iterator();
+                iterator = tableCache.entrySet().iterator();
             }
 
             private static class TableListRecord implements Record {

@@ -182,7 +182,8 @@ public class InformationSchemaColumnsFunctionFactory implements FunctionFactory 
             @Override
             public void toTop() {
                 columnIdx = -1;
-                this.iterator = tableCache.entrySet().iterator();
+                table = null;
+                iterator = tableCache.entrySet().iterator();
             }
 
             private static class ColumnsRecord implements Record {
