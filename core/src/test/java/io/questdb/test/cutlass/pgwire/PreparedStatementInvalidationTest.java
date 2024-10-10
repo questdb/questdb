@@ -27,7 +27,6 @@ package io.questdb.test.cutlass.pgwire;
 import io.questdb.PropertyKey;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -67,7 +66,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testPreparedStatement_selectScenario() throws Exception {
-        Assume.assumeFalse(legacyMode); // legacy code has a bug
+        assumeModern(); // legacy code has a bug
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.prepareStatement("create table x as" +
                     " (select 2 id, 'foobar' str, timestamp_sequence(1,10000) ts from long_sequence(1))" +
@@ -143,7 +142,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectPreparedStatement_columnWithBindVariableDropped() throws Exception {
-        Assume.assumeFalse(legacyMode); // legacy code has a bug
+        assumeModern(); // legacy code has a bug
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             connection.prepareStatement("create table x as" +
                     " (select 2 id, 'foobar' str, timestamp_sequence(1,10000) ts from long_sequence(1))" +
@@ -180,7 +179,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectStarPreparedThenColNameChanges() throws Exception {
-        Assume.assumeFalse(legacyMode); // Legacy code doesn't update result set shape
+        assumeModern(); // Legacy code doesn't update result set shape
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (CallableStatement st1 = connection.prepareCall("create table y as (" +
                     "select timestamp_sequence(0, 1000000000) timestamp," +
@@ -225,7 +224,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectStarPreparedThenColTypeChanges() throws Exception {
-        Assume.assumeFalse(legacyMode); // Legacy code doesn't update result set shape
+        assumeModern(); // Legacy code doesn't update result set shape
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (CallableStatement st1 = connection.prepareCall("create table y as (" +
                     "select timestamp_sequence(0, 1000000000) timestamp," +
@@ -270,6 +269,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testSelectTwoColsPreparedThenColAdded() throws Exception {
+        assumeModern();
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (CallableStatement st1 = connection.prepareCall("create table y as (" +
                     "select timestamp_sequence(0, 1000000000) timestamp," +

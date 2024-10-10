@@ -51,6 +51,7 @@ import io.questdb.test.tools.TestUtils;
 import org.checkerframework.checker.nullness.qual.NonNull;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.junit.Assume;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -445,6 +446,10 @@ public abstract class BasePGTest extends AbstractCairoTest {
                 assertWithPgServer(Mode.EXTENDED_CACHE_EVERYTHING, false, -1, runnable);
             }
         }
+    }
+
+    protected final void assumeModern() {
+        Assume.assumeFalse(legacyMode);
     }
 
     protected IPGWireServer createPGServer(PGWireConfiguration configuration) throws SqlException {
