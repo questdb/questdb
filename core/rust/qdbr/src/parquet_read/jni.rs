@@ -104,7 +104,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_getRowGroupStats(
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_readRowGroupStats(
     mut env: JNIEnv,
     _class: JClass,
     decoder: *mut ParquetDecoder<NonOwningFile>,
@@ -125,7 +125,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
     let columns = unsafe { slice::from_raw_parts(columns, column_count as usize) };
 
     let res = validate_jni_column_types(columns).and_then(|()| {
-        decoder.update_column_chunk_stats(row_group_stat_bufs, columns, row_group_index)
+        decoder.read_column_chunk_stats(row_group_stat_bufs, columns, row_group_index)
     });
 
     match res {
@@ -135,7 +135,30 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
             err.add_context(format!(
                 "could not get row group stats with fd {raw_fd} in row group {row_group_index}"
             ));
-            err.add_context("error in PartitionDecoder.getRowGroupStats");
+            err.add_context("error in PartitionDecoder.readRowGroupStats");
+            err.into_cairo_exception().throw(&mut env)
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_timestampAt(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *mut ParquetDecoder<NonOwningFile>,
+    column_index: u32,
+    row_index: u64,
+) -> i64 {
+    assert!(!decoder.is_null(), "decoder pointer is null");
+
+    let decoder = unsafe { &mut *decoder };
+    match decoder.timestamp_at(column_index, row_index) {
+        Ok(v) => v,
+        Err(mut err) => {
+            err.add_context(format!(
+                "could not get timestamp at row {row_index} in column {column_index}"
+            ));
+            err.add_context("error in PartitionDecoder.timestampAt");
             err.into_cairo_exception().throw(&mut env)
         }
     }
@@ -350,4 +373,20 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStat
     _class: JClass,
 ) -> usize {
     offset_of!(ColumnChunkStats, min_value_size)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_maxValuePtrOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ColumnChunkStats, max_value_ptr)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_RowGroupStatBuffers_maxValueSizeOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ColumnChunkStats, max_value_size)
 }

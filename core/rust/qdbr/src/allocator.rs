@@ -269,6 +269,11 @@ unsafe impl Allocator for QdbAllocator {
     }
 
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
+        // TODO(amunra): Ensure that allocated memory matches up with deallocated memory count.
+        //               I.e. should `track_allocate` track the requested layout or the actual
+        //               size that was allocated?
+        //               Sort this out with different tests for datatypes that require different
+        //               alignment. E.g. request 7 bytes, will probably allocate 8 bytes.
         Global.deallocate(ptr, layout);
         self.track_deallocate(layout.size());
     }

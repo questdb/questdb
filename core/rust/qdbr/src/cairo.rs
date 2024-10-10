@@ -46,6 +46,12 @@ impl DefaultReturn for u32 {
     }
 }
 
+impl DefaultReturn for i64 {
+    fn default_return() -> Self {
+        0
+    }
+}
+
 impl<T> DefaultReturn for *mut T {
     fn default_return() -> Self {
         std::ptr::null_mut()

@@ -82,7 +82,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long newPartitionSize,
             long oldPartitionSize
     ) {
-
         // Number of rows to insert from the O3 segment into this partition.
         final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
         final TableRecordMetadata tableWriterMetadata = tableWriter.getMetadata();
@@ -95,17 +94,18 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         long parquetFileFd = -1;
         CairoConfiguration cairoConfiguration = tableWriter.getConfiguration();
         FilesFacade ff = tableWriter.getFilesFacade();
-        try (PartitionDecoder partitionDecoder = new PartitionDecoder();
-             RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
-             RowGroupStatBuffers rowGroupStatBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
-             PartitionUpdater partitionUpdater = new PartitionUpdater(ff);
-             DirectIntList columnsIdsAndTypes = new DirectIntList(2, MemoryTag.NATIVE_O3);
-             PartitionDescriptor partitionDescriptor = new OwnedMemoryPartitionDescriptor()) {
-
+        try (
+                PartitionDecoder partitionDecoder = new PartitionDecoder();
+                RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
+                RowGroupStatBuffers rowGroupStatBuffers = new RowGroupStatBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
+                PartitionUpdater partitionUpdater = new PartitionUpdater(ff);
+                DirectIntList columnIdsAndTypes = new DirectIntList(2, MemoryTag.NATIVE_O3);
+                PartitionDescriptor partitionDescriptor = new OwnedMemoryPartitionDescriptor()
+        ) {
             parquetFileFd = TableUtils.openRO(ff, path.$(), LOG);
             partitionDecoder.of(parquetFileFd, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
 
-            final int rowGroupCount = partitionDecoder.getMetadata().rowGroupCount();
+            final int rowGroupCount = partitionDecoder.metadata().rowGroupCount();
             final int timestampIndex = tableWriterMetadata.getTimestampIndex();
             final int timestampColumnType = tableWriterMetadata.getColumnType(timestampIndex);
             assert ColumnType.isTimestamp(timestampColumnType);
@@ -189,11 +189,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
             long mergeRangeLo = srcOooLo;
             for (int rowGroup = 1; rowGroup < rowGroupCount; rowGroup++) {
-
-                columnsIdsAndTypes.clear();
-                columnsIdsAndTypes.add(timestampIndex);
-                columnsIdsAndTypes.add(timestampColumnType);
-                partitionDecoder.getRowGroupStats(rowGroupStatBuffers, columnsIdsAndTypes, rowGroup);
+                columnIdsAndTypes.clear();
+                columnIdsAndTypes.add(timestampIndex);
+                columnIdsAndTypes.add(timestampColumnType);
+                partitionDecoder.readRowGroupStats(rowGroupStatBuffers, columnIdsAndTypes, rowGroup);
                 final long min = rowGroupStatBuffers.getMinValueLong(0);
                 final long mergeRangeHi = Vect.boundedBinarySearchIndexT(
                         sortedTimestampsAddr,
@@ -211,7 +210,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 mergeRowGroup(
                         partitionDescriptor,
                         partitionUpdater,
-                        columnsIdsAndTypes,
+                        columnIdsAndTypes,
                         oooColumns,
                         sortedTimestampsAddr,
                         tableWriter,
@@ -234,7 +233,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 mergeRowGroup(
                         partitionDescriptor,
                         partitionUpdater,
-                        columnsIdsAndTypes,
+                        columnIdsAndTypes,
                         oooColumns,
                         sortedTimestampsAddr,
                         tableWriter,
@@ -1240,7 +1239,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         columnsIdsAndTypes.add(timestampIndex);
         columnsIdsAndTypes.add(timestampColumnType);
 
-        final int rowGroupSize = decoder.getMetadata().rowGroupSize(rowGroupIndex);
+        final int rowGroupSize = decoder.metadata().rowGroupSize(rowGroupIndex);
         decoder.decodeRowGroup(rowGroupBuffers, columnsIdsAndTypes, rowGroupIndex, 0, rowGroupSize);
         final long timestampDataPtr = rowGroupBuffers.getChunkDataPtr(0);
 

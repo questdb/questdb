@@ -84,8 +84,8 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
     }
 
     protected static class FullTablePartitionFrame implements PartitionFrame {
+        protected byte format;
         protected long parquetFd;
-        protected byte partitionFormat;
         protected int partitionIndex;
         protected int rowGroupIndex;
         // we don't need rowGroupLo as it can be calculated as rowGroupLo+(rowHi-rowLo)
@@ -110,7 +110,7 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
 
         @Override
         public byte getPartitionFormat() {
-            return partitionFormat;
+            return format;
         }
 
         @Override

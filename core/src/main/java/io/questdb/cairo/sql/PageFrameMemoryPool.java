@@ -28,7 +28,14 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.Reopenable;
 import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
-import io.questdb.std.*;
+import io.questdb.std.DirectIntList;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
+import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -244,7 +251,7 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
         if (parquetDecoder.getFd() != fd) {
             parquetDecoder.of(fd);
         }
-        final PartitionDecoder.Metadata metadata = parquetDecoder.getMetadata();
+        final PartitionDecoder.Metadata metadata = parquetDecoder.metadata();
         // Prepare table reader to parquet column index mapping.
         parquetColumnIndexes.clear();
         for (int i = 0, n = metadata.columnCount(); i < n; i++) {
@@ -289,7 +296,7 @@ public class PageFrameMemoryPool implements QuietCloseable, Mutable {
         public void decode(PartitionDecoder parquetDecoder, DirectIntList parquetColumns, int rowGroup, int rowLo, int rowHi) {
             parquetDecoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroup, rowLo, rowHi);
             clearAddresses();
-            for (int i = 0, n = parquetDecoder.getMetadata().columnCount(); i < n; i++) {
+            for (int i = 0, n = parquetDecoder.metadata().columnCount(); i < n; i++) {
                 pageAddresses.add(rowGroupBuffers.getChunkDataPtr(i));
                 pageSizes.add(rowGroupBuffers.getChunkDataSize(i));
                 auxPageAddresses.add(rowGroupBuffers.getChunkAuxPtr(i));

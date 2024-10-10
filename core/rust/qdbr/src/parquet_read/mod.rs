@@ -75,6 +75,9 @@ pub struct ColumnChunkStats {
     pub min_value_ptr: *mut u8,
     pub min_value_size: usize,
     pub min_value: AcVec<u8>,
+    pub max_value_ptr: *mut u8,
+    pub max_value_size: usize,
+    pub max_value: AcVec<u8>,
 }
 
 #[cfg(test)]

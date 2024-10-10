@@ -24,8 +24,20 @@
 
 package io.questdb.test.cairo;
 
-import io.questdb.cairo.*;
-import io.questdb.cairo.sql.*;
+import io.questdb.cairo.BitmapIndexReader;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IntervalFwdPartitionFrameCursor;
+import io.questdb.cairo.IntervalFwdPartitionFrameCursorFactory;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.PartitionFrame;
+import io.questdb.cairo.sql.PartitionFrameCursor;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.std.LongList;
@@ -630,11 +642,14 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                 writer.commit();
             }
 
-            try (TableReader reader = newOffPoolReader(configuration, "x")) {
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    IntervalFwdPartitionFrameCursor cursor = new IntervalFwdPartitionFrameCursor(
+                            new RuntimeIntervalModel(IntervalFwdPartitionFrameCursorTest.intervals),
+                            reader.getMetadata().getTimestampIndex()
+                    )
+            ) {
                 final TestTableReaderRecord record = new TestTableReaderRecord();
-                IntervalFwdPartitionFrameCursor cursor = new IntervalFwdPartitionFrameCursor(
-                        new RuntimeIntervalModel(IntervalFwdPartitionFrameCursorTest.intervals),
-                        reader.getMetadata().getTimestampIndex());
                 cursor.of(reader, null);
                 record.of(reader);
 
