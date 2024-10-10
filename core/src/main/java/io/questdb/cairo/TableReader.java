@@ -913,15 +913,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private long openPartition0(int partitionIndex) {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
-        final boolean isReopen = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE) > -1L;
-
         if (txFile.getPartitionCount() < 2 && txFile.getTransientRowCount() == 0) {
-            // Empty single partition. Don't check that directory exists on the disk
-            if (isReopen) {
-                // We had this partition open, so close the column files.
-                // We'll reopen them on a later attempt when there are some rows.
-                closePartition(partitionIndex);
-            }
             return -1;
         }
 
@@ -941,22 +933,19 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 .$(", format=parquet")
                                 .I$();
 
+                        final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
-                        final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.PARQUET);
-                        // TODO(puzpuzpuz): handle reopen properly - partition format may have changed
-                        if (isReopen) {
-                            ff.close(openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_FD));
-                        }
+
                         // TODO(puzpuzpuz): we need to read txn's Parquet file size and use it when reading
                         //                  that's because O3 appends new versions of the file to its end
                         long fd = TableUtils.openRO(ff, path.$(), LOG);
+                        assert fd > 0;
+                        assert openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_FD) == -1;
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_FD, fd);
-                        if (!isReopen) {
-                            openPartitionCount++;
-                        }
+                        openPartitionCount++;
                     }
 
                     return partitionSize;
@@ -975,14 +964,12 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 .I$();
 
                         openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
+                        final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
-                        final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.NATIVE);
-                        if (!isReopen) {
-                            openPartitionCount++;
-                        }
+                        openPartitionCount++;
                     }
 
                     return partitionSize;
