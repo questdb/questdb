@@ -47,8 +47,8 @@ import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
 import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
 
 public abstract class AbstractIntervalPartitionFrameCursor implements PartitionFrameCursor {
+    protected final IntervalPartitionFrame frame = new IntervalPartitionFrame();
     protected final RuntimeIntrinsicIntervalModel intervalModel;
-    protected final IntervalPartitionFrame partitionFrame = new IntervalPartitionFrame();
     protected final int timestampIndex;
     private final NativeTimestampFinder nativeTimestampFinder = new NativeTimestampFinder();
     private final ParquetTimestampFinder parquetTimestampFinder = new ParquetTimestampFinder();

@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.log.Log;
@@ -107,10 +108,23 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 }
 
                 if (lo < hi) {
-                    partitionFrame.partitionIndex = partitionLo;
-                    partitionFrame.rowLo = lo;
-                    partitionFrame.rowHi = hi;
+                    frame.partitionIndex = partitionLo;
+                    frame.rowLo = lo;
+                    frame.rowHi = hi;
                     sizeSoFar += (hi - lo);
+
+                    if (reader.getPartitionFormat(partitionLo) == PartitionFormat.PARQUET) {
+                        frame.format = PartitionFormat.PARQUET;
+                        frame.parquetFd = reader.getParquetFd(partitionLo);
+                        // TODO(puzpuzpuz): this is broken
+                        frame.rowGroupIndex = 0;
+                        frame.rowGroupLo = 0;
+                    } else {
+                        frame.format = PartitionFormat.NATIVE;
+                        frame.parquetFd = -1;
+                        frame.rowGroupIndex = -1;
+                        frame.rowGroupLo = -1;
+                    }
 
                     // we do have whole partition of fragment?
                     if (hi == rowCount) {
@@ -123,7 +137,7 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                         intervalsLo++;
                     }
 
-                    return partitionFrame;
+                    return frame;
                 }
                 // interval yielded empty partition frame
                 partitionLimit = hi;

@@ -69,7 +69,7 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
 
                 assert format == PartitionFormat.NATIVE;
                 frame.partitionIndex = partitionIndex;
-                frame.partitionFormat = PartitionFormat.NATIVE;
+                frame.format = PartitionFormat.NATIVE;
                 frame.parquetFd = -1;
                 frame.rowLo = 0;
                 frame.rowHi = hi;
@@ -97,7 +97,7 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
 
     private FullTablePartitionFrame prepareParquetFrame() {
         frame.partitionIndex = partitionIndex;
-        frame.partitionFormat = PartitionFormat.PARQUET;
+        frame.format = PartitionFormat.PARQUET;
         frame.parquetFd = parquetDecoder.getFd();
         frame.rowGroupLo = 0;
         frame.rowLo = rowLo;
