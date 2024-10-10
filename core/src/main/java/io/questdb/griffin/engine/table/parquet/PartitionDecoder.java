@@ -139,20 +139,6 @@ public class PartitionDecoder implements QuietCloseable {
         }
     }
 
-    public long timestampAt(int columnIndex, long rowIndex) {
-        assert ptr != 0;
-        try {
-            return timestampAt(ptr, columnIndex, rowIndex);
-        } catch (Throwable th) {
-            LOG.error().$("could not read timestamp value [fd=").$(fd)
-                    .$(", columnIndex=").$(columnIndex)
-                    .$(", rowIndex=").$(rowIndex)
-                    .$(", msg=").$(th.getMessage())
-                    .I$();
-            throw CairoException.nonCritical().put(th.getMessage());
-        }
-    }
-
     private static native long columnCountOffset();
 
     private static native long columnIdsOffset();
@@ -194,8 +180,6 @@ public class PartitionDecoder implements QuietCloseable {
     private static native long rowGroupCountOffset();
 
     private static native long rowGroupSizesPtrOffset();
-
-    private static native long timestampAt(long decoderPtr, int columnIndex, long rowIndex);
 
     private void destroy() {
         if (ptr != 0) {

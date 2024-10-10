@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -42,8 +43,66 @@ import org.junit.Test;
 
 import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
 import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
+import static org.junit.Assert.assertEquals;
 
 public class BinarySearchTest extends AbstractCairoTest {
+    // see implementation of Vect.binarySearch64Bit
+    private static final int THRESHOLD = 65;
+
+    @Test
+    public void testBinarySearchOnArrayWith4Duplicates() throws Exception {
+        testBinarySearchOnArrayWithDuplicates(4);
+    }
+
+    @Test
+    public void testBinarySearchOnArrayWith65Duplicates() throws Exception {
+        testBinarySearchOnArrayWithDuplicates(THRESHOLD + 5);
+    }
+
+    @Test
+    public void testBinarySearchOnArrayWithSingleValue() throws Exception {
+        assertMemoryLeak(() -> {
+            int size = 1024 * 1024;
+            int rows = (size / Long.BYTES);
+            try (MemoryCARWImpl mem = new MemoryCARWImpl(size, 1, MemoryTag.NATIVE_DEFAULT)) {
+                for (int i = 0; i < rows; i++) {
+                    mem.putLong(0);
+                }
+
+                assertEquals(rows - 1, binarySearch(mem, 0, 0, rows - 1, BIN_SEARCH_SCAN_DOWN));
+                assertEquals(131071, binarySearch(mem, 0, 0, rows - 1, BIN_SEARCH_SCAN_DOWN));
+
+                assertEquals(-1, binarySearch(mem, -1, 0, rows - 1, BIN_SEARCH_SCAN_DOWN));
+                assertEquals(-1, binarySearch(mem, -1, 0, rows - 1, BIN_SEARCH_SCAN_UP));
+                assertEquals(-131073, binarySearch(mem, 1, 0, rows - 1, BIN_SEARCH_SCAN_DOWN));
+                assertEquals(-131073, binarySearch(mem, 1, 0, rows - 1, BIN_SEARCH_SCAN_UP));
+            }
+        });
+    }
+
+    @Test
+    public void testBinarySearchOnArrayWithUniqueElements() throws Exception {
+        assertMemoryLeak(() -> {
+            int size = 1024 * 1024;
+            int rows = (size / Long.BYTES);
+            try (MemoryCARWImpl mem = new MemoryCARWImpl(size, 1, MemoryTag.NATIVE_DEFAULT)) {
+                for (int i = 0; i < rows; i++) {
+                    mem.putLong(i);
+                }
+
+                for (long i = 0; i < rows; i++) {
+                    assertEquals(i, mem.getLong(i * Long.BYTES));
+                    assertEquals(i, binarySearch(mem, i, 0, rows - 1, BIN_SEARCH_SCAN_DOWN));
+                    assertEquals(i, binarySearch(mem, i, 0, rows - 1, BIN_SEARCH_SCAN_UP));
+                }
+
+                assertEquals(-1, binarySearch(mem, -1, 0, rows - 1, BIN_SEARCH_SCAN_DOWN));
+                assertEquals(-1, binarySearch(mem, -1, 0, rows - 1, BIN_SEARCH_SCAN_UP));
+                assertEquals(-131073, binarySearch(mem, rows, 0, rows - 1, BIN_SEARCH_SCAN_DOWN));
+                assertEquals(-131073, binarySearch(mem, rows, 0, rows - 1, BIN_SEARCH_SCAN_UP));
+            }
+        });
+    }
 
     @Test
     public void testFindForward1() throws Exception {
@@ -224,8 +283,33 @@ public class BinarySearchTest extends AbstractCairoTest {
         testMem256Find(3, 20, 100, BIN_SEARCH_SCAN_UP);
     }
 
-    private long binarySearch(MemoryR column, long value, long low, long high, int scanDir) {
+    private static long binarySearch(MemoryR column, long value, long low, long high, int scanDir) {
         return Vect.binarySearch64Bit(column.getPageAddress(0), value, low, high, scanDir);
+    }
+
+    private void testBinarySearchOnArrayWithDuplicates(int dupCount) throws Exception {
+        assertMemoryLeak(() -> {
+            int size = 1024 * 1024;
+            int rows = (size / Long.BYTES);
+            int values = rows / dupCount;
+            try (MemoryCARWImpl mem = new MemoryCARWImpl(size, 1, MemoryTag.NATIVE_DEFAULT)) {
+                for (int i = 0; i < rows; i++) {
+                    mem.putLong(i / dupCount);
+                }
+
+                for (long i = 0; i < values; i++) {
+                    long value = i / dupCount;
+                    assertEquals(value, mem.getLong(i * Long.BYTES));
+                    assertEquals(i - (i % dupCount) + dupCount - 1, binarySearch(mem, value, 0, rows - 1, BIN_SEARCH_SCAN_DOWN));
+                    assertEquals(i - (i % dupCount), binarySearch(mem, value, 0, rows - 1, BIN_SEARCH_SCAN_UP));
+                }
+
+                assertEquals(-1, binarySearch(mem, -1, 0, rows - 1, BIN_SEARCH_SCAN_DOWN));
+                assertEquals(-1, binarySearch(mem, -1, 0, rows - 1, BIN_SEARCH_SCAN_UP));
+                assertEquals(-131073, binarySearch(mem, rows, 0, rows - 1, BIN_SEARCH_SCAN_DOWN));
+                assertEquals(-131073, binarySearch(mem, rows, 0, rows - 1, BIN_SEARCH_SCAN_UP));
+            }
+        });
     }
 
     private void testColumnFindForward(

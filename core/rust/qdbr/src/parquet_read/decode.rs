@@ -272,10 +272,6 @@ impl<R: Read + Seek> ParquetDecoder<R> {
         Ok(row_count)
     }
 
-    pub fn timestamp_at(&mut self, _column_index: u32, _row_index: u64) -> ParquetResult<i64> {
-        Ok(0)
-    }
-
     pub fn read_column_chunk_stats(
         &mut self,
         row_group_stat_buffers: &mut RowGroupStatBuffers,
