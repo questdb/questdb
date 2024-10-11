@@ -546,7 +546,7 @@ mod tests {
             let allocator = allocator.clone();
             let barrier = barrier.clone();
             threads.push(std::thread::spawn(move || {
-                let mut allocations = Vec::with_capacity(128);
+                let mut allocations = Vec::with_capacity(2048);
                 let mut rng = rand::thread_rng();
                 barrier.wait();
                 let iterations = 10_000usize;
