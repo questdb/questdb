@@ -24,12 +24,16 @@
 
 package io.questdb.griffin;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Transient;
 import org.jetbrains.annotations.TestOnly;
 
 public interface SqlCompiler extends QuietCloseable, Mutable {
@@ -38,7 +42,25 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
 
     void compileBatch(CharSequence batchText, SqlExecutionContext sqlExecutionContext, BatchCallback batchCallback) throws Exception;
 
+    void dropAllTables(SqlExecutionContext sqlExecutionContext) throws SqlException;
+
+    // todo: dropTable should take Operation and context as the only arguments
+    void dropTable(
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence tableName,
+            int tableNamePosition,
+            CharSequenceObjHashMap<CharSequence> flags
+    ) throws SqlException;
+
+    void execute(final CreateTableOperation createTableOp, SqlExecutionContext executionContext) throws SqlException;
+
     QueryBuilder query();
+
+    RecordCursorFactory generateSelectWithRetries(
+            @Transient QueryModel queryModel,
+            @Transient SqlExecutionContext executionContext,
+            boolean generateProgressLogger
+    ) throws SqlException;
 
     @TestOnly
     void setEnableJitNullChecks(boolean value);
@@ -55,12 +77,5 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     @TestOnly
     void testParseExpression(CharSequence expression, ExpressionParserListener listener) throws SqlException;
 
-    void dropAllTables(SqlExecutionContext sqlExecutionContext) throws SqlException;
-
-    void dropTable(
-            SqlExecutionContext sqlExecutionContext,
-            CharSequence tableName,
-            int tableNamePosition,
-            CharSequenceObjHashMap<CharSequence> flags
-    ) throws SqlException;
+    CairoEngine getEngine();
 }

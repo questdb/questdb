@@ -465,30 +465,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         );
     }
 
-    @Override
-    public void addColumn(
-            CharSequence columnName,
-            int columnType,
-            int symbolCapacity,
-            boolean symbolCacheFlag,
-            boolean isIndexed,
-            int indexValueBlockCapacity,
-            boolean isDedupKey,
-            SecurityContext securityContext
-    ) {
-        addColumn(
-                columnName,
-                columnType,
-                symbolCapacity,
-                symbolCacheFlag,
-                isIndexed,
-                indexValueBlockCapacity,
-                false,
-                isDedupKey,
-                securityContext
-        );
-    }
-
     /**
      * Adds new column to table, which can be either empty or can have data already. When existing columns
      * already have data this function will create ".top" file in addition to column files. ".top" file contains
@@ -544,9 +520,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         commit();
 
         long columnNameTxn = getTxn();
-        LOG.info().$("adding column '").utf8(columnName).$('[').$(ColumnType.nameOf(columnType)).$("], columnName txn ").$(columnNameTxn).$(" to ").$substr(pathRootSize, path).$();
+        LOG.info()
+                .$("adding column '").utf8(columnName)
+                .$('[').$(ColumnType.nameOf(columnType)).$("], columnName txn ").$(columnNameTxn)
+                .$(" to ").$substr(pathRootSize, path)
+                .$();
 
-        addColumnToMeta(columnName, columnType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, columnNameTxn, -1);
+        addColumnToMeta(
+                columnName,
+                columnType,
+                symbolCapacity,
+                symbolCacheFlag,
+                isIndexed,
+                indexValueBlockCapacity,
+                isSequential,
+                isDedupKey,
+                columnNameTxn,
+                -1
+        );
 
         // extend columnTop list to make sure row cancel can work
         // need for setting correct top is hard to test without being able to read from table
@@ -575,7 +566,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         bumpMetadataAndColumnStructureVersion();
 
-        metadata.addColumn(columnName, columnType, isIndexed, indexValueBlockCapacity, columnIndex, isSequential, symbolCapacity, isDedupKey, symbolCacheFlag);
+        metadata.addColumn(
+                columnName,
+                columnType,
+                isIndexed,
+                indexValueBlockCapacity,
+                columnIndex,
+                isSequential,
+                symbolCapacity,
+                isDedupKey,
+                symbolCacheFlag
+        );
 
         if (!Os.isWindows()) {
             ff.fsyncAndClose(TableUtils.openRO(ff, path.$(), LOG));
@@ -901,7 +902,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 convertOperator.convertColumn(columnName, existingColIndex, existingType, columnIndex, newType);
 
                 // Column converted, add new one to _meta file and remove the existing column
-                addColumnToMeta(columnName, newType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isSequential, isDedupKey, columnNameTxn, existingColIndex);
+                addColumnToMeta(
+                        columnName,
+                        newType,
+                        symbolCapacity,
+                        symbolCacheFlag,
+                        isIndexed,
+                        indexValueBlockCapacity,
+                        isSequential,
+                        isDedupKey,
+                        columnNameTxn,
+                        existingColIndex
+                );
 
                 // close old column files
                 freeColumnMemory(existingColIndex);
@@ -911,7 +923,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // remove old column to in-memory metadata object and add new one
                 metadata.removeColumn(existingColIndex);
-                metadata.addColumn(columnName, newType, isIndexed, indexValueBlockCapacity, existingColIndex, isSequential, symbolCapacity, isDedupKey, existingColIndex + 1, symbolCacheFlag); // by convention, replacingIndex is +1
+                metadata.addColumn(
+                        columnName,
+                        newType, isIndexed,
+                        indexValueBlockCapacity,
+                        existingColIndex,
+                        isSequential,
+                        symbolCapacity,
+                        isDedupKey,
+                        existingColIndex + 1,
+                        symbolCacheFlag
+                ); // by convention, replacingIndex is +1
 
                 // open new column files
                 if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {

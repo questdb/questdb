@@ -1734,6 +1734,7 @@ public class WalWriter implements TableWriterAPI {
                 boolean isIndexed,
                 int indexValueBlockCapacity,
                 boolean isSequential,
+                boolean isDedupKey,
                 SecurityContext securityContext
         ) {
             validateNewColumnName(columnName);
@@ -1858,6 +1859,7 @@ public class WalWriter implements TableWriterAPI {
                 boolean isIndexed,
                 int indexValueBlockCapacity,
                 boolean isSequential,
+                boolean isDedupKey,
                 SecurityContext securityContext
         ) {
             int columnIndex = metadata.getColumnIndexQuiet(columnName);
@@ -1871,7 +1873,15 @@ public class WalWriter implements TableWriterAPI {
 
                 if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
                     long segmentRowCount = getUncommittedRowCount();
-                    metadata.addColumn(columnName, columnType);
+                    metadata.addColumn(
+                            columnName,
+                            columnType,
+                            isIndexed,
+                            indexValueBlockCapacity,
+                            isDedupKey,
+                            symbolCacheFlag,
+                            symbolCapacity
+                    );
                     columnCount = metadata.getColumnCount();
                     columnIndex = columnCount - 1;
                     // create column file
@@ -1915,8 +1925,15 @@ public class WalWriter implements TableWriterAPI {
         }
 
         @Override
-        public void changeColumnType(CharSequence columnName, int newType, int symbolCapacity, boolean symbolCacheFlag,
-                                     boolean isIndexed, int indexValueBlockCapacity, boolean isSequential, SecurityContext securityContext
+        public void changeColumnType(
+                CharSequence columnName,
+                int newType,
+                int symbolCapacity,
+                boolean symbolCacheFlag,
+                boolean isIndexed,
+                int indexValueBlockCapacity,
+                boolean isSequential,
+                SecurityContext securityContext
         ) {
             final int existingColumnIndex = metadata.getColumnIndexQuiet(columnName);
             if (existingColumnIndex > -1) {
@@ -1936,7 +1953,14 @@ public class WalWriter implements TableWriterAPI {
                         rollUncommittedToNewSegment(existingColumnIndex, newType);
 
                         if (currentTxnStartRowNum == 0 || segmentRowCount == currentTxnStartRowNum) {
-                            metadata.changeColumnType(columnName, newType);
+                            metadata.changeColumnType(
+                                    columnName,
+                                    newType,
+                                    symbolCapacity,
+                                    symbolCacheFlag,
+                                    isIndexed,
+                                    indexValueBlockCapacity
+                            );
                             path.trimTo(pathSize).slash().put(segmentId);
 
                             markColumnRemoved(existingColumnIndex, existingColumnType);

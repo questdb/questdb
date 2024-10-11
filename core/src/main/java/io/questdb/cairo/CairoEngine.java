@@ -354,20 +354,20 @@ public class CairoEngine implements Closeable, WriterSource {
             TableStructure struct,
             boolean keepLock
     ) {
-        securityContext.authorizeTableCreate();
-        return createTableUnsecure(securityContext, mem, path, ifNotExists, struct, keepLock, false);
+        return createTable(securityContext, mem, path, ifNotExists, struct, keepLock, false);
     }
 
-    public @NotNull TableToken createTableInVolume(
+    public @NotNull TableToken createTable(
             SecurityContext securityContext,
             MemoryMARW mem,
             Path path,
             boolean ifNotExists,
             TableStructure struct,
-            boolean keepLock
+            boolean keepLock,
+            boolean inVolume
     ) {
         securityContext.authorizeTableCreate();
-        return createTableUnsecure(securityContext, mem, path, ifNotExists, struct, keepLock, true);
+        return createTableUnsecure(securityContext, mem, path, ifNotExists, struct, keepLock, inVolume);
     }
 
     public void ddl(CharSequence ddl, SqlExecutionContext executionContext) throws SqlException {
@@ -377,6 +377,31 @@ public class CairoEngine implements Closeable, WriterSource {
     public void ddl(CharSequence ddl, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
         try (SqlCompiler compiler = getSqlCompiler()) {
             ddl(compiler, ddl, sqlExecutionContext, eventSubSeq);
+        }
+    }
+
+    public void drop(CharSequence dropSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        drop(dropSql, sqlExecutionContext, null);
+    }
+
+    public void drop(CharSequence dropSql, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
+        try (SqlCompiler compiler = getSqlCompiler()) {
+            final CompiledQuery cq = compiler.compile(dropSql, sqlExecutionContext);
+            switch (cq.getType()) {
+                case UPDATE:
+                case DROP:
+                    drop0(eventSubSeq, cq);
+                    break;
+                case INSERT:
+                case INSERT_AS_SELECT:
+                    throw SqlException.$(0, "use insert()");
+                case SELECT:
+                    throw SqlException.$(0, "use select()");
+                default:
+                    throw SqlException.$(0, "use ddl()");
+            }
+        } catch (TableReferenceOutOfDateException e) {
+            // ignore
         }
     }
 
@@ -407,31 +432,6 @@ public class CairoEngine implements Closeable, WriterSource {
                 return;
             }
             throw CairoException.nonCritical().put("could not lock '").put(tableToken.getTableName()).put("' [reason='").put(lockedReason).put("']");
-        }
-    }
-
-    public void drop(CharSequence dropSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        drop(dropSql, sqlExecutionContext, null);
-    }
-
-    public void drop(CharSequence dropSql, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
-        try (SqlCompiler compiler = getSqlCompiler()) {
-            final CompiledQuery cq = compiler.compile(dropSql, sqlExecutionContext);
-            switch (cq.getType()) {
-                case UPDATE:
-                case DROP:
-                    drop0(eventSubSeq, cq);
-                    break;
-                case INSERT:
-                case INSERT_AS_SELECT:
-                    throw SqlException.$(0, "use insert()");
-                case SELECT:
-                    throw SqlException.$(0, "use select()");
-                default:
-                    throw SqlException.$(0, "use ddl()");
-            }
-        } catch (TableReferenceOutOfDateException e) {
-            // ignore
         }
     }
 
@@ -584,7 +584,7 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public TableMetadata getSequencerMetadata(TableToken tableToken) {
+    public TableRecordMetadata getSequencerMetadata(TableToken tableToken) {
         return getSequencerMetadata(tableToken, TableUtils.ANY_TABLE_VERSION);
     }
 
@@ -1735,8 +1735,10 @@ public class CairoEngine implements Closeable, WriterSource {
                                 .concat(table.getDirectoryName())
                                 .concat(TableUtils.COLUMN_VERSION_FILE_NAME);
 
-                        columnVersionReader.ofRO(configuration.getFilesFacade(),
-                                path.$());
+                        columnVersionReader.ofRO(
+                                configuration.getFilesFacade(),
+                                path.$()
+                        );
 
                         columnVersionReader.readUnsafe();
                         final long columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);

@@ -53,6 +53,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     private short type;
     private UpdateOperation updateOp;
     private DropOperation dropOp;
+    private CreateTableOperation createTableOp;
 
     public CompiledQueryImpl(CairoEngine engine) {
         // type inference fails on java 8 if <UpdateOperation> is removed
@@ -98,6 +99,8 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         switch (type) {
             case INSERT:
                 return insertOp.execute(sqlExecutionContext);
+            case CREATE_TABLE:
+                return createTableOp.execute(sqlExecutionContext, eventSubSeq);
             case UPDATE:
                 updateOp.withSqlStatement(sqlStatement);
                 return updateOperationDispatcher.execute(updateOp, sqlExecutionContext, eventSubSeq, closeOnDone);
@@ -158,7 +161,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     public CompiledQuery of(short type) {
-        return of(type, null, null);
+        return of(type, null);
     }
 
     public void ofAlter(AlterOperation alterOp) {
@@ -167,7 +170,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     public void ofSelect(RecordCursorFactory recordCursorFactory) {
-        of(SELECT, recordCursorFactory, null);
+        of(SELECT, recordCursorFactory);
     }
 
     public void ofAlterUser() {
@@ -194,13 +197,9 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         of(COPY_REMOTE);
     }
 
-    public void ofCreateTable(TableToken tableToken) {
-        of(CREATE_TABLE, null, tableToken);
-    }
-
-    public void ofCreateTableAsSelect(TableToken tableToken, long affectedRowsCount) {
-        of(CREATE_TABLE_AS_SELECT, null, tableToken);
-        this.affectedRowsCount = affectedRowsCount;
+    public void ofCreateTable(CreateTableOperation createTableOp) {
+        of(createTableOp.getRecordCursorFactory() == null ? CREATE_TABLE : CREATE_TABLE_AS_SELECT);
+        this.createTableOp = createTableOp;
     }
 
     public void ofCreateUser() {
@@ -218,7 +217,7 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     }
 
     public void ofExplain(RecordCursorFactory recordCursorFactory) {
-        of(EXPLAIN, recordCursorFactory, null);
+        of(EXPLAIN, recordCursorFactory);
     }
 
     public void ofInsert(InsertOperation insertOperation) {
@@ -302,10 +301,10 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
         this.sqlStatement = sqlStatement;
     }
 
-    private CompiledQuery of(short type, RecordCursorFactory factory, TableToken tableToken) {
+    private CompiledQuery of(short type, RecordCursorFactory factory) {
         this.type = type;
         this.recordCursorFactory = factory;
-        this.tableToken = tableToken;
+        this.tableToken = null;
         this.affectedRowsCount = -1;
         return this;
     }

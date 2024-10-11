@@ -41,9 +41,23 @@ public class TableReaderMetadataColumn extends TableColumnMetadata {
             int writerIndex,
             boolean dedupKeyFlag,
             int denseSymbolIndex,
-            int stableIndex
+            int stableIndex,
+            boolean symbolIsCached,
+            int symbolCapacity
     ) {
-        super(name, type, indexed, indexValueBlockCapacity, symbolTableStatic, metadata, writerIndex, dedupKeyFlag);
+        super(
+                name,
+                type,
+                indexed,
+                indexValueBlockCapacity,
+                symbolTableStatic,
+                metadata,
+                writerIndex,
+                dedupKeyFlag,
+                0,
+                symbolIsCached,
+                symbolCapacity
+        );
         this.denseSymbolIndex = denseSymbolIndex;
         this.stableIndex = stableIndex;
     }

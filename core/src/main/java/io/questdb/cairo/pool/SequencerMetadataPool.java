@@ -111,6 +111,36 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<MetadataPoolT
         }
 
         @Override
+        public int getIndexBlockCapacity(int columnIndex) {
+            return getColumnMetadata(columnIndex).getIndexValueBlockCapacity();
+        }
+
+        @Override
+        public boolean getSymbolCacheFlag(int columnIndex) {
+            return getColumnMetadata(columnIndex).symbolIsCached();
+        }
+
+        @Override
+        public int getSymbolCapacity(int columnIndex) {
+            return getColumnMetadata(columnIndex).getSymbolCapacity();
+        }
+
+        @Override
+        public CharSequence getTableName() {
+            return tableToken.getTableName();
+        }
+
+        @Override
+        public boolean isIndexed(int columnIndex) {
+            return getColumnMetadata(columnIndex).isIndexed();
+        }
+
+        @Override
+        public boolean isSequential(int columnIndex) {
+            return false;
+        }
+
+        @Override
         public boolean isDedupKey(int columnIndex) {
             throw new UnsupportedOperationException();
         }

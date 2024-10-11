@@ -34,8 +34,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.griffin.model.CreateTableModel;
-import io.questdb.griffin.model.ExecutionModel;
+import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.log.Log;
@@ -6697,9 +6696,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         }
 
         @Override
-        public ExecutionModel createTableSuffix(GenericLexer lexer, SecurityContext securityContext, CreateTableModel model, CharSequence tok) throws SqlException {
+        public void createTableExt(GenericLexer lexer, SecurityContext securityContext, CreateTableOperationBuilder model, CharSequence tok) throws SqlException {
             createTableSuffixCalled = true;
-            return super.createTableSuffix(lexer, securityContext, model, tok);
+            super.createTableExt(lexer, securityContext, model, tok);
         }
 
         @Override

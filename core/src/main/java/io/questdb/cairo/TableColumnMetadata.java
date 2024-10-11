@@ -39,6 +39,8 @@ public class TableColumnMetadata implements Plannable {
     private boolean indexed;
     private boolean isDedupKey;
     private String name;
+    private int symbolCapacity;
+    private boolean symbolIsCached;
     private int type;
 
     public TableColumnMetadata(String name, int type) {
@@ -46,7 +48,19 @@ public class TableColumnMetadata implements Plannable {
     }
 
     public TableColumnMetadata(String name, int type, @Nullable RecordMetadata metadata) {
-        this(name, type, false, 0, false, metadata, -1, false, 0);
+        this(
+                name,
+                type,
+                false,
+                0,
+                false,
+                metadata,
+                -1,
+                false,
+                0,
+                true,
+                0
+        );
         // Do not allow using this constructor for symbol types.
         // Use version where you specify symbol table parameters
         assert !ColumnType.isSymbol(type);
@@ -60,7 +74,19 @@ public class TableColumnMetadata implements Plannable {
             boolean symbolTableStatic,
             @Nullable RecordMetadata metadata
     ) {
-        this(name, type, indexFlag, indexValueBlockCapacity, symbolTableStatic, metadata, -1, false, 0);
+        this(
+                name,
+                type,
+                indexFlag,
+                indexValueBlockCapacity,
+                symbolTableStatic,
+                metadata,
+                -1,
+                false,
+                0,
+                true,
+                0
+        );
     }
 
     public TableColumnMetadata(
@@ -73,7 +99,19 @@ public class TableColumnMetadata implements Plannable {
             int writerIndex,
             boolean dedupKeyFlag
     ) {
-        this(name, type, indexed, indexValueBlockCapacity, symbolTableStatic, metadata, writerIndex, dedupKeyFlag, 0);
+        this(
+                name,
+                type,
+                indexed,
+                indexValueBlockCapacity,
+                symbolTableStatic,
+                metadata,
+                writerIndex,
+                dedupKeyFlag,
+                0,
+                true,
+                0
+        );
     }
 
     public TableColumnMetadata(
@@ -85,7 +123,9 @@ public class TableColumnMetadata implements Plannable {
             @Nullable RecordMetadata metadata,
             int writerIndex,
             boolean dedupKeyFlag,
-            int replacingIndex
+            int replacingIndex,
+            boolean symbolIsCached,
+            int symbolCapacity
     ) {
         this.name = name;
         this.type = type;
@@ -96,6 +136,8 @@ public class TableColumnMetadata implements Plannable {
         this.writerIndex = writerIndex;
         this.isDedupKey = dedupKeyFlag;
         this.replacingIndex = replacingIndex;
+        this.symbolIsCached = symbolIsCached;
+        this.symbolCapacity = symbolCapacity;
     }
 
     public int getIndexValueBlockCapacity() {
@@ -113,6 +155,10 @@ public class TableColumnMetadata implements Plannable {
 
     public int getReplacingIndex() {
         return replacingIndex;
+    }
+
+    public int getSymbolCapacity() {
+        return symbolCapacity;
     }
 
     public int getType() {
@@ -157,6 +203,14 @@ public class TableColumnMetadata implements Plannable {
 
     public void setName(String name) {
         this.name = name;
+    }
+
+    public void setSymbolCached(boolean cache) {
+        this.symbolIsCached = cache;
+    }
+
+    public boolean symbolIsCached() {
+        return symbolIsCached;
     }
 
     @Override

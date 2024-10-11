@@ -24,7 +24,9 @@
 
 package io.questdb.cairo.sql;
 
-public interface TableMetadata extends TableRecordMetadata {
+import io.questdb.cairo.TableStructure;
+
+public interface TableMetadata extends TableRecordMetadata, TableStructure {
     int getMaxUncommittedRows();
 
     long getO3MaxLag();

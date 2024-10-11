@@ -29,12 +29,12 @@ import io.questdb.std.ObjectFactory;
 
 public class ColumnCastModel implements Mutable {
     public static final ObjectFactory<ColumnCastModel> FACTORY = ColumnCastModel::new;
+    private ExpressionNode columnName;
     private int columnNamePos;
     private int columnType;
     private int columnTypePos;
     private int indexValueBlockSize;
     private boolean indexed;
-    private ExpressionNode name;
     private boolean symbolCacheFlag;
     private int symbolCapacity;
 
@@ -44,6 +44,10 @@ public class ColumnCastModel implements Mutable {
     @Override
     public void clear() {
         symbolCapacity = 0;
+    }
+
+    public ExpressionNode getColumnName() {
+        return columnName;
     }
 
     public int getColumnNamePos() {
@@ -62,10 +66,6 @@ public class ColumnCastModel implements Mutable {
         return indexValueBlockSize;
     }
 
-    public ExpressionNode getName() {
-        return name;
-    }
-
     public boolean getSymbolCacheFlag() {
         return symbolCacheFlag;
     }
@@ -78,16 +78,16 @@ public class ColumnCastModel implements Mutable {
         return indexed;
     }
 
+    public void setColumnName(ExpressionNode columnName) {
+        this.columnName = columnName;
+    }
+
     public void setIndexValueBlockSize(int indexValueBlockSize) {
         this.indexValueBlockSize = indexValueBlockSize;
     }
 
     public void setIndexed(boolean indexed) {
         this.indexed = indexed;
-    }
-
-    public void setName(ExpressionNode name) {
-        this.name = name;
     }
 
     public void setSymbolCacheFlag(boolean symbolCacheFlag) {

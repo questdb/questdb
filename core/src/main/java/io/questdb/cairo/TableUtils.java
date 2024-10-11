@@ -208,7 +208,16 @@ public final class TableUtils {
         return (int) (checkSum ^ (checkSum >>> 32));
     }
 
-    public static int changeColumnTypeInMetadata(CharSequence columnName, int newType, LowerCaseCharSequenceIntHashMap columnNameIndexMap, ObjList<TableColumnMetadata> columnMetadata) {
+    public static int changeColumnTypeInMetadata(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            boolean isIndexed,
+            int indexValueBlockCapacity,
+            LowerCaseCharSequenceIntHashMap columnNameIndexMap,
+            ObjList<TableColumnMetadata> columnMetadata
+    ) {
         int existingIndex = columnNameIndexMap.get(columnName);
         if (existingIndex < 0) {
             throw CairoException.nonCritical().put("cannot change type, column '").put(columnName).put("' does not exist");
@@ -218,14 +227,16 @@ public final class TableUtils {
         columnMetadata.add(
                 new TableColumnMetadata(
                         columnNameStr,
-                        newType,
-                        false,
-                        0,
+                        columnType,
+                        isIndexed,
+                        indexValueBlockCapacity,
                         false,
                         null,
                         columnIndex,
                         false,
-                        existingIndex + 1 // replacing column index by convention can be 0 if not in use
+                        existingIndex + 1, // replacing column index by convention can be 0 if not in use
+                        symbolCacheFlag,
+                        symbolCapacity
                 )
         );
         columnMetadata.getQuick(existingIndex).markDeleted();

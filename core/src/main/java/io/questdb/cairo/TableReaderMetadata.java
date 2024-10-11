@@ -70,6 +70,36 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         }
     }
 
+    @Override
+    public int getIndexBlockCapacity(int columnIndex) {
+        return columnMetadata.getQuick(columnIndex).getIndexValueBlockCapacity();
+    }
+
+    @Override
+    public boolean getSymbolCacheFlag(int columnIndex) {
+        return columnMetadata.getQuick(columnIndex).isIndexed();
+    }
+
+    @Override
+    public int getSymbolCapacity(int columnIndex) {
+        return 0;
+    }
+
+    @Override
+    public CharSequence getTableName() {
+        return null;
+    }
+
+    @Override
+    public boolean isIndexed(int columnIndex) {
+        return false;
+    }
+
+    @Override
+    public boolean isSequential(int columnIndex) {
+        return false;
+    }
+
     // constructor used to read random metadata files
     public TableReaderMetadata(CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -122,6 +152,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             boolean isIndexed = TableUtils.isColumnIndexed(metaMem, writerIndex);
             boolean isDedupKey = TableUtils.isColumnDedupKey(metaMem, writerIndex);
             int indexBlockCapacity = TableUtils.getIndexBlockCapacity(metaMem, writerIndex);
+            boolean symbolIsCached = TableUtils.isSymbolCached(metaMem, writerIndex);
+            int symbolCapacity = TableUtils.getSymbolCapacity(metaMem, writerIndex);
             TableReaderMetadataColumn existing = null;
             String newName;
 
@@ -173,7 +205,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                                     writerIndex,
                                     isDedupKey,
                                     denseSymbolIndex,
-                                    stableIndex
+                                    stableIndex,
+                                    symbolIsCached,
+                                    symbolCapacity
                             )
                     );
                     if (existing != null) {
@@ -319,7 +353,9 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                                     writerIndex,
                                     TableUtils.isColumnDedupKey(metaMem, writerIndex),
                                     denseSymbolIndex,
-                                    stableIndex
+                                    stableIndex,
+                                    TableUtils.isSymbolCached(metaMem, writerIndex),
+                                    TableUtils.getSymbolCapacity(metaMem, writerIndex)
                             )
                     );
                     int denseIndex = columnMetadata.size() - 1;

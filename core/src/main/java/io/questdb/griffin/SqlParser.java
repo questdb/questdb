@@ -30,6 +30,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
+import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.model.*;
 import io.questdb.std.*;
 import org.jetbrains.annotations.NotNull;
@@ -53,10 +54,10 @@ public class SqlParser {
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> aliasMap = new LowerCaseCharSequenceObjHashMap<>();
     private final CharacterStore characterStore;
     private final CharSequence column;
-    private final ObjectPool<ColumnCastModel> columnCastModelPool;
     private final CairoConfiguration configuration;
     private final ObjectPool<CopyModel> copyModelPool;
-    private final ObjectPool<CreateTableModel> createTableModelPool;
+    private final ObjectPool<ColumnCastModel> createTableColumnCastModelPool;
+    private final CreateTableOperationBuilder createTableOperationBuilder = new CreateTableOperationBuilder();
     private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionParser expressionParser;
@@ -94,8 +95,7 @@ public class SqlParser {
         this.queryColumnPool = queryColumnPool;
         this.expressionTreeBuilder = new ExpressionTreeBuilder();
         this.windowColumnPool = new ObjectPool<>(WindowColumn.FACTORY, configuration.getWindowColumnPoolCapacity());
-        this.createTableModelPool = new ObjectPool<>(CreateTableModel.FACTORY, configuration.getCreateTableModelPoolCapacity());
-        this.columnCastModelPool = new ObjectPool<>(ColumnCastModel.FACTORY, configuration.getColumnCastModelPoolCapacity());
+        this.createTableColumnCastModelPool = new ObjectPool<>(ColumnCastModel.FACTORY, configuration.getColumnCastModelPoolCapacity());
         this.renameTableModelPool = new ObjectPool<>(RenameTableModel.FACTORY, configuration.getRenameTableModelPoolCapacity());
         this.withClauseModelPool = new ObjectPool<>(WithClauseModel.FACTORY, configuration.getWithClauseModelPoolCapacity());
         this.insertModelPool = new ObjectPool<>(InsertModel.FACTORY, configuration.getInsertModelPoolCapacity());
@@ -367,8 +367,8 @@ public class SqlParser {
         throw SqlException.$((lexer.lastTokenPosition()), "'zone' expected");
     }
 
-    private int getCreateTableColumnIndex(CreateTableModel model, CharSequence columnName, int position) throws SqlException {
-        int index = model.getColumnIndex(columnName);
+    private int getCreateTableColumnIndex(CharSequence columnName, int position) throws SqlException {
+        int index = createTableOperationBuilder.getColumnIndex(columnName);
         if (index == -1) {
             throw SqlException.invalidColumn(position, columnName);
         }
@@ -538,11 +538,11 @@ public class SqlParser {
             SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        final CreateTableModel model = createTableModelPool.next();
+        createTableOperationBuilder.clear();
         final CharSequence tableName;
         // default to non-atomic, batched, creation
         CharSequence tok = tok(lexer, "'atomic' or 'table' or 'batch'");
-        model.setBatchSize(configuration.getInsertModelBatchSize());
+        createTableOperationBuilder.setBatchSize(configuration.getInsertModelBatchSize());
         boolean atomicSpecified = false;
         boolean batchSpecified = false;
         boolean isCreateAsSelect = false;
@@ -550,7 +550,7 @@ public class SqlParser {
         // if it's a CREATE ATOMIC, we don't accept BATCH
         if (SqlKeywords.isAtomicKeyword(tok)) {
             atomicSpecified = true;
-            model.setBatchSize(-1);
+            createTableOperationBuilder.setBatchSize(-1);
             expectTok(lexer, "table");
             tok = tok(lexer, "table name or 'if'");
         } else if (SqlKeywords.isBatchKeyword(tok)) {
@@ -558,7 +558,7 @@ public class SqlParser {
 
             long val = expectLong(lexer);
             if (val > 0) {
-                model.setBatchSize(val);
+                createTableOperationBuilder.setBatchSize(val);
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), "batch size must be positive integer");
             }
@@ -566,7 +566,7 @@ public class SqlParser {
             tok = tok(lexer, "table or o3MaxLag");
             if (SqlKeywords.isO3MaxLagKeyword(tok)) {
                 int pos = lexer.getPosition();
-                model.setBatchO3MaxLag(SqlUtil.expectMicros(tok(lexer, "lag value"), pos));
+                createTableOperationBuilder.setBatchO3MaxLag(SqlUtil.expectMicros(tok(lexer, "lag value"), pos));
                 expectTok(lexer, "table");
             }
             tok = tok(lexer, "table name or 'if'");
@@ -578,7 +578,7 @@ public class SqlParser {
 
         if (SqlKeywords.isIfKeyword(tok)) {
             if (SqlKeywords.isNotKeyword(tok(lexer, "'not'")) && SqlKeywords.isExistsKeyword(tok(lexer, "'exists'"))) {
-                model.setIgnoreIfExists(true);
+                createTableOperationBuilder.setIgnoreIfExists(true);
                 tableName = tok(lexer, "table name");
             } else {
                 throw SqlException.$(lexer.lastTokenPosition(), "'if not exists' expected");
@@ -590,31 +590,31 @@ public class SqlParser {
 
         assertTableNameIsQuotedOrNotAKeyword(tableName, lexer.lastTokenPosition());
 
-        model.setTableNameExpr(nextLiteral(GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tableName), lexer.lastTokenPosition()), lexer.lastTokenPosition()));
+        createTableOperationBuilder.setTableNameExpr(nextLiteral(GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tableName), lexer.lastTokenPosition()), lexer.lastTokenPosition()));
 
         tok = tok(lexer, "'(' or 'as'");
 
         if (Chars.equals(tok, '(')) {
             tok = tok(lexer, "like");
             if (isLikeKeyword(tok)) {
-                model.setBatchSize(-1);
-                parseLikeTableName(lexer, model);
-                return model;
+                createTableOperationBuilder.setBatchSize(-1);
+                parseCreateTableLikeTable(lexer);
+                return createTableOperationBuilder;
             } else {
                 lexer.unparseLast();
-                parseCreateTableColumns(lexer, model);
+                parseCreateTableColumns(lexer);
             }
         } else if (isAsKeyword(tok)) {
             isCreateAsSelect = true;
-            parseCreateTableAsSelect(lexer, model, executionContext, sqlParserCallback);
+            parseCreateTableAsSelect(lexer, executionContext, sqlParserCallback);
         } else {
             throw errUnexpected(lexer, tok);
         }
 
         // if not CREATE ... AS SELECT, make it atomic
         if (!isCreateAsSelect) {
-            model.setBatchSize(-1);
-            model.setBatchO3MaxLag(-1);
+            createTableOperationBuilder.setBatchSize(-1);
+            createTableOperationBuilder.setBatchO3MaxLag(-1);
 
             // if we use atomic or batch keywords, then throw an error
             if (atomicSpecified || batchSpecified) {
@@ -625,9 +625,9 @@ public class SqlParser {
         while ((tok = optTok(lexer)) != null && Chars.equals(tok, ',')) {
             tok = tok(lexer, "'index' or 'cast'");
             if (isIndexKeyword(tok)) {
-                parseCreateTableIndexDef(lexer, model);
+                parseCreateTableIndexDef(lexer);
             } else if (isCastKeyword(tok)) {
-                parseCreateTableCastDef(lexer, model);
+                parseCreateTableCastDef(lexer);
             } else {
                 throw errUnexpected(lexer, tok);
             }
@@ -636,12 +636,12 @@ public class SqlParser {
         ExpressionNode timestamp = parseTimestamp(lexer, tok);
         if (timestamp != null) {
             // ignore index, validate column
-            int timestampIdx = getCreateTableColumnIndex(model, timestamp.token, timestamp.position);
-            int timestampType = model.getColumnType(timestampIdx);
+            int timestampIdx = getCreateTableColumnIndex(timestamp.token, timestamp.position);
+            int timestampType = createTableOperationBuilder.getColumnType(timestampIdx);
             if (timestampType != ColumnType.TIMESTAMP && timestampType != -1) { // type can be -1 for create table as select because types aren't known yet
                 throw SqlException.position(timestamp.position).put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampType)).put(']');
             }
-            model.setTimestamp(timestamp);
+            createTableOperationBuilder.setTimestamp(timestamp);
             tok = optTok(lexer);
         }
 
@@ -649,18 +649,18 @@ public class SqlParser {
 
         ExpressionNode partitionBy = parseCreateTablePartition(lexer, tok);
         if (partitionBy != null) {
-            if (model.getTimestamp() == null) {
+            if (createTableOperationBuilder.getTimestamp() == null) {
                 throw SqlException.$(partitionBy.position, "partitioning is possible only on tables with designated timestamps");
             }
             if (PartitionBy.fromString(partitionBy.token) == -1) {
                 throw SqlException.$(partitionBy.position, "'NONE', 'HOUR', 'DAY', 'MONTH' or 'YEAR' expected");
             }
-            model.setPartitionBy(partitionBy);
+            createTableOperationBuilder.setPartitionBy(partitionBy);
             tok = optTok(lexer);
 
             if (tok != null) {
                 if (isWalKeyword(tok)) {
-                    if (!PartitionBy.isPartitioned(model.getPartitionBy())) {
+                    if (!PartitionBy.isPartitioned(createTableOperationBuilder.getPartitionBy())) {
                         throw SqlException.position(lexer.lastTokenPosition()).put("WAL Write Mode can only be used on partitioned tables");
                     }
                     walSetting = WAL_ENABLED;
@@ -680,9 +680,9 @@ public class SqlParser {
             }
         }
         final boolean isWalEnabled = configuration.isWalSupported()
-                && PartitionBy.isPartitioned(model.getPartitionBy())
+                && PartitionBy.isPartitioned(createTableOperationBuilder.getPartitionBy())
                 && ((walSetting == WAL_NOT_SET && configuration.getWalEnabledDefault()) || walSetting == WAL_ENABLED);
-        model.setWalEnabled(isWalEnabled);
+        createTableOperationBuilder.setWalEnabled(isWalEnabled);
 
         int maxUncommittedRows = configuration.getMaxUncommittedRows();
         long o3MaxLag = configuration.getO3MaxLag();
@@ -717,8 +717,8 @@ public class SqlParser {
                 throw SqlException.position(lexer.getPosition()).put(" expected parameter after WITH");
             }
         }
-        model.setMaxUncommittedRows(maxUncommittedRows);
-        model.setO3MaxLag(o3MaxLag);
+        createTableOperationBuilder.setMaxUncommittedRows(maxUncommittedRows);
+        createTableOperationBuilder.setO3MaxLag(o3MaxLag);
 
         if (tok != null && isInKeyword(tok)) {
             tok = tok(lexer, "volume");
@@ -729,12 +729,12 @@ public class SqlParser {
             if (Os.isWindows()) {
                 throw SqlException.position(lexer.getPosition()).put("'in volume' is not supported on Windows");
             }
-            model.setVolumeAlias(GenericLexer.unquote(tok));
+            createTableOperationBuilder.setVolumeAlias(GenericLexer.unquote(tok));
             tok = optTok(lexer);
         }
 
         if (tok != null && (isDedupKeyword(tok) || isDeduplicateKeyword(tok))) {
-            if (!model.isWalEnabled()) {
+            if (!createTableOperationBuilder.isWalEnabled()) {
                 throw SqlException.position(lexer.getPosition()).put("deduplication is possible only on WAL tables");
             }
 
@@ -759,14 +759,14 @@ public class SqlParser {
                     validateLiteral(lexer.lastTokenPosition(), tok);
                     final CharSequence columnName = GenericLexer.unquote(tok);
 
-                    int colIndex = model.getColumnIndex(columnName);
+                    int colIndex = createTableOperationBuilder.getColumnIndex(columnName);
                     if (colIndex < 0) {
                         throw SqlException.position(lexer.lastTokenPosition()).put("deduplicate key column not found [column=").put(columnName).put(']');
                     }
-                    if (colIndex == model.getTimestampIndex()) {
+                    if (colIndex == createTableOperationBuilder.getTimestampIndex()) {
                         timestampColumnFound = true;
                     }
-                    model.setDedupKeyFlag(colIndex);
+                    createTableOperationBuilder.setDedupKeyFlag(colIndex);
 
                     tok = optTok(lexer);
                     if (tok != null && Chars.equals(tok, ',')) {
@@ -785,10 +785,15 @@ public class SqlParser {
         }
 
         boolean expectedTok = tok == null || Chars.equals(tok, ';');
-        return sqlParserCallback.createTableSuffix(lexer, executionContext.getSecurityContext(), model, expectedTok ? null : tok);
+        sqlParserCallback.createTableExt(lexer, executionContext.getSecurityContext(), createTableOperationBuilder, expectedTok ? null : tok);
+        return createTableOperationBuilder;
     }
 
-    private void parseCreateTableAsSelect(GenericLexer lexer, CreateTableModel model, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
+    private void parseCreateTableAsSelect(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
         expectTok(lexer, '(');
         QueryModel queryModel = optimiser.optimise(
                 parseDml(lexer, null, lexer.getPosition(), true, sqlParserCallback),
@@ -801,22 +806,22 @@ public class SqlParser {
         // we do not know types of columns at this stage
         // compiler must put table together using query metadata.
         for (int i = 0, n = columns.size(); i < n; i++) {
-            model.addColumn(columns.getQuick(i).getName(), -1, configuration.getDefaultSymbolCapacity());
+            createTableOperationBuilder.addColumn(columns.getQuick(i).getName(), -1, configuration.getDefaultSymbolCapacity());
         }
 
-        model.setQueryModel(queryModel);
+        createTableOperationBuilder.setQueryModel(queryModel);
         expectTok(lexer, ')');
     }
 
-    private void parseCreateTableCastDef(GenericLexer lexer, CreateTableModel model) throws SqlException {
-        if (model.getQueryModel() == null) {
+    private void parseCreateTableCastDef(GenericLexer lexer) throws SqlException {
+        if (createTableOperationBuilder.getQueryModel() == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "cast is only supported in 'create table as ...' context");
         }
         expectTok(lexer, '(');
-        ColumnCastModel columnCastModel = columnCastModelPool.next();
+        ColumnCastModel columnCastModel = createTableColumnCastModelPool.next();
 
         final ExpressionNode columnName = expectLiteral(lexer);
-        columnCastModel.setName(columnName);
+        columnCastModel.setColumnName(columnName);
         expectTok(lexer, "as");
 
         final ExpressionNode columnType = expectLiteral(lexer);
@@ -860,12 +865,12 @@ public class SqlParser {
 
         expectTok(lexer, ')');
 
-        if (!model.addColumnCastModel(columnCastModel)) {
-            throw SqlException.$(columnCastModel.getName().position, "duplicate cast");
+        if (!createTableOperationBuilder.addColumnCastModel(columnCastModel)) {
+            throw SqlException.$(columnCastModel.getColumnName().position, "duplicate cast");
         }
     }
 
-    private void parseCreateTableColumns(GenericLexer lexer, CreateTableModel model) throws SqlException {
+    private void parseCreateTableColumns(GenericLexer lexer) throws SqlException {
         while (true) {
             CharSequence tok = notTermTok(lexer);
             SqlKeywords.assertTableNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
@@ -877,7 +882,7 @@ public class SqlParser {
                 throw SqlException.$(position, " new column name contains invalid characters");
             }
 
-            model.addColumn(position, name, type, configuration.getDefaultSymbolCapacity());
+            createTableOperationBuilder.addColumn(position, name, type, configuration.getDefaultSymbolCapacity());
 
             if (ColumnType.isSymbol(type)) {
                 tok = tok(lexer, "'capacity', 'nocache', 'cache', 'index' or ')'");
@@ -885,7 +890,7 @@ public class SqlParser {
                 int symbolCapacity;
                 if (isCapacityKeyword(tok)) {
                     // when capacity is not set explicitly it will default via configuration
-                    model.symbolCapacity(symbolCapacity = parseSymbolCapacity(lexer));
+                    createTableOperationBuilder.symbolCapacity(symbolCapacity = parseSymbolCapacity(lexer));
                     tok = tok(lexer, "'nocache', 'cache', 'index' or ')'");
                 } else {
                     symbolCapacity = -1;
@@ -900,11 +905,11 @@ public class SqlParser {
                     cached = configuration.getDefaultSymbolCacheFlag();
                     lexer.unparseLast();
                 }
-                model.cached(cached);
+                createTableOperationBuilder.cached(cached);
                 if (cached && symbolCapacity != -1) {
                     TableUtils.validateSymbolCapacityCached(true, symbolCapacity, lexer.lastTokenPosition());
                 }
-                tok = parseCreateTableInlineIndexDef(lexer, model);
+                tok = parseCreateTableInlineIndexDef(lexer);
             } else {
                 tok = null;
             }
@@ -937,12 +942,12 @@ public class SqlParser {
         }
     }
 
-    private void parseCreateTableIndexDef(GenericLexer lexer, CreateTableModel model) throws SqlException {
+    private void parseCreateTableIndexDef(GenericLexer lexer) throws SqlException {
         expectTok(lexer, '(');
         final CharSequence columnName = expectLiteral(lexer).token;
         final int position = lexer.lastTokenPosition();
-        final int columnIndex = getCreateTableColumnIndex(model, columnName, position);
-        final int columnType = model.getColumnType(columnIndex);
+        final int columnIndex = getCreateTableColumnIndex(columnName, position);
+        final int columnType = createTableOperationBuilder.getColumnType(columnIndex);
         if (columnType > -1 && !ColumnType.isSymbol(columnType)) {
             throw SqlException.$(position, "indexes are supported only for SYMBOL columns: ").put(columnName);
         }
@@ -951,26 +956,26 @@ public class SqlParser {
             int errorPosition = lexer.getPosition();
             int indexValueBlockSize = expectInt(lexer);
             TableUtils.validateIndexValueBlockSize(errorPosition, indexValueBlockSize);
-            model.setIndexFlags(columnIndex, true, Numbers.ceilPow2(indexValueBlockSize));
+            createTableOperationBuilder.setIndexFlags(columnIndex, true, Numbers.ceilPow2(indexValueBlockSize));
         } else {
-            model.setIndexFlags(columnIndex, true, configuration.getIndexValueBlockSize());
+            createTableOperationBuilder.setIndexFlags(columnIndex, true, configuration.getIndexValueBlockSize());
             lexer.unparseLast();
         }
         expectTok(lexer, ')');
     }
 
-    private CharSequence parseCreateTableInlineIndexDef(GenericLexer lexer, CreateTableModel model) throws SqlException {
+    private CharSequence parseCreateTableInlineIndexDef(GenericLexer lexer) throws SqlException {
         CharSequence tok = tok(lexer, "')', or 'index'");
 
         if (isFieldTerm(tok)) {
-            model.setIndexFlags(false, configuration.getIndexValueBlockSize());
+            createTableOperationBuilder.setIndexFlags(false, configuration.getIndexValueBlockSize());
             return tok;
         }
 
         expectTok(lexer, tok, "index");
 
         if (isFieldTerm(tok = tok(lexer, ") | , expected"))) {
-            model.setIndexFlags(true, configuration.getIndexValueBlockSize());
+            createTableOperationBuilder.setIndexFlags(true, configuration.getIndexValueBlockSize());
             return tok;
         }
 
@@ -979,8 +984,31 @@ public class SqlParser {
         int errorPosition = lexer.getPosition();
         int indexValueBlockSize = expectInt(lexer);
         TableUtils.validateIndexValueBlockSize(errorPosition, indexValueBlockSize);
-        model.setIndexFlags(true, Numbers.ceilPow2(indexValueBlockSize));
+        createTableOperationBuilder.setIndexFlags(true, Numbers.ceilPow2(indexValueBlockSize));
         return null;
+    }
+
+    private void parseCreateTableLikeTable(GenericLexer lexer) throws SqlException {
+        CharSequence tok;
+        // todo: validate keyword usage
+        tok = tok(lexer, "table name");
+        createTableOperationBuilder.setLikeTableName(
+                nextLiteral(
+                        GenericLexer.assertNoDotsAndSlashes(
+                                GenericLexer.unquote(tok),
+                                lexer.lastTokenPosition()
+                        ),
+                        lexer.lastTokenPosition()
+                )
+        );
+        tok = tok(lexer, ")");
+        if (!Chars.equals(tok, ')')) {
+            throw errUnexpected(lexer, tok);
+        }
+        tok = optTok(lexer);
+        if (tok != null && !Chars.equals(tok, ';')) {
+            throw errUnexpected(lexer, tok);
+        }
     }
 
     private ExpressionNode parseCreateTablePartition(GenericLexer lexer, CharSequence tok) throws SqlException {
@@ -1858,21 +1886,6 @@ public class SqlParser {
 
         if (tok != null) {
             lexer.unparseLast();
-        }
-    }
-
-    private void parseLikeTableName(GenericLexer lexer, CreateTableModel model) throws SqlException {
-        CharSequence tok;
-        // todo: validate keyword usage
-        tok = tok(lexer, "table name");
-        model.setLikeTableName(nextLiteral(GenericLexer.assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition()), lexer.lastTokenPosition()));
-        tok = tok(lexer, ")");
-        if (!Chars.equals(tok, ')')) {
-            throw errUnexpected(lexer, tok);
-        }
-        tok = optTok(lexer);
-        if (tok != null && !Chars.equals(tok, ';')) {
-            throw errUnexpected(lexer, tok);
         }
     }
 
@@ -2891,8 +2904,8 @@ public class SqlParser {
         queryColumnPool.clear();
         expressionNodePool.clear();
         windowColumnPool.clear();
-        createTableModelPool.clear();
-        columnCastModelPool.clear();
+        createTableOperationBuilder.clear();
+        createTableColumnCastModelPool.clear();
         renameTableModelPool.clear();
         withClauseModelPool.clear();
         subQueryMode = false;

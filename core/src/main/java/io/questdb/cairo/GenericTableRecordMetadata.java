@@ -52,7 +52,9 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             int writerIndex,
-            boolean isDedupKey
+            boolean isDedupKey,
+            boolean symbolIsCached,
+            int symbolCapacity
     ) {
         if (columnType > -1L) {
             add(
@@ -64,11 +66,15 @@ public class GenericTableRecordMetadata extends GenericRecordMetadata implements
                             symbolTableStatic,
                             null,
                             writerIndex,
-                            isDedupKey
+                            isDedupKey,
+                            0,
+                            symbolIsCached,
+                            symbolCapacity
                     )
             );
         }
     }
+
 
     @Override
     public void close() {
