@@ -934,17 +934,18 @@ public class PGPipelineEntry implements QuietCloseable {
     }
 
     private void copyPgResultSetColumnTypes() {
-        if (factory != null) {
-            final RecordMetadata m = factory.getMetadata();
-            final int columnCount = m.getColumnCount();
-            pgResultSetColumnTypes.clear();
-            pgResultSetColumnTypes.setPos(2 * columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                final int columnType = m.getColumnType(i);
-                pgResultSetColumnTypes.setQuick(2 * i, columnType);
-                // the extra values stored here are used to render geo-hashes as strings
-                pgResultSetColumnTypes.setQuick(2 * i + 1, GeoHashes.getBitFlags(columnType));
-            }
+        if (factory == null) {
+            return;
+        }
+        final RecordMetadata m = factory.getMetadata();
+        final int columnCount = m.getColumnCount();
+        pgResultSetColumnTypes.clear();
+        pgResultSetColumnTypes.setPos(2 * columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            final int columnType = m.getColumnType(i);
+            pgResultSetColumnTypes.setQuick(2 * i, columnType);
+            // the extra values stored here are used to render geo-hashes as strings
+            pgResultSetColumnTypes.setQuick(2 * i + 1, GeoHashes.getBitFlags(columnType));
         }
     }
 
