@@ -243,13 +243,20 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
 
     match encode() {
         Ok(_) => (),
-        Err(err) => {
-            let msg = format!(
-                "Failed to encode partition: {}",
-                err.display_with_backtrace()
-            );
-            env.throw_new("java/lang/RuntimeException", msg)
-                .expect("failed to throw exception");
+        Err(mut err) => {
+            let table_name = unsafe {
+                std::str::from_utf8(slice::from_raw_parts(
+                    table_name_ptr,
+                    table_name_size as usize,
+                )).expect("invalid table name utf8")
+            };
+            err.add_context(
+                format!(
+                    "could not encode partition for table {} and timestamp index {}",
+                    table_name, timestamp_index
+                ));
+            err.add_context("error in PartitionEncoder.encodePartition");
+            err.into_cairo_exception().throw(&mut env)
         }
     }
 }

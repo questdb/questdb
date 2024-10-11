@@ -121,10 +121,6 @@ impl ParquetError {
         Ok(())
     }
 
-    pub fn display_with_backtrace(&self) -> ParquetErrorWithBacktraceDisplay {
-        ParquetErrorWithBacktraceDisplay(self)
-    }
-
     fn build_out_of_memory() -> ParquetError {
         let last_err = take_last_alloc_error();
         let no_last_err = last_err.is_none();

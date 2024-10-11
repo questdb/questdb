@@ -204,7 +204,6 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                  PartitionDecoder partitionDecoder = new PartitionDecoder()
             ) {
                 // Check that the partition directory and data.parquet file now exists on disk.
-                System.err.println(new String(Runtime.getRuntime().exec("find " + root + "/x~").getInputStream().readAllBytes()));
                 path.of(root).concat("x~").concat("1970-01-05.1").$();
                 Assert.assertTrue(ff.exists(path.$()));
                 Assert.assertTrue(ff.isDirOrSoftLinkDir(path.$()));

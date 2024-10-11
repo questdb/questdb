@@ -323,6 +323,7 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public int mkdirs(Path path, int mode) {
+        assert path.byteAt(path.size() - 1) == '/';
         return Files.mkdirs(path, mode);
     }
 
