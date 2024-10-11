@@ -1055,15 +1055,16 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void reloadTableNames() {
         reloadTableNames(null);
-        try (CairoMetadataRW metadataRW = cairoMetadata.write()) {
-            metadataRW.hydrateAllTables();
-        } catch (IOException ignore) {
-        }
     }
 
     @TestOnly
     public void reloadTableNames(@Nullable ObjList<TableToken> convertedTables) {
         tableNameRegistry.reload(convertedTables);
+        try (CairoMetadataRW metadataRW = cairoMetadata.write()) {
+            metadataRW.clear();
+            metadataRW.hydrateAllTables();
+        } catch (IOException ignore) {
+        }
     }
 
     public void removeTableToken(TableToken tableToken) {
