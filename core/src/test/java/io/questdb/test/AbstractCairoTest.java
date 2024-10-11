@@ -466,7 +466,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     public static void refreshTablesInBaseEngine() {
         engine.reloadTableNames();
-
     }
 
     @BeforeClass
