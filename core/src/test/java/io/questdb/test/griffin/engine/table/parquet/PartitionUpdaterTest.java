@@ -60,8 +60,15 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                 path
                         .concat(root)
                         .concat(table.getDirNameUtf8())
-                        .concat("1970-01-05");
+                        .concat("1970-01-05")
+                        .slash$();
                 final int partitionDirLen = path.size();
+                LOG.info().$(">>>>>>>>>>> EXPECTING TO FIND: ").$(path).$();
+                for (int byteIndex = 0; byteIndex <= path.size(); byteIndex++) {
+                    final byte b = path.byteAt(byteIndex);
+                    LOG.info().$("byte[").$(byteIndex).$("] = ").$(b).$(" .. char: ").$((char)b).$();
+                }
+                dumpX();
                 Assert.assertTrue(ff.exists(path.$()));
                 Assert.assertTrue(ff.isDirOrSoftLinkDir(path.$()));
                 PartitionEncoder.populateFromTableReader(reader, descriptor, 0);
@@ -118,5 +125,24 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                 Assert.assertTrue(updatedParquetPartitionSize > parquetPartitionSize);
             }
         });
+    }
+
+    private void dumpX() throws Exception {
+        listAllFiles(" >>>>>>> TABLE X >>>>>> ", java.nio.file.Path.of(root, "x~"));
+    }
+
+    private static void listAllFiles(String prefix, java.nio.file.Path currentPath)
+            throws Exception
+    {
+        try (java.nio.file.DirectoryStream<java.nio.file.Path> stream = java.nio.file.Files.newDirectoryStream(currentPath)) {
+            for (java.nio.file.Path entry : stream) {
+                if (java.nio.file.Files.isDirectory(entry)) {
+                    LOG.info().$(prefix).$(entry).$(" [DIR]").$();
+                    listAllFiles(prefix, entry);
+                } else {
+                    LOG.info().$(prefix).$(entry).$(" [FILE]").$();
+                }
+            }
+        }
     }
 }

@@ -204,7 +204,13 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                  PartitionDecoder partitionDecoder = new PartitionDecoder()
             ) {
                 // Check that the partition directory and data.parquet file now exists on disk.
-                path.of(root).concat("x~").concat("1970-01-05.1").$();
+                path.of(root).concat("x~").concat("1970-01-05.1").slash$();
+                LOG.info().$(">>>>>>>>>>> EXPECTING TO FIND: ").$(path).$();
+                for (int byteIndex = 0; byteIndex <= path.size(); byteIndex++) {
+                    final byte b = path.byteAt(byteIndex);
+                    LOG.info().$("byte[").$(byteIndex).$("] = ").$(b).$(" .. char: ").$((char)b).$();
+                }
+                dumpX();
                 Assert.assertTrue(ff.exists(path.$()));
                 Assert.assertTrue(ff.isDirOrSoftLinkDir(path.$()));
                 path.concat("data.parquet").$();
@@ -234,7 +240,24 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 ff.close(fd);
             }
         });
+    }
 
+    private void dumpX() throws Exception {
+        listAllFiles(" >>>>>>> TABLE X >>>>>> ", java.nio.file.Path.of(root, "x~"));
+    }
 
+    private static void listAllFiles(String prefix, java.nio.file.Path currentPath)
+            throws Exception
+    {
+        try (java.nio.file.DirectoryStream<java.nio.file.Path> stream = java.nio.file.Files.newDirectoryStream(currentPath)) {
+            for (java.nio.file.Path entry : stream) {
+                if (java.nio.file.Files.isDirectory(entry)) {
+                    LOG.info().$(prefix).$(entry).$(" [DIR]").$();
+                    listAllFiles(prefix, entry);
+                } else {
+                    LOG.info().$(prefix).$(entry).$(" [FILE]").$();
+                }
+            }
+        }
     }
 }
