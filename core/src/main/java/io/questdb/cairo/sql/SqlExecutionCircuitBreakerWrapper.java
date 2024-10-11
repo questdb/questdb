@@ -33,8 +33,10 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-// does not have to be thread-safe, because worker threads own the jobs/contexts
-// which hold SqlExecutionCircuitBreakerWrapper objects
+// This wrapper itself does not provide thread-safety, and that is ok because worker threads own the
+// jobs/contexts which hold SqlExecutionCircuitBreakerWrapper objects.
+// However, the `delegate` circuit breaker instance referenced by the wrapper has to be thread-safe
+// if it is used by multiple threads (i.e. set as a delegate in multiple wrappers at the same time).
 public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBreaker, Closeable {
     private SqlExecutionCircuitBreaker delegate;
     private NetworkSqlExecutionCircuitBreaker networkSqlExecutionCircuitBreaker;
