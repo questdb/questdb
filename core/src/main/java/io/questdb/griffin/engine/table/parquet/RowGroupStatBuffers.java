@@ -52,22 +52,6 @@ public class RowGroupStatBuffers implements QuietCloseable, Reopenable {
         }
     }
 
-    public long getMinValueLong(int columnIndex) {
-        final long size = getMinValueSize(columnIndex);
-        assert size == Long.BYTES;
-        final long ptr = getMinValuePtr(columnIndex);
-        assert ptr != 0;
-        return Unsafe.getUnsafe().getLong(ptr);
-    }
-
-    @Override
-    public void close() {
-        if (ptr != 0) {
-            destroy(ptr);
-            ptr = 0;
-        }
-    }
-
     public long getMaxValueLong(int columnIndex) {
         final long size = getMaxValueSize(columnIndex);
         assert size == Long.BYTES;
