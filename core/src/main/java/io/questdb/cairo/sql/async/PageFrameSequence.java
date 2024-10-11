@@ -189,7 +189,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     public void close() {
         clear();
         localRecord = Misc.free(localRecord);
-        circuitBreaker = Misc.freeIfCloseable(circuitBreaker);
+        circuitBreaker = Misc.free(circuitBreaker);
         localTask = Misc.free(localTask);
         Misc.free(atom);
     }
