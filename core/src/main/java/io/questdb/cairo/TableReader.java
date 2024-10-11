@@ -1091,6 +1091,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                 final int columnType = metadata.getColumnType(columnIndex);
 
                 final MemoryCMR dataMem = columns.getQuick(primaryIndex);
+                // We intend to keep file handle open only for the last partition. All other
+                // partitions will have file handle closed after memory is mapped. The potential knock-on
+                // effect of that is when user workload is such that it involved appending to non-last partition,
+                // the reader will incur file-reopen and re-map instead of "realloc" call
                 boolean lastPartition = partitionIndex == partitionCount - 1;
                 if (ColumnType.isVarSize(columnType)) {
                     final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);

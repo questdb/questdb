@@ -102,7 +102,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         Misc.free(walEventReader);
     }
 
-    private static boolean cleanDroppedTableDirectory(CairoEngine engine, Path tempPath, TableToken tableToken) {
+    private static void cleanDroppedTableDirectory(CairoEngine engine, Path tempPath, TableToken tableToken) {
         // Clean all the files inside table folder name except WAL directories and SEQ_DIR directory
         boolean allClean = true;
         FilesFacade ff = engine.getConfiguration().getFilesFacade();
@@ -137,15 +137,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 if (allClean) {
                     // Remove _txn and _meta files when all other files are removed
                     if (!removeOrLog(tempPath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME), ff)) {
-                        return false;
+                        return;
                     }
-                    return ff.removeQuiet(tempPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$());
+                    ff.removeQuiet(tempPath.trimTo(rootLen).concat(TableUtils.META_FILE_NAME).$());
                 }
             } finally {
                 ff.findClose(p);
             }
         }
-        return false;
     }
 
     private static boolean matchesWalLock(Utf8Sequence name) {
@@ -175,7 +174,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         return true;
     }
 
-    private static boolean tryDestroyDroppedTable(TableToken tableToken, TableWriter writer, CairoEngine engine, Path tempPath) {
+    private static void tryDestroyDroppedTable(TableToken tableToken, TableWriter writer, CairoEngine engine, Path tempPath) {
         if (engine.lockReadersAndMetadata(tableToken)) {
             TableWriter writerToClose = null;
             try {
@@ -185,7 +184,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         writer = writerToClose = engine.getWriterUnsafe(tableToken, WAL_2_TABLE_WRITE_REASON);
                     } catch (EntryUnavailableException ex) {
                         // Table is being written to, we cannot destroy it at the moment
-                        return false;
+                        return;
                     } catch (CairoException ex) {
                         // Ignore it, table can be half deleted.
                     }
@@ -194,7 +193,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     // Force writer to close all the files.
                     writer.destroy();
                 }
-                return cleanDroppedTableDirectory(engine, tempPath, tableToken);
+                cleanDroppedTableDirectory(engine, tempPath, tableToken);
             } finally {
                 if (writerToClose != null) {
                     writerToClose.close();
@@ -205,7 +204,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             LOG.info().$("table '").utf8(tableToken.getDirName())
                     .$("' is dropped, waiting to acquire Table Readers lock to delete the table files").$();
         }
-        return false;
     }
 
     /**
@@ -385,9 +383,11 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             .I$();
                 }
             } catch (Throwable th) {
-                // There is an exception the table will be marked as suspended.
-                // Update the last applied transactions before it happens.
-                engine.getTableSequencerAPI().notifyCommitReadable(tableToken, writer.getTxn(), writer.getTxn());
+                // We could have been applying multiple txns, and we failed somewhere in the middle. The writer will
+                // be returned to the pool and dirty writes will be rolled back. We have to update the sequencer
+                // on the state of the writer and revert any dirty txns that might have advanced. We do that
+                // by equalizing writerTxn and dirtyWriterTxn.
+                engine.getTableSequencerAPI().updateWriterTxns(tableToken, writer.getTxn(), writer.getTxn());
                 throw th;
             } finally {
                 Misc.free(structuralChangeCursor);
@@ -572,7 +572,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
                 // else: table is dropped and fully cleaned, this is late notification.
             } else {
-                long lastWriterTxn, lastWriterAppliedTxn;
+                long writerTxn, dirtyWriterTxn;
                 txnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
                 try (TableWriter writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON)) {
                     assert writer.getMetadata().getTableId() == tableToken.getTableId();
@@ -582,8 +582,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     }
                     applyOutstandingWalTransactions(tableToken, writer, engine, operationCompiler, tempPath, runStatus, txnTracker);
                     txnTracker.hadEnoughMemory(tableToken.getTableName(), rnd);
-                    lastWriterTxn = writer.getSeqTxn();
-                    lastWriterAppliedTxn = writer.getAppliedSeqTxn();
+                    writerTxn = writer.getSeqTxn();
+                    dirtyWriterTxn = writer.getAppliedSeqTxn();
                 } catch (EntryUnavailableException tableBusy) {
                     //noinspection StringEquality
                     if (tableBusy.getReason() != NO_LOCK_REASON
@@ -595,12 +595,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         engine.notifyWalTxnRepublisher(tableToken);
                     }
                     // Do not suspend table. Perhaps writer will be unlocked with no transaction applied.
-                    // We do not suspend table because of having initial value on lastWriterTxn. It will either be
+                    // We do not suspend table because of having initial value on writerTxn. It will either be
                     // "ignore" or last txn we applied.
                     return;
                 }
 
-                if (engine.getTableSequencerAPI().notifyCommitReadable(tableToken, lastWriterTxn, lastWriterAppliedTxn)) {
+                if (engine.getTableSequencerAPI().updateWriterTxns(tableToken, writerTxn, dirtyWriterTxn)) {
                     engine.notifyWalTxnCommitted(tableToken);
                 }
             }

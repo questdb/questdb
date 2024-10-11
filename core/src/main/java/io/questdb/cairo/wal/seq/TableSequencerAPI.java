@@ -239,7 +239,6 @@ public class TableSequencerAPI implements QuietCloseable {
         return seqTxnTracker.initTxns(writerTxn, seqTxn, isSuspended);
     }
 
-    @TestOnly
     public boolean isSuspended(final TableToken tableToken) {
         return getSeqTxnTracker(tableToken).isSuspended();
     }
@@ -282,10 +281,6 @@ public class TableSequencerAPI implements QuietCloseable {
             }
             return txn;
         }
-    }
-
-    public boolean notifyCommitReadable(final TableToken tableToken, long writerTxn, long lastWriterAppliedTxn) {
-        return getSeqTxnTracker(tableToken).notifyCommitReadable(writerTxn, lastWriterAppliedTxn);
     }
 
     public boolean notifyOnCheck(TableToken tableToken, long seqTxn) {
@@ -426,6 +421,13 @@ public class TableSequencerAPI implements QuietCloseable {
 
     public void suspendTable(final TableToken tableToken, ErrorTag errorTag, String errorMessage) {
         getSeqTxnTracker(tableToken).setSuspended(errorTag, errorMessage);
+    }
+
+    /**
+     * @see SeqTxnTracker#updateWriterTxns(long, long)
+     */
+    public boolean updateWriterTxns(final TableToken tableToken, long writerTxn, long dirtyWriterTxn) {
+        return getSeqTxnTracker(tableToken).updateWriterTxns(writerTxn, dirtyWriterTxn);
     }
 
     private SeqTxnTracker getSeqTxnTracker(TableToken tt) {
