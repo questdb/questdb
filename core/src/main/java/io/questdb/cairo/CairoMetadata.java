@@ -95,6 +95,27 @@ public class CairoMetadata {
         return reader.get();
     }
 
+    /**
+     * Thread unsafe function for debug printing the metadata object, doesn't require manual closing.
+     */
+    @TestOnly
+    public String toString0Unsafe() {
+        StringSink sink = tlSink.get();
+        sink.put("CairoMetadata [");
+        sink.put("tableCount=").put(tables.size()).put(']');
+        sink.put('\n');
+
+        for (CairoTable table : tables.values()) {
+            sink.put('\t');
+            table.toSink(sink);
+            sink.put('\n');
+        }
+        String s = sink.toString();
+        sink.clear();
+        tlSink.remove();
+        return s;
+    }
+
     public CairoMetadataRW write() {
         lock.writeLock().lock();
         version++;
