@@ -36,18 +36,27 @@ public interface CairoMetadataRW extends CairoMetadataRO {
 
     void dropTable(@NotNull CharSequence tableName);
 
-    /**
-     * This is dangerous and may clobber any concurrent metadata changes. This should only be used in last-resort cases,
-     * for example, for testing purposes.
-     */
     @TestOnly
     void hydrateAllTables();
 
-    void hydrateTable(@NotNull CharSequence tableName, boolean blindUpsert, boolean infoLog);
+    void hydrateTable(@NotNull CharSequence tableName, boolean infoLog);
 
-    void hydrateTable(@NotNull TableToken token, @NotNull Path path, @NotNull ColumnVersionReader columnVersionReader, boolean blindUpsert, boolean infoLog);
+    /**
+     * Hydrates table metadata, bypassing TableWriter/Reader. Uses a thread-local Path/ColumnVersionReader
+     * <p>
+     * This function reads the table metadata from file directly, bypassing TableReader/Writer. This ensures that it is
+     * non-blocking.
+     * <p>
+     * One must be careful on the setting of the `blindUpsert` value. When set to true, the data will be blindly
+     * upserted to the tables list, which could clobber any concurrent metadata update, leading to inconsistent state.
+     * <p>
+     * In general, any metadata change that does not originate from TableWriter (or friends) should use `blindUpsert=false`.
+     *
+     * @param token The table token for the table to read metadata.
+     */
+    void hydrateTable(@NotNull TableToken token, @NotNull Path path, @NotNull ColumnVersionReader columnVersionReader, boolean infoLog);
 
-    void hydrateTable(@NotNull TableWriterMetadata tableMetadata, boolean blindUpsert, boolean infoLog);
+    void hydrateTable(@NotNull TableWriterMetadata tableMetadata, boolean infoLog);
 
-    void hydrateTable(@NotNull TableToken token, boolean blindUpsert, boolean infoLog);
+    void hydrateTable(@NotNull TableToken token, boolean infoLog);
 }

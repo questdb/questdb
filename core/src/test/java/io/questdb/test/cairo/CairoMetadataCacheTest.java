@@ -140,6 +140,7 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
         }
     }
 
+    @SuppressWarnings("BusyWait")
     @Test
     public void fuzzRenames() throws Exception {
 
@@ -717,9 +718,4 @@ public class CairoMetadataCacheTest extends AbstractCairoTest {
         }
     }
 
-    protected static boolean metadataCacheContains(String expectedToContain) {
-
-
-        return engine.getCairoMetadata().read().toString0().contains(expectedToContain);
-    }
 }

@@ -78,7 +78,7 @@ public class CairoMetadata {
 
             try (CairoMetadataRW metadataRW = write()) {
                 for (int i = 0, n = tableTokens.size(); i < n; i++) {
-                    metadataRW.hydrateTable(tableTokens.getQuick(i), false, false);
+                    metadataRW.hydrateTable(tableTokens.getQuick(i), false);
                 }
                 LOG.info().$("metadata hydration completed [tables=").$(metadataRW.getTableCount()).I$();
             }
@@ -186,7 +186,7 @@ public class CairoMetadata {
 
         @Override
         public long snapshotRefresh(HashMap<CharSequence, CairoTable> localCache, long priorVersion) {
-            if (priorVersion <= getVersion()) {
+            if (priorVersion >= getVersion()) {
                 return priorVersion;
             }
 
@@ -298,32 +298,22 @@ public class CairoMetadata {
             try {
                 for (int i = 0, n = tableTokens.size(); i < n; i++) {
                     tableToken = tableTokens.getQuick(i);
-                    hydrateTable(tableToken, true, true);
+                    hydrateTable(tableToken, true);
                 }
             } catch (CairoException ex) {
                 LOG.error().$("could not hydrate metadata, exception:  ").$(ex.getMessage()).$(" [table=").$(tableToken.getTableName()).I$();
             }
         }
 
+
         /**
-         * Hydrates table metadata, bypassing TableWriter/Reader. Uses a thread-local Path/ColumnVersionReader
-         * <p>
-         * This function reads the table metadata from file directly, bypassing TableReader/Writer. This ensures that it is
-         * non-blocking.
-         * <p>
-         * One must be careful on the setting of the `blindUpsert` value. When set to true, the data will be blindly
-         * upserted to the tables list, which could clobber any concurrent metadata update, leading to inconsistent state.
-         * <p>
-         * In general, any metadata change that does not originate from TableWriter (or friends) should use `blindUpsert=false`.
-         *
-         * @param token       The table token for the table to read metadata.
-         * @param blindUpsert Specifies whether upsert is blind or only if non-null. This is important as TableWriter should take priority over other processes calling this function (async hydration job, queries)
+         * @see CairoMetadataRW#hydrateTable(TableToken, boolean)
          */
-        public void hydrateTable(@NotNull TableToken token, boolean blindUpsert, boolean infoLog) {
+        public void hydrateTable(@NotNull TableToken token, boolean infoLog) {
             LOG.debug().$("hydrating table using thread-local path and column version reader [table=")
                     .$(token).I$();
             try {
-                hydrateTable(token, tlPath.get(), tlColumnVersionReader.get(), blindUpsert, infoLog);
+                hydrateTable(token, tlPath.get(), tlColumnVersionReader.get(), infoLog);
             } finally {
                 tlPath.get().close();
                 tlColumnVersionReader.get().close();
@@ -332,18 +322,21 @@ public class CairoMetadata {
             }
         }
 
-        public void hydrateTable(@NotNull CharSequence tableName, boolean blindUpsert, boolean infoLog) throws TableReferenceOutOfDateException {
+        /**
+         * @see CairoMetadataRW#hydrateTable(CharSequence, boolean)
+         */
+        public void hydrateTable(@NotNull CharSequence tableName, boolean infoLog) throws TableReferenceOutOfDateException {
             final TableToken token = engine.getTableTokenIfExists(tableName);
             if (token == null) {
                 throw TableReferenceOutOfDateException.of(tableName);
             }
-            hydrateTable(token, blindUpsert, infoLog);
+            hydrateTable(token, infoLog);
         }
 
         /**
-         * @see CairoEngine#metadataCacheHydrateTable(TableToken, boolean, boolean)
+         * @see CairoMetadataRW#hydrateTable(TableToken, boolean)
          */
-        public void hydrateTable(@NotNull TableWriterMetadata tableMetadata, boolean blindUpsert, boolean infoLog) {
+        public void hydrateTable(@NotNull TableWriterMetadata tableMetadata, boolean infoLog) {
             final TableToken tableToken = tableMetadata.getTableToken();
 
             if (infoLog) {
@@ -437,7 +430,6 @@ public class CairoMetadata {
                 @NotNull TableToken token,
                 @NotNull Path path,
                 @NotNull ColumnVersionReader columnVersionReader,
-                boolean blindUpsert,
                 boolean infoLog
         ) throws CairoException {
             if (infoLog) {

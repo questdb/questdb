@@ -1123,7 +1123,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             tableNameRegistry.rename(fromTableToken, toTableToken);
                             try (CairoMetadataRW metadataRW = getCairoMetadata().write()) {
                                 metadataRW.dropTable(fromTableName);
-                                metadataRW.hydrateTable(toTableName, true, true);
+                                metadataRW.hydrateTable(toTableName, true);
                             } catch (IOException ignore) {
                             }
                             ;
@@ -1148,7 +1148,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     try (CairoMetadataRW metadataRW = getCairoMetadata().write()) {
                         try {
                             toTableToken = rename0(fromPath, fromTableToken, toPath, toTableName);
-                            metadataRW.hydrateTable(toTableName, true, true);
+                            metadataRW.hydrateTable(toTableName, true);
                             TableUtils.overwriteTableNameFile(
                                     fromPath.of(configuration.getRoot()).concat(toTableToken),
                                     memory,
@@ -1442,7 +1442,7 @@ public class CairoEngine implements Closeable, WriterSource {
             getDdlListener(tableToken).onTableCreated(securityContext, tableToken);
 
             try (CairoMetadataRW metadataRW = getCairoMetadata().write()) {
-                metadataRW.hydrateTable(tableToken, true, true);
+                metadataRW.hydrateTable(tableToken, true);
             } catch (IOException ignore) {
             }
 

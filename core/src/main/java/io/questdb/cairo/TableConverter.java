@@ -131,7 +131,7 @@ public class TableConverter {
                                 convertedTables.add(token);
 
                                 try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
-                                    metadataRW.hydrateTable(token, true, true);
+                                    metadataRW.hydrateTable(token, true);
                                 } catch (IOException ignore) {
                                 }
                             }
