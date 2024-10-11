@@ -91,7 +91,6 @@ public class OrderByTimeoutTest extends AbstractCairoTest {
     public void tearDown() throws Exception {
         super.tearDown();
         breakConnection = -1;
-        circuitBreaker = Misc.free(circuitBreaker);
     }
 
     @Test
