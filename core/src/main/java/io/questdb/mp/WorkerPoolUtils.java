@@ -59,7 +59,8 @@ public class WorkerPoolUtils {
                 // create job per worker to allow each worker to have own shard walk sequence
                 final PageFrameReduceJob pageFrameReduceJob = new PageFrameReduceJob(
                         messageBus,
-                        new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks())
+                        new Rnd(microsecondClock.getTicks(), nanosecondClock.getTicks()),
+                        configuration.getCircuitBreakerConfiguration()
                 );
                 workerPool.assign(i, pageFrameReduceJob);
                 workerPool.freeOnExit(pageFrameReduceJob);

@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -40,6 +41,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBreaker, Closeable {
     private SqlExecutionCircuitBreaker delegate;
     private NetworkSqlExecutionCircuitBreaker networkSqlExecutionCircuitBreaker;
+
+    public SqlExecutionCircuitBreakerWrapper(@NotNull SqlExecutionCircuitBreakerConfiguration configuration) {
+        networkSqlExecutionCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration, MemoryTag.NATIVE_CB2);
+    }
 
     @Override
     public void cancel() {
@@ -58,7 +63,8 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
 
     @Override
     public void close() throws IOException {
-        delegate = Misc.free(networkSqlExecutionCircuitBreaker);
+        networkSqlExecutionCircuitBreaker = Misc.free(networkSqlExecutionCircuitBreaker);
+        delegate = null;
     }
 
     @Override
@@ -94,13 +100,8 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
         if (executionContextCircuitBreaker.isThreadsafe()) {
             delegate = executionContextCircuitBreaker;
         } else {
-            if (networkSqlExecutionCircuitBreaker == null) {
-                final SqlExecutionCircuitBreakerConfiguration configuration = executionContextCircuitBreaker.getConfiguration();
-                assert configuration != null;
-                networkSqlExecutionCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration, MemoryTag.NATIVE_CB2);
-            } else {
-                networkSqlExecutionCircuitBreaker.resetTimer();
-            }
+            networkSqlExecutionCircuitBreaker.setFd(executionContextCircuitBreaker.getFd());
+            networkSqlExecutionCircuitBreaker.resetTimer();
             delegate = networkSqlExecutionCircuitBreaker;
         }
     }

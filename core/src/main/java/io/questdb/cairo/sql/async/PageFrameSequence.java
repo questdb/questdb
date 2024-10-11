@@ -98,7 +98,7 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
         this.localTaskFactory = localTaskFactory;
         this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, sharedWorkerCount);
         this.taskType = taskType;
-        this.circuitBreaker = new SqlExecutionCircuitBreakerWrapper();
+        this.circuitBreaker = new SqlExecutionCircuitBreakerWrapper(configuration.getCircuitBreakerConfiguration());
     }
 
     /**
@@ -545,10 +545,8 @@ public class PageFrameSequence<T extends StatefulAtom> implements Closeable {
     private void initRecord(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
         if (localRecord == null) {
             localRecord = new PageFrameMemoryRecord();
-            circuitBreaker.init(executionContextCircuitBreaker);
         }
-
-        circuitBreaker.setFd(executionContextCircuitBreaker.getFd());
+        circuitBreaker.init(executionContextCircuitBreaker);
     }
 
     private boolean stealWork(

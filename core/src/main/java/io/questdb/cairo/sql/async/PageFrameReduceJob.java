@@ -52,7 +52,10 @@ public class PageFrameReduceJob implements Job, Closeable {
 
     // Each thread should be assigned own instance of this job, making the code effectively
     // single threaded. Such assignment is necessary for threads to have their own shard walk sequence.
-    public PageFrameReduceJob(MessageBus bus, Rnd rnd) {
+    public PageFrameReduceJob(
+            MessageBus bus,
+            Rnd rnd,
+            @Nullable SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration) {
         this.messageBus = bus;
         this.shardCount = messageBus.getPageFrameReduceShardCount();
         this.shards = new int[shardCount];
@@ -75,7 +78,7 @@ public class PageFrameReduceJob implements Job, Closeable {
         }
 
         this.record = new PageFrameMemoryRecord();
-        this.circuitBreaker = new SqlExecutionCircuitBreakerWrapper();
+        this.circuitBreaker = new SqlExecutionCircuitBreakerWrapper(circuitBreakerConfiguration);
     }
 
     /**
@@ -239,7 +242,6 @@ public class PageFrameReduceJob implements Job, Closeable {
         if (cbState == SqlExecutionCircuitBreaker.STATE_OK) {
             record.of(frameSequence.getSymbolTableSource());
             assert !frameSequence.done;
-            circuitBreaker.setFd(frameSequence.getCircuitBreakerFd());
             frameSequence.getReduceStartedCounter().incrementAndGet();
             frameSequence.getReducer().reduce(workerId, record, task, circuitBreaker, stealingFrameSequence);
         } else {
