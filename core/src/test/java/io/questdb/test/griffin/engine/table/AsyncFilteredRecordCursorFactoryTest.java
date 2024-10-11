@@ -523,7 +523,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     @Test
     public void testPositiveLimitGroupBy() throws Exception {
         try (SqlExecutionCircuitBreakerWrapper wrapper = new SqlExecutionCircuitBreakerWrapper()) {
-            wrapper.init(new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB1));
+            wrapper.init(new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2));
             withPool((engine, compiler, sqlExecutionContext) -> {
                 compiler.compile("create table x as (select rnd_double() a, timestamp_sequence(20000000, 100000) t from long_sequence(2000000)) timestamp(t) partition by hour", sqlExecutionContext);
                 final String sql = "select sum(a) from (x where a > 0.345747032 and a < 0.34575 limit 5)";
@@ -562,7 +562,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                             "foobar\t1970-01-01T00:52:14.800000Z\t0.345765350101064\t0.5880181545675813\n" +
                             "foobar\t1970-01-01T00:58:31.000000Z\t0.34580598176419974\t0.5880527032198728\n"
             );
-        }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB1));
+        }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2));
     }
 
     @Test
@@ -613,7 +613,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             );
 
             resetTaskCapacities();
-        }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB1));
+        }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2));
     }
 
     private static Class<?> getClass(SqlExecutionCircuitBreaker circuitBreaker) {
@@ -756,7 +756,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                         sqlExecutionContext,
                         false
                 );
-            }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB1));
+            }, new NetworkSqlExecutionCircuitBreaker(engine.getConfiguration().getCircuitBreakerConfiguration(), MemoryTag.NATIVE_CB2));
         } finally {
             sqlExecutionContext.setParallelFilterEnabled(true);
         }
