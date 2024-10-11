@@ -134,9 +134,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private final TableSequencerAPI tableSequencerAPI;
     private final Telemetry<TelemetryTask> telemetry;
     private final Telemetry<TelemetryWalTask> telemetryWal;
-    private final ThreadLocal<ColumnVersionReader> tlColumnVersionReader = ThreadLocal.withInitial(ColumnVersionReader::new);
-    private final ThreadLocal<Path> tlPath = ThreadLocal.withInitial(Path::new);
-    private final ThreadLocal<ObjHashSet<TableToken>> tlTokens = ThreadLocal.withInitial(ObjHashSet::new);
     // initial value of unpublishedWalTxnCount is 1 because we want to scan for non-applied WAL transactions on startup
     private final AtomicLong unpublishedWalTxnCount = new AtomicLong(1);
     private final WalWriterPool walWriterPool;
