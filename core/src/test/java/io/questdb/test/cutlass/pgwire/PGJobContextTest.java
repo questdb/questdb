@@ -10609,6 +10609,37 @@ create table tab as (
     }
 
     @Test
+    public void testUpdateTwiceWithSamePreparedStatement() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("CREATE TABLE tango(id LONG, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+            }
+            try (PreparedStatement statement = connection.prepareStatement("UPDATE tango SET id = ?")) {
+                for (int i = 0; i < 2; i++) {
+                    statement.setLong(1, 42);
+                    statement.executeUpdate();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateTwiceWithSameQueryText() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("CREATE TABLE tango(id LONG, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+            }
+            String updateText = "UPDATE tango SET id = ?";
+            for (int i = 0; i < 2; i++) {
+                try (PreparedStatement statement = connection.prepareStatement(updateText)) {
+                    statement.setLong(1, 42);
+                    statement.executeUpdate();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUpdateWithNowAndSystimestamp() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             setCurrentMicros(123678000);

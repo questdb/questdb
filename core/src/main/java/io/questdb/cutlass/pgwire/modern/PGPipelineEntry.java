@@ -1070,12 +1070,13 @@ public class PGPipelineEntry implements QuietCloseable {
             );
             // execute against writer from the engine, synchronously (null sequence)
             for (int attempt = 1; ; attempt++) {
-                try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, true)) {
+                try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
                     // this doesn't actually wait, because the call is synchronous
                     fut.await();
                     sqlAffectedRowCount = fut.getAffectedRowsCount();
                     break;
                 } catch (TableReferenceOutOfDateException e) {
+                    Misc.free(compiledQuery.getUpdateOperation());
                     if (attempt == maxRecompileAttempts) {
                         throw e;
                     }
