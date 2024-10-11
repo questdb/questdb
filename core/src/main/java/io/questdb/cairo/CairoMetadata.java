@@ -273,6 +273,7 @@ public class CairoMetadata {
             CairoTable table = super.getTable(tableToken);
             if (table == null) {
                 // hydrate cache
+                hydrateTable(tableToken, true);
             }
             table = super.getTable(tableToken);
             return table;

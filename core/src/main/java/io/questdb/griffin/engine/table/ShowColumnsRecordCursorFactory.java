@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoColumn;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoMetadataRO;
+import io.questdb.cairo.CairoMetadataRW;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -118,7 +119,16 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             }
 
             if (table == null) {
+                // try the auto hydrate version
+                try (CairoMetadataRW metadataRW = executionContext.getCairoEngine().getCairoMetadata().write()) {
+                    table = metadataRW.getTable(tableToken);
+                } catch (IOException ignore) {
+                }
+            }
+
+            if (table == null) {
                 throw CairoException.tableDoesNotExist(tableToken.getTableName()).position(tokenPosition);
+
             } else {
                 return of(table);
             }
