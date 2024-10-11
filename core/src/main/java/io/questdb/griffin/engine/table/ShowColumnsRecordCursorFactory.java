@@ -27,6 +27,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoColumn;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoMetadataRO;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -39,6 +40,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import org.jetbrains.annotations.NotNull;
+
+import java.io.IOException;
 
 public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final int N_NAME_COL = 0;
@@ -107,7 +110,13 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition) {
-            CairoTable table = executionContext.getCairoEngine().metadataCacheGetTable(tableToken);
+            // todo: maybe we want the auto hydrate version here
+            CairoTable table = null;
+            try (CairoMetadataRO metadataRO = executionContext.getCairoEngine().getCairoMetadata().write()) {
+                table = metadataRO.getTable(tableToken);
+            } catch (IOException ignore) {
+            }
+
             if (table == null) {
                 throw CairoException.tableDoesNotExist(tableToken.getTableName()).position(tokenPosition);
             } else {

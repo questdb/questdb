@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoMetadataRW;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -42,11 +43,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
+import java.io.IOException;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 
@@ -91,7 +93,8 @@ public class TablesFunctionFactory implements FunctionFactory {
     public static class TablesCursorFactory extends AbstractRecordCursorFactory {
         public static final Log LOG = LogFactory.getLog(TablesCursorFactory.class);
         private final TablesRecordCursor cursor;
-        private final ConcurrentHashMap<CairoTable> tableCache = new ConcurrentHashMap<>();
+        private final HashMap<CharSequence, CairoTable> tableCache = new HashMap<>();
+        private long tableCacheVersion = -1;
 
         public TablesCursorFactory() {
             super(METADATA);
@@ -101,15 +104,18 @@ public class TablesFunctionFactory implements FunctionFactory {
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             final CairoEngine engine = executionContext.getCairoEngine();
-            if (tableCache.isEmpty()) {
-                // initialise the first time this factory is created
-                engine.metadataCacheCopyMap(tableCache);
-            } else {
-                // otherwise check if we need to refresh any values
-                engine.metadataCacheRefreshSnapshot(tableCache);
+            try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
+                if (tableCache.isEmpty()) {
+                    // initialise the first time this factory is created
+                    metadataRW.snapshotCreate(tableCache);
+                    tableCacheVersion = metadataRW.getVersion();
+                } else {
+                    // otherwise check if we need to refresh any values
+                    tableCacheVersion = metadataRW.snapshotRefresh(tableCache, tableCacheVersion);
+                }
+                metadataRW.filterVisibleTables(tableCache);
+            } catch (IOException ignore) {
             }
-            engine.metadataCacheFilterVisibleTables(tableCache);
-
             cursor.toTop();
             return cursor;
         }
@@ -131,10 +137,11 @@ public class TablesFunctionFactory implements FunctionFactory {
 
         private static class TablesRecordCursor implements NoRandomAccessRecordCursor {
             private final TableListRecord record = new TableListRecord();
-            private final ConcurrentHashMap<CairoTable> tableCache;
+            private final HashMap<CharSequence, CairoTable> tableCache;
             private Iterator<Map.Entry<CharSequence, CairoTable>> iterator;
 
-            public TablesRecordCursor(ConcurrentHashMap<CairoTable> tableCache) {
+
+            public TablesRecordCursor(HashMap<CharSequence, CairoTable> tableCache) {
                 this.tableCache = tableCache;
                 this.iterator = tableCache.entrySet().iterator();
             }

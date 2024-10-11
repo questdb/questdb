@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoMetadataRW;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -42,6 +43,8 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
+
+import java.io.IOException;
 
 /**
  * Force re-hydrates the CairoMetadata cache.
@@ -126,9 +129,12 @@ public class HydrateTableMetadataFunctionFactory implements FunctionFactory {
                 final TableToken tableToken = tableTokens.getQuick(i);
                 if (!tableToken.isSystem()) {
                     try {
-                        engine.metadataCacheHydrateTable(tableTokens.getQuick(i), true, true);
+                        try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
+                            metadataRW.hydrateTable(tableTokens.getQuick(i), true, true);
+                        } catch (IOException ignore) {
+                        }
                     } catch (CairoException ex) {
-                        LOG.error().$("could not hydrate metadata: [table=").$(tableToken).I$();
+                        LOG.error().$("could not hydrate metadata [table=").$(tableToken).I$();
                         return false;
                     }
                 }

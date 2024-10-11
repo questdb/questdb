@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoMetadataRW;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
@@ -33,6 +34,8 @@ import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import org.junit.Test;
+
+import java.io.IOException;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 
@@ -107,14 +110,20 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
                     "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()"
             );
 
-            engine.metadataCacheClear();
+            try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
+                metadataRW.clear();
+            } catch (IOException ignore) {
+            }
 
             // cache can rehydrate table 2 during call, but not 1
             assertSql("id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\n" + "2\ttable2\tts2\tNONE\t1000\t300000000\n",
                     "select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag from tables()");
 
             // trying to rehydrate all tables
-            engine.metadataCacheHydrateAllTables();
+            try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
+                metadataRW.hydrateAllTables();
+            } catch (IOException ignore) {
+            }
 
             // still can't rehydrate table 1
             assertSql(

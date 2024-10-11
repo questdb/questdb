@@ -24,7 +24,14 @@
 
 package io.questdb.cairo.wal.seq;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.BinaryAlterSerializer;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoMetadataRW;
+import io.questdb.cairo.IDGenerator;
+import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -39,6 +46,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.io.IOException;
 import java.util.concurrent.locks.ReadWriteLock;
 
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
@@ -176,7 +184,12 @@ public class TableSequencerImpl implements TableSequencer {
         final long txn = tableTransactionLog.addEntry(getStructureVersion(), WalUtils.DROP_TABLE_WALID,
                 0, 0, timestamp, 0, 0, 0);
         metadata.dropTable();
-        engine.metadataCacheRemoveTable(tableToken);
+
+        try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
+            metadataRW.dropTable(tableToken);
+        } catch (IOException ignore) {
+        }
+
         notifyTxnCommitted(Long.MAX_VALUE);
         engine.getWalListener().tableDropped(tableToken, txn, timestamp);
     }

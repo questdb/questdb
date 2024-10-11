@@ -31,6 +31,7 @@ import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoMetadataRW;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.SecurityContext;
@@ -481,7 +482,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         securityContext = configuration.getFactoryProvider().getSecurityContextFactory().getRootContext();
         metrics = node1.getMetrics();
         engine = node1.getEngine();
-        engine.metadataCacheClear();
+        try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
+            metadataRW.clear();
+        } catch (IOException ignore) {
+        }
         messageBus = node1.getMessageBus();
 
         node1.initGriffin(circuitBreaker);
@@ -507,7 +511,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         factoryProvider = null;
         engineFactory = null;
         configurationFactory = null;
-        engine.metadataCacheClear();
+        try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
+            metadataRW.clear();
+        } catch (IOException ignore) {
+        }
         AbstractTest.tearDownStatic();
         DumpThreadStacksFunctionFactory.dumpThreadStacks();
     }
@@ -522,7 +529,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         SharedRandom.RANDOM.set(new Rnd());
         forEachNode(QuestDBTestNode::setUpCairo);
         engine.resetNameRegistryMemory();
-        engine.metadataCacheClear();
+        try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
+            metadataRW.clear();
+        } catch (IOException ignore) {
+        }
         refreshTablesInBaseEngine();
         SharedRandom.RANDOM.set(new Rnd());
         TestFilesFacadeImpl.resetTracking();
@@ -543,7 +553,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         LOG.info().$("Tearing down test ").$(getClass().getSimpleName()).$('#').$(testName.getMethodName()).$();
         forEachNode(node -> node.tearDownCairo(removeDir));
         ioURingFacade = IOURingFacadeImpl.INSTANCE;
-        engine.metadataCacheClear();
+        try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
+            metadataRW.clear();
+        } catch (IOException ignore) {
+        }
         sink.clear();
         memoryUsage = -1;
         if (inputWorkRoot != null) {
@@ -809,6 +822,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
         writer.apply(addColumnC.build(), true);
     }
 
+    protected static void assertCairoMetadata(String expected) {
+        TestUtils.assertEquals(expected, engine.getCairoMetadata().read().toString0());
+    }
+
     protected static void assertCursor(
             CharSequence expected,
             RecordCursorFactory factory,
@@ -1050,10 +1067,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 AbstractCairoTest.ff = ffBefore;
             }
         });
-    }
-
-    protected static void assertMetadataCache(String expected) {
-        TestUtils.assertEquals(expected, engine.metadataCacheToString0());
     }
 
     protected static void assertQuery(Record[] expected, CharSequence query, CharSequence ddl, @Nullable CharSequence expectedTimestamp, boolean expectSize) throws Exception {

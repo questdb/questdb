@@ -33,6 +33,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoMetadataRW;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.EntityColumnFilter;
@@ -120,6 +121,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.io.IOException;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.griffin.SqlKeywords.*;
@@ -3775,7 +3777,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     securityContext.authorizeTableDrop(tableToken);
                     try {
                         engine.drop(path, tableToken);
-                        engine.metadataCacheRemoveTable(tableToken);
+                        
+                        try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
+                            metadataRW.dropTable(tableToken);
+                        } catch (IOException ignore) {
+                        }
                     } catch (CairoException report) {
                         // it will fail when there are readers/writers and lock cannot be acquired
                         dropTablesFailedList.put(tableToken.getTableName(), report.getMessage());
