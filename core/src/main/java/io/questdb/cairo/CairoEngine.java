@@ -366,9 +366,11 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(telemetryWal);
         Misc.free(tableNameRegistry);
         Misc.free(checkpointAgent);
-        try (CairoMetadataRW metadataRW = cairoMetadata.write()) {
-            metadataRW.clear();
-        } catch (IOException ignore) {
+        if (cairoMetadata != null) {
+            try (CairoMetadataRW metadataRW = getCairoMetadata().write()) {
+                metadataRW.clear();
+            } catch (IOException ignore) {
+            }
         }
     }
 
@@ -1062,7 +1064,7 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void reloadTableNames(@Nullable ObjList<TableToken> convertedTables) {
         tableNameRegistry.reload(convertedTables);
-        try (CairoMetadataRW metadataRW = cairoMetadata.write()) {
+        try (CairoMetadataRW metadataRW = getCairoMetadata().write()) {
             metadataRW.clear();
             metadataRW.hydrateAllTables();
         } catch (IOException ignore) {
