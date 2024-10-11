@@ -127,7 +127,7 @@ public class PageFrameReduceJob implements Job, Closeable {
 
     @Override
     public void close() {
-        circuitBreaker = Misc.freeIfCloseable(circuitBreaker);
+        circuitBreaker = Misc.free(circuitBreaker);
         record = Misc.free(record);
     }
 
