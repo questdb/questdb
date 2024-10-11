@@ -230,7 +230,7 @@ public class CairoMetadata {
         }
 
         /**
-         * For debug printing the metadata object.
+         * For debug printing the metadata object, doesn't require manual closing.
          */
         @TestOnly
         public String toString0() {
