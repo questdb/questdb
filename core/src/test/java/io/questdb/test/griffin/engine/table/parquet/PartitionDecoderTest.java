@@ -212,6 +212,8 @@ public class PartitionDecoderTest extends AbstractCairoTest {
                 }
                 dumpX();
                 Assert.assertTrue(ff.exists(path.$()));
+                Assert.assertTrue(java.nio.file.Files.exists(java.nio.file.Path.of(path.toString())));
+                Assert.assertTrue(java.nio.file.Files.isDirectory(java.nio.file.Path.of(path.toString())));
                 Assert.assertTrue(ff.isDirOrSoftLinkDir(path.$()));
                 path.concat("data.parquet").$();
                 Assert.assertTrue(ff.exists(path.$()));
