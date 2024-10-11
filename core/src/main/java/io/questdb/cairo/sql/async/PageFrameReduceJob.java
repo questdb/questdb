@@ -179,8 +179,13 @@ public class PageFrameReduceJob implements Job, Closeable {
                             .$(", cursor=").$(cursor)
                             .I$();
                     if (frameSequence.isActive()) {
-                        if (workerId > -1) {
-                            // using the job's own circuitBreaker, we need to initialize it
+                        // The circuit breaker could be the one from this job, or the one belongs to stealingFrameSequence.
+                        // If this is work stealing (workerId == -1), and the frame sequence stealing work is processing
+                        // its own task (stealingFrameSequence == frameSequence), the circuit breaker wrapper has been
+                        // initialized with the circuit breaker instance belongs to this task.
+                        // If this is not work stealing, or the stealing frame sequence is not working on its own task,
+                        // we need to initialize the circuit breaker wrapper with the task's circuit breaker.
+                        if (workerId != -1 || frameSequence != stealingFrameSequence) {
                             circuitBreaker.init(frameSequence.getCircuitBreaker());
                         }
                         reduce(workerId, record, circuitBreaker, task, frameSequence, stealingFrameSequence);
