@@ -27,7 +27,7 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoMetadataRW;
+import io.questdb.cairo.CairoMetadataRO;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -94,16 +94,16 @@ public class AllTablesFunctionFactory implements FunctionFactory {
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             final CairoEngine engine = executionContext.getCairoEngine();
-            try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
+            try (CairoMetadataRO metadataRO = engine.getCairoMetadata().read()) {
                 if (tableCache.isEmpty()) {
                     // initialise the first time this factory is created
-                    metadataRW.snapshotCreate(tableCache);
-                    tableCacheVersion = metadataRW.getVersion();
+                    metadataRO.snapshotCreate(tableCache);
+                    tableCacheVersion = metadataRO.getVersion();
                 } else {
                     // otherwise check if we need to refresh any values
-                    tableCacheVersion = metadataRW.snapshotRefresh(tableCache, tableCacheVersion);
+                    tableCacheVersion = metadataRO.snapshotRefresh(tableCache, tableCacheVersion);
                 }
-                metadataRW.filterVisibleTables(tableCache);
+                metadataRO.filterVisibleTables(tableCache);
             } catch (IOException ignore) {
             }
             cursor.toTop();
