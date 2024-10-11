@@ -91,17 +91,23 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
     }
 
     public void init(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
-        final SqlExecutionCircuitBreakerConfiguration sqlExecutionCircuitBreakerConfiguration = executionContextCircuitBreaker.getConfiguration();
-        if (sqlExecutionCircuitBreakerConfiguration != null) {
+        if (executionContextCircuitBreaker.isThreadsafe()) {
+            delegate = executionContextCircuitBreaker;
+        } else {
             if (networkSqlExecutionCircuitBreaker == null) {
-                networkSqlExecutionCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(sqlExecutionCircuitBreakerConfiguration, MemoryTag.NATIVE_CB2);
+                final SqlExecutionCircuitBreakerConfiguration configuration = executionContextCircuitBreaker.getConfiguration();
+                assert configuration != null;
+                networkSqlExecutionCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(configuration, MemoryTag.NATIVE_CB2);
             } else {
                 networkSqlExecutionCircuitBreaker.resetTimer();
             }
             delegate = networkSqlExecutionCircuitBreaker;
-        } else {
-            delegate = executionContextCircuitBreaker;
         }
+    }
+
+    @Override
+    public boolean isThreadsafe() {
+        return delegate.isThreadsafe();
     }
 
     @Override

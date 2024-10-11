@@ -85,6 +85,11 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     @Override
+    public boolean isThreadsafe() {
+        return true;
+    }
+
+    @Override
     public boolean isTimerSet() {
         return true;
     }

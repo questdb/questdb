@@ -140,6 +140,11 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
+    public boolean isThreadsafe() {
+        return false;
+    }
+
+    @Override
     public boolean isTimerSet() {
         return powerUpTime < Long.MAX_VALUE;
     }

@@ -149,6 +149,11 @@ public class SecurityTest extends AbstractCairoTest {
             }
 
             @Override
+            public boolean isThreadsafe() {
+                return true;
+            }
+
+            @Override
             public boolean isTimerSet() {
                 return false;
             }
