@@ -139,8 +139,7 @@ public class TablesFunctionFactory implements FunctionFactory {
             private final TableListRecord record = new TableListRecord();
             private final HashMap<CharSequence, CairoTable> tableCache;
             private Iterator<Map.Entry<CharSequence, CairoTable>> iterator;
-
-
+            
             public TablesRecordCursor(HashMap<CharSequence, CairoTable> tableCache) {
                 this.tableCache = tableCache;
                 this.iterator = tableCache.entrySet().iterator();

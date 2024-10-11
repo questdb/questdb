@@ -111,7 +111,6 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         }
 
         public ShowColumnsCursor of(SqlExecutionContext executionContext, TableToken tableToken, int tokenPosition) {
-            // todo: maybe we want the auto hydrate version here
             CairoTable table = null;
             try (CairoMetadataRO metadataRO = executionContext.getCairoEngine().getCairoMetadata().write()) {
                 table = metadataRO.getTable(tableToken);
@@ -128,7 +127,6 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
 
             if (table == null) {
                 throw CairoException.tableDoesNotExist(tableToken.getTableName()).position(tokenPosition);
-
             } else {
                 return of(table);
             }

@@ -24,13 +24,22 @@
 
 package io.questdb.test;
 
-import io.questdb.cairo.*;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoMetadataRW;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.tools.TestUtils;
+
+import java.io.IOException;
 
 public class CreateTableTestUtils {
 
@@ -90,6 +99,11 @@ public class CreateTableTestUtils {
             } else {
                 throw e;
             }
+        }
+
+        try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
+            metadataRW.hydrateTable("x", true);
+        } catch (IOException ignore) {
         }
 
         Utf8StringSink utf8Sink = new Utf8StringSink();

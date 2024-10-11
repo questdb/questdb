@@ -366,7 +366,10 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(telemetryWal);
         Misc.free(tableNameRegistry);
         Misc.free(checkpointAgent);
-
+        try (CairoMetadataRW metadataRW = cairoMetadata.write()) {
+            metadataRW.clear();
+        } catch (IOException ignore) {
+        }
     }
 
     @TestOnly
@@ -442,7 +445,6 @@ public class CairoEngine implements Closeable, WriterSource {
                         metadataRW.dropTable(tableToken);
                     } catch (IOException ignore) {
                     }
-                    ;
                 }
 
                 tableNameRegistry.dropTable(tableToken);
@@ -1125,13 +1127,12 @@ public class CairoEngine implements Closeable, WriterSource {
                         );
                     } finally {
                         if (renamed) {
-                            tableNameRegistry.rename(fromTableToken, toTableToken);
                             try (CairoMetadataRW metadataRW = getCairoMetadata().write()) {
+                                tableNameRegistry.rename(fromTableToken, toTableToken);
                                 metadataRW.dropTable(fromTableName);
                                 metadataRW.hydrateTable(toTableName, true);
                             } catch (IOException ignore) {
                             }
-                            ;
                         } else {
                             LOG.info()
                                     .$("failed to rename table [from=").utf8(fromTableName)

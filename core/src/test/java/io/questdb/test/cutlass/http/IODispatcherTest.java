@@ -29,7 +29,6 @@ import io.questdb.Metrics;
 import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoMetadataRW;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.CursorPrinter;
@@ -151,7 +150,6 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
 
-import java.io.IOException;
 import java.io.InputStream;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -9215,10 +9213,10 @@ public class IODispatcherTest extends AbstractTest {
             // create table with all column types
             createTableX(engine, recordCount);
 
-            try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
-                metadataRW.hydrateAllTables();
-            } catch (IOException ignore) {
-            }
+//            try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
+//                metadataRW.hydrateAllTables();
+//            } catch (IOException ignore) {
+//            }
 
             sendAndReceive(
                     NetworkFacadeImpl.INSTANCE,
