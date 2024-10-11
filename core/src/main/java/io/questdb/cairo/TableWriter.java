@@ -1235,7 +1235,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         if (columnRowCount != 0) {
                             // Do not add the column to the parquet file if there are no rows
-
                             if (ColumnType.isSymbol(columnType)) {
                                 long columnSize = columnRowCount * ColumnType.sizeOf(columnType);
                                 long columnAddr = TableUtils.mapRO(ff, dFile(path.trimTo(partitionLen), columnName, columnNameTxn), LOG, columnSize, memoryTag);

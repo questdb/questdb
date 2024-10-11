@@ -122,11 +122,6 @@ public class PartitionDecoder implements QuietCloseable {
         );
     }
 
-    public long timestampAt(int columnIndex, long rowIndex) {
-        assert ptr != 0;
-        return timestampAt(ptr, columnIndex, rowIndex);  // throws CairoException on error
-    }
-
     private static native long columnCountOffset();
 
     private static native long columnIdsOffset();
@@ -168,12 +163,6 @@ public class PartitionDecoder implements QuietCloseable {
     private static native long rowGroupCountOffset();
 
     private static native long rowGroupSizesPtrOffset();
-
-    private static native long timestampAt(
-            long decoderPtr,
-            int columnIndex,
-            long rowIndex
-    ) throws CairoException;
 
     private void destroy() {
         if (ptr != 0) {

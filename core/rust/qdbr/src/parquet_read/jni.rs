@@ -142,29 +142,6 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDec
 }
 
 #[no_mangle]
-pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_timestampAt(
-    mut env: JNIEnv,
-    _class: JClass,
-    decoder: *mut ParquetDecoder<NonOwningFile>,
-    column_index: u32,
-    row_index: u64,
-) -> i64 {
-    assert!(!decoder.is_null(), "decoder pointer is null");
-
-    let decoder = unsafe { &mut *decoder };
-    match decoder.timestamp_at(column_index, row_index) {
-        Ok(v) => v,
-        Err(mut err) => {
-            err.add_context(format!(
-                "could not get timestamp at row {row_index} in column {column_index}"
-            ));
-            err.add_context("error in PartitionDecoder.timestampAt");
-            err.into_cairo_exception().throw(&mut env)
-        }
-    }
-}
-
-#[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionDecoder_columnCountOffset(
     _env: JNIEnv,
     _class: JClass,

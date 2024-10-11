@@ -171,8 +171,7 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testClose() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-
+        assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, "x", PartitionBy.NONE).
                     col("a", ColumnType.INT).
                     col("b", ColumnType.INT).
@@ -391,7 +390,6 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
 
     public void testReload(int partitionBy, long increment, LongList intervals, int rowCount, CharSequence expected1, CharSequence expected2) throws Exception {
         assertMemoryLeak(() -> {
-
             TableToken x;
             TableModel model = new TableModel(configuration, "x", partitionBy).
                     col("a", ColumnType.SYMBOL).indexed(true, 4).
@@ -611,11 +609,11 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     private void testIntervals(int partitionBy, long increment, int rowCount, CharSequence expected, long expectedCount) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            TableModel model = new TableModel(configuration, "x", partitionBy).
-                    col("a", ColumnType.SYMBOL).indexed(true, 4).
-                    col("b", ColumnType.SYMBOL).indexed(true, 4).
-                    timestamp();
+        assertMemoryLeak(() -> {
+            TableModel model = new TableModel(configuration, "x", partitionBy)
+                    .col("a", ColumnType.SYMBOL).indexed(true, 4)
+                    .col("b", ColumnType.SYMBOL).indexed(true, 4)
+                    .timestamp();
             AbstractCairoTest.create(model);
 
             final Rnd rnd = new Rnd();
