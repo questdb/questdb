@@ -189,6 +189,13 @@ public class PageFrameReduceJob implements Job, Closeable {
                         reduce(workerId, record, circuitBreaker, task, frameSequence, stealingFrameSequence);
                     }
                 } catch (Throwable th) {
+                    LOG.error()
+                            .$("reduce error [error=").$(th)
+                            .$(", id=").$(frameSequence.getId())
+                            .$(", taskType=").$(task.getType())
+                            .$(", frameIndex=").$(task.getFrameIndex())
+                            .$(", frameCount=").$(frameSequence.getFrameCount())
+                            .I$();
                     int interruptReason = SqlExecutionCircuitBreaker.STATE_OK;
                     if (th instanceof CairoException) {
                         CairoException e = (CairoException) th;
