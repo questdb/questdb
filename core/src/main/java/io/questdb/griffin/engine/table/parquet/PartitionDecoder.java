@@ -92,6 +92,34 @@ public class PartitionDecoder implements QuietCloseable {
         }
     }
 
+    // scanDirection is either Vect.BIN_SEARCH_SCAN_DOWN (1) or Vect.BIN_SEARCH_SCAN_UP (-1)
+    public int findRowGroupByTimestamp(
+            long timestamp,
+            long rowLo,
+            long rowHi,
+            int timestampColumnIndex,
+            int scanDirection
+    ) {
+        assert ptr != 0;
+        try {
+            return findRowGroupByTimestamp(
+                    ptr,
+                    timestamp,
+                    rowLo,
+                    rowHi,
+                    timestampColumnIndex,
+                    scanDirection
+            );
+        } catch (Throwable th) {
+            LOG.error().$("could not find row group by timestamp [fd=").$(fd)
+                    .$(", timestamp=").$(timestamp)
+                    .$(", timestampColumnIndex=").$(timestampColumnIndex)
+                    .$(", msg=").$(th.getMessage())
+                    .I$();
+            throw CairoException.nonCritical().put(th.getMessage());
+        }
+    }
+
     public long getFd() {
         return fd;
     }
@@ -166,6 +194,15 @@ public class PartitionDecoder implements QuietCloseable {
     );
 
     private static native void destroy(long impl);
+
+    private static native int findRowGroupByTimestamp(
+            long decoderPtr,
+            long rowLo,
+            long rowHi,
+            long timestamp,
+            int timestampColumnIndex,
+            int scanDirection
+    );
 
     private static native long readRowGroupStats(
             long decoderPtr,

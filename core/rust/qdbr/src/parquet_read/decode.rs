@@ -119,6 +119,24 @@ const TIMESTAMP_96_EMPTY: [u8; 12] = [0; 12];
 /// Not to be confused with the field_id in the parquet metadata.
 pub type ParquetColumnIndex = i32;
 
+// Should match Java's Vect.BIN_SEARCH_SCAN_DOWN and Vect.BIN_SEARCH_SCAN_UP.
+pub enum ScanDirection {
+    Down = 1,
+    Up = -1,
+}
+
+impl TryFrom<i32> for ScanDirection {
+    type Error = ParquetError;
+
+    fn try_from(scan_dir: i32) -> Result<Self, Self::Error> {
+        match scan_dir {
+            1 => Ok(ScanDirection::Down),
+            -1 => Ok(ScanDirection::Up),
+            _ => Err(fmt_err!(Invalid, "unknown scan direction: {}", scan_dir)),
+        }
+    }
+}
+
 impl<R: Read + Seek> ParquetDecoder<R> {
     pub fn decode_row_group(
         &mut self,
@@ -327,6 +345,18 @@ impl<R: Read + Seek> ParquetDecoder<R> {
             stats.max_value_size = stats.max_value.len();
         }
         Ok(())
+    }
+
+    pub fn find_row_group_by_timestamp(
+        &mut self,
+        _timestamp: i64,
+        _row_lo: usize,
+        _row_hi: usize,
+        _timestamp_column_index: usize,
+        _scan_direction: ScanDirection,
+    ) -> ParquetResult<u32> {
+        // TODO(puzpuzpuz): implement me
+        Ok(0)
     }
 }
 

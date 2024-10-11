@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.NativeTimestampFinder;
 import io.questdb.cairo.ParquetTimestampFinder;
 import io.questdb.cairo.PartitionBy;
@@ -35,7 +36,6 @@ import io.questdb.std.datetime.microtime.Timestamps;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
@@ -43,103 +43,114 @@ import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
 
 public class TimestampFinderTest extends AbstractCairoTest {
 
-    // TODO(puzpuzpuz): enable the test when ParquetTimestampFinder#findTimestamp() is done
-    @Ignore
+    @Override
+    public void setUp() {
+        super.setUp();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_DATA_PAGE_SIZE, 256);
+    }
+
     @Test
     public void testFuzz() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        final int rowCount = 10000;
+        final int rowCount = 10_000;
         assertMemoryLeak(() -> {
-            TableModel modelX = new TableModel(configuration, "x", PartitionBy.YEAR).timestamp();
-            AbstractCairoTest.create(modelX);
-            TableModel modelY = new TableModel(configuration, "y", PartitionBy.YEAR).timestamp();
-            AbstractCairoTest.create(modelY);
+            TableModel oracleModel = new TableModel(configuration, "oracle", PartitionBy.YEAR).timestamp();
+            AbstractCairoTest.create(oracleModel);
+            TableModel model = new TableModel(configuration, "x", PartitionBy.YEAR).timestamp();
+            AbstractCairoTest.create(model);
 
             final long minTimestamp = TimestampFormatUtils.parseTimestamp("1980-01-01T00:00:00.000Z");
             long maxTimestamp = minTimestamp;
             long timestamp = minTimestamp;
             try (
-                    TableWriter writerX = newOffPoolWriter(configuration, "x", metrics);
-                    TableWriter writerY = newOffPoolWriter(configuration, "y", metrics)
+                    TableWriter oracleWriter = newOffPoolWriter(configuration, "oracle", metrics);
+                    TableWriter writer = newOffPoolWriter(configuration, "x", metrics)
             ) {
                 for (int i = 0; i < rowCount; i++) {
-                    writerX.newRow(timestamp).append();
-                    writerY.newRow(timestamp).append();
+                    oracleWriter.newRow(timestamp).append();
+                    writer.newRow(timestamp).append();
                     maxTimestamp = timestamp;
-                    timestamp += rnd.nextLong(Timestamps.MINUTE_MICROS);
+                    timestamp += rnd.nextLong(2) * Timestamps.MINUTE_MICROS;
                 }
-                writerX.commit();
-                writerY.commit();
+                oracleWriter.commit();
+                writer.commit();
             }
 
-            // convert y to parquet
-            ddl("alter table y convert partition to parquet where timestamp >= 0");
+            // convert x to parquet
+            ddl("alter table x convert partition to parquet where timestamp >= 0");
 
-            NativeTimestampFinder finderX = new NativeTimestampFinder();
+            NativeTimestampFinder oracleFinder = new NativeTimestampFinder();
             try (
-                    TableReader readerX = newOffPoolReader(configuration, "x");
-                    TableReader readerY = newOffPoolReader(configuration, "y");
-                    ParquetTimestampFinder finderY = new ParquetTimestampFinder();
+                    TableReader oracleReader = newOffPoolReader(configuration, "oracle");
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    ParquetTimestampFinder finder = new ParquetTimestampFinder();
             ) {
-                Assert.assertEquals(1, readerX.getPartitionCount());
-                Assert.assertEquals(1, readerY.getPartitionCount());
+                Assert.assertEquals(1, oracleReader.getPartitionCount());
+                Assert.assertEquals(1, reader.getPartitionCount());
 
-                readerX.openPartition(0);
-                readerY.openPartition(0);
+                oracleReader.openPartition(0);
+                reader.openPartition(0);
 
-                finderX.of(readerX, 0, 0, rowCount);
-                finderY.of(readerY, 0, 0);
+                oracleFinder.of(oracleReader, 0, 0, rowCount);
+                finder.of(reader, 0, 0);
 
-                Assert.assertEquals(minTimestamp, finderX.minTimestamp());
-                Assert.assertEquals(finderX.minTimestamp(), finderY.minTimestamp());
-                Assert.assertEquals(maxTimestamp, finderX.maxTimestamp());
-                Assert.assertEquals(finderX.maxTimestamp(), finderY.maxTimestamp());
+                Assert.assertEquals(minTimestamp, oracleFinder.minTimestamp());
+                Assert.assertEquals(oracleFinder.minTimestamp(), finder.minTimestamp());
+                Assert.assertEquals(maxTimestamp, oracleFinder.maxTimestamp());
+                Assert.assertEquals(oracleFinder.maxTimestamp(), finder.maxTimestamp());
 
                 for (int row = 0; row < rowCount; row++) {
-                    Assert.assertEquals(finderX.timestampAt(row), finderY.timestampAt(row));
+                    Assert.assertEquals(oracleFinder.timestampAt(row), finder.timestampAt(row));
                 }
 
-                for (long ts = minTimestamp - 1; ts < maxTimestamp + 1; ts++) {
+                final long start = System.nanoTime();
+                long calls = 0;
+                for (long ts = minTimestamp - 1; ts < maxTimestamp + 1; ts += Timestamps.MINUTE_MICROS) {
                     // full partition
                     Assert.assertEquals(
-                            finderX.findTimestamp(ts, 0, rowCount, BIN_SEARCH_SCAN_UP),
-                            finderY.findTimestamp(ts, 0, rowCount, BIN_SEARCH_SCAN_UP)
+                            oracleFinder.findTimestamp(ts, 0, rowCount - 1, BIN_SEARCH_SCAN_UP),
+                            finder.findTimestamp(ts, 0, rowCount - 1, BIN_SEARCH_SCAN_UP)
                     );
                     Assert.assertEquals(
-                            finderX.findTimestamp(ts, 0, rowCount, BIN_SEARCH_SCAN_DOWN),
-                            finderY.findTimestamp(ts, 0, rowCount, BIN_SEARCH_SCAN_DOWN)
+                            oracleFinder.findTimestamp(ts, 0, rowCount - 1, BIN_SEARCH_SCAN_DOWN),
+                            finder.findTimestamp(ts, 0, rowCount - 1, BIN_SEARCH_SCAN_DOWN)
                     );
 
                     // first partition half
                     Assert.assertEquals(
-                            finderX.findTimestamp(ts, 0, rowCount / 2, BIN_SEARCH_SCAN_UP),
-                            finderY.findTimestamp(ts, 0, rowCount / 2, BIN_SEARCH_SCAN_UP)
+                            oracleFinder.findTimestamp(ts, 0, rowCount / 2, BIN_SEARCH_SCAN_UP),
+                            finder.findTimestamp(ts, 0, rowCount / 2, BIN_SEARCH_SCAN_UP)
                     );
                     Assert.assertEquals(
-                            finderX.findTimestamp(ts, 0, rowCount / 2, BIN_SEARCH_SCAN_DOWN),
-                            finderY.findTimestamp(ts, 0, rowCount / 2, BIN_SEARCH_SCAN_DOWN)
+                            oracleFinder.findTimestamp(ts, 0, rowCount / 2, BIN_SEARCH_SCAN_DOWN),
+                            finder.findTimestamp(ts, 0, rowCount / 2, BIN_SEARCH_SCAN_DOWN)
                     );
 
                     // second partition half
                     Assert.assertEquals(
-                            finderX.findTimestamp(ts, rowCount / 2, rowCount, BIN_SEARCH_SCAN_UP),
-                            finderY.findTimestamp(ts, rowCount / 2, rowCount, BIN_SEARCH_SCAN_UP)
+                            oracleFinder.findTimestamp(ts, rowCount / 2, rowCount - 1, BIN_SEARCH_SCAN_UP),
+                            finder.findTimestamp(ts, rowCount / 2, rowCount - 1, BIN_SEARCH_SCAN_UP)
                     );
                     Assert.assertEquals(
-                            finderX.findTimestamp(ts, rowCount / 2, rowCount, BIN_SEARCH_SCAN_DOWN),
-                            finderY.findTimestamp(ts, rowCount / 2, rowCount, BIN_SEARCH_SCAN_DOWN)
+                            oracleFinder.findTimestamp(ts, rowCount / 2, rowCount - 1, BIN_SEARCH_SCAN_DOWN),
+                            finder.findTimestamp(ts, rowCount / 2, rowCount - 1, BIN_SEARCH_SCAN_DOWN)
                     );
 
                     // partition middle
                     Assert.assertEquals(
-                            finderX.findTimestamp(ts, rowCount / 3, 2 * rowCount / 3, BIN_SEARCH_SCAN_UP),
-                            finderY.findTimestamp(ts, rowCount / 3, 2 * rowCount / 3, BIN_SEARCH_SCAN_UP)
+                            oracleFinder.findTimestamp(ts, rowCount / 3, 2 * rowCount / 3, BIN_SEARCH_SCAN_UP),
+                            finder.findTimestamp(ts, rowCount / 3, 2 * rowCount / 3, BIN_SEARCH_SCAN_UP)
                     );
                     Assert.assertEquals(
-                            finderX.findTimestamp(ts, rowCount / 3, 2 * rowCount / 3, BIN_SEARCH_SCAN_DOWN),
-                            finderY.findTimestamp(ts, rowCount / 3, 2 * rowCount / 3, BIN_SEARCH_SCAN_DOWN)
+                            oracleFinder.findTimestamp(ts, rowCount / 3, 2 * rowCount / 3, BIN_SEARCH_SCAN_DOWN),
+                            finder.findTimestamp(ts, rowCount / 3, 2 * rowCount / 3, BIN_SEARCH_SCAN_DOWN)
                     );
+
+                    calls += 8;
                 }
+
+                System.out.println("average call latency: " + ((System.nanoTime() - start) / calls) + "ns");
             }
         });
     }

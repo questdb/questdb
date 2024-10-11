@@ -33,6 +33,10 @@ import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
+
+import static io.questdb.std.Vect.BIN_SEARCH_SCAN_DOWN;
+import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
 
 public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCloseable {
     private final PartitionDecoder partitionDecoder = new PartitionDecoder();
@@ -59,8 +63,49 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
 
     @Override
     public long findTimestamp(long value, long rowLo, long rowHi, int scanDir) {
-        // TODO(puzpuzpuz): implement me
-        return 0;
+        // TODO(puzpuzpuz): optimize me
+        final PartitionDecoder.Metadata metadata = partitionDecoder.metadata();
+        final int rowGroupCount = metadata.rowGroupCount();
+        // First, find row group containing the timestamp.
+        int rowGroupIndex = partitionDecoder.findRowGroupByTimestamp(value, rowLo, rowHi, timestampIdAndType.get(0), scanDir);
+        if (rowGroupIndex == -1) {
+            return scanDir == BIN_SEARCH_SCAN_DOWN ? rowLo - 1 : rowLo;
+        }
+        if (rowGroupIndex == rowGroupCount) {
+            return scanDir == BIN_SEARCH_SCAN_DOWN ? rowHi : rowHi + 1;
+        }
+        // Next, decode it and do binary search.
+        long offset = 0;
+        for (int i = 0; i < rowGroupCount; i++) {
+            if (i == rowGroupIndex) {
+                break;
+            }
+            offset += metadata.rowGroupSize(i);
+        }
+        final long rowGroupRowLo = rowLo - offset;
+        final long rowGroupRowHi = Math.min(rowHi - offset, metadata.rowGroupSize(rowGroupIndex) - 1);
+        partitionDecoder.decodeRowGroup(
+                rowGroupBuffers,
+                timestampIdAndType,
+                rowGroupIndex,
+                (int) rowGroupRowLo,
+                (int) (rowGroupRowHi + 1) // exclusive
+        );
+        long idx = Vect.binarySearch64Bit(
+                rowGroupBuffers.getChunkDataPtr(0),
+                value,
+                0,
+                rowGroupRowHi - rowGroupRowLo,
+                scanDir
+        );
+        if (idx < 0) {
+            if (scanDir == BIN_SEARCH_SCAN_UP) {
+                idx = -idx - 1;
+            } else if (scanDir == BIN_SEARCH_SCAN_DOWN) {
+                idx = -idx - 2;
+            }
+        }
+        return idx + rowGroupRowLo + offset;
     }
 
     @Override
