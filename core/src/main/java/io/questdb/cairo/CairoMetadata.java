@@ -62,6 +62,7 @@ public class CairoMetadata {
     private final ThreadLocal<ColumnVersionReader> tlColumnVersionReader = ThreadLocal.withInitial(ColumnVersionReader::new);
     private final ThreadLocal<Path> tlPath = ThreadLocal.withInitial(Path::new);
     private final CairoMetadataWriter writer = new CairoMetadataWriter();
+    ThreadLocal<StringSink> tlSink = ThreadLocal.withInitial(StringSink::new);
     private long version;
 
     public CairoMetadata(CairoEngine engine) {
@@ -233,7 +234,7 @@ public class CairoMetadata {
          */
         @TestOnly
         public String toString0() {
-            StringSink sink = Misc.getThreadLocalSink();
+            StringSink sink = tlSink.get();
             sink.put("CairoMetadata [");
             sink.put("tableCount=").put(tables.size()).put(']');
             sink.put('\n');
@@ -244,7 +245,10 @@ public class CairoMetadata {
                 sink.put('\n');
             }
             close();
-            return sink.toString();
+            String s = sink.toString();
+            sink.clear();
+            tlSink.remove();
+            return s;
         }
     }
 

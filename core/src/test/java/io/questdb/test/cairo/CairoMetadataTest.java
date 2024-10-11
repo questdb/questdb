@@ -39,7 +39,7 @@ import java.time.Instant;
 import java.util.concurrent.atomic.AtomicInteger;
 
 
-public class CairoMetadataCacheTest extends AbstractCairoTest {
+public class CairoMetadataTest extends AbstractCairoTest {
 
     private static final String xMetaString = "CairoMetadata [tableCount=1]\n" +
             "\tCairoTable [name=x, id=1, directoryName=x~, isDedup=false, isSoftLink=false, metadataVersion=0, maxUncommittedRows=1000, o3MaxLag=300000000, partitionBy=NONE, timestampIndex=3, timestampName=timestamp, walEnabled=false, columnCount=16]\n" +

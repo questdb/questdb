@@ -2546,6 +2546,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         // Record column structure version bump in txn file for WAL sequencer structure version to match writer structure version.
         bumpColumnStructureVersion();
+
+        
+        try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
+            metadataRW.dropTable(fromTableName);
+            metadataRW.hydrateTable(metadata, true);
+        } catch (IOException ignore) {
+        }
     }
 
     @Override

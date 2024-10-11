@@ -35,6 +35,7 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
             ddl("create table A(col0 int, col1 symbol, col2 double)");
             ddl("create table B(col0 long, col1 string, col2 float)");
             ddl("create table C(col0 double, col1 char, col2 byte)");
+            drainWalQueue();
             assertQuery(
                     "table_name\tordinal_position\tcolumn_name\tdata_type\n" +
                             "A\t0\tcol0\tINT\n" +
