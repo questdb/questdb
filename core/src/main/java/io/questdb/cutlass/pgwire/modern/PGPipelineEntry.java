@@ -935,17 +935,18 @@ public class PGPipelineEntry implements QuietCloseable {
     }
 
     private void copyPgResultSetColumnTypes() {
-        if (factory != null) {
-            final RecordMetadata m = factory.getMetadata();
-            final int columnCount = m.getColumnCount();
-            pgResultSetColumnTypes.clear();
-            pgResultSetColumnTypes.setPos(2 * columnCount);
-            for (int i = 0; i < columnCount; i++) {
-                final int columnType = m.getColumnType(i);
-                pgResultSetColumnTypes.setQuick(2 * i, columnType);
-                // the extra values stored here are used to render geo-hashes as strings
-                pgResultSetColumnTypes.setQuick(2 * i + 1, GeoHashes.getBitFlags(columnType));
-            }
+        if (factory == null) {
+            return;
+        }
+        final RecordMetadata m = factory.getMetadata();
+        final int columnCount = m.getColumnCount();
+        pgResultSetColumnTypes.clear();
+        pgResultSetColumnTypes.setPos(2 * columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            final int columnType = m.getColumnType(i);
+            pgResultSetColumnTypes.setQuick(2 * i, columnType);
+            // the extra values stored here are used to render geo-hashes as strings
+            pgResultSetColumnTypes.setQuick(2 * i + 1, GeoHashes.getBitFlags(columnType));
         }
     }
 
@@ -1070,12 +1071,13 @@ public class PGPipelineEntry implements QuietCloseable {
             );
             // execute against writer from the engine, synchronously (null sequence)
             for (int attempt = 1; ; attempt++) {
-                try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, true)) {
+                try (OperationFuture fut = compiledQuery.execute(sqlExecutionContext, tempSequence, false)) {
                     // this doesn't actually wait, because the call is synchronous
                     fut.await();
                     sqlAffectedRowCount = fut.getAffectedRowsCount();
                     break;
                 } catch (TableReferenceOutOfDateException e) {
+                    Misc.free(compiledQuery.getUpdateOperation());
                     if (attempt == maxRecompileAttempts) {
                         throw e;
                     }

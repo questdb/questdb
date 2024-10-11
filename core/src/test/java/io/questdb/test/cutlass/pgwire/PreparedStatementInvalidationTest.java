@@ -26,7 +26,6 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.PropertyKey;
 import io.questdb.std.str.Path;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -121,7 +120,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                     insertStatement.executeUpdate();
                     Assert.fail("val column was dropped, the INSERT should have failed");
                 } catch (SQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "row value count does not match column count [expected=2, actual=3, tuple=1]");
+                    assertMessageContains(e, "row value count does not match column count [expected=2, actual=3, tuple=1]");
                 }
             }
         });
@@ -216,7 +215,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                     insertStatement.executeUpdate();
                     Assert.fail("val column was dropped, the INSERT should have failed");
                 } catch (SQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "Invalid column: val");
+                    assertMessageContains(e, "Invalid column: val");
                 }
             }
         });
@@ -404,7 +403,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                 try (ResultSet shouldNotBeCreated = ps.executeQuery()) {
                     Assert.fail("id column was dropped, the query should fail");
                 } catch (SQLException e) {
-                    TestUtils.assertContains(e.getMessage(), "Invalid column: id");
+                    assertMessageContains(e, "Invalid column: id");
                 }
             }
         });
