@@ -2836,7 +2836,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     "\tpyh&Nlz{\n" +
                     "\t?\uDBB7\uDE72*\uD93B\uDF2D\uD917\uDDB2\n" +
                     "\uD9F2\uDF17\uDBE8\uDCCF\uF168\u19ADE%۔+@\uDBC6\uDF53B/W\tYx~Eg8S]\n" +
-                    "YpcxLP0u=jR#B9xn*f\t\uDBFE\uDF83Ϊ\u1AC8饋旮5폥V뷓\n" +
+                    "YpcxLP0u=jR#B9xn*f\t\uDBFE\uDF83Ϊ᫈饋旮5폥V뷓\n" +
                     "Z<CF\t\n" +
                     "76{#dfd_[B}&@wtN\t\n" +
                     "\tpݟ\uDB49\uDE58|͆\uD95E\uDC6B\uDA38\uDF16ƈ\n" +
@@ -2868,7 +2868,7 @@ public class TextLoaderTest extends AbstractCairoTest {
                     ",pyh&Nlz{\n" +
                     ",?\uDBB7\uDE72*\uD93B\uDF2D\uD917\uDDB2\n" +
                     "\uD9F2\uDF17\uDBE8\uDCCF\uF168\u19ADE%۔+@\uDBC6\uDF53B/W,Yx~Eg8S]\n" +
-                    "YpcxLP0u=jR#B9xn*f,\uDBFE\uDF83Ϊ\u1AC8饋旮5폥V뷓\n" +
+                    "YpcxLP0u=jR#B9xn*f,\uDBFE\uDF83Ϊ᫈饋旮5폥V뷓\n" +
                     "Z<CF,\n" +
                     "76{#dfd_[B}&@wtN,\n" +
                     ",pݟ\uDB49\uDE58|͆\uD95E\uDC6B\uDA38\uDF16ƈ\n" +
