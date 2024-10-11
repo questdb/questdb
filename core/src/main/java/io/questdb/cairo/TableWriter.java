@@ -124,7 +124,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -651,7 +650,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
             metadataRW.hydrateTable(metadata, true);
-        } catch (IOException ignore) {
         }
     }
 
@@ -697,7 +695,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
             metadataRW.hydrateTable(metadata, true);
-        } catch (IOException ignore) {
         }
         LOG.info().$("ADDED index to '").utf8(columnName).$('[').$(ColumnType.nameOf(existingType)).$("]' to ").$substr(pathRootSize, path).$();
     }
@@ -907,7 +904,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.bumpTruncateVersion();
             try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
                 metadataRW.hydrateTable(metadata, true);
-            } catch (IOException ignore) {
             }
         }
     }
@@ -1020,7 +1016,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
                     metadataRW.hydrateTable(metadata, true);
-                } catch (IOException ignore) {
                 }
             } finally {
                 // clear temp resources
@@ -1568,7 +1563,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         updateMetadataWithDeduplicationUpsertKeys(false, null);
         try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
             metadataRW.hydrateTable(metadata, true);
-        } catch (IOException ignore) {
         }
     }
 
@@ -1625,7 +1619,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
                 metadataRW.hydrateTable(metadata, true);
-            } catch (IOException ignore) {
             }
 
             LOG.info().$("END DROP INDEX [txn=").$(txWriter.getTxn())
@@ -1672,7 +1665,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         updateMetadataWithDeduplicationUpsertKeys(true, columnsIndexes);
         try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
             metadataRW.hydrateTable(metadata, true);
-        } catch (IOException ignore) {
         }
     }
 
@@ -2436,7 +2428,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
             metadataRW.hydrateTable(metadata, true);
-        } catch (IOException ignore) {
         }
         LOG.info().$("REMOVED column '").utf8(name).$('[').$(ColumnType.nameOf(type)).$("]' from ").$substr(pathRootSize, path).$();
     }
@@ -2528,7 +2519,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
             metadataRW.hydrateTable(metadata, true);
-        } catch (IOException ignore) {
         }
 
         LOG.info().$("RENAMED column '").utf8(currentName).$("' to '").utf8(newName).$("' from ").$substr(pathRootSize, path).$();
@@ -2550,7 +2540,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
             metadataRW.dropTable(fromTableName);
             metadataRW.hydrateTable(metadata, true);
-        } catch (IOException ignore) {
         }
     }
 
@@ -2613,7 +2602,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
                 metadataRW.hydrateTable(metadata, true);
-            } catch (IOException ignore) {
             }
 
         } finally {
@@ -2640,7 +2628,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
                 metadataRW.hydrateTable(metadata, true);
-            } catch (IOException ignore) {
             }
         } finally {
             ddlMem.close();
@@ -7973,7 +7960,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
             metadataRW.hydrateTable(metadata, true);
-        } catch (IOException ignore) {
         }
     }
 

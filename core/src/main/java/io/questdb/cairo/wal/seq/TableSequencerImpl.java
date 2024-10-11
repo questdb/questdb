@@ -46,7 +46,6 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-import java.io.IOException;
 import java.util.concurrent.locks.ReadWriteLock;
 
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
@@ -187,7 +186,6 @@ public class TableSequencerImpl implements TableSequencer {
 
         try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
             metadataRW.dropTable(tableToken);
-        } catch (IOException ignore) {
         }
 
         notifyTxnCommitted(Long.MAX_VALUE);

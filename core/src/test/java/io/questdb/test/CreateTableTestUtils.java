@@ -39,8 +39,6 @@ import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cairo.TestRecord;
 import io.questdb.test.tools.TestUtils;
 
-import java.io.IOException;
-
 public class CreateTableTestUtils {
 
     public static void createAllTable(CairoEngine engine, int partitionBy) {
@@ -103,7 +101,6 @@ public class CreateTableTestUtils {
 
         try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
             metadataRW.hydrateTable("x", true);
-        } catch (IOException ignore) {
         }
 
         Utf8StringSink utf8Sink = new Utf8StringSink();

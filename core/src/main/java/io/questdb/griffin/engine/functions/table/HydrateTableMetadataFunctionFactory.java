@@ -44,8 +44,6 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.IOException;
-
 /**
  * Force re-hydrates the CairoMetadata cache.
  * Either give:
@@ -131,7 +129,6 @@ public class HydrateTableMetadataFunctionFactory implements FunctionFactory {
                     try {
                         try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
                             metadataRW.hydrateTable(tableTokens.getQuick(i), true);
-                        } catch (IOException ignore) {
                         }
                     } catch (CairoException ex) {
                         LOG.error().$("could not hydrate metadata [table=").$(tableToken).I$();

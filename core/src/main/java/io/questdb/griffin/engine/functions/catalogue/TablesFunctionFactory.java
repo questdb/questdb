@@ -47,7 +47,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 
-import java.io.IOException;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -114,7 +113,6 @@ public class TablesFunctionFactory implements FunctionFactory {
                     tableCacheVersion = metadataRO.snapshotRefresh(tableCache, tableCacheVersion);
                 }
                 metadataRO.filterVisibleTables(tableCache);
-            } catch (IOException ignore) {
             }
             cursor.toTop();
             return cursor;

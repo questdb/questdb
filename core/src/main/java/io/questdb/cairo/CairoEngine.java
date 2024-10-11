@@ -96,7 +96,6 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.concurrent.TimeUnit;
@@ -366,7 +365,6 @@ public class CairoEngine implements Closeable, WriterSource {
         if (cairoMetadata != null) {
             try (CairoMetadataRW metadataRW = getCairoMetadata().write()) {
                 metadataRW.clear();
-            } catch (IOException ignore) {
             }
         }
     }
@@ -442,7 +440,6 @@ public class CairoEngine implements Closeable, WriterSource {
                     unlockTableUnsafe(tableToken, null, false);
                     try (CairoMetadataRW metadataRW = getCairoMetadata().write()) {
                         metadataRW.dropTable(tableToken);
-                    } catch (IOException ignore) {
                     }
                 }
 
@@ -1064,7 +1061,6 @@ public class CairoEngine implements Closeable, WriterSource {
         try (CairoMetadataRW metadataRW = getCairoMetadata().write()) {
             metadataRW.clear();
             metadataRW.hydrateAllTables();
-        } catch (IOException ignore) {
         }
     }
 
@@ -1130,7 +1126,6 @@ public class CairoEngine implements Closeable, WriterSource {
                                 tableNameRegistry.rename(fromTableToken, toTableToken);
                                 metadataRW.dropTable(fromTableName);
                                 metadataRW.hydrateTable(toTableName, true);
-                            } catch (IOException ignore) {
                             }
                         } else {
                             LOG.info()
@@ -1165,7 +1160,6 @@ public class CairoEngine implements Closeable, WriterSource {
                         }
                         tableNameRegistry.dropTable(fromTableToken);
                         metadataRW.dropTable(fromTableName);
-                    } catch (IOException ignore) {
                     }
                 } else {
                     LOG.error()
@@ -1448,7 +1442,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
             try (CairoMetadataRW metadataRW = getCairoMetadata().write()) {
                 metadataRW.hydrateTable(tableToken, true);
-            } catch (IOException ignore) {
             }
 
             return tableToken;

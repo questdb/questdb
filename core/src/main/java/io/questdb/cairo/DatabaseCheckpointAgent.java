@@ -57,7 +57,6 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -677,7 +676,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
                 metadataRW.clear();
                 metadataRW.hydrateAllTables();
-            } catch (IOException ignore) {
             }
         } finally {
             tableMetadata = Misc.free(tableMetadata);

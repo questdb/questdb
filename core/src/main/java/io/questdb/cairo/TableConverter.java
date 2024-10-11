@@ -41,8 +41,6 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 
-import java.io.IOException;
-
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
 
@@ -132,7 +130,6 @@ public class TableConverter {
 
                                 try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
                                     metadataRW.hydrateTable(token, true);
-                                } catch (IOException ignore) {
                                 }
                             }
 

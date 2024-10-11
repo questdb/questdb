@@ -42,8 +42,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import org.jetbrains.annotations.NotNull;
 
-import java.io.IOException;
-
 public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final int N_NAME_COL = 0;
     public static final int N_TYPE_COL = N_NAME_COL + 1;
@@ -114,14 +112,12 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
             CairoTable table = null;
             try (CairoMetadataRO metadataRO = executionContext.getCairoEngine().getCairoMetadata().write()) {
                 table = metadataRO.getTable(tableToken);
-            } catch (IOException ignore) {
             }
 
             if (table == null) {
                 // try the auto hydrate version
                 try (CairoMetadataRW metadataRW = executionContext.getCairoEngine().getCairoMetadata().write()) {
                     table = metadataRW.getTable(tableToken);
-                } catch (IOException ignore) {
                 }
             }
 

@@ -47,7 +47,6 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -86,7 +85,6 @@ public class CairoMetadata {
         } catch (CairoException e) {
             LogRecord l = e.isCritical() ? LOG.critical() : LOG.error();
             l.$(e.getMessage()).$();
-        } catch (IOException ignored) {
         }
     }
 
@@ -98,6 +96,7 @@ public class CairoMetadata {
     /**
      * Thread unsafe function for debug printing the metadata object, doesn't require manual closing.
      */
+    @SuppressWarnings("unused")
     @TestOnly
     public String toString0Unsafe() {
         StringSink sink = tlSink.get();
@@ -128,7 +127,7 @@ public class CairoMetadata {
             lock.readLock().unlock();
         }
 
-        public @Nullable CairoTable filterVisibleTables(HashMap<CharSequence, CairoTable> localCache) {
+        public void filterVisibleTables(HashMap<CharSequence, CairoTable> localCache) {
             Iterator<Map.Entry<CharSequence, CairoTable>> iterator = localCache.entrySet().iterator();
 
             boolean isSys = false;
@@ -165,7 +164,6 @@ public class CairoMetadata {
                 isNotFinal = false;
             }
 
-            return null;
         }
 
         public @Nullable CairoTable getTable(@NotNull TableToken tableToken) {

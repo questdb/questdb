@@ -483,7 +483,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         engine = node1.getEngine();
         try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
             metadataRW.clear();
-        } catch (IOException ignore) {
         }
         messageBus = node1.getMessageBus();
 
@@ -512,7 +511,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         configurationFactory = null;
         try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
             metadataRW.clear();
-        } catch (IOException ignore) {
         }
         AbstractTest.tearDownStatic();
         DumpThreadStacksFunctionFactory.dumpThreadStacks();
@@ -530,7 +528,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         engine.resetNameRegistryMemory();
         try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
             metadataRW.clear();
-        } catch (IOException ignore) {
         }
         refreshTablesInBaseEngine();
         SharedRandom.RANDOM.set(new Rnd());
@@ -554,7 +551,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
         ioURingFacade = IOURingFacadeImpl.INSTANCE;
         try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
             metadataRW.clear();
-        } catch (IOException ignore) {
         }
         sink.clear();
         memoryUsage = -1;

@@ -35,8 +35,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import org.junit.Test;
 
-import java.io.IOException;
-
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 
 public class TablesFunctionFactoryTest extends AbstractCairoTest {
@@ -112,7 +110,6 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
             // trying to rehydrate all tables
             try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
                 metadataRW.hydrateAllTables();
-            } catch (IOException ignore) {
             }
 
             // still can't rehydrate table 1

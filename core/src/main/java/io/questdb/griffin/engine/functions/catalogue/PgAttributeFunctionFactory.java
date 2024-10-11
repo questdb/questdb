@@ -47,7 +47,6 @@ import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-import java.io.IOException;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -121,7 +120,6 @@ public class PgAttributeFunctionFactory implements FunctionFactory {
                     tableCacheVersion = metadataRO.snapshotRefresh(tableCache, tableCacheVersion);
                 }
                 metadataRO.filterVisibleTables(tableCache);
-            } catch (IOException ignore) {
             }
 
             cursor.toTop();

@@ -121,7 +121,6 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.io.IOException;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static io.questdb.griffin.SqlKeywords.*;
@@ -3777,10 +3776,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     securityContext.authorizeTableDrop(tableToken);
                     try {
                         engine.drop(path, tableToken);
-                        
+
                         try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
                             metadataRW.dropTable(tableToken);
-                        } catch (IOException ignore) {
                         }
                     } catch (CairoException report) {
                         // it will fail when there are readers/writers and lock cannot be acquired

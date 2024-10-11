@@ -25,15 +25,14 @@
 package io.questdb.cairo;
 
 
+import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.Closeable;
 import java.util.HashMap;
 
-public interface CairoMetadataRO extends AutoCloseable, Closeable {
-    @Nullable
-    CairoTable filterVisibleTables(HashMap<CharSequence, CairoTable> localCache);
+public interface CairoMetadataRO extends AutoCloseable, QuietCloseable {
+    void filterVisibleTables(HashMap<CharSequence, CairoTable> localCache);
 
     @Nullable
     CairoTable getTable(@NotNull TableToken tableToken);
