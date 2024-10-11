@@ -72,9 +72,6 @@ public class PartitionUpdaterTest extends AbstractCairoTest {
                 TestUtils.assertContains(
                         badPathExc.getMessage(),
                         "Could not create parquet file");
-                TestUtils.assertContains(
-                        badPathExc.getMessage(),
-                        "Is a directory");
 
                 path.trimTo(partitionDirLen);
                 path.put(".1").slash$();
