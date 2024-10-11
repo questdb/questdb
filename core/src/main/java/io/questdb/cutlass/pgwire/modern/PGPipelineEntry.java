@@ -33,6 +33,7 @@ import io.questdb.cutlass.pgwire.BadProtocolException;
 import io.questdb.cutlass.pgwire.PGOids;
 import io.questdb.cutlass.pgwire.PGResponseSink;
 import io.questdb.griffin.*;
+import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.mp.SCSequence;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.network.QueryPausedException;
@@ -2057,7 +2058,7 @@ public class PGPipelineEntry implements QuietCloseable {
                 break;
             case CompiledQuery.ALTER:
                 // future-proofing ALTER execution
-                compiledQuery.ofAlter(cq.getAlterOperation());
+                compiledQuery.ofAlter(AlterOperation.deepCloneOf(cq.getAlterOperation()));
                 compiledQuery.withSqlText(cq.getSqlText());
                 sqlTag = TAG_OK;
                 break;

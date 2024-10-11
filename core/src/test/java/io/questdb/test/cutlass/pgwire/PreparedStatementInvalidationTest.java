@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.PropertyKey;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -36,6 +37,10 @@ import org.postgresql.util.PSQLException;
 import java.sql.*;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.concurrent.BrokenBarrierException;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertTrue;
 
@@ -288,6 +293,83 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
                             sink, rs
                     );
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testSelectAllAfterConcurrentColDropCreate() throws Exception {
+        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("create table select_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
+            }
+            mayDrainWalQueue();
+
+            try (PreparedStatement insertStatement = connection.prepareStatement("insert into select_after_drop values (?, 0, '1990-01-01')")) {
+                insertStatement.setLong(1, 42);
+                Assert.assertEquals(1, insertStatement.executeUpdate());
+            }
+            mayDrainWalQueue();
+
+            CyclicBarrier barrier = new CyclicBarrier(2);
+            AtomicReference<Exception> exception = new AtomicReference<>();
+            new Thread(() -> {
+                try {
+                    while (barrier.getNumberWaiting() == 0) {
+                        try (Statement stmt = connection.createStatement()) {
+                            stmt.execute("alter table select_after_drop add column val2 int");
+                        }
+                        mayDrainWalQueue();
+                        try (Statement stmt = connection.createStatement()) {
+                            stmt.execute("alter table select_after_drop drop column val2");
+                        }
+                        mayDrainWalQueue();
+                    }
+                } catch (SQLException e) {
+                    exception.set(e);
+                } finally {
+                    try {
+                        barrier.await();
+                    } catch (InterruptedException | BrokenBarrierException e) {
+                        exception.compareAndSet(null, e);
+                    }
+                    Path.clearThreadLocals();
+                }
+            }).start();
+
+            long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+            try (PreparedStatement selectStatement = connection.prepareStatement("select * from select_after_drop")) {
+                do {
+                    try (ResultSet rs = selectStatement.executeQuery()) {
+                        sink.clear();
+                        ResultSetMetaData metaData = rs.getMetaData();
+                        String expected = null;
+                        if (metaData.getColumnCount() == 3) {
+                            expected = "id[BIGINT],val[INTEGER],ts[TIMESTAMP]\n" +
+                                    "42,0,1990-01-01 00:00:00.0\n";
+                        } else if (metaData.getColumnCount() == 4) {
+                            expected = "id[BIGINT],val[INTEGER],ts[TIMESTAMP],val2[INTEGER]\n" +
+                                    "42,0,1990-01-01 00:00:00.0,null\n";
+                        } else {
+                            Assert.fail("Unexpected column count: " + metaData.getColumnCount());
+                        }
+                        assertResultSet(
+                                expected,
+                                sink,
+                                rs
+                        );
+                    } catch (SQLException e) {
+                        // ignore this error, JDBC driver will retry the query only once
+                        if (!e.getMessage().contains("ERROR: cached plan must not change result type")) {
+                            throw e;
+                        }
+                    }
+                } while (System.nanoTime() < deadlineNanos);
+            } finally {
+                barrier.await();
+            }
+            if (exception.get() != null) {
+                throw exception.get();
             }
         });
     }
