@@ -675,6 +675,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                         .put("could not remove restore trigger file. file permission issues? [file=").put(dstPath).put(']');
             }
             try (CairoMetadataRW metadataRW = engine.getCairoMetadata().write()) {
+                metadataRW.clear();
                 metadataRW.hydrateAllTables();
             } catch (IOException ignore) {
             }

@@ -591,6 +591,7 @@ public class CheckpointTest extends AbstractCairoTest {
             engine.checkpointRecover();
             engine.reloadTableNames();
 
+
             drainWalQueue();
 
             // Renamed table should be there under the original name.
