@@ -92,15 +92,21 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
         return delegate.getState(millis, fd);
     }
 
+    @Override
+    public long getTimeout() {
+        return delegate.getTimeout();
+    }
+
     public void init(SqlExecutionCircuitBreakerWrapper wrapper) {
         init(wrapper.delegate);
     }
 
+    @Override
     public void init(SqlExecutionCircuitBreaker executionContextCircuitBreaker) {
         if (executionContextCircuitBreaker.isThreadsafe()) {
             delegate = executionContextCircuitBreaker;
         } else {
-            networkSqlExecutionCircuitBreaker.setFd(executionContextCircuitBreaker.getFd());
+            networkSqlExecutionCircuitBreaker.init(executionContextCircuitBreaker);
             networkSqlExecutionCircuitBreaker.resetTimer();
             delegate = networkSqlExecutionCircuitBreaker;
         }

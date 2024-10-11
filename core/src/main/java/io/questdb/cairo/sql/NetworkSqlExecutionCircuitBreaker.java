@@ -141,6 +141,17 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
+    public long getTimeout() {
+        return timeout;
+    }
+
+    @Override
+    public void init(SqlExecutionCircuitBreaker circuitBreaker) {
+        fd = circuitBreaker.getFd();
+        timeout = circuitBreaker.getTimeout();
+    }
+
+    @Override
     public boolean isThreadsafe() {
         return false;
     }
