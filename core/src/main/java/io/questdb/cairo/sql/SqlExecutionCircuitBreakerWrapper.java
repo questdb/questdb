@@ -56,7 +56,7 @@ public class SqlExecutionCircuitBreakerWrapper implements SqlExecutionCircuitBre
 
     @Override
     public void close() throws IOException {
-        delegate = Misc.freeIfCloseable(networkSqlExecutionCircuitBreaker);
+        delegate = Misc.free(networkSqlExecutionCircuitBreaker);
     }
 
     @Override
