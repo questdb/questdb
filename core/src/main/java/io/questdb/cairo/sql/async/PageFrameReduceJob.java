@@ -55,7 +55,7 @@ public class PageFrameReduceJob implements Job, Closeable {
     public PageFrameReduceJob(
             MessageBus bus,
             Rnd rnd,
-            @Nullable SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration) {
+            @NotNull SqlExecutionCircuitBreakerConfiguration circuitBreakerConfiguration) {
         this.messageBus = bus;
         this.shardCount = messageBus.getPageFrameReduceShardCount();
         this.shards = new int[shardCount];
